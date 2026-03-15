@@ -1,4 +1,21 @@
+import React from 'react';
+
 export type InterviewFormat = 'star' | 'roleplay';
+
+export interface Student {
+  name: string;
+  net_id: string;
+}
+
+export interface FormatCardProps {
+  format: InterviewFormat;
+  title: string;
+  description: string;
+  duration: string;
+  icon: React.ReactNode;
+  selected: boolean;
+  onSelect: (format: InterviewFormat) => void;
+}
 
 export interface Message {
   role: 'interviewer' | 'candidate';
