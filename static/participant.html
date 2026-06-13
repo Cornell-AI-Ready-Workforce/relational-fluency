@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Conversation</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg:        #ededec;   /* very light cool gray page */
+    --surface:   #ffffff;   /* cards, assistant bubbles */
+    --surface-2: #d7d8d7;   /* alt panels (from palette) */
+    --line:      #b8b9b6;   /* soft cool gray border */
+    --line-soft: #d0d1ce;
+    --fg:        #2f2f2f;
+    --muted:     #6a6a68;
+    --accent:    #b3181b;   /* brand red */
+    --accent-deep:#951417;
+    --accent-soft:#f1dcdc;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+         background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 28px 20px 140px; }
+  header { padding: 8px 0 18px; border-bottom: 1px solid var(--line-soft); margin-bottom: 20px; }
+  h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; letter-spacing: -0.01em; color: var(--fg); }
+  .intro { color: var(--muted); font-size: 14px; line-height: 1.55; white-space: pre-wrap; }
+  .session-id { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .msgs { display: flex; flex-direction: column; gap: 14px; }
+  .msg { padding: 11px 15px; border-radius: 14px; max-width: 80%; line-height: 1.5; font-size: 15px;
+         white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #ffffff; }
+  .msg.user.partial { opacity: 0.6; font-style: italic; }
+  .msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--line-soft);
+                   box-shadow: 0 1px 0 rgba(47,47,47,0.02); }
+  .msg.meta { align-self: center; font-size: 12px; color: var(--muted); padding: 4px 8px; }
+  .latency { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .msg.user .latency { color: rgba(255,255,255,0.75); }
+  .composer { position: fixed; bottom: 0; left: 0; right: 0;
+              background: linear-gradient(180deg, rgba(237,237,236,0.4) 0%, var(--bg) 30%);
+              border-top: 1px solid var(--line-soft); padding: 14px 20px 16px; }
+  .composer-inner { max-width: 720px; margin: 0 auto; display: flex; gap: 10px; align-items: center; }
+  textarea { flex: 1; resize: none; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px;
+             font: inherit; min-height: 44px; max-height: 160px; background: var(--surface); color: var(--fg);
+             transition: border-color 0.15s; }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  button { padding: 10px 18px; border: 0; border-radius: 10px; background: var(--accent); color: #ffffff;
+           font-weight: 600; cursor: pointer; transition: background 0.15s, transform 0.05s;
+           font-family: inherit; font-size: 14px; }
+  button:hover:not(:disabled) { background: var(--accent-deep); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button.secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--line); }
+  button.secondary:hover:not(:disabled) { background: var(--surface-2); }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .voice-bar { display: flex; align-items: center; gap: 14px; }
+  .mic-status { width: 12px; height: 12px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
+  .mic-status.live { background: var(--accent); box-shadow: 0 0 0 0 rgba(179,24,27,0.55); animation: pulse 1.6s infinite; }
+  .mic-status.muted { background: var(--muted); }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(179,24,27,0.5);}
+    70%  { box-shadow: 0 0 0 10px rgba(179,24,27,0);}
+    100% { box-shadow: 0 0 0 0 rgba(179,24,27,0);}
+  }
+  .level { width: 90px; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+  .level > div { height: 100%; width: 0%; background: var(--accent); transition: width 80ms linear; }
+  .consent-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.45); backdrop-filter: blur(3px);
+                      display:flex; align-items:center; justify-content:center; z-index: 50; padding: 20px; }
+  .consent-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 14px;
+                  max-width: 620px; width: 100%; padding: 26px 28px; max-height: 92vh; overflow-y: auto;
+                  box-shadow: 0 24px 60px rgba(47,47,47,0.18); }
+  .consent-card h2 { font-size: 17px; margin: 0 0 14px; color: var(--fg); }
+  .consent-card .body { font-size: 14px; line-height: 1.6; color: var(--fg); white-space: pre-wrap; }
+  .consent-card label { display: flex; gap: 10px; align-items: flex-start; margin: 18px 0 6px; font-size: 14px; cursor: pointer; }
+  .consent-card label input { margin-top: 3px; accent-color: var(--accent); }
+  .consent-card .code-row { display:flex; gap:10px; align-items:center; margin: 16px 0; }
+  .consent-card .code-row input { padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font: inherit; flex: 1; background: var(--surface); color: var(--fg); }
+  .consent-card .code-row input:focus { outline: none; border-color: var(--accent); }
+  .consent-card .actions { display:flex; gap:8px; justify-content:flex-end; margin-top: 14px; }
+  .consent-card .err { color: var(--accent); font-size: 13px; min-height: 18px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="consent-overlay" id="consentOverlay" style="display:none">
+  <div class="consent-card">
+    <h2 id="consentTitle">Consent</h2>
+    <div class="body" id="consentBody"></div>
+    <div class="code-row">
+      <label style="margin:0;font-size:13px;color:var(--muted)">Participant code:</label>
+      <input type="text" id="participantCode" placeholder="e.g. p_001" autocomplete="off" />
+    </div>
+    <label>
+      <input type="checkbox" id="consentCheck" />
+      <span id="consentConfirmLabel"></span>
+    </label>
+    <div class="err" id="consentErr"></div>
+    <div class="actions">
+      <button id="consentSubmit">Continue</button>
+    </div>
+  </div>
+</div>
+<div class="wrap">
+  <header>
+    <h1 id="title">Loading…</h1>
+    <div class="intro" id="intro"></div>
+    <div class="session-id" id="sid"></div>
+  </header>
+  <div class="msgs" id="msgs"></div>
+</div>
+<div class="composer">
+  <div class="composer-inner" id="composerText" style="display:none">
+    <textarea id="input" placeholder="Type a message…" autofocus></textarea>
+    <button id="send">Send</button>
+  </div>
+  <div class="composer-inner voice-bar" id="composerVoice" style="display:none">
+    <div class="mic-status" id="micStatus"></div>
+    <span id="micLabel" style="font-size:13px;color:var(--muted)">Click Start to begin</span>
+    <div class="level"><div id="micLevel"></div></div>
+    <button id="startVoice">Start</button>
+    <button id="stopVoice" class="secondary" style="display:none">Stop</button>
+  </div>
+</div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const scenario = params.get('scenario') || 'difficult_disclosure';
+  const mode = params.get('mode') === 'voice' ? 'voice' : 'text';
+  const key = params.get('key') || '';
+  const keyParam = key ? `&key=${encodeURIComponent(key)}` : '';
+  const keyParamFirst = key ? `?key=${encodeURIComponent(key)}` : '';
+  const $ = (id) => document.getElementById(id);
+
+  // Participant ID is set after the consent flow (voice mode requires it;
+  // text mode treats it as optional and skips the gate).
+  let participantId = params.get('participant_id') || null;
+
+  async function runConsentGate() {
+    if (participantId) return true; // already have one
+    if (mode !== 'voice') return true; // text mode: consent not required
+    const res = await fetch('/api/consent' + keyParamFirst);
+    const cfg = await res.json();
+    $('consentTitle').textContent = cfg.title;
+    $('consentBody').innerHTML = cfg.body
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    $('consentConfirmLabel').textContent = cfg.confirm_checkbox;
+    $('consentOverlay').style.display = 'flex';
+    return new Promise((resolve) => {
+      $('consentSubmit').addEventListener('click', async () => {
+        const code = $('participantCode').value.trim();
+        const checked = $('consentCheck').checked;
+        $('consentErr').textContent = '';
+        if (!code) { $('consentErr').textContent = 'Please enter a participant code.'; return; }
+        if (!checked) { $('consentErr').textContent = 'Please confirm to continue.'; return; }
+        try {
+          const r = await fetch('/api/consent' + keyParamFirst, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, consent_given: true }),
+          });
+          if (!r.ok) { $('consentErr').textContent = 'Could not register consent.'; return; }
+          const data = await r.json();
+          participantId = data.participant_id;
+          $('consentOverlay').style.display = 'none';
+          resolve(true);
+        } catch (e) {
+          $('consentErr').textContent = 'Network error: ' + e.message;
+        }
+      });
+    });
+  }
+
+  const msgs = $('msgs');
+  let ws = null;
+  let currentAssistant = null;
+  let currentLatency = null;
+  let busy = false;
+  let userPartialEl = null;
+
+  function appendMsg(role, text, klass) {
+    const el = document.createElement('div');
+    el.className = `msg ${role}` + (klass ? ' ' + klass : '');
+    el.textContent = text;
+    msgs.appendChild(el);
+    window.scrollTo(0, document.body.scrollHeight);
+    return el;
+  }
+
+  function setBusy(v) {
+    busy = v;
+    if (mode === 'text') {
+      $('send').disabled = v;
+      $('input').disabled = v;
+    }
+  }
+
+  function applyHello(m) {
+    $('title').textContent = m.scenario.title;
+    $('intro').textContent = m.scenario.intro;
+    $('sid').textContent = `session: ${m.session_id}`;
+    try {
+      history.replaceState({}, '', `?scenario=${encodeURIComponent(scenario)}&session=${encodeURIComponent(m.session_id)}&mode=${mode}${key ? `&key=${encodeURIComponent(key)}` : ''}`);
+    } catch {}
+  }
+
+  // ---------- TEXT MODE ----------
+  function startText() {
+    $('composerText').style.display = 'flex';
+    const pidParam = participantId ? `&participant_id=${encodeURIComponent(participantId)}` : '';
+    const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/participant?scenario=${encodeURIComponent(scenario)}${pidParam}${keyParam}`;
+    ws = new WebSocket(wsUrl);
+    ws.addEventListener('message', (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.type === 'session') applyHello(m);
+      else if (m.type === 'assistant_text_delta') {
+        if (!currentAssistant) {
+          currentAssistant = appendMsg('assistant', '');
+          currentLatency = document.createElement('div');
+          currentLatency.className = 'latency';
+        }
+        currentAssistant.insertBefore(document.createTextNode(m.text), currentLatency.parentNode === currentAssistant ? currentLatency : null);
+        if (!currentLatency.parentNode) currentAssistant.appendChild(currentLatency);
+        window.scrollTo(0, document.body.scrollHeight);
+      } else if (m.type === 'assistant_done') {
+        if (currentLatency) currentLatency.textContent = `first ${m.latency_to_first_token_s}s · total ${m.latency_total_s}s`;
+        currentAssistant = null; currentLatency = null;
+        setBusy(false); $('input').focus();
+      } else if (m.type === 'error') {
+        appendMsg('meta', `error: ${m.message}`); setBusy(false);
+      }
+    });
+    ws.addEventListener('close', () => { appendMsg('meta', 'disconnected'); setBusy(true); });
+    function send() {
+      const text = $('input').value.trim();
+      if (!text || busy || ws.readyState !== 1) return;
+      appendMsg('user', text);
+      ws.send(JSON.stringify({ type: 'user_text', text }));
+      $('input').value = ''; setBusy(true);
+    }
+    $('send').addEventListener('click', send);
+    $('input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+  }
+
+  // ---------- VOICE MODE ----------
+  let audioCtx = null;
+  let micNode = null;
+  let workletNode = null;
+  let mediaStream = null;
+  let playbackTime = 0;     // when the next chunk should start
+  let assistantSpeaking = false;
+  let assistantTextEl = null;
+
+  async function startVoiceCapture() {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    await audioCtx.audioWorklet.addModule('/static/pcm-worklet.js');
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    micNode = audioCtx.createMediaStreamSource(mediaStream);
+    workletNode = new AudioWorkletNode(audioCtx, 'pcm-capture', {
+      processorOptions: { targetSampleRate: 16000 },
+    });
+    micNode.connect(workletNode);
+    // Don't connect worklet to destination, we don't want monitor playback.
+    workletNode.port.onmessage = (ev) => {
+      if (ws && ws.readyState === 1) ws.send(ev.data);
+    };
+
+    // Simple input level meter using a parallel analyser.
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    micNode.connect(analyser);
+    const lvl = $('micLevel'); const buf = new Uint8Array(analyser.fftSize);
+    function tick() {
+      analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / buf.length);
+      lvl.style.width = `${Math.min(100, rms * 250)}%`;
+      requestAnimationFrame(tick);
+    }
+    tick();
+  }
+
+  function setMicVisualState(state) {
+    const el = $('micStatus'); const lbl = $('micLabel');
+    el.className = 'mic-status ' + state;
+    if (state === 'live') lbl.textContent = 'Listening, speak any time';
+    else if (state === 'muted') lbl.textContent = 'Muted (assistant is speaking)';
+    else lbl.textContent = 'Idle';
+  }
+
+  function setMicMuted(muted) {
+    if (workletNode) workletNode.port.postMessage({ muted });
+    setMicVisualState(muted ? 'muted' : 'live');
+  }
+
+  function playPcmChunk(bytes) {
+    if (!audioCtx) return;
+    const int16 = new Int16Array(bytes);
+    const float = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) float[i] = int16[i] / 32768;
+    // Source is 16 kHz mono. createBuffer at that rate; Web Audio resamples.
+    const buf = audioCtx.createBuffer(1, float.length, 16000);
+    buf.copyToChannel(float, 0);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    const now = audioCtx.currentTime;
+    if (playbackTime < now + 0.02) playbackTime = now + 0.02;
+    src.start(playbackTime);
+    playbackTime += buf.duration;
+    src.onended = () => {
+      if (audioCtx && audioCtx.currentTime >= playbackTime - 0.01) {
+        // Last chunk finished. Re-open the mic.
+        if (assistantSpeaking) {
+          assistantSpeaking = false;
+          setMicMuted(false);
+        }
+      }
+    };
+  }
+
+  function startVoice() {
+    $('composerVoice').style.display = 'flex';
+    setMicVisualState('idle');
+    $('startVoice').onclick = async () => {
+      $('startVoice').disabled = true;
+      try { await startVoiceCapture(); } catch (e) {
+        appendMsg('meta', 'mic error: ' + e.message); $('startVoice').disabled = false; return;
+      }
+      $('startVoice').style.display = 'none';
+      $('stopVoice').style.display = 'inline-block';
+
+      const pidParam = participantId ? `&participant_id=${encodeURIComponent(participantId)}` : '';
+      const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/participant/voice?scenario=${encodeURIComponent(scenario)}${pidParam}${keyParam}`;
+      ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+      ws.addEventListener('open', () => setMicMuted(false));
+      ws.addEventListener('message', (ev) => {
+        if (typeof ev.data === 'string') {
+          const m = JSON.parse(ev.data);
+          if (m.type === 'session') applyHello(m);
+          else if (m.type === 'user_transcript') {
+            if (m.final) {
+              if (userPartialEl) { userPartialEl.remove(); userPartialEl = null; }
+              appendMsg('user', m.text);
+            } else {
+              if (!userPartialEl) userPartialEl = appendMsg('user', '', 'partial');
+              userPartialEl.textContent = m.text;
+            }
+          } else if (m.type === 'assistant_started') {
+            assistantSpeaking = true; setMicMuted(true);
+            assistantTextEl = appendMsg('assistant', '');
+            currentLatency = document.createElement('div'); currentLatency.className = 'latency';
+            assistantTextEl.appendChild(currentLatency);
+          } else if (m.type === 'assistant_text_delta') {
+            if (!assistantTextEl) {
+              assistantTextEl = appendMsg('assistant', '');
+              currentLatency = document.createElement('div'); currentLatency.className = 'latency';
+              assistantTextEl.appendChild(currentLatency);
+            }
+            assistantTextEl.insertBefore(document.createTextNode(m.text), currentLatency);
+            window.scrollTo(0, document.body.scrollHeight);
+          } else if (m.type === 'assistant_done') {
+            if (currentLatency) currentLatency.textContent = `first-token ${m.latency_to_first_token_s}s · first-audio ${m.latency_to_first_audio_s}s · total ${m.latency_total_s}s`;
+            assistantTextEl = null; currentLatency = null;
+          } else if (m.type === 'error') {
+            appendMsg('meta', 'error: ' + m.message);
+          }
+        } else {
+          // Binary audio chunk from TTS.
+          playPcmChunk(ev.data);
+        }
+      });
+      ws.addEventListener('close', () => { appendMsg('meta', 'disconnected'); setMicVisualState('idle'); });
+    };
+    $('stopVoice').onclick = () => {
+      try { ws && ws.close(); } catch {}
+      try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
+      try { audioCtx && audioCtx.close(); } catch {}
+      $('stopVoice').style.display = 'none';
+      $('startVoice').style.display = 'inline-block';
+      $('startVoice').disabled = false;
+      setMicVisualState('idle');
+    };
+  }
+
+  (async () => {
+    const ok = await runConsentGate();
+    if (!ok) return;
+    if (mode === 'voice') startVoice(); else startText();
+  })();
+</script>
+</body>
+</html>

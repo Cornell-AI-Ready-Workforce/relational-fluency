@@ -1,0 +1,35 @@
+# Consent text shown to participants before mic activates.
+# Edit this for your study's IRB / institutional language.
+#
+# `version` is recorded with each participant so you can track which
+# consent wording they saw.
+
+version: "v0.1-2026-06"
+title: "Conversational AI study — consent"
+body: |
+  In this session you'll have a voice conversation with an AI partner about a
+  workplace scenario. We are studying how AI can support relational skills
+  such as perspective taking, emotional regulation, apology, and creating
+  psychological safety.
+
+  **What we record:**
+  - Your microphone audio for the duration of the session
+  - The AI's spoken responses
+  - A transcript of the conversation
+  - Session metadata (scenario, timing, settings)
+
+  **How it's used:**
+  - To analyze conversational dynamics for research purposes
+  - To improve the AI partner's behavior
+  - Audio and transcripts are stored locally on a research machine
+
+  **Your rights:**
+  - You may stop at any time by clicking Stop
+  - You can request that your session data be deleted by contacting the
+    researcher
+  - Participation is voluntary
+
+  By checking the box below you confirm that you have read and understood
+  the above and that you consent to participate.
+
+confirm_checkbox: "I have read the above and consent to participate."

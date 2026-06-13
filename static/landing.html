@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Relational Fluency: practice the hard conversations at work</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg:           #ffffff;
+    --surface:      #fafaf8;
+    --surface-2:    #f1eee7;
+    --line:         #e3e0d8;
+    --line-soft:    #ecead9;
+    --fg:           #1a1a1a;
+    --muted:        #5e5e5b;
+    --accent:       #b3181b;
+    --accent-deep:  #8e1316;
+    --accent-soft:  #f7e9e9;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--fg);
+    -webkit-font-smoothing: antialiased; line-height: 1.55;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Header */
+  header.site {
+    border-bottom: 1px solid var(--line);
+    padding: 16px 32px;
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--bg);
+  }
+  .brand-row { display: flex; align-items: center; gap: 12px; }
+  .brand-row img.logo { height: 36px; width: auto; display: block; }
+  .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+  .brand-text .name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; color: var(--fg); }
+  .brand-text .sub { color: var(--muted); font-weight: 400; font-size: 12px; }
+  nav.site a { color: var(--fg); font-size: 14px; margin-left: 22px; font-weight: 500; }
+  nav.site a:hover { color: var(--accent); }
+
+  /* Hero */
+  .hero {
+    padding: 90px 32px 100px;
+    max-width: 980px;
+    margin: 0 auto;
+    text-align: left;
+  }
+  .eyebrow {
+    text-transform: uppercase; letter-spacing: 0.14em; font-size: 12px;
+    color: var(--accent); font-weight: 600; margin-bottom: 18px;
+  }
+  h1 {
+    font-size: 46px; line-height: 1.1; font-weight: 700; letter-spacing: -0.02em;
+    margin: 0 0 22px; max-width: 800px;
+  }
+  .lede {
+    font-size: 19px; line-height: 1.55; color: var(--muted);
+    max-width: 720px; margin: 0 0 36px;
+  }
+  .lede strong { color: var(--fg); font-weight: 600; }
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    display: inline-block; padding: 13px 26px; border-radius: 8px; font-weight: 600;
+    font-size: 15px; cursor: pointer; border: 0; transition: background 0.15s, transform 0.05s;
+    font-family: inherit;
+  }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent-deep); }
+  .btn.secondary {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+  }
+  .btn.secondary:hover { background: var(--surface); border-color: var(--muted); }
+  .btn:active { transform: translateY(1px); }
+  .cta-note { color: var(--muted); font-size: 13px; }
+
+  /* Sections */
+  section.band {
+    padding: 70px 32px; border-top: 1px solid var(--line);
+  }
+  section.band.muted { background: var(--surface); }
+  .band-inner { max-width: 980px; margin: 0 auto; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent);
+    font-weight: 600; margin: 0 0 14px;
+  }
+  .section-title {
+    font-size: 28px; font-weight: 700; letter-spacing: -0.01em;
+    line-height: 1.25; margin: 0 0 28px; max-width: 720px;
+  }
+  .section-lede { color: var(--muted); font-size: 16px; max-width: 720px; margin: 0 0 30px; line-height: 1.6; }
+
+  /* Skill cards */
+  .skill-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 18px;
+  }
+  .skill-card {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 20px 22px;
+  }
+  .skill-card .num {
+    color: var(--accent); font-size: 12px; font-weight: 600; letter-spacing: 0.1em;
+  }
+  .skill-card h3 {
+    font-size: 17px; margin: 6px 0 8px; font-weight: 600; letter-spacing: -0.01em;
+  }
+  .skill-card p {
+    color: var(--muted); font-size: 14px; margin: 0; line-height: 1.55;
+  }
+
+  /* Feature bullets */
+  .features {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 22px;
+  }
+  .feature h3 { font-size: 16px; margin: 0 0 6px; font-weight: 600; }
+  .feature p { color: var(--muted); font-size: 14px; margin: 0; line-height: 1.55; }
+
+  /* Footer */
+  footer {
+    padding: 36px 32px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px; background: var(--surface);
+  }
+  footer .inner { max-width: 980px; margin: 0 auto; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  footer a { color: var(--muted); }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(26,26,26,0.55); backdrop-filter: blur(4px);
+    display: none; align-items: center; justify-content: center; z-index: 50;
+    padding: 24px;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal {
+    background: var(--bg); border-radius: 14px; max-width: 760px; width: 100%;
+    max-height: 90vh; overflow-y: auto; padding: 32px 34px;
+    box-shadow: 0 30px 70px rgba(26,26,26,0.25);
+    border: 1px solid var(--line);
+  }
+  .modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+  .modal h3 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+  .modal .close {
+    background: none; border: none; cursor: pointer; font-size: 22px; color: var(--muted);
+    padding: 0; line-height: 1;
+  }
+  .modal .step-eyebrow { color: var(--accent); font-size: 11px; font-weight: 600;
+                         text-transform: uppercase; letter-spacing: 0.14em; margin-bottom: 18px; }
+  .modal .step-lede { color: var(--muted); font-size: 14px; margin: 0 0 22px; line-height: 1.55; }
+
+  /* Step 1: format picker */
+  .format-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 600px) { .format-grid { grid-template-columns: 1fr; } }
+  .format-card {
+    background: var(--bg); border: 1.5px solid var(--line); border-radius: 12px;
+    padding: 22px 24px; cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    text-align: left;
+  }
+  .format-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .format-card .icon { font-size: 24px; margin-bottom: 10px; color: var(--accent); }
+  .format-card h4 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+  .format-card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .format-card .count { color: var(--muted); font-size: 12px; margin-top: 12px; font-weight: 600; }
+
+  /* Step 2: scenario picker */
+  .scenario-list { display: flex; flex-direction: column; gap: 10px; }
+  .scenario-card {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 16px; cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    text-align: left;
+  }
+  .scenario-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .scenario-card .info { flex: 1; min-width: 0; }
+  .scenario-card h4 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+  .scenario-card .meta { color: var(--muted); font-size: 12px; margin: 0 0 6px; }
+  .scenario-card .chip {
+    display: inline-block; background: var(--accent-soft); color: var(--accent);
+    font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+    letter-spacing: 0.04em; text-transform: uppercase; margin-right: 6px;
+  }
+  .scenario-card .desc { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0; }
+  .scenario-card .start { color: var(--accent); font-size: 13px; font-weight: 600;
+                          white-space: nowrap; padding-top: 2px; }
+
+  .back-link { background: none; border: none; color: var(--muted); cursor: pointer;
+               font-size: 13px; padding: 0; margin-bottom: 16px; font-family: inherit; }
+  .back-link:hover { color: var(--accent); }
+
+  @media (max-width: 700px) {
+    .hero { padding: 60px 24px 70px; }
+    h1 { font-size: 34px; }
+    section.band { padding: 50px 24px; }
+    header.site { padding: 12px 22px; }
+    nav.site a:not(:last-child) { display: none; }
+    .brand-row img.logo { height: 30px; }
+  }
+  @media (max-width: 560px) {
+    .hero { padding: 46px 20px 54px; }
+    h1 { font-size: 29px; }
+    .lede { font-size: 17px; margin-bottom: 28px; }
+    .eyebrow { margin-bottom: 14px; }
+    section.band { padding: 42px 20px; }
+    .section-title { font-size: 22px; margin-bottom: 22px; }
+    .section-lede { font-size: 15px; }
+    header.site { padding: 11px 16px; }
+    .brand-text .sub { display: none; }
+    /* CTA buttons share the row; the note drops to its own line. */
+    .cta-row .btn { flex: 1 1 auto; text-align: center; }
+    .cta-note { flex-basis: 100%; }
+    .modal-backdrop { padding: 14px; }
+    .modal { padding: 24px 20px; border-radius: 12px; }
+    .modal h3 { font-size: 19px; }
+    .format-card { padding: 18px 18px; }
+    .scenario-card { padding: 14px 15px; }
+    footer { padding: 28px 20px; }
+    footer .inner { flex-direction: column; gap: 6px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="brand-row">
+    <img src="/static/logo.png" alt="Relational Fluency logo" class="logo" />
+    <div class="brand-text">
+      <span class="name">Relational Fluency</span>
+      <span class="sub">a workplace conversation practice platform</span>
+    </div>
+  </div>
+  <nav class="site">
+    <a href="#what">What it is</a>
+    <a href="#skills">Skills</a>
+    <a href="/researcher" target="_blank" rel="noopener">Researcher</a>
+  </nav>
+</header>
+
+<section class="hero">
+  <div class="eyebrow">A research demo</div>
+  <h1>Practice the hard conversations at work, before they happen.</h1>
+  <p class="lede">
+    Talk with AI coworkers, managers, and teammates in realistic workplace situations.
+    Give difficult feedback. Repair after you snap at someone. Run a tense meeting where
+    one person is shut down and another is taking over. <strong>The AI plays the other
+    person, with their own personality and history.</strong> They push back, open up, or
+    go quiet based on how you show up.
+  </p>
+  <div class="cta-row">
+    <button class="btn primary" id="openPickerBtn">Start a conversation</button>
+    <a class="btn secondary" href="/researcher" target="_blank" rel="noopener">Researcher view</a>
+  </div>
+</section>
+
+<section class="band muted" id="what">
+  <div class="band-inner">
+    <h2>Why this exists</h2>
+    <div class="section-title">
+      You only get to have the real conversation once.
+    </div>
+    <p class="section-lede">
+      When something matters at work, like giving someone hard feedback or apologizing for a
+      public mistake, you rarely get a chance to rehearse. This platform gives you that
+      chance.
+    </p>
+  </div>
+</section>
+
+<section class="band" id="skills">
+  <div class="band-inner">
+    <h2>Four skills the platform measures</h2>
+    <div class="section-title">What gets stressed in each conversation.</div>
+    <div class="skill-grid">
+      <div class="skill-card"><div class="num">01</div><h3>Perspective taking</h3>
+        <p>Drawing out what the other person actually thinks, not the easy surface answer.</p></div>
+      <div class="skill-card"><div class="num">02</div><h3>Emotional regulation</h3>
+        <p>Staying useful when you are frustrated, blindsided, or being criticized.</p></div>
+      <div class="skill-card"><div class="num">03</div><h3>Apology and repair</h3>
+        <p>Owning a mistake cleanly. Not crumbling. Not deflecting.</p></div>
+      <div class="skill-card"><div class="num">04</div><h3>Psychological safety</h3>
+        <p>Making it safe for the other person to be honest, especially when they have less power than you.</p></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="inner">
+    <div>Relational Fluency · v0.4 · a research prototype.</div>
+    <div>Citations live in the project docs.</div>
+  </div>
+</footer>
+
+<!-- Modal -->
+<div class="modal-backdrop" id="modal">
+  <div class="modal" role="dialog" aria-labelledby="modalTitle">
+    <div class="modal-header">
+      <h3 id="modalTitle">How would you like to start?</h3>
+      <button class="close" id="closeModal" aria-label="Close">×</button>
+    </div>
+
+    <!-- Step 1 -->
+    <div id="step1">
+      <div class="step-eyebrow">Step 1 of 2 · format</div>
+      <p class="step-lede">Pick a conversation shape. Both use voice and your microphone. Group conversations route turns automatically between the AI characters.</p>
+      <div class="format-grid">
+        <button class="format-card" data-format="single">
+          <div class="icon">●</div>
+          <h4>One on one conversation</h4>
+          <p>You and one AI character. Performance feedback, repair after a mistake, disclosure, disagreement.</p>
+          <div class="count" id="count-single">scenarios</div>
+        </button>
+        <button class="format-card" data-format="group">
+          <div class="icon">● ● ●</div>
+          <h4>Group meeting</h4>
+          <p>You facilitate a meeting with three to four AI characters. Each has their own view and resistance.</p>
+          <div class="count" id="count-group">scenarios</div>
+        </button>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div id="step2" style="display:none">
+      <button class="back-link" id="backToStep1">← Back to format</button>
+      <div class="step-eyebrow" id="step2Eyebrow">Step 2 of 2 · scenario</div>
+      <p class="step-lede" id="step2Lede">Choose a scenario.</p>
+      <div class="scenario-list" id="scenarioList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const key = params.get('key') || '';
+  const keyParamFirst = key ? `?key=${encodeURIComponent(key)}` : '';
+  const keyParam = key ? `&key=${encodeURIComponent(key)}` : '';
+  const $ = (id) => document.getElementById(id);
+
+  let scenarios = [];
+
+  async function loadScenarios() {
+    const r = await fetch('/api/scenarios' + keyParamFirst);
+    scenarios = await r.json();
+    const singleCount = scenarios.filter(s => s.mode === 'single').length;
+    const groupCount = scenarios.filter(s => s.mode === 'group').length;
+    $('count-single').textContent = `${singleCount} scenarios`;
+    $('count-group').textContent = `${groupCount} scenarios`;
+  }
+
+  function openModal() { $('modal').classList.add('show'); showStep(1); }
+  function closeModal() { $('modal').classList.remove('show'); }
+
+  function showStep(n) {
+    $('step1').style.display = n === 1 ? 'block' : 'none';
+    $('step2').style.display = n === 2 ? 'block' : 'none';
+  }
+
+  const SCENARIO_DESC = {
+    missed_deadlines: "Your senior engineer used to be reliable and just missed their third sprint in a row. Have the conversation without jumping to a performance review.",
+    pushback_meeting: "A peer pushed back on your proposal in a meeting, harder than felt fair. They pinged you for a follow up. The proposal isn't actually what they're upset about.",
+    critical_feedback: "Your skip level pulled you in for an unscheduled chat. They have three critical things to say about you. Stay open without folding.",
+    credit_taken: "You and a peer worked on an idea together. They just presented it as their own at the all hands. You pull them aside.",
+    slack_snap: "Three days ago you snapped at a junior colleague in a public Slack channel. They have been quiet since. You meet to repair.",
+    bad_decision: "A decision you made shipped and caused a customer outage. The team worked the weekend cleaning it up. You debrief with one of them.",
+    quiet_report: "One of your reports is your strongest engineer and never speaks up in team discussions. You think they have a view they are not sharing.",
+    burned_out_team: "You just took over a project. The docs say everything is on track. In your first one on one, your senior engineer is going to suggest otherwise, if you earn it.",
+    hidden_profile_vendor: "Pick between two vendors with three teammates. The deck makes Vendor A look obvious. Each teammate holds one piece of information that, together, change the answer.",
+    blameful_retro: "Run the post incident retro after a four hour outage. One engineer is defensive, one is bracing to be blamed, one wants to skip the retro, one saw a warning sign but did not escalate.",
+    dominated_brainstorm: "Run a strategy brainstorm. A VP and his ally are taking over. A researcher has data that complicates their view. A new hire is invisible on video. Get the floor open again.",
+    public_retraction: "Last week you publicly blamed the wrong person on your team. Today you learned it was actually someone else. The person you blamed, the person actually responsible, and a peer who witnessed the whole thing are all on this call. Set the record straight.",
+    presentation_pileon: "You're a junior analyst who just presented. A skeptical senior engineer, a stressed PM, a cost-focused finance lead, a rival peer, and your own hands-off manager start arguing over your work, and increasingly with each other. Your job is to mediate and hold the room. (High-incivility research condition.)",
+  };
+
+  function renderScenarios(format) {
+    const list = scenarios.filter(s => s.mode === format);
+    $('step2Eyebrow').textContent = format === 'group'
+      ? 'Step 2 of 2 · group scenario'
+      : 'Step 2 of 2 · one on one scenario';
+    $('step2Lede').textContent = format === 'group'
+      ? 'Each scenario has three or four AI characters with their own personalities and voices.'
+      : 'Each scenario stresses one of the four relational skills.';
+    const container = $('scenarioList');
+    container.innerHTML = '';
+    list.forEach(s => {
+      const card = document.createElement('button');
+      card.className = 'scenario-card';
+      card.innerHTML = `
+        <div class="info">
+          <h4>${s.title}</h4>
+          <div class="meta">
+            <span class="chip">${s.skill}</span>
+            ${s.mode === 'group' ? `<span>· ${s.cast_size} characters</span>` : ''}
+          </div>
+          <p class="desc">${SCENARIO_DESC[s.id] || ''}</p>
+        </div>
+        <div class="start">Start →</div>
+      `;
+      card.addEventListener('click', () => {
+        const url = `/v2?scenario=${encodeURIComponent(s.id)}${keyParam}`;
+        location.href = url;
+      });
+      container.appendChild(card);
+    });
+    showStep(2);
+  }
+
+  $('openPickerBtn').addEventListener('click', openModal);
+  $('closeModal').addEventListener('click', closeModal);
+  $('modal').addEventListener('click', (e) => { if (e.target === $('modal')) closeModal(); });
+  $('backToStep1').addEventListener('click', () => showStep(1));
+  document.querySelectorAll('.format-card').forEach(b => {
+    b.addEventListener('click', () => renderScenarios(b.dataset.format));
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+  loadScenarios();
+</script>
+</body>
+</html>

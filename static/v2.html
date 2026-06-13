@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Conversation v2</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg:        #ededec;
+    --surface:   #ffffff;
+    --surface-2: #d7d8d7;
+    --tile-bg:   #2f2f2f;
+    --tile-bg-active: #b3181b;
+    --line:      #b8b9b6;
+    --line-soft: #d0d1ce;
+    --fg:        #2f2f2f;
+    --fg-on-dark:#f5f5f4;
+    --muted:     #6a6a68;
+    --accent:    #b3181b;
+    --accent-deep:#951417;
+    --accent-soft:#f1dcdc;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+         background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased;
+         min-height: 100vh; min-height: 100svh; display: flex; flex-direction: column; }
+  header { padding: 14px 20px 10px; border-bottom: 1px solid var(--line-soft); background: var(--surface);
+           display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  header .title { font-size: 16px; font-weight: 600; }
+  header .meta { font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+  /* Lower area: description (left) and live transcript (right), side by side. */
+  .lower-row { display: flex; gap: 14px; width: 100%; max-width: 1100px; align-items: stretch; }
+  .lower-row > * { flex: 1 1 0; min-width: 0; }
+  .brief {
+    padding: 16px 18px;
+    background: #ffffff;
+    border: 1px solid var(--line-soft);
+    border-radius: 12px;
+    box-shadow: 0 1px 0 rgba(47,47,47,0.03), 0 4px 14px rgba(47,47,47,0.04);
+    overflow-y: auto;
+    max-height: 360px;
+  }
+  .brief .label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 8px;
+  }
+  .brief .body {
+    font-size: 13.5px; line-height: 1.55; color: var(--fg); white-space: pre-wrap;
+    margin: 0 0 12px;
+  }
+  .brief .cast-line {
+    font-size: 12px; color: var(--muted);
+    border-top: 1px solid var(--line-soft); padding-top: 10px; margin-top: 10px;
+  }
+  .brief .cast-line strong { color: var(--fg); font-weight: 600; }
+  @media (max-width: 700px) {
+    .lower-row { flex-direction: column; }
+    .brief { max-height: none; }
+  }
+  main { flex: 1; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+  /* Photos in a single row across the top. */
+  .grid { display: grid; gap: 12px; width: 100%; max-width: 1100px;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .tile { background: var(--tile-bg); color: var(--fg-on-dark); border-radius: 14px;
+          aspect-ratio: 4/3; display: flex; flex-direction: column;
+          align-items: center; justify-content: center; gap: 7px;
+          position: relative; transition: box-shadow 0.2s, transform 0.15s;
+          padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }
+  .tile.speaking { box-shadow: 0 0 0 3px var(--accent), 0 8px 24px rgba(179,24,27,0.25); }
+  .tile.self { background: var(--surface); color: var(--fg); border: 1px solid var(--line-soft); }
+  .tile.self.speaking { box-shadow: 0 0 0 3px var(--accent); }
+  .avatar { width: 62px; height: 62px; border-radius: 50%; display: flex;
+            align-items: center; justify-content: center; font-size: 23px;
+            font-weight: 600; color: white; user-select: none; flex-shrink: 0; }
+  .avatar.self { background: var(--surface-2); color: var(--fg); }
+  .name { font-size: 15px; font-weight: 500; }
+  .role { font-size: 12px; opacity: 0.7; margin-top: -8px; }
+  .speaking-indicator { position: absolute; top: 12px; right: 12px; font-size: 11px;
+                        background: var(--accent); color: #fff; padding: 3px 9px;
+                        border-radius: 999px; opacity: 0; transition: opacity 0.2s;
+                        font-weight: 600; letter-spacing: 0.04em; }
+  .tile.speaking .speaking-indicator { opacity: 1; }
+  .mic-icon { width: 18px; height: 18px; border-radius: 50%; background: var(--line);
+              position: absolute; bottom: 12px; left: 12px; }
+  .tile.self .mic-icon.live { background: var(--accent);
+                              box-shadow: 0 0 0 0 rgba(179,24,27,0.55); animation: pulse 1.6s infinite; }
+  .tile.self .mic-icon.muted { background: var(--muted); }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(179,24,27,0.5);}
+    70%  { box-shadow: 0 0 0 10px rgba(179,24,27,0);}
+    100% { box-shadow: 0 0 0 0 rgba(179,24,27,0);}
+  }
+  .mic-level { position: absolute; bottom: 12px; right: 12px; width: 70px; height: 5px;
+               background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+  .mic-level > div { height: 100%; width: 0%; background: var(--accent); transition: width 80ms linear; }
+  .controls { display: flex; gap: 10px; align-items: center; padding: 8px 0; }
+  button { padding: 11px 22px; border: 0; border-radius: 10px; background: var(--accent);
+           color: #fff; font-weight: 600; cursor: pointer; font: inherit; font-size: 14px;
+           transition: background 0.15s, transform 0.05s; }
+  button:hover:not(:disabled) { background: var(--accent-deep); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--line); }
+  select { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px;
+           background: var(--surface); font: inherit; font-size: 13px; color: var(--fg); cursor: pointer; }
+  select:focus { outline: none; border-color: var(--accent); }
+  .transcript { width: 100%; max-height: 360px; overflow-y: auto;
+                background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px;
+                padding: 14px 18px; font-size: 13px; line-height: 1.5; }
+  .transcript .turn { margin-bottom: 8px; }
+  .transcript .speaker { font-weight: 600; color: var(--accent); }
+  .transcript .speaker.self { color: var(--fg); }
+  .transcript .meta { font-size: 11px; color: var(--muted); margin-left: 6px; }
+  /* Live (in-progress) caption — muted until the utterance is committed. */
+  .transcript .turn.live .text { color: var(--muted); }
+  .transcript .turn.live .speaker::after { content: " \2026"; color: var(--muted); font-weight: 400; }
+  .director-note { font-size: 12px; color: var(--muted); font-style: italic; }
+
+  /* Persona tile = circular profile photo on a white card (camera-off look). */
+  .tile.has-photo { background: #ffffff; color: var(--fg); border: 1px solid var(--line-soft); }
+  .tile.has-photo .name { color: var(--fg); }
+  .tile.has-photo .role { color: var(--muted); opacity: 1; }
+  .avatar.photo-avatar { object-fit: cover; background: var(--surface-2); padding: 0; }
+
+  /* User camera — live webcam fills the self tile during a session. */
+  .tile.self video { position: absolute; inset: 0; width: 100%; height: 100%;
+                 object-fit: cover; border-radius: 14px; transform: scaleX(-1); /* mirror */
+                 display: none; }
+  .tile.self.cam-on video { display: block; }
+  .tile.self.cam-on .avatar.self, .tile.self.cam-on > .name { display: none; }
+  .tile.self.cam-on .name.cam, .tile.self.cam-on .mic-icon,
+  .tile.self.cam-on .mic-level, .tile.self.cam-on .speaking-indicator { z-index: 2; }
+  .tile.self .name.cam { display: none; position: absolute; bottom: 8px; left: 40px;
+                 color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.6); margin: 0; z-index: 2; }
+  .tile.self.cam-on .name.cam { display: block; }
+
+  /* Intro meeting-room photo on the brief screen. */
+  .brief .intro-photo { width: 100%; border-radius: 10px; margin: 0 0 18px; display: block;
+                 border: 1px solid var(--line-soft); }
+
+  /* Situation popup (replaces the consent gate) — photo + scene explanation,
+     side by side so both are visible at once. */
+  /* Higher specificity than the base .consent-card (which is defined later
+     with max-width:620px) so the wider situation popup actually wins. */
+  .consent-card.situation-card { max-width: 960px; }
+  .situation-main { display: flex; gap: 24px; align-items: flex-start; }
+  .situation-card .situation-img { width: 300px; flex-shrink: 0; border-radius: 12px; margin: 4px 0 0; display: block;
+                 box-shadow: 0 6px 20px rgba(47,47,47,0.18); }
+  .situation-text { flex: 1; min-width: 0; }
+  .situation-card h2 { font-size: 18px; margin: 0 0 12px; }
+  .situation-card .body { font-size: 15px; line-height: 1.65; white-space: pre-wrap; color: var(--fg); }
+  .situation-card .actions { margin-top: 22px; }
+  .situation-card .actions button { width: 100%; padding: 13px; font-size: 15px; }
+  @media (max-width: 680px) {
+    .situation-main { flex-direction: column; gap: 16px; }
+    .situation-card .situation-img { width: 100%; margin: 0; }
+  }
+
+  /* End-of-session debrief overlay. */
+  .debrief-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.5); backdrop-filter: blur(4px);
+                 display: flex; align-items: flex-start; justify-content: center; z-index: 60; padding: 28px 16px;
+                 overflow-y: auto; }
+  .debrief-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 16px;
+                 max-width: 720px; width: 100%; padding: 28px 30px; margin: auto;
+                 box-shadow: 0 24px 60px rgba(47,47,47,0.22); }
+  .debrief-card h2 { font-size: 19px; margin: 0 0 4px; }
+  .debrief-card .label { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+                 color: var(--accent); margin: 0 0 12px; }
+  .debrief-card .room-summary { font-size: 15px; line-height: 1.6; color: var(--fg);
+                 background: var(--accent-soft); border-radius: 10px; padding: 14px 16px; margin: 0 0 22px; }
+  .persona-card { border: 1px solid var(--line-soft); border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+  .persona-card .pc-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .persona-card .pc-avatar { width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; object-fit: cover;
+                 display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 600; font-size: 15px; }
+  .persona-card .pc-name { font-size: 15px; font-weight: 600; }
+  .persona-card .pc-role { font-size: 12px; color: var(--muted); }
+  .persona-card .agenda { font-size: 13px; line-height: 1.55; color: var(--fg);
+                 border-left: 3px solid var(--accent); padding: 4px 0 4px 12px; margin: 0 0 12px; background: #faf6f6; }
+  .persona-card .agenda b { color: var(--accent); }
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .metric { background: var(--bg); border-radius: 9px; padding: 10px 11px; }
+  .metric .m-label { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .metric .m-val { font-size: 14px; font-weight: 600; margin: 3px 0 4px; text-transform: capitalize; }
+  .metric .m-val.r-no, .metric .m-val.r-barely { color: var(--accent); }
+  .metric .m-val.r-somewhat { color: #9a7b1e; }
+  .metric .m-val.r-mostly, .metric .m-val.r-yes, .metric .m-val.softened { color: #2f7d4f; }
+  .metric .m-val.hardened { color: var(--accent); }
+  .metric .m-val.unchanged { color: var(--muted); }
+  .metric .m-ev { font-size: 11px; line-height: 1.4; color: var(--muted); }
+  .debrief-card .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+  .debrief-loading { font-size: 14px; color: var(--muted); padding: 8px 0; }
+  @media (max-width: 640px) {
+    .metrics { grid-template-columns: 1fr; }
+    .debrief-card { padding: 20px 18px; }
+  }
+  .consent-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.45); backdrop-filter: blur(3px);
+                      display:flex; align-items:center; justify-content:center; z-index: 50; padding: 20px; }
+  .consent-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 14px;
+                  max-width: 620px; width: 100%; padding: 26px 28px; max-height: 92vh; overflow-y: auto;
+                  box-shadow: 0 24px 60px rgba(47,47,47,0.18); }
+  .consent-card h2 { font-size: 17px; margin: 0 0 14px; }
+  .consent-card .body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+  .consent-card label { display: flex; gap: 10px; align-items: flex-start; margin: 18px 0 6px; font-size: 14px; cursor: pointer; }
+  .consent-card label input { margin-top: 3px; accent-color: var(--accent); }
+  .consent-card .code-row { display:flex; gap:10px; align-items:center; margin: 16px 0; }
+  .consent-card .code-row input { padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font: inherit; flex: 1; background: var(--surface); color: var(--fg); }
+  .consent-card .code-row input:focus { outline: none; border-color: var(--accent); }
+  .consent-card .actions { display:flex; gap:8px; justify-content:flex-end; margin-top: 14px; }
+  .consent-card .err { color: var(--accent); font-size: 13px; min-height: 18px; margin-top: 4px; }
+
+  /* ---------- Mobile / small screens ---------- */
+  @media (max-width: 640px) {
+    header { padding: 11px 14px 9px; gap: 10px; flex-wrap: wrap; }
+    header .title { font-size: 15px; }
+    #modelPicker { font-size: 12px; padding: 8px 9px; }
+    header .meta { font-size: 11px; }
+    .controls { gap: 8px; padding: 0; }
+    button { padding: 10px 16px; font-size: 13px; }
+    main { padding: 14px; gap: 14px; }
+    /* Two compact, square tiles per row instead of one tall stacked column. */
+    .grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .tile { aspect-ratio: 1 / 1; gap: 8px; padding: 12px; border-radius: 12px; }
+    .avatar { width: 56px; height: 56px; font-size: 21px; }
+    .name { font-size: 13px; }
+    .role { font-size: 11px; }
+    .speaking-indicator { top: 8px; right: 8px; font-size: 10px; padding: 2px 7px; }
+    .mic-icon { bottom: 9px; left: 9px; }
+    .mic-level { bottom: 9px; right: 9px; width: 46px; }
+    .transcript { max-height: 220px; padding: 12px 14px; border-radius: 10px; }
+    .consent-card { padding: 20px 18px; }
+    .consent-card h2 { font-size: 16px; }
+  }
+  /* Very narrow phones: keep tiles legible. */
+  @media (max-width: 360px) {
+    .avatar { width: 48px; height: 48px; font-size: 18px; }
+    .mic-level { width: 38px; }
+  }
+</style>
+</head>
+<body>
+<div class="consent-overlay" id="situationOverlay" style="display:none">
+  <div class="consent-card situation-card">
+    <div class="situation-main">
+      <img id="situationImg" class="situation-img" alt="" />
+      <div class="situation-text">
+        <h2 id="situationTitle">The situation</h2>
+        <div class="body" id="situationBody"></div>
+      </div>
+    </div>
+    <div class="actions"><button id="situationStart">I'm ready, let me in</button></div>
+  </div>
+</div>
+
+<header>
+  <div>
+    <div class="title" id="title">Loading…</div>
+    <div class="meta" id="sid"></div>
+  </div>
+  <div class="controls" id="controls">
+    <select id="modelPicker" title="Model — locked once the session starts"></select>
+    <button id="startBtn">Start session</button>
+    <button id="stopBtn" class="secondary" style="display:none">End</button>
+  </div>
+</header>
+
+<div class="debrief-overlay" id="debriefOverlay" style="display:none">
+  <div class="debrief-card">
+    <div class="label">Debrief</div>
+    <h2 id="debriefTitle">How the room really saw it</h2>
+    <div id="debriefContent"></div>
+    <div class="actions">
+      <button class="secondary" id="debriefClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="grid" id="grid"></div>
+  <div class="lower-row">
+    <div class="brief" id="brief" style="display:none">
+      <img class="intro-photo" id="introPhoto" alt="" style="display:none" />
+      <div class="label">Your setup</div>
+      <div class="body" id="briefBody"></div>
+      <div class="cast-line" id="castLine"></div>
+    </div>
+    <div class="transcript" id="transcript" aria-live="polite"></div>
+  </div>
+</main>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const scenario = params.get('scenario') || 'missed_deadlines';
+  const launchId = params.get('launch') || '';   // researcher-configured launch
+  const launchParam = launchId ? `&launch=${encodeURIComponent(launchId)}` : '';
+  const key = params.get('key') || '';
+  const keyParam = key ? `&key=${encodeURIComponent(key)}` : '';
+  const keyParamFirst = key ? `?key=${encodeURIComponent(key)}` : '';
+  const $ = (id) => document.getElementById(id);
+
+  let participantId = params.get('participant_id') || null;
+  let started = false;       // is a session currently running
+  let activeModel = null;    // model the running session was started with
+  let sessionId = null;      // server session id once connected
+  let sessionMode = 'single';// 'single' | 'group'
+  let userTurns = 0;         // committed participant turns this session (gates debrief)
+  let ws = null;
+  let audioCtx = null;
+  let micNode = null;
+  let workletNode = null;
+  let mediaStream = null;
+  let playbackTime = 0;
+  let cast = [];
+  let activeSpeaker = null;
+  let assistantSpeaking = false;
+  let currentTurn = { agent_id: null, text: '' };
+  let userFinals = [];     // committed final STT segments for the current utterance
+  let userLiveEl = null;   // the single live user-caption bubble (null between turns)
+
+  // ---------- avatars ----------
+  function initialsOf(name) {
+    return name.split(/\s+/).slice(0,2).map(s => s[0]?.toUpperCase() || '').join('') || '?';
+  }
+  function colorFor(name) {
+    // Deterministic muted color from name hash.
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffffff;
+    const hue = Math.abs(h) % 360;
+    return `hsl(${hue}, 32%, 42%)`;
+  }
+
+  // ---------- participant registration (silent) ----------
+  // The voice path still needs a participant record (audio capture). For the
+  // demo we register one silently instead of showing a consent form — the
+  // popup now carries the situation, not a consent gate.
+  async function ensureParticipant() {
+    if (participantId) return true;
+    try {
+      const r = await fetch('/api/consent' + keyParamFirst, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: 'demo_' + Date.now(), consent_given: true }),
+      });
+      if (r.ok) { participantId = (await r.json()).participant_id; return true; }
+    } catch (e) {}
+    return false;
+  }
+
+  // ---------- situation popup (shown before the meeting begins) ----------
+  function showSituation(d) {
+    $('situationTitle').textContent = d.title || 'The situation';
+    $('situationBody').textContent = d.intro || '';
+    const img = $('situationImg');
+    if (d.intro_image) {
+      img.src = photoUrl(d.intro_image);
+      img.style.display = 'block';
+      img.onerror = () => { img.style.display = 'none'; };
+    } else {
+      img.style.display = 'none';
+    }
+    $('situationOverlay').style.display = 'flex';
+    $('situationStart').addEventListener('click', async () => {
+      $('situationStart').disabled = true;
+      await ensureParticipant();
+      $('situationOverlay').style.display = 'none';
+    }, { once: true });
+  }
+
+  // ---------- grid rendering ----------
+  const photoUrl = (photo) => `/static/agents/${photo}`;
+  function makeInitials(name) {
+    const d = document.createElement('div');
+    d.className = 'avatar';
+    d.style.background = colorFor(name);
+    d.textContent = initialsOf(name);
+    return d;
+  }
+
+  function renderGrid() {
+    const g = $('grid'); g.innerHTML = '';
+    // Self tile — avatar pre-start, live webcam once the session begins.
+    const self = document.createElement('div');
+    self.className = 'tile self'; self.id = 'tile-self';
+    self.innerHTML = `
+      <video id="selfCam" autoplay muted playsinline></video>
+      <div class="avatar self">YOU</div>
+      <div class="name">You</div>
+      <div class="name cam">You</div>
+      <div class="speaking-indicator">SPEAKING</div>
+      <div class="mic-icon" id="selfMic"></div>
+      <div class="mic-level"><div id="micLevel"></div></div>
+    `;
+    g.appendChild(self);
+    attachCamera();  // (re)bind the live stream if we already have one
+    // Agent tiles — photo when the scenario provides one, else initials.
+    cast.forEach(a => {
+      const t = document.createElement('div');
+      const hasPhoto = a.photo && a.photo !== 'initials';
+      t.className = 'tile' + (hasPhoto ? ' has-photo' : '');
+      t.id = `tile-${a.id}`;
+      const visual = hasPhoto
+        ? `<img class="avatar photo-avatar" src="${photoUrl(a.photo)}" alt="${a.name}"
+                onerror="this.replaceWith(makeInitials('${a.name}'))" />`
+        : `<div class="avatar" style="background:${colorFor(a.name)}">${initialsOf(a.name)}</div>`;
+      t.innerHTML = `
+        ${visual}
+        <div class="name">${a.name}</div>
+        ${a.role ? `<div class="role">${a.role}</div>` : ''}
+        <div class="speaking-indicator">SPEAKING</div>
+      `;
+      g.appendChild(t);
+    });
+  }
+
+  // Bind the captured webcam stream into the self tile (if video is available).
+  function attachCamera() {
+    const v = $('selfCam');
+    const selfTile = $('tile-self');
+    if (!v || !selfTile) return;
+    const hasVideo = mediaStream && mediaStream.getVideoTracks().length > 0;
+    if (hasVideo) {
+      if (v.srcObject !== mediaStream) v.srcObject = mediaStream;
+      selfTile.classList.add('cam-on');
+    } else {
+      selfTile.classList.remove('cam-on');
+    }
+  }
+
+  function setActiveSpeaker(speakerId) {
+    if (activeSpeaker) {
+      const prev = $(`tile-${activeSpeaker === 'user' ? 'self' : activeSpeaker}`);
+      if (prev) prev.classList.remove('speaking');
+    }
+    activeSpeaker = speakerId;
+    if (speakerId) {
+      const next = $(`tile-${speakerId === 'user' ? 'self' : speakerId}`);
+      if (next) next.classList.add('speaking');
+    }
+  }
+
+  function setMicVisual(state) {
+    const el = $('selfMic');
+    if (!el) return;
+    el.className = 'mic-icon ' + (state === 'live' ? 'live' : state === 'muted' ? 'muted' : '');
+  }
+
+  // ---------- transcript ----------
+  function appendTranscript(role, agentId, text, latency) {
+    const el = document.createElement('div');
+    el.className = 'turn';
+    const name = role === 'user' ? 'You' : (cast.find(a => a.id === agentId)?.name || agentId);
+    // Color each agent's name to match their tile avatar so the transcript is
+    // easy to follow in a multi-party meeting.
+    const style = (role !== 'user' && name) ? ` style="color:${colorFor(name)}"` : '';
+    el.innerHTML = `<span class="speaker ${role === 'user' ? 'self' : ''}"${style}>${name}:</span> <span class="text"></span>` +
+      (latency != null ? `<span class="meta">${latency}s</span>` : '');
+    el.querySelector('.text').textContent = text;
+    $('transcript').appendChild(el);
+    $('transcript').scrollTop = $('transcript').scrollHeight;
+    return el;
+  }
+
+  // ---- user caption: one consolidated, live-updating bubble per utterance ----
+  function renderUserCaption(partial) {
+    const text = [...userFinals, partial].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    if (!userLiveEl) userLiveEl = appendTranscript('user', null, '');
+    userLiveEl.classList.add('live');
+    userLiveEl.querySelector('.text').textContent = text;
+    $('transcript').scrollTop = $('transcript').scrollHeight;
+  }
+  function finalizeUserCaption() {
+    if (userLiveEl) userLiveEl.classList.remove('live');
+    userLiveEl = null;
+    userFinals = [];
+  }
+
+  function appendDirectorNote(speakers) {
+    const el = document.createElement('div');
+    el.className = 'turn director-note';
+    const names = speakers.map(s => cast.find(a => a.id === s.agent_id)?.name || s.agent_id).join(' → ');
+    el.textContent = speakers.length ? `director → ${names}` : 'director → (silence)';
+    $('transcript').appendChild(el);
+    $('transcript').scrollTop = $('transcript').scrollHeight;
+  }
+
+  // ---------- audio capture + playback ----------
+  async function startCapture() {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // iOS/Safari start AudioContexts suspended; resume within the Start-button
+    // gesture or both mic capture and TTS playback stay silent.
+    if (audioCtx.state === 'suspended') {
+      try { await audioCtx.resume(); } catch {}
+    }
+    playbackTime = 0;  // fresh timeline (important when restarting a session)
+    await audioCtx.audioWorklet.addModule('/static/pcm-worklet.js');
+    const audioConstraints = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    // Camera-on by default for the Zoom-like tile. Fall back to audio-only if
+    // the camera is missing or permission is denied — the session still runs.
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints,
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+      });
+    } catch (e) {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    }
+    attachCamera();  // show the live feed in the self tile if we got video
+    micNode = audioCtx.createMediaStreamSource(mediaStream);
+    workletNode = new AudioWorkletNode(audioCtx, 'pcm-capture', {
+      processorOptions: { targetSampleRate: 16000 },
+    });
+    micNode.connect(workletNode);
+    workletNode.port.onmessage = (ev) => {
+      if (ws && ws.readyState === 1) ws.send(ev.data);
+    };
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    micNode.connect(analyser);
+    const lvl = $('micLevel'); const buf = new Uint8Array(analyser.fftSize);
+    function tick() {
+      analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / buf.length);
+      if (lvl) lvl.style.width = `${Math.min(100, rms * 250)}%`;
+      requestAnimationFrame(tick);
+    }
+    tick();
+  }
+
+  function setMicMuted(muted) {
+    if (workletNode) workletNode.port.postMessage({ muted });
+    setMicVisual(muted ? 'muted' : 'live');
+  }
+
+  function playPcmChunk(bytes) {
+    if (!audioCtx) return;
+    const int16 = new Int16Array(bytes);
+    const float = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) float[i] = int16[i] / 32768;
+    const buf = audioCtx.createBuffer(1, float.length, 16000);
+    buf.copyToChannel(float, 0);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    const now = audioCtx.currentTime;
+    if (playbackTime < now + 0.02) playbackTime = now + 0.02;
+    src.start(playbackTime);
+    playbackTime += buf.duration;
+    src.onended = () => {
+      if (audioCtx && audioCtx.currentTime >= playbackTime - 0.01 && assistantSpeaking) {
+        // last chunk done, unmute mic
+        assistantSpeaking = false;
+        setMicMuted(false);
+        setActiveSpeaker(null);
+      }
+    };
+  }
+
+  // ---------- session start ----------
+  async function startSession() {
+    $('startBtn').disabled = true;
+    if (!participantId) await ensureParticipant();  // voice path needs a participant record
+    try { await startCapture(); }
+    catch (e) {
+      appendTranscript('user', null, 'Mic error: ' + e.message);
+      $('startBtn').disabled = false; return;
+    }
+    $('startBtn').style.display = 'none';
+    $('stopBtn').style.display = 'inline-block';
+    started = true;
+    userTurns = 0;
+    activeModel = $('modelPicker').value;
+
+    const pidParam = participantId ? `&participant_id=${encodeURIComponent(participantId)}` : '';
+    const modelVal = $('modelPicker').value;
+    const modelParam = modelVal ? `&model=${encodeURIComponent(modelVal)}` : '';
+    const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/participant/voice?scenario=${encodeURIComponent(scenario)}${pidParam}${modelParam}${launchParam}${keyParam}`;
+    ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+    ws.addEventListener('open', () => setMicMuted(false));
+    ws.addEventListener('message', (ev) => {
+      if (typeof ev.data === 'string') {
+        const m = JSON.parse(ev.data);
+        if (m.type === 'session') {
+          $('title').textContent = m.scenario.title;
+          $('sid').textContent = `session: ${m.session_id} · mode: ${m.scenario.mode}`;
+          sessionId = m.session_id;
+          sessionMode = m.scenario.mode || 'single';
+          cast = m.cast || [];
+          renderGrid();
+          try { history.replaceState({}, '', `?scenario=${encodeURIComponent(scenario)}&session=${encodeURIComponent(m.session_id)}${key ? `&key=${encodeURIComponent(key)}` : ''}`); } catch {}
+        } else if (m.type === 'user_transcript') {
+          // Build one consolidated bubble: interim updates live, finals commit.
+          if (m.final) { userFinals.push(m.text); renderUserCaption(''); }
+          else { renderUserCaption(m.text); }
+        } else if (m.type === 'director_routed') {
+          finalizeUserCaption();  // user's turn is committed; routing stays internal
+          userTurns++;            // one committed participant turn (gates debrief)
+        } else if (m.type === 'assistant_started') {
+          finalizeUserCaption();
+          assistantSpeaking = true;
+          setMicMuted(true);
+          setActiveSpeaker(m.agent_id);
+          currentTurn = { agent_id: m.agent_id, text: '', el: null };
+        } else if (m.type === 'assistant_text_delta') {
+          if (!currentTurn.el) currentTurn.el = appendTranscript('assistant', m.agent_id, '');
+          currentTurn.text += m.text;
+          currentTurn.el.querySelector('.text').textContent = currentTurn.text;
+          $('transcript').scrollTop = $('transcript').scrollHeight;
+        } else if (m.type === 'assistant_done') {
+          if (currentTurn.el && m.latency_total_s != null) {
+            const meta = document.createElement('span'); meta.className = 'meta';
+            meta.textContent = `${m.latency_total_s}s`;
+            currentTurn.el.appendChild(meta);
+          }
+          currentTurn = { agent_id: null, text: '', el: null };
+          // Note: setMicMuted(false) is triggered by the last audio chunk's onended.
+        } else if (m.type === 'silence') {
+          finalizeUserCaption();
+          assistantSpeaking = false;
+          setMicMuted(false);
+          setActiveSpeaker(null);
+        } else if (m.type === 'error') {
+          appendTranscript('user', null, 'error: ' + m.message);
+        }
+      } else {
+        playPcmChunk(ev.data);
+      }
+    });
+    ws.addEventListener('close', () => { setMicVisual(''); });
+  }
+
+  function endSession(opts = {}) {
+    const { debrief = true } = opts;
+    // Capture before teardown clears state.
+    const sid = sessionId;
+    const wantDebrief = debrief && sessionMode === 'group' && userTurns > 0 && !!sid;
+
+    try { ws && ws.close(); } catch {}
+    try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
+    try { audioCtx && audioCtx.close(); } catch {}
+    ws = null; audioCtx = null; mediaStream = null;
+    started = false;
+    userFinals = []; userLiveEl = null;
+    currentTurn = { agent_id: null, text: '', el: null };
+    $('stopBtn').style.display = 'none';
+    $('startBtn').style.display = 'inline-block';
+    $('startBtn').disabled = false;
+    setMicVisual('');
+    setActiveSpeaker(null);
+    const selfTile = $('tile-self'); if (selfTile) selfTile.classList.remove('cam-on');
+
+    if (wantDebrief) showDebrief(sid);
+  }
+
+  // ---------- debrief ----------
+  const RATING_TEXT = { no: 'No', barely: 'Barely', somewhat: 'Somewhat', mostly: 'Mostly', yes: 'Yes' };
+  const DIR_TEXT = { hardened: 'Hardened', unchanged: 'Unchanged', softened: 'Softened', shifted: 'Shifted' };
+
+  async function showDebrief(sid) {
+    $('debriefContent').innerHTML = `<div class="debrief-loading">Reading the room back to you — analyzing how each person responded…</div>`;
+    $('debriefOverlay').style.display = 'flex';
+    try {
+      const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/debrief` + keyParamFirst, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      if (!r.ok) {
+        const msg = (await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`;
+        $('debriefContent').innerHTML = `<div class="debrief-loading">Could not generate the debrief: ${msg}</div>`;
+        return;
+      }
+      renderDebrief(await r.json());
+    } catch (e) {
+      $('debriefContent').innerHTML = `<div class="debrief-loading">Debrief error: ${e.message}</div>`;
+    }
+  }
+
+  function renderDebrief(d) {
+    const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const metric = (label, valKey, val, ev) => `
+      <div class="metric">
+        <div class="m-label">${label}</div>
+        <div class="m-val r-${esc(valKey)} ${esc(valKey)}">${esc(val)}</div>
+        <div class="m-ev">${esc(ev)}</div>
+      </div>`;
+    let html = '';
+    if (d.room_summary) html += `<div class="room-summary">${esc(d.room_summary)}</div>`;
+    (d.personas || []).forEach(p => {
+      const a = cast.find(c => c.id === p.agent_id) || {};
+      const hasPhoto = a.photo && a.photo !== 'initials';
+      const avatar = hasPhoto
+        ? `<img class="pc-avatar" src="${photoUrl(a.photo)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'pc-avatar',style:'background:${colorFor(p.name)}',textContent:'${initialsOf(p.name)}'}))" />`
+        : `<div class="pc-avatar" style="background:${colorFor(p.name)}">${initialsOf(p.name)}</div>`;
+      const stanceVal = `${esc(p.stance_start)} → ${esc(p.stance_end)}`;
+      html += `
+        <div class="persona-card">
+          <div class="pc-head">
+            ${avatar}
+            <div>
+              <div class="pc-name">${esc(p.name)}</div>
+              <div class="pc-role">${esc(p.role || '')}</div>
+            </div>
+          </div>
+          <div class="agenda"><b>Hidden agenda you couldn't see:</b> ${esc(p.hidden_agenda)}</div>
+          <div class="metrics">
+            ${metric('Felt heard', p.felt_heard, RATING_TEXT[p.felt_heard] || p.felt_heard, p.felt_heard_evidence)}
+            ${metric('Real concern addressed', p.concern_addressed, RATING_TEXT[p.concern_addressed] || p.concern_addressed, p.concern_addressed_evidence)}
+            ${metric('Stance', p.stance_direction, DIR_TEXT[p.stance_direction] || p.stance_direction, stanceVal + (p.stance_note ? ' — ' + p.stance_note : ''))}
+          </div>
+        </div>`;
+    });
+    $('debriefContent').innerHTML = html || '<div class="debrief-loading">No persona data.</div>';
+  }
+
+  $('startBtn').addEventListener('click', startSession);
+  $('stopBtn').addEventListener('click', () => endSession());
+  $('debriefClose').addEventListener('click', () => { $('debriefOverlay').style.display = 'none'; });
+
+  // A session runs one model end to end. Changing the model mid-session ends
+  // the current conversation and starts a fresh session on the new model — two
+  // models never share a transcript.
+  $('modelPicker').addEventListener('change', async () => {
+    if (!started) return;  // pre-start: the new value is simply used at Start
+    if (!confirm('Switching the model starts a new conversation. The current one will end. Continue?')) {
+      $('modelPicker').value = activeModel;  // revert the dropdown
+      return;
+    }
+    endSession({ debrief: false });  // model swap, not a real session end — no debrief
+    $('transcript').innerHTML = '';
+    setActiveSpeaker(null);
+    await startSession();  // brand-new session on the newly selected model
+  });
+
+  async function loadBrief() {
+    try {
+      const r = await fetch('/api/scenarios/' + encodeURIComponent(scenario) + keyParamFirst);
+      if (!r.ok) return;
+      const d = await r.json();
+      $('title').textContent = d.title;
+      $('sid').textContent = `${d.mode === 'group' ? 'group meeting' : 'one on one'} · ${d.cast.length} character${d.cast.length === 1 ? '' : 's'}`;
+      $('briefBody').textContent = d.intro;
+      // The first-person "entering the room" photo lives in the situation popup
+      // now (see showSituation), so keep the brief itself text-only.
+      $('introPhoto').style.display = 'none';
+      // Pre-start model picker, preselected to this scenario's effective default.
+      // The chosen model is fixed for the whole session (sent at WS connect).
+      const MODEL_OPTIONS = [
+        ['claude-opus-4-8', 'Opus 4.8'],
+        ['claude-sonnet-4-6', 'Sonnet 4.6'],
+        ['claude-haiku-4-5', 'Haiku 4.5'],
+      ];
+      const mp = $('modelPicker');
+      const opts = MODEL_OPTIONS.slice();
+      if (d.model && !opts.find(o => o[0] === d.model)) opts.unshift([d.model, d.model]);
+      // URL model (set by a researcher launch) wins over the scenario default.
+      const urlModel = params.get('model');
+      if (urlModel && !opts.find(o => o[0] === urlModel)) opts.unshift([urlModel, urlModel]);
+      mp.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+      if (d.model) mp.value = d.model;
+      if (urlModel) mp.value = urlModel;
+      if (d.cast && d.cast.length) {
+        const names = d.cast.map(a => a.name);
+        let label;
+        if (names.length === 1) label = `You will be talking with <strong>${names[0]}</strong>.`;
+        else if (names.length === 2) label = `You will be talking with <strong>${names[0]}</strong> and <strong>${names[1]}</strong>.`;
+        else label = `You will be talking with <strong>${names.slice(0, -1).join('</strong>, <strong>')}</strong>, and <strong>${names[names.length - 1]}</strong>.`;
+        $('castLine').innerHTML = label;
+      }
+      $('brief').style.display = 'block';
+      // Render preview tiles so the user sees who they'll meet before pressing Start.
+      cast = d.cast || [];
+      renderGrid();
+      // Show the situation popup (image + scene) unless a participant was
+      // already provided (e.g. a researcher-configured launch).
+      if (!participantId) showSituation(d);
+    } catch (e) {}
+  }
+
+  (async () => {
+    await loadBrief();
+  })();
+</script>
+</body>
+</html>

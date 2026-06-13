@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+logs/*.jsonl
+.DS_Store
+
+# Session dataset — participant audio + transcripts (PII), large; never commit
+data/
+*.wav

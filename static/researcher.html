@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Researcher</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg:         #ededec;   /* very light cool gray */
+    --bg-right:   #e3e4e2;   /* slightly darker for right panel */
+    --surface:    #ffffff;
+    --surface-2:  #d7d8d7;   /* palette light gray */
+    --line:       #b8b9b6;
+    --line-soft:  #d0d1ce;
+    --fg:         #2f2f2f;
+    --muted:      #6a6a68;
+    --accent:     #b3181b;
+    --accent-deep:#951417;
+    --accent-soft:#f1dcdc;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+         background: var(--bg); color: var(--fg); font-size: 14px; -webkit-font-smoothing: antialiased; }
+  .app { display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
+  .left { padding: 20px 24px; overflow-y: auto; border-right: 1px solid var(--line-soft); }
+  .right { padding: 20px 24px; overflow-y: auto; background: var(--bg-right);
+           border-left: 1px solid var(--line-soft); }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
+       margin: 20px 0 10px; font-weight: 600; }
+  h2:first-child { margin-top: 0; }
+  .picker { display: flex; gap: 8px; margin-bottom: 12px; }
+  select, input[type=text] { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px;
+                              background: var(--surface); font: inherit; color: var(--fg); }
+  select:focus, input[type=text]:focus { outline: none; border-color: var(--accent); }
+  button { padding: 7px 14px; border: 0; border-radius: 8px; background: var(--accent); color: #ffffff;
+           font-weight: 600; cursor: pointer; font-size: 13px; transition: background 0.15s, transform 0.05s;
+           font-family: inherit; }
+  button:hover:not(:disabled) { background: var(--accent-deep); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button.secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--line); }
+  button.secondary:hover:not(:disabled) { background: var(--surface-2); }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .msgs { display: flex; flex-direction: column; gap: 11px; }
+  .msg { padding: 9px 13px; border-radius: 12px; max-width: 85%; line-height: 1.5;
+         white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #ffffff; }
+  .msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--line-soft); }
+  .msg .meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .msg.user .meta { color: rgba(255,255,255,0.75); }
+  .knob { margin: 10px 0; }
+  .knob-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .knob input[type=range] { width: 100%; accent-color: var(--accent); }
+  .notes { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+  .note { background: var(--surface); border: 1px solid var(--line-soft); border-left: 3px solid var(--accent);
+          padding: 7px 10px; border-radius: 6px; font-size: 13px; }
+  .note-input { display: flex; gap: 6px; }
+  .note-input input { flex: 1; }
+  .branches { display: flex; flex-direction: column; gap: 6px; }
+  .branch-btn { text-align: left; padding: 9px 11px; line-height: 1.35; }
+  .branch-btn.triggered { background: var(--accent-soft); color: var(--fg); border-color: var(--accent); }
+  .state-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted);
+               padding: 2px 0; }
+  .session-bar { padding: 9px 12px; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 8px;
+                 font-family: ui-monospace, Menlo, monospace; font-size: 12px; margin-bottom: 14px;
+                 display: flex; justify-content: space-between; color: var(--fg); }
+  .dataset { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .dataset-row { display: flex; gap: 8px; align-items: center; }
+  .files { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+  .file { display: flex; justify-content: space-between; gap: 8px;
+          padding: 6px 10px; background: var(--surface); border: 1px solid var(--line-soft);
+          border-radius: 6px; align-items: center; }
+  .file .meta { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+  .file a { color: var(--accent); text-decoration: none; }
+  .file a:hover { text-decoration: underline; }
+  .files-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
+  .muted-inline { color: var(--muted); font-weight: 500; font-size: 10px;
+                  text-transform: none; letter-spacing: 0; margin-left: 4px; }
+  .knob-group-incivility .knob input[type=range]::-webkit-slider-thumb {
+    background: var(--accent);
+  }
+  .knob-group-incivility .knob input[type=range]::-moz-range-thumb {
+    background: var(--accent);
+  }
+  .knob-group-incivility { padding: 10px 12px; background: var(--surface);
+                           border: 1px solid var(--line-soft); border-radius: 8px;
+                           border-left: 3px solid var(--accent); }
+  .knob.active-incivility .knob-label > span:first-child::before {
+    content: "● "; color: var(--accent);
+  }
+  .launch-note { font-size: 12px; color: var(--muted); line-height: 1.5; margin-bottom: 12px; }
+  .launch-field { display: flex; justify-content: space-between; align-items: center;
+                  gap: 10px; margin: 8px 0; }
+  .launch-field label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .launch-field select { flex: 1; min-width: 0; padding: 6px 8px; font-size: 12px;
+                         background: var(--surface); color: var(--fg);
+                         border: 1px solid var(--line); border-radius: 7px; }
+  .launch-btn { width: 100%; margin-top: 14px; padding: 9px 0; font-size: 13px; font-weight: 600; }
+  .launch-status { font-size: 11px; color: var(--muted); margin-top: 8px; min-height: 16px; }
+  .auto-steer { padding: 10px 12px; background: var(--surface);
+                border: 1px solid var(--line-soft); border-radius: 8px;
+                margin-bottom: 14px; }
+  .auto-steer-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .auto-steer-head h2 { margin: 0; }
+  .auto-steer-desc { font-size: 11px; color: var(--muted); line-height: 1.45; margin-top: 6px; }
+  button.toggle { padding: 5px 14px; font-size: 12px; font-weight: 600;
+                  background: var(--surface-2); color: var(--muted);
+                  border: 1px solid var(--line); border-radius: 999px; }
+  button.toggle.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .steer-log { margin-top: 8px; max-height: 200px; overflow-y: auto;
+               display: flex; flex-direction: column; gap: 6px; }
+  .steer-entry { font-size: 11px; line-height: 1.45; padding: 6px 8px;
+                 background: var(--surface-2); border-radius: 6px;
+                 border-left: 2px solid var(--accent); }
+  .steer-entry.manual { border-left-color: var(--muted); }
+  .steer-entry .who { font-weight: 600; }
+  .steer-entry .shift { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .steer-entry .why { color: var(--muted); display: block; margin-top: 2px; }
+  .steer-entry .tag { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em;
+                      color: var(--accent); margin-right: 4px; }
+  .steer-entry.manual .tag { color: var(--muted); }
+  .levels { display: flex; gap: 6px; }
+  .levels button { flex: 1; padding: 6px 4px; font-size: 12px; font-weight: 600;
+                   background: var(--surface); color: var(--muted);
+                   border: 1px solid var(--line); border-radius: 7px; }
+  .levels button:hover:not(.on) { background: var(--surface-2); color: var(--fg); }
+  .levels button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .empty-hint { font-size: 13px; color: var(--muted); line-height: 1.5;
+                background: var(--surface); border: 1px dashed var(--line-soft);
+                border-radius: 8px; padding: 14px 16px; }
+  .empty-hint code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
+                     font-size: 12px; }
+  .closed-banner { font-size: 12px; color: var(--muted); background: var(--surface);
+                   border: 1px solid var(--line-soft); border-left: 3px solid var(--muted);
+                   border-radius: 6px; padding: 8px 10px; margin-bottom: 12px; }
+  .picker option.closed { color: var(--muted); }
+  .score { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+  .score-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px;
+                padding:10px 12px; background:var(--surface); border:1px solid var(--line-soft);
+                border-radius:8px; border-left:3px solid var(--accent); }
+  .score-head .construct { font-weight:600; font-size:13px; }
+  .score-head .overall { font-size:20px; font-weight:700; color:var(--accent);
+                         font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .score-summary { font-size:12px; color:var(--fg); line-height:1.5; padding:2px; }
+  .score-sub { font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted);
+               margin:12px 0 5px; font-weight:600; }
+  .dim { margin:9px 0; }
+  .dim-label { display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px; }
+  .dim-label .s { color:var(--muted); font-variant-numeric:tabular-nums; }
+  .dim-bar { height:6px; background:var(--surface-2); border-radius:3px; overflow:hidden; }
+  .dim-bar > span { display:block; height:100%; background:var(--accent); }
+  .dim-rationale { font-size:11px; color:var(--muted); line-height:1.45; margin-top:4px; }
+  .dim-quote { font-size:11px; color:var(--muted); font-style:italic;
+               border-left:2px solid var(--line); padding-left:6px; margin-top:3px; }
+  .behaviors { display:flex; flex-wrap:wrap; gap:5px; margin-top:4px; }
+  .bchip { font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--line-soft);
+           background:var(--surface); color:var(--muted); }
+  .bchip.pos { border-color:#3a7d44; color:#2f6b39; }
+  .bchip.neg { border-color:var(--accent); color:var(--accent-deep); }
+  .bchip .ct { font-variant-numeric:tabular-nums; opacity:0.8; }
+  .score-list { margin:5px 0 0; padding-left:18px; font-size:12px; line-height:1.5; color:var(--fg); }
+  .score-list li { margin:2px 0; }
+  .score-meta { font-size:10px; color:var(--muted); font-family:ui-monospace,Menlo,monospace; margin-top:10px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="left">
+    <h2>Session</h2>
+    <div class="picker">
+      <select id="sessionPicker"><option value="">select session</option></select>
+      <button id="refreshSessions" class="secondary">↻</button>
+    </div>
+    <div class="session-bar" id="sessionBar" style="display:none">
+      <span id="sessionInfo"></span>
+      <span id="turnCount"></span>
+    </div>
+
+    <h2>Dataset</h2>
+    <div class="dataset" id="dataset">
+      <div class="dataset-row">
+        <button id="downloadZip">Download session ZIP</button>
+        <button id="refreshFiles" class="secondary" title="Refresh file list">↻ files</button>
+      </div>
+      <div class="files" id="fileList"><div class="files-empty">No session selected.</div></div>
+    </div>
+
+    <!-- Relational fluency score panel. Hidden for now: flip SHOW_SCORE to
+         true in the script below to bring it back. The scoring backend
+         (server/scoring.py, server/rubrics.py, /api/sessions/{id}/score)
+         stays fully functional either way, including the CLI:
+         python -m server.scoring <session_id> -->
+    <div id="scoreSection" style="display:none">
+      <h2>Relational fluency score</h2>
+      <div class="score" id="scorePanel">
+        <div class="dataset-row">
+          <button id="scoreBtn">Score session</button>
+          <button id="rescoreBtn" class="secondary" title="Re-run the judge from scratch">↻ re-score</button>
+        </div>
+        <div id="scoreBody"><div class="files-empty">No session selected.</div></div>
+      </div>
+    </div>
+
+    <h2>Transcript</h2>
+    <div class="msgs" id="msgs"></div>
+  </div>
+
+  <div class="right">
+    <div id="launchCard" style="display:none">
+      <h2>Start a new session</h2>
+      <div class="launch-note">
+        Set the gears first, then click Start. The conversation page opens in a
+        new tab and this page tracks it live from turn one. Or pick an already
+        running session from the dropdown on the left.
+      </div>
+      <div class="launch-field"><label>Scenario</label><select id="launchScenario"></select></div>
+      <div class="launch-field"><label>Model</label><select id="launchModel"></select></div>
+      <div class="launch-field"><label>Auto steering</label><button id="launchAutoSteer" class="toggle on">On</button></div>
+      <div class="launch-field" id="launchAgentRow" style="display:none"><label>Agent</label><select id="launchAgent"></select></div>
+      <h2>Persona knobs</h2>
+      <div id="launchKnobs"></div>
+      <h2 title="Workplace-incivility behaviors. Defaults to 0 (no incivility).">Incivility dial <span class="muted-inline">(opt-in)</span></h2>
+      <div id="launchIncivility" class="knob-group-incivility"></div>
+      <button id="launchBtn" class="launch-btn">Start session &nearr;</button>
+      <div id="launchStatus" class="launch-status"></div>
+    </div>
+    <div id="rightClosed" class="closed-banner" style="display:none">
+      This session has ended. Steering controls are disabled. You can still download artifacts on the left.
+    </div>
+    <div id="rightControls" style="display:none">
+      <div class="auto-steer">
+        <div class="auto-steer-head">
+          <h2>Auto steering</h2>
+          <button id="autoSteerBtn" class="toggle">Off</button>
+        </div>
+        <div class="auto-steer-desc">
+          When on, a controller reviews each turn and shifts persona gears in
+          response to how the participant treats the agents: softening on
+          acknowledgment and repair, hardening on blame and dismissal. Every
+          shift is logged below with a reason. Manual buttons stay live as
+          overrides.
+        </div>
+        <div id="steerLog" class="steer-log"></div>
+      </div>
+
+      <div id="agentPickerRow" style="display:none">
+        <h2>Steering target</h2>
+        <div class="picker">
+          <select id="agentPicker"></select>
+        </div>
+      </div>
+
+      <h2 id="knobsHeading">Tone &amp; manner</h2>
+      <div id="knobs"></div>
+
+      <h2 id="incivilityHeading" title="Workplace-incivility behaviors. Defaults to 0 (no incivility). Reference: Andersson &amp; Pearson 1999; Cortina et al. 2001.">Incivility dial <span class="muted-inline">(opt-in)</span></h2>
+      <div id="incivilityKnobs"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const key = params.get('key') || '';
+  const keyParam = key ? `&key=${encodeURIComponent(key)}` : '';
+  const keyParamFirst = key ? `?key=${encodeURIComponent(key)}` : '';
+
+  let ws = null;
+  let currentSessionId = null;
+  let currentSessionStatus = null;  // 'active' | 'closed' | null
+  let state = null;
+  let selectedAgent = null;
+  const TONE_KNOBS = ["warmth", "formality", "agreeableness", "verbosity", "restraint"];
+  const INCIVILITY_KNOBS = ["condescension", "sarcasm", "dismissiveness", "passive_aggression"];
+  const COGNITION_KNOBS = ["attention"];
+  const INCIVILITY_LABEL = {
+    condescension: "condescension",
+    sarcasm: "sarcasm",
+    dismissiveness: "dismissiveness",
+    passive_aggression: "passive aggression",
+  };
+  const COGNITION_LABEL = { attention: "attention (memory)" };
+  let pendingKnob = null;
+
+  const $ = (id) => document.getElementById(id);
+
+  let sessionsCache = [];
+
+  async function refreshSessions() {
+    const r = await fetch(`/api/sessions${keyParamFirst}`);
+    const list = await r.json();
+    sessionsCache = list;
+    const picker = $('sessionPicker');
+    const cur = picker.value;
+    picker.innerHTML = '<option value="">select session</option>';
+    const active = list.filter(s => s.status === 'active');
+    const closed = list.filter(s => s.status !== 'active');
+    if (active.length) {
+      const grp = document.createElement('optgroup'); grp.label = 'Active (steerable)';
+      active.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = `${s.title} · ${s.turn_count} turns · ${s.id}`;
+        grp.appendChild(opt);
+      });
+      picker.appendChild(grp);
+    }
+    if (closed.length) {
+      const grp = document.createElement('optgroup'); grp.label = 'Closed (download only)';
+      closed.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.className = 'closed';
+        const dur = s.duration_s ? ` · ${s.duration_s}s` : '';
+        opt.textContent = `${s.title} · ${s.turn_count} turns${dur} · ${s.id}`;
+        grp.appendChild(opt);
+      });
+      picker.appendChild(grp);
+    }
+    if (cur && list.find(s => s.id === cur)) picker.value = cur;
+    else if (active.length === 1) picker.value = active[0].id;
+  }
+
+  function setRightPanel(mode) {
+    // 'empty' | 'closed' | 'active' — empty shows the launch card
+    $('launchCard').style.display   = mode === 'empty'  ? 'block' : 'none';
+    $('rightClosed').style.display  = mode === 'closed' ? 'block' : 'none';
+    $('rightControls').style.display = mode === 'active' ? 'block' : 'none';
+  }
+
+  function fmtSize(n) {
+    if (n == null) return '';
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+  }
+
+  async function refreshFiles() {
+    if (!currentSessionId) {
+      $('fileList').innerHTML = '<div class="files-empty">No session selected.</div>';
+      return;
+    }
+    try {
+      const r = await fetch(`/api/sessions/${encodeURIComponent(currentSessionId)}/files${keyParamFirst}`);
+      if (!r.ok) {
+        $('fileList').innerHTML = `<div class="files-empty">Could not list files (HTTP ${r.status}).</div>`;
+        return;
+      }
+      const files = await r.json();
+      if (!files.length) {
+        $('fileList').innerHTML = '<div class="files-empty">No files yet.</div>';
+        return;
+      }
+      $('fileList').innerHTML = files.map(f => {
+        const url = `/api/sessions/${encodeURIComponent(currentSessionId)}/download/${encodeURIComponent(f.name)}${keyParamFirst}`;
+        return `<div class="file"><a href="${url}" download>${f.name}</a><span class="meta">${fmtSize(f.size_bytes)}</span></div>`;
+      }).join('');
+    } catch (e) {
+      $('fileList').innerHTML = `<div class="files-empty">Error: ${e.message}</div>`;
+    }
+  }
+
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  function renderScore(d) {
+    if (!d) {
+      $('scoreBody').innerHTML = '<div class="files-empty">Not scored yet. Click "Score session" to run the judge.</div>';
+      return;
+    }
+    const ov = d.overall || {};
+    const dims = (d.dimensions || []).map(dim => {
+      const pct = dim.score ? (dim.score / 5 * 100) : 0;
+      const quotes = (dim.evidence || []).slice(0, 2)
+        .map(q => `<div class="dim-quote">&ldquo;${esc(q)}&rdquo;</div>`).join('');
+      return `<div class="dim">
+        <div class="dim-label"><span>${esc(dim.label)}</span><span class="s">${dim.score == null ? '–' : dim.score}/5</span></div>
+        <div class="dim-bar"><span style="width:${pct}%"></span></div>
+        <div class="dim-rationale">${esc(dim.rationale)}</div>${quotes}
+      </div>`;
+    }).join('');
+
+    const rates = d.behavior_rates || {};
+    const chips = Object.keys(rates).filter(k => rates[k].count > 0)
+      .sort((a, b) => rates[b].count - rates[a].count)
+      .map(k => {
+        const b = rates[k];
+        const cls = b.polarity === '+' ? 'pos' : 'neg';
+        return `<span class="bchip ${cls}">${esc(b.label)} <span class="ct">×${b.count}</span></span>`;
+      }).join('');
+
+    const list = (arr) => (arr && arr.length)
+      ? `<ul class="score-list">${arr.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+    const when = d.scored_at ? new Date(d.scored_at * 1000).toLocaleString() : '';
+
+    $('scoreBody').innerHTML = `
+      <div class="score-head">
+        <span class="construct">${esc(d.construct_name)}</span>
+        <span class="overall">${ov.score == null ? '–' : ov.score}<span style="font-size:12px;color:var(--muted)">/5</span></span>
+      </div>
+      <div class="score-summary">${esc(ov.summary)}</div>
+      <div class="score-sub">Dimensions</div>${dims}
+      ${chips ? `<div class="score-sub">Behaviors observed</div><div class="behaviors">${chips}</div>` : ''}
+      ${ov.strengths && ov.strengths.length ? `<div class="score-sub">Strengths</div>${list(ov.strengths)}` : ''}
+      ${ov.growth_edges && ov.growth_edges.length ? `<div class="score-sub">Growth edges</div>${list(ov.growth_edges)}` : ''}
+      <div class="score-meta">judge ${esc(d.judge_model)} · ${d.n_user_turns} turns${when ? ' · ' + esc(when) : ''}</div>
+    `;
+  }
+
+  // Score panel visibility switch. The judge, endpoints, and CLI keep working
+  // regardless; this only controls the researcher UI.
+  const SHOW_SCORE = false;
+  if (SHOW_SCORE) $('scoreSection').style.display = 'block';
+
+  async function refreshScore(sessionId) {
+    if (!SHOW_SCORE) return;
+    if (!sessionId) { renderScore(null); return; }
+    try {
+      const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/score${keyParamFirst}`);
+      if (r.status === 404) { renderScore(null); return; }
+      if (!r.ok) { $('scoreBody').innerHTML = `<div class="files-empty">Could not load score (HTTP ${r.status}).</div>`; return; }
+      renderScore(await r.json());
+    } catch (e) {
+      $('scoreBody').innerHTML = `<div class="files-empty">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  async function runScore(force) {
+    if (!SHOW_SCORE || !currentSessionId) return;
+    const btn = $('scoreBtn'), reBtn = $('rescoreBtn');
+    btn.disabled = true; reBtn.disabled = true;
+    $('scoreBody').innerHTML = '<div class="files-empty">Scoring… the judge is reading the transcript (this can take ~20-40s).</div>';
+    try {
+      const q = force ? '?force=1' : '';
+      const sep = q ? '&' : '?';
+      const url = `/api/sessions/${encodeURIComponent(currentSessionId)}/score${q}${key ? sep + 'key=' + encodeURIComponent(key) : ''}`;
+      const r = await fetch(url, { method: 'POST' });
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try { msg = (await r.json()).detail || msg; } catch {}
+        $('scoreBody').innerHTML = `<div class="files-empty">Scoring failed: ${esc(msg)}</div>`;
+        return;
+      }
+      renderScore(await r.json());
+      refreshFiles();  // score.json is now a downloadable artifact
+    } catch (e) {
+      $('scoreBody').innerHTML = `<div class="files-empty">Error: ${esc(e.message)}</div>`;
+    } finally {
+      btn.disabled = false; reBtn.disabled = false;
+    }
+  }
+
+  // ---------- launch: configure gears first, then start ----------
+  const LAUNCH_MODEL_OPTIONS = [
+    ['claude-opus-4-8', 'Opus 4.8'],
+    ['claude-sonnet-4-6', 'Sonnet 4.6'],
+    ['claude-haiku-4-5', 'Haiku 4.5'],
+  ];
+  const bandIdx = (v) => v < 0.34 ? 0 : v < 0.67 ? 1 : 2;
+  const L_TONE = [{ label: 'Low', value: 0.2 }, { label: 'Med', value: 0.5 }, { label: 'High', value: 0.85 }];
+  const L_INC = [{ label: 'Off', value: 0.0 }, { label: 'Mild', value: 0.5 }, { label: 'Strong', value: 0.9 }];
+  let launchDetail = null;       // scenario detail incl. default personas
+  let launchStaged = {};         // {agent_id: {knob: value}} only researcher-changed gears
+  let launchAuto = true;         // matches the server's on-by-default
+  let launchAgentSel = null;
+  let launchPoll = null;
+
+  async function initLaunchCard() {
+    try {
+      const r = await fetch(`/api/scenarios${keyParamFirst}`);
+      const list = await r.json();
+      $('launchScenario').innerHTML = list.map(s =>
+        `<option value="${esc(s.id)}">${esc(s.title)} · ${s.mode === 'group' ? 'group' : '1:1'}</option>`).join('');
+      if (list.length) await loadLaunchScenario(list[0].id);
+    } catch {}
+  }
+
+  async function loadLaunchScenario(id) {
+    const r = await fetch(`/api/scenarios/${encodeURIComponent(id)}${keyParamFirst}`);
+    launchDetail = await r.json();
+    launchStaged = {};
+    launchAgentSel = launchDetail.cast[0]?.id || null;
+    const lm = $('launchModel');
+    const opts = LAUNCH_MODEL_OPTIONS.slice();
+    if (launchDetail.model && !opts.find(o => o[0] === launchDetail.model)) opts.unshift([launchDetail.model, launchDetail.model]);
+    lm.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+    if (launchDetail.model) lm.value = launchDetail.model;
+    const isGroup = launchDetail.cast.length > 1;
+    $('launchAgentRow').style.display = isGroup ? 'flex' : 'none';
+    if (isGroup) {
+      $('launchAgent').innerHTML = launchDetail.cast.map(a =>
+        `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
+      $('launchAgent').value = launchAgentSel;
+    }
+    renderLaunchKnobs();
+  }
+
+  function launchVal(aid, knob, fallback) {
+    if (launchStaged[aid] && launchStaged[aid][knob] != null) return launchStaged[aid][knob];
+    const dp = (launchDetail.personas || {})[aid] || {};
+    return dp[knob] != null ? dp[knob] : fallback;
+  }
+
+  function renderLaunchKnobs() {
+    const aid = launchAgentSel;
+    const mk = (container, names, levels, fallback, incivility) => {
+      container.innerHTML = '';
+      names.forEach(name => {
+        const v = launchVal(aid, name, fallback);
+        const active = bandIdx(v);
+        const row = document.createElement('div');
+        row.className = 'knob';
+        if (incivility && active >= 1) row.classList.add('active-incivility');
+        const label = incivility ? (INCIVILITY_LABEL[name] || name) : name;
+        row.innerHTML = `
+          <div class="knob-label"><span>${label}</span></div>
+          <div class="levels">${levels.map((lv, i) =>
+            `<button data-val="${lv.value}" data-i="${i}" class="${i === active ? 'on' : ''}">${lv.label}</button>`
+          ).join('')}</div>`;
+        container.appendChild(row);
+        row.querySelectorAll('.levels button').forEach(btn => {
+          btn.addEventListener('click', () => {
+            row.querySelectorAll('.levels button').forEach(b => b.classList.remove('on'));
+            btn.classList.add('on');
+            if (incivility) row.classList.toggle('active-incivility', Number(btn.dataset.i) >= 1);
+            if (!launchStaged[aid]) launchStaged[aid] = {};
+            launchStaged[aid][name] = Number(btn.dataset.val);
+          });
+        });
+      });
+    };
+    mk($('launchKnobs'), TONE_KNOBS, L_TONE, 0.5, false);
+    mk($('launchIncivility'), INCIVILITY_KNOBS, L_INC, 0.0, true);
+  }
+
+  $('launchScenario').addEventListener('change', (e) => loadLaunchScenario(e.target.value));
+  $('launchAgent').addEventListener('change', (e) => { launchAgentSel = e.target.value; renderLaunchKnobs(); });
+  $('launchAutoSteer').addEventListener('click', () => {
+    launchAuto = !launchAuto;
+    $('launchAutoSteer').classList.toggle('on', launchAuto);
+    $('launchAutoSteer').textContent = launchAuto ? 'On' : 'Off';
+  });
+
+  $('launchBtn').addEventListener('click', async () => {
+    if (!launchDetail) return;
+    // Open the tab synchronously inside the click so popup blockers allow it.
+    const tab = window.open('', '_blank');
+    $('launchBtn').disabled = true;
+    $('launchStatus').textContent = 'Creating session…';
+    try {
+      const r = await fetch(`/api/launch${keyParamFirst}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scenario: $('launchScenario').value,
+          model: $('launchModel').value,
+          auto_steering: launchAuto,
+          knobs: launchStaged,
+        }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      tab.location = d.participant_url + (key ? `&key=${encodeURIComponent(key)}` : '');
+      $('launchStatus').textContent = 'Conversation tab opened. Waiting for the participant to press Start…';
+      clearInterval(launchPoll);
+      launchPoll = setInterval(async () => {
+        try {
+          const pr = await fetch(`/api/launch/${encodeURIComponent(d.launch_id)}${keyParamFirst}`);
+          if (!pr.ok) return;
+          const pd = await pr.json();
+          if (pd.session_id) {
+            clearInterval(launchPoll); launchPoll = null;
+            $('launchStatus').textContent = '';
+            $('launchBtn').disabled = false;
+            await refreshSessions();
+            $('sessionPicker').value = pd.session_id;
+            connect(pd.session_id);
+          }
+        } catch {}
+      }, 1000);
+    } catch (e) {
+      try { tab.close(); } catch {}
+      $('launchStatus').textContent = 'Launch failed: ' + e.message;
+      $('launchBtn').disabled = false;
+    }
+  });
+
+  // Gear-shift log: every knob change (auto or manual) the server broadcasts.
+  function appendSteer(m) {
+    const log = $('steerLog');
+    const el = document.createElement('div');
+    el.className = 'steer-entry' + (m.auto ? '' : ' manual');
+    const knobLabel = INCIVILITY_LABEL[m.knob] || m.knob;
+    const tag = m.auto ? 'auto' : (m.reason === 'preset at launch' ? 'preset' : 'manual');
+    el.innerHTML = `<span class="tag">${tag}</span>` +
+      `<span class="who">${esc(m.agent_name || m.agent_id)}</span> · ` +
+      `${esc(knobLabel)} <span class="shift">${esc(m.from_level)} &rarr; ${esc(m.to_level)}</span>` +
+      (m.reason ? `<span class="why">${esc(m.reason)}</span>` : '');
+    log.prepend(el);
+    while (log.children.length > 40) log.removeChild(log.lastChild);
+  }
+
+  function connect(sessionId) {
+    if (ws) { try { ws.close(); } catch {} ws = null; }
+    if (launchPoll) { clearInterval(launchPoll); launchPoll = null; $('launchBtn').disabled = false; $('launchStatus').textContent = ''; }
+    $('msgs').innerHTML = '';
+    $('steerLog').innerHTML = '';
+    currentSessionId = sessionId;
+    const meta = sessionsCache.find(s => s.id === sessionId);
+    currentSessionStatus = meta ? meta.status : null;
+    refreshFiles();
+    refreshScore(sessionId);
+    if (currentSessionStatus !== 'active') {
+      // Closed session: show transcript snapshot from events.jsonl if we can,
+      // but no WebSocket and no steering.
+      setRightPanel('closed');
+      showClosedTranscript(sessionId);
+      return;
+    }
+    setRightPanel('active');
+    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/researcher?session_id=${encodeURIComponent(sessionId)}${keyParam}`;
+    ws = new WebSocket(url);
+    ws.addEventListener('message', (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.type === 'state') { state = m; renderState(); }
+      else if (m.type === 'transcript') { appendMsg(m); }
+      else if (m.type === 'steering') { appendSteer(m); }
+    });
+    ws.addEventListener('close', () => {
+      const div = document.createElement('div');
+      div.className = 'msg'; div.style.color = 'var(--warn)';
+      div.textContent = '(disconnected)';
+      $('msgs').appendChild(div);
+    });
+  }
+
+  function agentName(agent_id) {
+    if (!agent_id || !state) return '';
+    const a = (state.cast || []).find(x => x.id === agent_id);
+    return a ? a.name : agent_id;
+  }
+
+  function appendMsg(m) {
+    const el = document.createElement('div');
+    el.className = `msg ${m.role}`;
+    if (m.role === 'assistant' && m.agent_id && state && state.cast && state.cast.length > 1) {
+      const header = document.createElement('div');
+      header.style.fontSize = '11px';
+      header.style.color = 'var(--muted)';
+      header.style.marginBottom = '2px';
+      header.textContent = agentName(m.agent_id);
+      el.appendChild(header);
+      const body = document.createElement('div');
+      body.textContent = m.text;
+      el.appendChild(body);
+    } else {
+      el.textContent = m.text;
+    }
+    if (m.latency_total_s !== undefined) {
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const f = m.latency_to_first_token_s != null ? `first ${m.latency_to_first_token_s}s · ` : '';
+      meta.textContent = f + `total ${m.latency_total_s}s`;
+      el.appendChild(meta);
+    }
+    $('msgs').appendChild(el);
+    el.scrollIntoView({ block: 'end' });
+  }
+
+  function renderState() {
+    if (!state) return;
+    $('sessionBar').style.display = 'flex';
+    const modeLabel = state.scenario.mode === 'group' ? `group (${state.cast.length})` : 'single';
+    $('sessionInfo').textContent = `${state.scenario.id} · ${modeLabel} · model=${state.model}`;
+    $('turnCount').textContent = `${state.turn_count} turn${state.turn_count === 1 ? '' : 's'}`;
+
+    // Auto steering toggle reflects server state
+    const steerOn = !!state.auto_steering;
+    const steerBtn = $('autoSteerBtn');
+    steerBtn.classList.toggle('on', steerOn);
+    steerBtn.textContent = steerOn ? 'On' : 'Off';
+
+    // Agent picker (visible only for multi-agent)
+    const cast = state.cast || [];
+    const isGroup = cast.length > 1;
+    $('agentPickerRow').style.display = isGroup ? 'block' : 'none';
+    if (!selectedAgent || !cast.find(a => a.id === selectedAgent)) {
+      selectedAgent = cast[0]?.id || null;
+    }
+    if (isGroup) {
+      const picker = $('agentPicker');
+      picker.innerHTML = '';
+      cast.forEach(a => {
+        const opt = document.createElement('option');
+        opt.value = a.id; opt.textContent = a.name;
+        picker.appendChild(opt);
+      });
+      picker.value = selectedAgent;
+    }
+
+    const targetName = isGroup ? agentName(selectedAgent) : '';
+    $('knobsHeading').textContent = isGroup ? `Persona knobs · ${targetName}` : 'Persona knobs';
+
+    const persona = (state.personas || {})[selectedAgent] || {};
+
+    function renderKnob(container, name, defaultV, opts) {
+      const v = persona[name] != null ? persona[name] : defaultV;
+      const row = document.createElement('div');
+      row.className = 'knob';
+      const label = opts && opts.label ? opts.label : name;
+      if (opts && opts.activeWhenAbove && v >= opts.activeWhenAbove) row.classList.add('active-incivility');
+      row.innerHTML = `
+        <div class="knob-label"><span>${label}</span><span id="kv-${name}">${v.toFixed(2)}</span></div>
+        <input type="range" min="0" max="1" step="0.01" value="${v}" data-knob="${name}" />
+      `;
+      container.appendChild(row);
+      const slider = row.querySelector('input');
+      slider.addEventListener('input', (e) => {
+        $(`kv-${name}`).textContent = Number(e.target.value).toFixed(2);
+      });
+      slider.addEventListener('change', (e) => {
+        ws.send(JSON.stringify({ type: 'set_knob', knob: name, value: Number(e.target.value), agent_id: selectedAgent }));
+      });
+    }
+
+    // Three-level button knobs. Values land squarely in the persona band
+    // thresholds (<0.34 low, <0.67 mid, >=0.67 high) used in persona.py.
+    const bandIndex = (v) => v < 0.34 ? 0 : v < 0.67 ? 1 : 2;
+    function renderLevelKnob(container, name, defaultV, levels, opts) {
+      const v = persona[name] != null ? persona[name] : defaultV;
+      const active = bandIndex(v);
+      const row = document.createElement('div');
+      row.className = 'knob';
+      const label = (opts && opts.label) || name;
+      if (opts && opts.incivility && active >= 1) row.classList.add('active-incivility');
+      row.innerHTML = `
+        <div class="knob-label"><span>${label}</span></div>
+        <div class="levels">${levels.map((lv, i) =>
+          `<button data-val="${lv.value}" data-i="${i}" class="${i === active ? 'on' : ''}">${lv.label}</button>`
+        ).join('')}</div>`;
+      container.appendChild(row);
+      row.querySelectorAll('.levels button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const val = Number(btn.dataset.val);
+          row.querySelectorAll('.levels button').forEach(b => b.classList.remove('on'));
+          btn.classList.add('on');
+          if (opts && opts.incivility) row.classList.toggle('active-incivility', Number(btn.dataset.i) >= 1);
+          persona[name] = val;  // keep local state in sync until the server echoes back
+          if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'set_knob', knob: name, value: val, agent_id: selectedAgent }));
+          }
+        });
+      });
+    }
+    const TONE_LEVELS = [{ label: 'Low', value: 0.2 }, { label: 'Med', value: 0.5 }, { label: 'High', value: 0.85 }];
+    const INCIVILITY_LEVELS = [{ label: 'Off', value: 0.0 }, { label: 'Mild', value: 0.5 }, { label: 'Strong', value: 0.9 }];
+
+    const knobs = $('knobs');
+    knobs.innerHTML = '';
+    TONE_KNOBS.forEach(name => renderLevelKnob(knobs, name, 0.5, TONE_LEVELS));
+
+    const inc = $('incivilityKnobs');
+    inc.innerHTML = '';
+    inc.className = 'knob-group-incivility';
+    INCIVILITY_KNOBS.forEach(name => renderLevelKnob(inc, name, 0.0, INCIVILITY_LEVELS, {
+      label: INCIVILITY_LABEL[name] || name,
+      incivility: true,
+    }));
+  }
+
+  async function showClosedTranscript(sessionId) {
+    try {
+      const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/download/events.jsonl${keyParamFirst}`);
+      if (!r.ok) return;
+      const text = await r.text();
+      text.trim().split('\n').forEach(line => {
+        try {
+          const e = JSON.parse(line);
+          if (e.type === 'user_turn')       appendMsg({ role: 'user',      text: e.text });
+          else if (e.type === 'assistant_turn') appendMsg({
+            role: 'assistant', text: e.text,
+            latency_to_first_token_s: e.latency_to_first_token_s,
+            latency_total_s: e.latency_total_s,
+          });
+        } catch {}
+      });
+    } catch {}
+  }
+
+  $('sessionPicker').addEventListener('change', (e) => {
+    if (e.target.value) connect(e.target.value);
+    else { currentSessionId = null; currentSessionStatus = null; setRightPanel('empty'); $('fileList').innerHTML = '<div class="files-empty">No session selected.</div>'; $('msgs').innerHTML = ''; }
+  });
+  $('refreshSessions').addEventListener('click', refreshSessions);
+  $('agentPicker').addEventListener('change', (e) => {
+    selectedAgent = e.target.value;
+    renderState();
+  });
+  $('autoSteerBtn').addEventListener('click', () => {
+    if (!ws || ws.readyState !== 1 || !state) return;
+    ws.send(JSON.stringify({ type: 'set_auto_steering', enabled: !state.auto_steering }));
+  });
+  $('refreshFiles').addEventListener('click', refreshFiles);
+  $('scoreBtn').addEventListener('click', () => runScore(false));
+  $('rescoreBtn').addEventListener('click', () => runScore(true));
+  $('downloadZip').addEventListener('click', () => {
+    if (!currentSessionId) return;
+    window.location.href = `/api/sessions/${encodeURIComponent(currentSessionId)}/download.zip${keyParamFirst}`;
+  });
+
+  setRightPanel('empty');
+  initLaunchCard();
+  refreshSessions();
+  setInterval(refreshSessions, 3000);
+</script>
+</body>
+</html>

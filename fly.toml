@@ -1,0 +1,46 @@
+# Fly.io config for the relational-fluency platform.
+# Set `app` to a unique name (e.g. "rf-jennie") via `fly launch` or `fly apps create`.
+
+app = "CHANGE_ME"
+primary_region = "ewr"          # newark — close to most US east; pick another via `fly platform regions`
+
+[build]
+  # Fly will build from the Dockerfile at the repo root.
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "8080"
+  DATA_DIR = "/data"
+  # Secrets (ANTHROPIC_API_KEY, DEEPGRAM_API_KEY, ELEVENLABS_API_KEY,
+  # SESSION_KEY) are set via `fly secrets set`, not here.
+
+[[mounts]]
+  source = "rf_data"             # volume name (created via `fly volumes create`)
+  destination = "/data"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  auto_stop_machines = "off"      # don't suspend — WebSocket sessions need persistence
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  # Long idle is fine — voice sessions can sit quiet between turns.
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 50
+    soft_limit = 25
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

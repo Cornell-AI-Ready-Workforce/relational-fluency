@@ -1,0 +1,18 @@
+# Code-only image. Secrets, data, and dev artifacts stay out.
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+.git/
+.gitignore
+data/
+logs/
+docs/
+.DS_Store
+Dockerfile
+.dockerignore
+fly.toml
+README.md
+*.md
