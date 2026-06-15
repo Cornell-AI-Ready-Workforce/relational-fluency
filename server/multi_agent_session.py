@@ -27,10 +27,10 @@ if TYPE_CHECKING:
     from fastapi import WebSocket
 
 
-# Cap on how many agent utterances one user turn can trigger (initial routed
-# speakers + agent-to-agent hand-offs). Set high so Arjun and Claire can really
-# get into it back and forth without the participant having to intervene.
-MAX_AGENT_TURNS_PER_USER = 8
+# Cap on how many agent utterances one user turn can trigger. The director
+# returns a 3-speaker [arjun, claire, arjun] fight, so a cap of 3 makes that the
+# whole burst (and skips the extra continuation call) before the floor returns.
+MAX_AGENT_TURNS_PER_USER = 3
 
 
 def _strip_self_label(text: str, labels: List[str]) -> str:
@@ -114,11 +114,10 @@ class MultiAgentVoiceSessionRunner:
                 await self._send_safe({
                     "type": "user_transcript", "text": event["text"], "final": True,
                 })
-                # Primary turn-end: ~0.7s of silence (endpointing → speech_final).
-                if event.get("speech_final"):
-                    self._maybe_start_turn()
             elif etype == "endpoint":
-                # Backup turn-end: UtteranceEnd at 1s, in case speech_final missed.
+                # End the turn ONLY on UtteranceEnd (word-gap-aware silence), so a
+                # mid-thought pause does not hand the floor to the agents while the
+                # participant is still talking.
                 self._maybe_start_turn()
             elif etype == "speech_started":
                 await self._send_safe({"type": "speech_started"})
@@ -183,6 +182,7 @@ class MultiAgentVoiceSessionRunner:
             last_speaker = speakers[-1]["agent_id"] if speakers else None
             agent_turns = len(speakers)
             while (not self._closed and last_speaker is not None
+                   and self.session.scenario.chain_continuations
                    and agent_turns < MAX_AGENT_TURNS_PER_USER):
                 follow = await self.session.director.route_continuation(
                     self.session.shared_history, last_speaker

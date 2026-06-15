@@ -26,8 +26,10 @@ _DIRECTOR_TOOL = {
     "description": (
         "Decide which agents respond next and in what order. "
         "Return an empty list if no agent should speak (silence is a valid choice). "
-        "Be realistic — most user turns get exactly 1 response. Sometimes 2 in "
-        "back-and-forth. Rarely 0 (genuine silence) or 3+."
+        "How many speakers depends entirely on the scenario routing guidance: it "
+        "may call for a single responder, or a multi-speaker sequence where agents "
+        "argue with EACH OTHER (e.g. [A, B, A]). Follow that guidance; do not "
+        "default to one."
     ),
     "input_schema": {
         "type": "object",
@@ -62,7 +64,7 @@ _DIRECTOR_TOOL = {
 }
 
 
-def _format_transcript(shared_history: list, name_lookup: dict, max_turns: int = 10) -> str:
+def _format_transcript(shared_history: list, name_lookup: dict, max_turns: int = 6) -> str:
     """Render the most recent turns as a transcript string for the director."""
     recent = shared_history[-max_turns:]
     lines = []
@@ -104,6 +106,14 @@ class Director:
         latest_user_text: str,
     ) -> List[dict]:
         """Return [{agent_id, intent?}] — possibly empty."""
+        # Fast path: the very first reaction (no agent has spoken yet) is the
+        # configured opener. Skip the director LLM call so the meeting opens fast.
+        opener = getattr(self.scenario, "opener", None)
+        if opener and not any(e.get("speaker") != "user" for e in shared_history):
+            served = [{"agent_id": aid} for aid in opener if aid in self._valid_ids]
+            if served:
+                return served
+
         transcript = _format_transcript(shared_history, self._name_lookup)
         system = f"""You are a meeting director routing turns in a multi-party voice conversation.
 
@@ -117,12 +127,14 @@ class Director:
    route ONLY to that named agent. Do not also include others. Ignore all
    other heuristics. This rule has highest priority.
 
-2. **Did the user ask the room broadly?** If yes, apply the scenario's
-   routing guidance below to pick the most realistic 1–2 responders.
+2. **Otherwise, FOLLOW THE SCENARIO ROUTING GUIDANCE BELOW.** It decides who
+   speaks and HOW MANY. If it asks for a multi-speaker sequence where agents
+   argue with each other (e.g. [arjun, claire, arjun]), return exactly that —
+   do NOT trim it down to one speaker. The number of speakers is whatever the
+   guidance says, up to the max.
 
-3. **Did the user say something transitional / confirmatory?** ("ok",
-   "sounds good", "let me move on") — usually return empty list (silence)
-   OR a single brief responder. Don't generate cross-talk over a transition.
+3. **Did the user say something purely transitional?** ("ok", "thanks") with
+   nothing substantive — a single brief responder or empty is fine.
 
 ## Scene
 {self.scenario.scene or '(no scene description)'}
@@ -148,7 +160,7 @@ Decide who speaks next."""
         try:
             response = await self.client.messages.create(
                 model=self.model,
-                max_tokens=400,
+                max_tokens=160,
                 system=system,
                 tools=[_DIRECTOR_TOOL],
                 tool_choice={"type": "tool", "name": "set_speakers"},
@@ -205,7 +217,8 @@ Decide who speaks next."""
 - Names them as the person who should speak / would know best ("Sam can speak to the deploy side", "Jordan probably has a better read on this than I do", "I'd want Rae to weigh in").
 - Directly invites their response or pushes back on their stated position, expecting a reply.
 - Attacks, belittles, talks down to, or throws a pointed jab AT another agent by name (e.g. {last_name} just went after someone). Route the targeted agent so they can fire back — heated exchanges should ping-pong, not die.
-Route to the agent who was turned to (or attacked).
+- The Scenario routing guidance above calls for a specific agent to jump in right after a remark like the one {last_name} just made (for example, to call out condescension or dismissiveness). Honor that guidance and route that agent NOW, even if {last_name} was addressing the human rather than another agent.
+Route to the agent who was turned to (or attacked, or who the guidance says should jump in).
 
 ## Return an EMPTY list (floor goes back to the human facilitator) when:
 - {last_name} answered or addressed the human, or made a general statement to the room with no specific person turned to.
@@ -224,7 +237,7 @@ The last speaker was {last_name}. Did {last_name} turn to a specific other agent
         try:
             response = await self.client.messages.create(
                 model=self.model,
-                max_tokens=200,
+                max_tokens=100,
                 system=system,
                 tools=[_DIRECTOR_TOOL],
                 tool_choice={"type": "tool", "name": "set_speakers"},

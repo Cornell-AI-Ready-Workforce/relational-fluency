@@ -34,11 +34,14 @@ def default_options() -> LiveOptions:
         sample_rate=16000,
         channels=1,
         interim_results=True,
-        # The turn ends on `speech_final` after `endpointing` ms of silence
-        # (0.7s). utterance_end_ms (min 1000) stays as a backup trigger only.
-        utterance_end_ms=1000,
+        # The turn ends ONLY on UtteranceEnd, after this much silence following
+        # the last word — long enough not to cut a mid-thought pause, but trimmed
+        # for snappier responses.
+        utterance_end_ms=1200,
         vad_events=True,
-        endpointing=800,
+        # endpointing now only controls how fast interim text finalizes for
+        # display; it no longer triggers the turn, so it can stay snappy.
+        endpointing=300,
     )
 
 

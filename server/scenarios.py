@@ -67,6 +67,12 @@ class Scenario:
     intro_image: str = ""  # filename under static/agents/ shown on the brief screen (pre-start)
     cast: List[Agent] = field(default_factory=list)
     director_prompt: str = ""  # routing guidance for group mode
+    # When False, skip the per-gap route_continuation calls — use when the
+    # director already returns complete multi-speaker sequences (faster).
+    chain_continuations: bool = True
+    # Agents to route on the very first reaction, served WITHOUT a director LLM
+    # call so the meeting opens snappily.
+    opener: List[str] = field(default_factory=list)
     branches: List[Branch] = field(default_factory=list)
     references: List[Reference] = field(default_factory=list)
     model: Optional[str] = None
@@ -146,6 +152,8 @@ def _scenario_from_dict(data: dict) -> Scenario:
         intro_image=(data.get("intro_image") or "").strip(),
         cast=cast,
         director_prompt=data.get("director_prompt", "").strip(),
+        chain_continuations=data.get("chain_continuations", True),
+        opener=data.get("opener", []) or [],
         branches=branches,
         references=references,
         model=data.get("model"),

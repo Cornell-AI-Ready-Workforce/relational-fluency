@@ -49,8 +49,8 @@ class ElevenLabsStream:
         await self.ws.send(json.dumps({
             "text": " ",
             "voice_settings": {
-                "stability": 0.45,
-                "similarity_boost": 0.75,
+                "stability": 0.22,       # low = highly expressive, emotional delivery
+                "similarity_boost": 0.8,
                 "use_speaker_boost": True,
             },
             "generation_config": {
