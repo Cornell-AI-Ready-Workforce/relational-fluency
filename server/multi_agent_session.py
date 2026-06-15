@@ -28,9 +28,9 @@ if TYPE_CHECKING:
 
 
 # Cap on how many agent utterances one user turn can trigger (initial routed
-# speakers + agent-to-agent hand-offs). Kept short so the floor returns to the
-# participant quickly — they're the facilitator and need to chime in often.
-MAX_AGENT_TURNS_PER_USER = 3
+# speakers + agent-to-agent hand-offs). Set high enough that Arjun and Claire can
+# argue back and forth for several turns without the participant intervening.
+MAX_AGENT_TURNS_PER_USER = 6
 
 
 def _strip_self_label(text: str, labels: List[str]) -> str:

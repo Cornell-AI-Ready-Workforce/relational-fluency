@@ -21,7 +21,7 @@ from .scenarios import Agent, Branch, Scenario
 
 
 DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
-DEFAULT_MAX_TOKENS = 350
+DEFAULT_MAX_TOKENS = 130
 
 
 class AgentEngine:
@@ -98,9 +98,11 @@ class AgentEngine:
         parts.append("")
         if self.scenario.mode == "group":
             parts.append(
-                "You are in a multi-party voice conversation. Keep your reply short — "
-                "one to three sentences usually. Others may speak after you. Do not "
-                "narrate, summarize, or restate what others said. Just speak as you would.\n"
+                "You are in a multi-party voice conversation. Keep it SHORT — usually "
+                "one sentence, two at most. This is real speech, so be brief and to the "
+                "point; do not give little speeches. Use plain, everyday language — no "
+                "jargon, no buzzwords, no elaborate metaphors. Others may speak after "
+                "you. Do not narrate, summarize, or restate what others said.\n"
                 "Output ONLY the words you say out loud. Do NOT begin with your own name, "
                 "initials, or a 'Name:' speaker label — your name is shown separately. "
                 "No stage directions, no quotation marks around your line."

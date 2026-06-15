@@ -59,9 +59,9 @@
     .brief { max-height: none; }
   }
   main { flex: 1; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
-  /* Photos in a single row across the top. */
-  .grid { display: grid; gap: 12px; width: 100%; max-width: 1100px;
-          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  /* Photos in a single row across the top — large for immersion. */
+  .grid { display: grid; gap: 14px; width: 100%; max-width: 1280px;
+          grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
   .tile { background: var(--tile-bg); color: var(--fg-on-dark); border-radius: 14px;
           aspect-ratio: 4/3; display: flex; flex-direction: column;
           align-items: center; justify-content: center; gap: 7px;
@@ -70,8 +70,8 @@
   .tile.speaking { box-shadow: 0 0 0 3px var(--accent), 0 8px 24px rgba(179,24,27,0.25); }
   .tile.self { background: var(--surface); color: var(--fg); border: 1px solid var(--line-soft); }
   .tile.self.speaking { box-shadow: 0 0 0 3px var(--accent); }
-  .avatar { width: 62px; height: 62px; border-radius: 50%; display: flex;
-            align-items: center; justify-content: center; font-size: 23px;
+  .avatar { width: 108px; height: 108px; border-radius: 50%; display: flex;
+            align-items: center; justify-content: center; font-size: 38px;
             font-weight: 600; color: white; user-select: none; flex-shrink: 0; }
   .avatar.self { background: var(--surface-2); color: var(--fg); }
   .name { font-size: 15px; font-weight: 500; }
@@ -195,6 +195,36 @@
   .metric .m-ev { font-size: 11px; line-height: 1.4; color: var(--muted); }
   .debrief-card .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
   .debrief-loading { font-size: 14px; color: var(--muted); padding: 8px 0; }
+
+  /* ---------- Feedback page (post-attempt, 4D-style) ---------- */
+  .fb-intro { font-size: 13.5px; line-height: 1.55; color: var(--muted); margin: 0 0 18px; }
+  .fb-hero { display: flex; align-items: center; gap: 18px; background: var(--accent-soft);
+             border-radius: 12px; padding: 16px 18px; margin: 0 0 20px; }
+  .fb-hero .score-ring { flex-shrink: 0; width: 64px; height: 64px; border-radius: 50%;
+             display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700;
+             color: #fff; }
+  .fb-hero .score-ring small { font-size: 12px; font-weight: 600; opacity: 0.85; }
+  .fb-hero .summary { font-size: 14px; line-height: 1.55; color: var(--fg); }
+  .fb-dim { border: 1px solid var(--line-soft); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+  .fb-dim .head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+  .fb-dim .dim-name { font-size: 15px; font-weight: 600; }
+  .fb-dim .dim-score { font-size: 13px; font-weight: 700; padding: 2px 10px; border-radius: 999px; color: #fff; }
+  .fb-dim .rationale { font-size: 13px; line-height: 1.5; color: var(--fg); margin: 0; }
+  .fb-dim .ev { font-size: 12px; color: var(--muted); font-style: italic; margin-top: 6px; }
+  /* score colors (shared by hero ring + dim pill) */
+  .s1, .s2 { background: var(--accent); }
+  .s3 { background: #9a7b1e; }
+  .s4, .s5 { background: #2f7d4f; }
+  .fb-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; }
+  .fb-col { border-radius: 12px; padding: 14px 16px; }
+  .fb-col.well { background: #eef6f0; border: 1px solid #cfe6d8; }
+  .fb-col.improve { background: #fbf3ef; border: 1px solid #f0d8cd; }
+  .fb-col h4 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .fb-col.well h4 { color: #2f7d4f; }
+  .fb-col.improve h4 { color: var(--accent); }
+  .fb-col ul { margin: 0; padding-left: 18px; }
+  .fb-col li { font-size: 13px; line-height: 1.5; margin-bottom: 6px; }
+  @media (max-width: 640px) { .fb-cols { grid-template-columns: 1fr; } }
   @media (max-width: 640px) {
     .metrics { grid-template-columns: 1fr; }
     .debrief-card { padding: 20px 18px; }
@@ -277,6 +307,19 @@
     <div id="debriefContent"></div>
     <div class="actions">
       <button class="secondary" id="debriefClose">Close</button>
+      <button id="toFeedback">See my feedback &rarr;</button>
+    </div>
+  </div>
+</div>
+
+<div class="debrief-overlay" id="feedbackOverlay" style="display:none">
+  <div class="debrief-card feedback-card">
+    <div class="label">Your feedback</div>
+    <h2 id="feedbackTitle">How you handled the room</h2>
+    <div id="feedbackContent"></div>
+    <div class="actions">
+      <button class="secondary" id="feedbackClose">Close</button>
+      <button id="feedbackRetry">Try another attempt</button>
     </div>
   </div>
 </div>
@@ -329,6 +372,7 @@
   let speechRaf = null;
   let timerInt = null;     // conversation elapsed-time ticker
   let timerStartMs = 0;
+  let feedbackSid = null;  // session id for the post-attempt feedback page
 
   // ---------- avatars ----------
   function initialsOf(name) {
@@ -786,6 +830,7 @@
   const DIR_TEXT = { hardened: 'Hardened', unchanged: 'Unchanged', softened: 'Softened', shifted: 'Shifted' };
 
   async function showDebrief(sid) {
+    feedbackSid = sid;
     $('debriefContent').innerHTML = `<div class="debrief-loading">Reading the room back to you — analyzing how each person responded…</div>`;
     $('debriefOverlay').style.display = 'flex';
     try {
@@ -843,6 +888,69 @@
   $('startBtn').addEventListener('click', startSession);
   $('stopBtn').addEventListener('click', () => endSession());
   $('debriefClose').addEventListener('click', () => { $('debriefOverlay').style.display = 'none'; });
+
+  // ---------- feedback page (post-attempt, scored) ----------
+  const scoreClass = (s) => 's' + (Number(s) || 3);
+
+  async function showFeedback(sid) {
+    $('debriefOverlay').style.display = 'none';
+    $('feedbackContent').innerHTML = `<div class="debrief-loading">Scoring how you handled the room… this takes a moment.</div>`;
+    $('feedbackOverlay').style.display = 'flex';
+    try {
+      const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/score` + keyParamFirst, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      if (!r.ok) {
+        const msg = (await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`;
+        $('feedbackContent').innerHTML = `<div class="debrief-loading">Could not generate feedback: ${msg}</div>`;
+        return;
+      }
+      renderFeedback(await r.json());
+    } catch (e) {
+      $('feedbackContent').innerHTML = `<div class="debrief-loading">Feedback error: ${e.message}</div>`;
+    }
+  }
+
+  function renderFeedback(d) {
+    const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const ov = d.overall || {};
+    const skill = d.skill || 'this skill';
+    let html = `
+      <div class="fb-intro">Your relational-fluency feedback for <b>${esc(skill)}</b> — keeping a tense room feeling safe to speak. You're scored 1 to 5 on each part of the skill, based on what you actually said and did.</div>
+      <div class="fb-hero">
+        <div class="score-ring ${scoreClass(ov.score)}">${ov.score != null ? ov.score : '–'}<small>/5</small></div>
+        <div class="summary">${esc(ov.summary)}</div>
+      </div>`;
+    (d.dimensions || []).forEach(dim => {
+      const ev = (dim.evidence && dim.evidence[0]) ? `<div class="ev">&ldquo;${esc(dim.evidence[0])}&rdquo;</div>` : '';
+      html += `
+        <div class="fb-dim">
+          <div class="head">
+            <span class="dim-name">${esc(dim.label)}</span>
+            <span class="dim-score ${scoreClass(dim.score)}">${dim.score != null ? dim.score : '–'} / 5</span>
+          </div>
+          <p class="rationale">${esc(dim.rationale)}</p>
+          ${ev}
+        </div>`;
+    });
+    const list = (arr) => (arr && arr.length)
+      ? '<ul>' + arr.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>'
+      : '<p class="rationale" style="color:var(--muted)">—</p>';
+    html += `
+      <div class="fb-cols">
+        <div class="fb-col well"><h4>What you did well</h4>${list(ov.strengths)}</div>
+        <div class="fb-col improve"><h4>Ways to improve</h4>${list(ov.growth_edges)}</div>
+      </div>`;
+    $('feedbackContent').innerHTML = html;
+  }
+
+  $('toFeedback').addEventListener('click', () => { if (feedbackSid) showFeedback(feedbackSid); });
+  $('feedbackClose').addEventListener('click', () => { $('feedbackOverlay').style.display = 'none'; });
+  $('feedbackRetry').addEventListener('click', () => {
+    $('feedbackOverlay').style.display = 'none';
+    $('debriefOverlay').style.display = 'none';
+    $('transcript').innerHTML = '';   // clear for a fresh attempt; press Start to go again
+  });
 
   // A session runs one model end to end. Changing the model mid-session ends
   // the current conversation and starts a fresh session on the new model — two
