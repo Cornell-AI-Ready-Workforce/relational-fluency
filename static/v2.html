@@ -122,11 +122,15 @@
   .transcript .turn.live .speaker::after { content: " \2026"; color: var(--muted); font-weight: 400; }
   .director-note { font-size: 12px; color: var(--muted); font-style: italic; }
 
-  /* Persona tile = circular profile photo on a white card (camera-off look). */
-  .tile.has-photo { background: #ffffff; color: var(--fg); border: 1px solid var(--line-soft); }
-  .tile.has-photo .name { color: var(--fg); }
-  .tile.has-photo .role { color: var(--muted); opacity: 1; }
-  .avatar.photo-avatar { object-fit: cover; background: var(--surface-2); padding: 0; }
+  /* Persona tile = full-bleed photo, like a live video tile (immersive). */
+  .tile.has-photo { padding: 0; overflow: hidden; align-items: flex-start; justify-content: flex-end; }
+  .tile .photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .tile.has-photo::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 48%;
+        background: linear-gradient(to top, rgba(0,0,0,0.72), rgba(0,0,0,0)); pointer-events: none; }
+  .tile.has-photo .name, .tile.has-photo .role { position: relative; z-index: 1; color: #fff;
+        text-shadow: 0 1px 4px rgba(0,0,0,0.75); }
+  .tile.has-photo .name { margin: 0 0 0 14px; font-size: 16px; font-weight: 600; }
+  .tile.has-photo .role { margin: 2px 0 14px 14px; font-size: 12px; opacity: 0.92; }
 
   /* User camera — live webcam fills the self tile during a session. */
   .tile.self video { position: absolute; inset: 0; width: 100%; height: 100%;
@@ -466,8 +470,8 @@
       t.className = 'tile' + (hasPhoto ? ' has-photo' : '');
       t.id = `tile-${a.id}`;
       const visual = hasPhoto
-        ? `<img class="avatar photo-avatar" src="${photoUrl(a.photo)}" alt="${a.name}"
-                onerror="this.replaceWith(makeInitials('${a.name}'))" />`
+        ? `<img class="photo" src="${photoUrl(a.photo)}" alt="${a.name}"
+                onerror="const t=this.closest('.tile'); if(t)t.classList.remove('has-photo'); this.replaceWith(makeInitials('${a.name}'))" />`
         : `<div class="avatar" style="background:${colorFor(a.name)}">${initialsOf(a.name)}</div>`;
       t.innerHTML = `
         ${visual}
