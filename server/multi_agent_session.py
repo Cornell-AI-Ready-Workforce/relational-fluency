@@ -15,6 +15,7 @@ agents have finished. v1 policy — no barge-in.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import TYPE_CHECKING, List, Optional
 
@@ -26,9 +27,23 @@ if TYPE_CHECKING:
     from fastapi import WebSocket
 
 
-# Safety cap on how many agent utterances one user turn can trigger (initial
-# routed speakers + agent-to-agent hand-offs). Prevents runaway agent cross-talk.
-MAX_AGENT_TURNS_PER_USER = 6
+# Cap on how many agent utterances one user turn can trigger (initial routed
+# speakers + agent-to-agent hand-offs). Kept short so the floor returns to the
+# participant quickly — they're the facilitator and need to chime in often.
+MAX_AGENT_TURNS_PER_USER = 3
+
+
+def _strip_self_label(text: str, labels: List[str]) -> str:
+    """Drop a leading self-referential speaker label the model sometimes emits by
+    mimicking the transcript format (e.g. 'Claire Donovan:' or 'Claire -').
+    Without this the agent's own name gets spoken aloud and shown in the caption."""
+    for nm in sorted(labels, key=len, reverse=True):
+        if not nm:
+            continue
+        m = re.match(r"^\s*\[?" + re.escape(nm) + r"\]?\s*[:\-–—]\s*", text, re.IGNORECASE)
+        if m:
+            return text[m.end():]
+    return text
 
 
 class MultiAgentVoiceSessionRunner:
@@ -99,19 +114,30 @@ class MultiAgentVoiceSessionRunner:
                 await self._send_safe({
                     "type": "user_transcript", "text": event["text"], "final": True,
                 })
+                # Primary turn-end: ~0.7s of silence (endpointing → speech_final).
+                if event.get("speech_final"):
+                    self._maybe_start_turn()
             elif etype == "endpoint":
-                if self.assistant_speaking.is_set() or not self._pending_finals:
-                    continue
-                user_text = " ".join(self._pending_finals).strip()
-                self._pending_finals = []
-                if user_text:
-                    self._turn_task = asyncio.create_task(self._run_turn(user_text))
+                # Backup turn-end: UtteranceEnd at 1s, in case speech_final missed.
+                self._maybe_start_turn()
             elif etype == "speech_started":
                 await self._send_safe({"type": "speech_started"})
             elif etype == "error":
                 self.session.store.event("voice_error", where="stt", message=event.get("text", ""))
             elif etype == "closed":
                 return
+
+    def _maybe_start_turn(self) -> None:
+        """Kick off an agent turn from the buffered user finals, unless agents
+        are already speaking or there's nothing buffered. Idempotent: once fired
+        it clears the buffer, so the speech_final and UtteranceEnd triggers can't
+        double-fire the same utterance."""
+        if self.assistant_speaking.is_set() or not self._pending_finals:
+            return
+        user_text = " ".join(self._pending_finals).strip()
+        self._pending_finals = []
+        if user_text:
+            self._turn_task = asyncio.create_task(self._run_turn(user_text))
 
     async def _run_turn(self, user_text: str) -> None:
         self.assistant_speaking.set()
@@ -205,7 +231,28 @@ class MultiAgentVoiceSessionRunner:
         full_text: List[str] = []
         t_first_token: List[float] = []
 
+        # Labels to strip if the model prefixes its own line with them.
+        labels = [agent.name]
+        name_parts = (agent.name or "").split()
+        if len(name_parts) > 1:
+            labels.append(name_parts[0])
+        max_head = max((len(l) for l in labels), default=0) + 4
+
         async def claude_producer():
+            head = ""
+            head_done = False
+
+            async def emit(text: str):
+                if not text:
+                    return
+                full_text.append(text)
+                await text_for_tts.put(text)
+                await self._send_safe({
+                    "type": "assistant_text_delta",
+                    "text": text,
+                    "agent_id": agent_id,
+                })
+
             try:
                 async for delta in engine.stream_reply(
                     self.session.shared_history,
@@ -215,13 +262,19 @@ class MultiAgentVoiceSessionRunner:
                 ):
                     if not t_first_token:
                         t_first_token.append(time.time())
-                    full_text.append(delta)
-                    await text_for_tts.put(delta)
-                    await self._send_safe({
-                        "type": "assistant_text_delta",
-                        "text": delta,
-                        "agent_id": agent_id,
-                    })
+                    if not head_done:
+                        # Buffer just long enough to detect/strip a leading
+                        # self-name label before any audio or caption goes out.
+                        head += delta
+                        if len(head) < max_head and "\n" not in head:
+                            continue
+                        head_done = True
+                        await emit(_strip_self_label(head, labels))
+                        head = ""
+                        continue
+                    await emit(delta)
+                if not head_done:  # short reply that never hit the buffer threshold
+                    await emit(_strip_self_label(head, labels))
             finally:
                 await text_for_tts.put(None)
 

@@ -95,6 +95,11 @@
                background: var(--surface-2); border-radius: 3px; overflow: hidden; }
   .mic-level > div { height: 100%; width: 0%; background: var(--accent); transition: width 80ms linear; }
   .controls { display: flex; gap: 10px; align-items: center; padding: 8px 0; }
+  .timer { font-family: ui-monospace, Menlo, monospace; font-size: 13px; font-weight: 600;
+           color: var(--fg); background: var(--surface-2); padding: 5px 10px; border-radius: 8px;
+           letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 6px; }
+  .timer::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .timer.running::before { background: var(--accent); animation: pulse 1.6s infinite; }
   button { padding: 11px 22px; border: 0; border-radius: 10px; background: var(--accent);
            color: #fff; font-weight: 600; cursor: pointer; font: inherit; font-size: 14px;
            transition: background 0.15s, transform 0.05s; }
@@ -258,6 +263,7 @@
     <div class="meta" id="sid"></div>
   </div>
   <div class="controls" id="controls">
+    <span class="timer" id="timer" title="Time in this conversation">00:00</span>
     <select id="modelPicker" title="Model — locked once the session starts"></select>
     <button id="startBtn">Start session</button>
     <button id="stopBtn" class="secondary" style="display:none">End</button>
@@ -313,9 +319,16 @@
   let cast = [];
   let activeSpeaker = null;
   let assistantSpeaking = false;
-  let currentTurn = { agent_id: null, text: '' };
+  let currentTurn = null;  // the agent turn currently receiving text/audio (or null)
   let userFinals = [];     // committed final STT segments for the current utterance
   let userLiveEl = null;   // the single live user-caption bubble (null between turns)
+  // Speech sync: each agent turn's caption + red speaking-ring are driven off
+  // the audio playback clock so the transcript reveals in time with the voice
+  // (text deltas arrive far ahead of the spoken audio, so we pace them here).
+  let speechQueue = [];    // [{agent_id, el, fullText, shown, startCtx, endCtx, done, latency, metaAdded}]
+  let speechRaf = null;
+  let timerInt = null;     // conversation elapsed-time ticker
+  let timerStartMs = 0;
 
   // ---------- avatars ----------
   function initialsOf(name) {
@@ -345,10 +358,21 @@
     return false;
   }
 
+  // Reflow a hard-wrapped block-scalar string: join single line breaks within a
+  // paragraph into spaces, keep blank lines as paragraph breaks. Stops the
+  // YAML's manual line wraps from showing as awkward mid-sentence breaks.
+  function flowText(s) {
+    return (s || '').replace(/\r/g, '')
+      .split(/\n[ \t]*\n/)
+      .map(p => p.replace(/\s*\n\s*/g, ' ').trim())
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
   // ---------- situation popup (shown before the meeting begins) ----------
   function showSituation(d) {
     $('situationTitle').textContent = d.title || 'The situation';
-    $('situationBody').textContent = d.intro || '';
+    $('situationBody').textContent = flowText(d.intro);
     const img = $('situationImg');
     if (d.intro_image) {
       img.src = photoUrl(d.intro_image);
@@ -426,6 +450,7 @@
   }
 
   function setActiveSpeaker(speakerId) {
+    if (speakerId === activeSpeaker) return;  // idempotent — called every animation frame
     if (activeSpeaker) {
       const prev = $(`tile-${activeSpeaker === 'user' ? 'self' : activeSpeaker}`);
       if (prev) prev.classList.remove('speaking');
@@ -435,6 +460,90 @@
       const next = $(`tile-${speakerId === 'user' ? 'self' : speakerId}`);
       if (next) next.classList.add('speaking');
     }
+  }
+
+  // ---------- speech sync: reveal captions + speaking-ring in time with audio ----------
+  // The server streams an agent's text deltas well ahead of its spoken audio.
+  // Rather than dump the text instantly, we reveal each turn's caption in
+  // proportion to how much of that turn's audio has actually played, and we
+  // light the red speaking ring on whichever tile owns the audio playing *now*.
+  // Smallest sentence-ending offset strictly past `charN` (so we reveal whole
+  // sentences, not partial words). Falls back to the full length.
+  function sentenceCut(full, charN) {
+    const re = /[.!?]+(?=\s|$)/g; let m;
+    while ((m = re.exec(full)) !== null) {
+      const end = m.index + m[0].length;
+      if (end > charN) return end;
+    }
+    return full.length;
+  }
+  // Reveal the turn up to the end of whichever sentence the audio is currently
+  // in — so the caption advances sentence by sentence in time with the voice.
+  function revealTurn(turn, charN) {
+    if (!turn.el) turn.el = appendTranscript('assistant', turn.agent_id, '');
+    const cut = sentenceCut(turn.fullText, charN);
+    const shown = turn.fullText.slice(0, cut).trim();
+    if (shown !== turn.shown) {
+      turn.shown = shown;
+      turn.el.querySelector('.text').textContent = shown;
+      const tr = $('transcript'); if (tr) tr.scrollTop = tr.scrollHeight;
+    }
+    turn.revealedAll = turn.done && cut >= turn.fullText.length;
+    if (turn.revealedAll && turn.latency != null && !turn.metaAdded) {
+      const meta = document.createElement('span'); meta.className = 'meta';
+      meta.textContent = `${turn.latency}s`;
+      turn.el.appendChild(meta); turn.metaAdded = true;
+    }
+  }
+
+  function tickSpeech() {
+    speechRaf = requestAnimationFrame(tickSpeech);
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    let active = null;
+    for (const turn of speechQueue) {
+      if (turn.startCtx == null) {
+        // No audio for this turn yet. If it finished with no audio at all
+        // (e.g. TTS failed), fall back to showing the full text.
+        if (turn.done) revealTurn(turn, turn.fullText.length);
+        continue;
+      }
+      // Audio is buffered but this turn is NOT playing yet — keep it hidden so a
+      // later speaker's name doesn't appear before their voice is heard.
+      if (t < turn.startCtx) continue;
+      const dur = Math.max(0.05, turn.endCtx - turn.startCtx);
+      let prog = (t - turn.startCtx) / dur;
+      prog = prog > 1 ? 1 : prog;
+      revealTurn(turn, Math.floor(prog * turn.fullText.length));
+      if (t < turn.endCtx) active = turn.agent_id;
+    }
+    setActiveSpeaker(active);
+    // Drop fully-spoken, fully-revealed turns so the loop stays light.
+    while (speechQueue.length) {
+      const h = speechQueue[0];
+      const audioDone = h.startCtx != null && t > h.endCtx + 0.15;
+      const noAudioDone = h.startCtx == null && h.done && h.el;
+      if ((audioDone || noAudioDone) && h.revealedAll) speechQueue.shift();
+      else break;
+    }
+  }
+
+  // ---------- conversation timer ----------
+  const pad2 = (n) => (n < 10 ? '0' : '') + n;
+  function renderTimer() {
+    const s = Math.max(0, Math.floor((Date.now() - timerStartMs) / 1000));
+    $('timer').textContent = pad2(Math.floor(s / 60)) + ':' + pad2(s % 60);
+  }
+  function startTimer() {
+    timerStartMs = Date.now();
+    renderTimer();
+    $('timer').classList.add('running');
+    if (timerInt) clearInterval(timerInt);
+    timerInt = setInterval(renderTimer, 1000);
+  }
+  function stopTimer() {
+    if (timerInt) { clearInterval(timerInt); timerInt = null; }
+    $('timer').classList.remove('running');  // freezes at the final elapsed time
   }
 
   function setMicVisual(state) {
@@ -545,14 +654,21 @@
     src.connect(audioCtx.destination);
     const now = audioCtx.currentTime;
     if (playbackTime < now + 0.02) playbackTime = now + 0.02;
-    src.start(playbackTime);
-    playbackTime += buf.duration;
+    const chunkStart = playbackTime;
+    src.start(chunkStart);
+    playbackTime = chunkStart + buf.duration;
+    // Tie this chunk to the agent turn currently streaming, so the caption can
+    // be paced to the real audio and the red speaking ring follows the voice.
+    if (currentTurn) {
+      if (currentTurn.startCtx == null) currentTurn.startCtx = chunkStart;
+      currentTurn.endCtx = playbackTime;
+    }
+    if (speechRaf == null) tickSpeech();
     src.onended = () => {
       if (audioCtx && audioCtx.currentTime >= playbackTime - 0.01 && assistantSpeaking) {
-        // last chunk done, unmute mic
+        // Last scheduled chunk finished — the whole multi-speaker turn is done.
         assistantSpeaking = false;
         setMicMuted(false);
-        setActiveSpeaker(null);
       }
     };
   }
@@ -570,6 +686,9 @@
     $('stopBtn').style.display = 'inline-block';
     started = true;
     userTurns = 0;
+    speechQueue = [];
+    if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
+    startTimer();
     activeModel = $('modelPicker').value;
 
     const pidParam = participantId ? `&participant_id=${encodeURIComponent(participantId)}` : '';
@@ -601,21 +720,26 @@
           finalizeUserCaption();
           assistantSpeaking = true;
           setMicMuted(true);
-          setActiveSpeaker(m.agent_id);
-          currentTurn = { agent_id: m.agent_id, text: '', el: null };
+          // Don't draw the bubble yet. The name + caption appear the moment this
+          // turn's audio actually starts (see tickSpeech), so the speaker's name
+          // shows up in time with their voice instead of jumping in ahead of it.
+          currentTurn = {
+            agent_id: m.agent_id, el: null,
+            fullText: '', shown: '', startCtx: null, endCtx: null,
+            done: false, latency: null, metaAdded: false,
+          };
+          speechQueue.push(currentTurn);
         } else if (m.type === 'assistant_text_delta') {
-          if (!currentTurn.el) currentTurn.el = appendTranscript('assistant', m.agent_id, '');
-          currentTurn.text += m.text;
-          currentTurn.el.querySelector('.text').textContent = currentTurn.text;
-          $('transcript').scrollTop = $('transcript').scrollHeight;
+          if (currentTurn) currentTurn.fullText += m.text;  // buffered; revealed by tickSpeech
         } else if (m.type === 'assistant_done') {
-          if (currentTurn.el && m.latency_total_s != null) {
-            const meta = document.createElement('span'); meta.className = 'meta';
-            meta.textContent = `${m.latency_total_s}s`;
-            currentTurn.el.appendChild(meta);
+          if (currentTurn) {
+            currentTurn.done = true;
+            if (m.latency_total_s != null) currentTurn.latency = m.latency_total_s;
+            // No audio arrived for this turn (e.g. TTS failed) — show it now.
+            if (currentTurn.startCtx == null) revealTurn(currentTurn, currentTurn.fullText.length);
           }
-          currentTurn = { agent_id: null, text: '', el: null };
-          // Note: setMicMuted(false) is triggered by the last audio chunk's onended.
+          currentTurn = null;
+          // Mic re-opens when the last audio chunk finishes (playPcmChunk.onended).
         } else if (m.type === 'silence') {
           finalizeUserCaption();
           assistantSpeaking = false;
@@ -643,7 +767,10 @@
     ws = null; audioCtx = null; mediaStream = null;
     started = false;
     userFinals = []; userLiveEl = null;
-    currentTurn = { agent_id: null, text: '', el: null };
+    currentTurn = null;
+    speechQueue = [];
+    if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
+    stopTimer();
     $('stopBtn').style.display = 'none';
     $('startBtn').style.display = 'inline-block';
     $('startBtn').disabled = false;
@@ -739,7 +866,7 @@
       const d = await r.json();
       $('title').textContent = d.title;
       $('sid').textContent = `${d.mode === 'group' ? 'group meeting' : 'one on one'} · ${d.cast.length} character${d.cast.length === 1 ? '' : 's'}`;
-      $('briefBody').textContent = d.intro;
+      $('briefBody').textContent = flowText(d.intro);
       // The first-person "entering the room" photo lives in the situation popup
       // now (see showSituation), so keep the brief itself text-only.
       $('introPhoto').style.display = 'none';

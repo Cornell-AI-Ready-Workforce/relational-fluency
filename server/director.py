@@ -197,11 +197,15 @@ Decide who speaks next."""
 ## Scene
 {self.scenario.scene or '(no scene description)'}
 
+## Scenario routing guidance
+{self.scenario.director_prompt or '(none)'}
+
 ## Route to one agent when {last_name}'s turn turns to a SPECIFIC other agent — any of these:
 - Asks them a question, by name or clearly implied ("Jordan, can you walk us through the timeline?", "What did you see on the dashboards, Rae?").
 - Names them as the person who should speak / would know best ("Sam can speak to the deploy side", "Jordan probably has a better read on this than I do", "I'd want Rae to weigh in").
 - Directly invites their response or pushes back on their stated position, expecting a reply.
-Route to the agent who was turned to.
+- Attacks, belittles, talks down to, or throws a pointed jab AT another agent by name (e.g. {last_name} just went after someone). Route the targeted agent so they can fire back — heated exchanges should ping-pong, not die.
+Route to the agent who was turned to (or attacked).
 
 ## Return an EMPTY list (floor goes back to the human facilitator) when:
 - {last_name} answered or addressed the human, or made a general statement to the room with no specific person turned to.

@@ -34,9 +34,11 @@ def default_options() -> LiveOptions:
         sample_rate=16000,
         channels=1,
         interim_results=True,
-        utterance_end_ms=1200,
+        # The turn ends on `speech_final` after `endpointing` ms of silence
+        # (0.7s). utterance_end_ms (min 1000) stays as a backup trigger only.
+        utterance_end_ms=1000,
         vad_events=True,
-        endpointing=300,
+        endpointing=800,
     )
 
 
@@ -70,6 +72,9 @@ class DeepgramStream:
             _put({
                 "type": "final" if result.is_final else "partial",
                 "text": text,
+                # speech_final is set on the final that ends an utterance after
+                # `endpointing` ms of silence — our primary turn-end trigger.
+                "speech_final": bool(getattr(result, "speech_final", False)),
             })
 
         async def on_utterance_end(_self, *_a, **_kw):

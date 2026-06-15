@@ -100,7 +100,10 @@ class AgentEngine:
             parts.append(
                 "You are in a multi-party voice conversation. Keep your reply short — "
                 "one to three sentences usually. Others may speak after you. Do not "
-                "narrate, summarize, or restate what others said. Just speak as you would."
+                "narrate, summarize, or restate what others said. Just speak as you would.\n"
+                "Output ONLY the words you say out loud. Do NOT begin with your own name, "
+                "initials, or a 'Name:' speaker label — your name is shown separately. "
+                "No stage directions, no quotation marks around your line."
             )
         else:
             parts.append(
