@@ -1,0 +1,29 @@
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.env*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Secrets & environment
+.env
+*.pem
+
+# Data — raw research data never goes in git
+reddit-analysis/data/raw/
+finetuning/data/*.jsonl
+studies/**/data/raw/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
