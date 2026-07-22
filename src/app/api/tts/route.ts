@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Rachel voice — natural, professional female voice
-const VOICE_ID = '21m00Tcm4TlvDq8ikWAM';
+// Matilda voice — knowledgeable, professional female voice
+const VOICE_ID = 'XrExE9yKIg1WjnnlVkGX';
 
 export async function POST(request: NextRequest) {
   try {
@@ -11,8 +11,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing text' }, { status: 400 });
     }
 
-    // Strip JSON signals before sending to TTS
-    const cleanText = text.replace(/\{"action":\s*"[^"]*"\}/g, '').trim();
+    // Strip JSON signals and markdown formatting before sending to TTS
+    const cleanText = text
+      .replace(/\{"action":\s*"[^"]*"\}/g, '')
+      .replace(/\*\*(.+?)\*\*/g, '$1')
+      .replace(/\*(.+?)\*/g, '$1')
+      .replace(/[*_~`]/g, '')
+      .trim();
     if (!cleanText) {
       return NextResponse.json({ error: 'Empty text after cleaning' }, { status: 400 });
     }
