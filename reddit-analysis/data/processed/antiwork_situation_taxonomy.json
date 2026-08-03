@@ -1,0 +1,92 @@
+{
+ "total_posts": 99347,
+ "interpersonal_posts": 39301,
+ "counterparts": {
+  "boss_manager": 18931,
+  "owner_exec": 9140,
+  "hr": 7021,
+  "customer": 4011,
+  "coworker": 13218,
+  "own_team": 2309
+ },
+ "situations": {
+  "discipline_firing": {
+   "count": 6305,
+   "pct": 6.35,
+   "with_counterpart_pct": 61,
+   "scenario": "gap"
+  },
+  "quitting_resignation": {
+   "count": 3647,
+   "pct": 3.67,
+   "with_counterpart_pct": 60,
+   "scenario": "context"
+  },
+  "sick_pto_conflict": {
+   "count": 3276,
+   "pct": 3.3,
+   "with_counterpart_pct": 55,
+   "scenario": "gap"
+  },
+  "schedule_shift_conflict": {
+   "count": 2755,
+   "pct": 2.77,
+   "with_counterpart_pct": 56,
+   "scenario": "partial S2-C"
+  },
+  "workload_understaffing": {
+   "count": 2333,
+   "pct": 2.35,
+   "with_counterpart_pct": 64,
+   "scenario": "S2-C"
+  },
+  "unfair_rule_policy": {
+   "count": 1966,
+   "pct": 1.98,
+   "with_counterpart_pct": 65,
+   "scenario": "context"
+  },
+  "blame_humiliation": {
+   "count": 1631,
+   "pct": 1.64,
+   "with_counterpart_pct": 74,
+   "scenario": "S1-C"
+  },
+  "rto_remote_dispute": {
+   "count": 1202,
+   "pct": 1.21,
+   "with_counterpart_pct": 47,
+   "scenario": "S2-B"
+  },
+  "pay_raise_negotiation": {
+   "count": 740,
+   "pct": 0.74,
+   "with_counterpart_pct": 62,
+   "scenario": "S2-A"
+  },
+  "excluded_ignored": {
+   "count": 473,
+   "pct": 0.48,
+   "with_counterpart_pct": 65,
+   "scenario": "S4"
+  },
+  "team_morale_aftermath": {
+   "count": 194,
+   "pct": 0.2,
+   "with_counterpart_pct": 59,
+   "scenario": "S3"
+  },
+  "hostile_message": {
+   "count": 78,
+   "pct": 0.08,
+   "with_counterpart_pct": 68,
+   "scenario": "S1-B"
+  },
+  "credit_misattribution": {
+   "count": 77,
+   "pct": 0.08,
+   "with_counterpart_pct": 78,
+   "scenario": "S1-A / S4"
+  }
+ }
+}

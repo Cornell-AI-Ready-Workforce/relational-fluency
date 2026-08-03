@@ -1,0 +1,39 @@
+# Builds the agent image on pushes to main that touch agents/, pushes to ECR.
+# Requires repo secrets: AWS_ROLE_ARN (OIDC deploy role), AWS_REGION.
+# Deploy remains a manual `terraform apply -var container_image=...` —
+# intentional: the agent version must not change silently during a study wave.
+
+name: build-agent-image
+
+on:
+  push:
+    branches: [main]
+    paths: ["agents/**"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push (release SHA tag)
+        env:
+          REPO: ${{ steps.ecr.outputs.registry }}/relational-fluency/agent
+        run: |
+          SHA=${GITHUB_SHA::7}
+          docker build -t $REPO:$SHA agents/
+          docker push $REPO:$SHA
+          echo "Pushed $REPO:$SHA — deploy with: terraform apply -var container_image=$REPO:$SHA"

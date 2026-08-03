@@ -1,0 +1,84 @@
+# Full spec: scenario-specifications.md / Scenario_Specifications_Full.pdf
+# Situation grounding: situation-taxonomy.md
+id: S3
+title: Scenario 3 — Inspirational Leadership
+competency: inspirational_leadership
+focal_esci_items: 5, 7, 24 (R), 27, 61
+duration_minutes: 7-12
+modality: voice
+situation: The participant is interim team lead after a morale shock (see variations) and must
+  lead a demoralized three-person team through a quarter with no new resources. They review
+  short 1:1 notes on each member, then lead a team meeting followed by brief one-on-ones.
+fixed_opening_prompt: 'Casey (as the team meeting starts): “So which one is this — the ''we''re
+  a family'' speech, or the ''tighten our belts'' speech? Because we''ve heard both this year.”'
+ai_partners:
+- name: Casey
+  role: cynical challenger
+  behavior: Vocal, sharp, publicly challenges the participant early in the meeting (“is this
+    the 'we're a family' speech or the 'tighten our belts' speech?”). Ridicules spin and empty
+    motivation; respects honesty about constraints and concrete commitments. Comes around only
+    if the challenge is met without defensiveness or pulling rank.
+- name: Jordan
+  role: disengaged high performer
+  behavior: Formerly the team's best; now near-silent, minimal answers, camera-off energy. Says
+    nothing unless noticed and drawn out. Responds to genuine acknowledgment of the unfairness
+    and to being offered meaningful ownership — not to generic praise.
+- name: Avery
+  role: anxious junior
+  behavior: 'Worried about job security, asks quiet clarifying questions, watches how the leader
+    treats the other two. A barometer: relaxes visibly when the leader is honest and steady;
+    goes quiet when the leader spins or snaps.'
+pressure_points:
+- name: Honest message vs. spin
+  setup: The team waits for the opening message about the situation.
+  skill_shown: Acknowledges the situation plainly, no false promises, gives the team something
+    real to work toward (items 61, 7)
+  skill_missed: Corporate spin, minimization, or doom without direction (items 61, 24)
+- name: Public challenge
+  setup: Casey's sarcastic opening lands in front of everyone.
+  skill_shown: Meets it without defensiveness; validates the skepticism; answers the substance
+    (items 7, 27)
+  skill_missed: Pulls rank, gets defensive, or capitulates to the cynicism (item 24)
+- name: The silent one
+  setup: Jordan contributes nothing; nobody flags it.
+  skill_shown: Notices unprompted; draws Jordan out respectfully (in meeting or 1:1); connects
+    to what Jordan values; offers real ownership (item 27)
+  skill_missed: Never notices, or puts Jordan on the spot carelessly (items 27, 24)
+- name: Building pride
+  setup: The team's past work comes up — or could, if the leader brings it up.
+  skill_shown: Anchors identity in what the team does well; specific, credible pride — not flattery
+    (item 5)
+  skill_missed: Generic cheerleading, or nothing to be proud of (items 5, 24)
+- name: Commitments
+  setup: Members ask, in different ways, “so what actually changes?”
+  skill_shown: Makes few, specific, keepable commitments and repeats them back at the close
+    (items 61, 7)
+  skill_missed: Promises broadly to keep the room happy, or commits to nothing (item 61)
+variations:
+- label: A
+  name: Resignations over a pay dispute (IRB overview default)
+  description: Two colleagues resigned over pay; their work redistributes to the remaining three.
+    Leadership above declines to discuss compensation.
+  source_situations:
+  - team_morale_aftermath
+  - pay_raise_negotiation
+- label: B
+  name: Commission restructuring
+  description: A commission/bonus restructuring cut take-home pay for the team's strongest performers;
+    the decision was made two levels up.
+  source_situations:
+  - team_morale_aftermath
+- label: C
+  name: Unpopular mandated change
+  description: Head office mandated a new scheduling/workflow system the team is convinced will
+    fail; the mandate is fixed but implementation is local.
+  source_situations:
+  - unfair_rule_policy
+surface_randomization:
+- names (gender-balanced pool)
+- industry (software / retail ops / healthcare admin / logistics)
+- channel framing (video call / phone call)
+emotional_register_sources:
+- burnout_topic_15pct
+- venting_topic_5pct
+situation_taxonomy: ../situation-taxonomy.md

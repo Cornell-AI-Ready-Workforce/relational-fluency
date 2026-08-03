@@ -1,0 +1,76 @@
+# Full spec: scenario-specifications.md / Scenario_Specifications_Full.pdf
+# Situation grounding: situation-taxonomy.md
+id: S2
+title: Scenario 2 — Influence
+competency: influence
+focal_esci_items: 3, 17, 20, 38, 49, 68 (items 3/49 are frequently N/A in this dyadic setting;
+  see rating instrument)
+duration_minutes: 7-12
+modality: voice
+situation: The participant was promised an improvement that never came while their workload
+  grew (see variations). They requested this meeting with a sympathetic but constrained manager,
+  holding one piece of real leverage.
+fixed_opening_prompt: 'Morgan: “Thanks for grabbing time — I''ve got a hard stop in twenty,
+  but I wanted us to talk properly. What''s on your mind?”'
+ai_partners:
+- name: Morgan
+  role: the manager
+  behavior: 'Sympathetic but constrained. Genuinely values the participant; deploys realistic
+    deflections in order: (1) “budget''s locked — next cycle”, (2) “my hands are tied, this
+    is above me”, (3) vague goodwill without commitment (“let me see what I can do”). Goes formal
+    and cold if given an ultimatum; the chill must be repaired before progress resumes. Moves
+    only for: a reasoned case tied to contribution, framing that serves Morgan''s own interests
+    (retention, team output, what Morgan can defend upward), and concrete creative options (off-cycle
+    review, scope/title change, committed timeline).'
+pressure_points:
+- name: Opening frame
+  setup: Morgan's neutral invitation forces a choice of opening.
+  skill_shown: Reasoned case anchored in contribution and shared interests (items 68, 20)
+  skill_missed: Demand, complaint, or immediate ultimatum (item 68)
+- name: First deflection
+  setup: “Nothing I can do this cycle.”
+  skill_shown: Anticipated — has a response ready; adjusts approach rather than repeating (items
+    38, 17)
+  skill_missed: Repeats the same argument louder, or folds immediately (item 17)
+- name: Second deflection
+  setup: “Hands tied — this is above my pay grade.”
+  skill_shown: 'Switches strategy: equips Morgan to make the case upward; proposes what Morgan
+    can actually control (items 17, 3, 49, 20)'
+  skill_missed: Treats Morgan as the final wall; gives up or gets frustrated (item 17)
+- name: Leverage moment
+  setup: The competing offer (or equivalent leverage) surfaces — by participant's choice or
+    Morgan asking directly.
+  skill_shown: Framed as a shared problem to solve (“I'd rather stay — help me make that work”)
+    (items 20, 38)
+  skill_missed: Framed as a threat with a deadline; Morgan goes cold (item 38)
+- name: The close
+  setup: 'Morgan offers vague goodwill: “let me see what I can do.”'
+  skill_shown: Converts goodwill into a concrete, dated commitment while preserving warmth (items
+    68, 20)
+  skill_missed: Accepts the vagueness, or overplays and damages the relationship (item 68)
+variations:
+- label: A
+  name: Promised raise + competing offer (IRB overview default)
+  description: A raise promised two cycles ago never came; the participant now holds a written
+    competing offer ~15–20% higher.
+  source_situations:
+  - pay_raise_negotiation
+- label: B
+  name: Hybrid arrangement under RTO mandate
+  description: A return-to-office push threatens a long-standing, high-performing 2-days-remote
+    arrangement; leverage is a documented productivity record and a precedent set by another
+    team.
+  source_situations:
+  - rto_remote_dispute
+- label: C
+  name: Resources for an overloaded team
+  description: The participant's team absorbed a departed colleague's workload “temporarily”
+    six months ago; leverage is visible attrition risk and a concrete backfill proposal.
+  source_situations:
+  - workload_understaffing
+  - schedule_shift_conflict
+surface_randomization:
+- names (gender-balanced pool)
+- industry (software / retail ops / healthcare admin / logistics)
+- channel framing (video call / phone call)
+situation_taxonomy: ../situation-taxonomy.md

@@ -1,0 +1,338 @@
+[
+ {
+  "topic": 0,
+  "share": 7.6,
+  "terms": [
+   "manager",
+   "new",
+   "store",
+   "managers",
+   "management",
+   "started",
+   "team",
+   "doing",
+   "months",
+   "quit",
+   "coworkers",
+   "person",
+   "coworker",
+   "training"
+  ],
+  "examples": [
+   "thought it was a good job\u2026until. so i work for a private loan company. we work in mainly payday loan",
+   "wrongly suspected of theft at work i been working this job for over a year and never had any issues "
+  ]
+ },
+ {
+  "topic": 1,
+  "share": 15.2,
+  "terms": [
+   "life",
+   "feel",
+   "money",
+   "live",
+   "good",
+   "family",
+   "hard",
+   "living",
+   "doing",
+   "school",
+   "better",
+   "world",
+   "having",
+   "love"
+  ],
+  "examples": [
+   "does anyone have any suggestions for a career path for a 28 year old nonbinary person? (note: both m",
+   "20 and already tired of work. what do i do? as the title says, i recently entered into adulthood and"
+  ]
+ },
+ {
+  "topic": 2,
+  "share": 6.8,
+  "terms": [
+   "pay",
+   "paid",
+   "money",
+   "paying",
+   "paycheck",
+   "salary",
+   "employer",
+   "raise",
+   "month",
+   "getting",
+   "rate",
+   "check",
+   "bills",
+   "getting paid"
+  ],
+  "examples": [
+   "who would pay for that? ",
+   "$150k a day pay? "
+  ]
+ },
+ {
+  "topic": 3,
+  "share": 7.0,
+  "terms": [
+   "hours",
+   "hour",
+   "shift",
+   "break",
+   "shifts",
+   "schedule",
+   "lunch",
+   "overtime",
+   "minutes",
+   "breaks",
+   "clock",
+   "scheduled",
+   "minute",
+   "early"
+  ],
+  "examples": [
+   "would you work 84 hours a week? [ ",
+   "is 5.5 hour shift with no break worth it? i am schedule to work 5.5 hour work shift and i am debatin"
+  ]
+ },
+ {
+  "topic": 4,
+  "share": 7.0,
+  "terms": [
+   "interview",
+   "position",
+   "applied",
+   "interviews",
+   "experience",
+   "hiring",
+   "resume",
+   "applying",
+   "application",
+   "offer",
+   "questions",
+   "looking",
+   "role",
+   "apply"
+  ],
+  "examples": [
+   "is this normal ? i had just applied to a position on indeed . i end up applying on their website . t",
+   "if i had to go through more than 2 interviews for a job... fuck that job. i don understand places of"
+  ]
+ },
+ {
+  "topic": 5,
+  "share": 4.7,
+  "terms": [
+   "sick",
+   "pto",
+   "vacation",
+   "use",
+   "leave",
+   "sick leave",
+   "note",
+   "doctor",
+   "covid",
+   "doctors",
+   "calling",
+   "called",
+   "use pto",
+   "policy"
+  ],
+  "examples": [
+   "my go to work sick package i don have pto or sick time until a year so i have no choice \ud83e\udd72",
+   "pto vs sick leave in ca a law was passed that employees get 5 days of sick time. my questions is if "
+  ]
+ },
+ {
+  "topic": 6,
+  "share": 5.9,
+  "terms": [
+   "company",
+   "new",
+   "employees",
+   "team",
+   "raise",
+   "months",
+   "employee",
+   "laid",
+   "ceo",
+   "role",
+   "salary",
+   "bonus",
+   "companies",
+   "performance"
+  ],
+  "examples": [
+   "laid off due to pseudo outsourcing company has offices in every region of the world\u2026company stands u",
+   "company laid me off, now trying to casually scam me out of 2 months of severance i got laid off last"
+  ]
+ },
+ {
+  "topic": 7,
+  "share": 6.9,
+  "terms": [
+   "fired",
+   "email",
+   "hr",
+   "didn",
+   "today",
+   "sent",
+   "called",
+   "saying",
+   "let",
+   "supervisor",
+   "notice",
+   "employer",
+   "phone",
+   "check"
+  ],
+  "examples": [
+   "well thats one way to get fired i don kno\u2064w if i sho\u2064uld laug\u2064h at this gu\u2064y or be hap\u2064py for him",
+   "did my former employer lie about receiving paperwork from the dua? i was canned from my job on 1/17."
+  ]
+ },
+ {
+  "topic": 8,
+  "share": 9.9,
+  "terms": [
+   "boss",
+   "quit",
+   "coworker",
+   "bosses",
+   "tell",
+   "doesn",
+   "wants",
+   "coworkers",
+   "new",
+   "boss boss",
+   "says",
+   "new boss",
+   "ask",
+   "bad"
+  ],
+  "examples": [
+   "who has defy their boss anybody have past experiabce of defying their boss if do whsr hsppens",
+   "my boss better give me a raise then or he can go fuck himself "
+  ]
+ },
+ {
+  "topic": 9,
+  "share": 2.9,
+  "terms": [
+   "wage",
+   "minimum",
+   "minimum wage",
+   "living",
+   "hour",
+   "living wage",
+   "theft",
+   "wage theft",
+   "wages",
+   "bare",
+   "bare minimum",
+   "food",
+   "tips",
+   "paid minimum"
+  ],
+  "examples": [
+   "minimum wage i always see people discussing minimum wage, so what do you all think minimum wage shou",
+   "minimum wage clock thought you might find this sobering: minimum wage clock - "
+  ]
+ },
+ {
+  "topic": 10,
+  "share": 4.0,
+  "terms": [
+   "health",
+   "mental",
+   "mental health",
+   "insurance",
+   "health insurance",
+   "quit",
+   "issues",
+   "health issues",
+   "care",
+   "anxiety",
+   "physical",
+   "medical",
+   "stress",
+   "leave"
+  ],
+  "examples": [
+   "how to fix mental health at work [ ",
+   "mental health what are signs that a job is impacting your mental health?"
+  ]
+ },
+ {
+  "topic": 11,
+  "share": 6.1,
+  "terms": [
+   "office",
+   "home",
+   "remote",
+   "wfh",
+   "return",
+   "return office",
+   "hybrid",
+   "come",
+   "desk",
+   "come office",
+   "commute",
+   "rto",
+   "remotely",
+   "fully"
+  ],
+  "examples": [
+   "this is why they want you back in the office. ",
+   "what is your office setup? those who have been called back to the office, what exactly did you retur"
+  ]
+ },
+ {
+  "topic": 12,
+  "share": 10.7,
+  "terms": [
+   "workers",
+   "union",
+   "strike",
+   "labor",
+   "companies",
+   "employees",
+   "ai",
+   "worker",
+   "unions",
+   "class",
+   "rights",
+   "wages",
+   "government",
+   "power"
+  ],
+  "examples": [
+   "is the u.s general labor strike starting? question in title, i suppose with ups, sag-aftra, and the ",
+   "explaining us labor law: \"right to work\" & \"at-will\" employment many people are confused by two comm"
+  ]
+ },
+ {
+  "topic": 13,
+  "share": 5.3,
+  "terms": [
+   "fucking",
+   "fuck",
+   "shit",
+   "hate",
+   "bullshit",
+   "ass",
+   "literally",
+   "tired",
+   "stupid",
+   "gonna",
+   "anymore",
+   "hell",
+   "today",
+   "damn"
+  ],
+  "examples": [
+   "...the fuck. ",
+   "no shit sherlock \ud83d\ude44 "
+  ]
+ }
+]
