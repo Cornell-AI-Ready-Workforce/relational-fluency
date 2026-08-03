@@ -11,7 +11,11 @@ import json
 import os
 import re
 
-DIRECTOR_MODEL = os.getenv("DIRECTOR_MODEL", "claude-haiku-4-5")
+# Decision 2026-08-03: director = Gemini Flash (via the Cornell LiteLLM proxy,
+# which translates the Anthropic-format request to any configured backend).
+# The value must match the proxy's model alias — confirm with the proxy admin.
+# Running WITHOUT LiteLLM (direct Anthropic API)? Override to a Haiku model.
+DIRECTOR_MODEL = os.getenv("DIRECTOR_MODEL", "gemini-3.6-flash")
 MAX_TRANSCRIPT_CHARS = 6000
 
 FALLBACK = {

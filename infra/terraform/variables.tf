@@ -26,6 +26,12 @@ variable "container_image" {
   default     = ""
 }
 
+variable "anthropic_base_url" {
+  description = "Cornell LiteLLM proxy base URL (empty = direct Anthropic API)"
+  type        = string
+  default     = ""
+}
+
 variable "actor_model" {
   description = "Model for the actor (pin a snapshot and freeze for the study wave)"
   type        = string
@@ -33,9 +39,9 @@ variable "actor_model" {
 }
 
 variable "director_model" {
-  description = "Model for the director"
+  description = "Model for the director (LiteLLM alias; Gemini Flash per 2026-08-03 decision)"
   type        = string
-  default     = "claude-haiku-4-5"
+  default     = "gemini-3.6-flash"
 }
 
 variable "scenario_id" {

@@ -87,10 +87,11 @@ resource "aws_ecs_task_definition" "agent" {
     essential = true
     portMappings = [{ containerPort = 8100, protocol = "tcp" }]
     environment = [
-      { name = "SCENARIO_ID",    value = var.scenario_id },
-      { name = "ACTOR_MODEL",    value = var.actor_model },
-      { name = "DIRECTOR_MODEL", value = var.director_model },
-      { name = "PORT",           value = "8100" },
+      { name = "SCENARIO_ID",        value = var.scenario_id },
+      { name = "ACTOR_MODEL",        value = var.actor_model },
+      { name = "DIRECTOR_MODEL",     value = var.director_model },
+      { name = "ANTHROPIC_BASE_URL", value = var.anthropic_base_url },
+      { name = "PORT",               value = "8100" },
     ]
     secrets = [
       { name = "ANTHROPIC_API_KEY", valueFrom = aws_secretsmanager_secret.anthropic_key.arn },
