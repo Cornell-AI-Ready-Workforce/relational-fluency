@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { InterviewSession, InterviewReport } from '@/lib/types';
 import { ScoreCard } from '@/components/ScoreCard';
 import { TranscriptView } from '@/components/TranscriptView';
-import { saveInterview, saveReport, uploadAudio, saveAudioRecording } from '@/lib/db';
+import { saveEncounter } from '@/lib/db';
 import { getAudioBlob, clearAudioBlob } from '@/lib/audioStore';
 
 function OverallScoreCircle({ score }: { score: number }) {
@@ -72,7 +72,7 @@ function LoadingState() {
         <div className="w-16 h-16 border-4 border-purple-100 border-t-purple-600 rounded-full animate-spin mx-auto mb-6" />
         <h2 className="text-xl font-semibold text-gray-900 mb-2">Generating your report...</h2>
         <p className="text-gray-500 text-sm">
-          Claude is analyzing your interview responses and generating personalized feedback.
+          The AI judge is analyzing your interview responses and generating personalized feedback.
         </p>
       </div>
     </div>
@@ -113,7 +113,7 @@ export default function ReportPage() {
       const reportData: InterviewReport = await response.json();
       setReport(reportData);
 
-      // Persist to Supabase in background
+      // Persist to S3 in background
       persistToDatabase(session, reportData);
     } catch (err) {
       console.error('Error generating report:', err);
@@ -125,26 +125,13 @@ export default function ReportPage() {
 
   const persistToDatabase = async (session: InterviewSession, reportData: InterviewReport) => {
     try {
-      const interviewId = await saveInterview(session);
-      setSavedInterviewId(interviewId);
-
-      await saveReport(interviewId, reportData);
-
-      // Upload audio if available
       const { blob: audioBlob, duration } = getAudioBlob();
-      if (audioBlob) {
-        try {
-          const storagePath = await uploadAudio(interviewId, audioBlob);
-          await saveAudioRecording(interviewId, storagePath, duration);
-        } catch (audioErr) {
-          console.error('Audio upload failed (non-fatal):', audioErr);
-        }
-        clearAudioBlob();
-      }
-
+      const interviewId = await saveEncounter(session, reportData, audioBlob, duration);
+      setSavedInterviewId(interviewId);
+      if (audioBlob) clearAudioBlob();
       setIsSaved(true);
     } catch (dbErr) {
-      console.error('Database save failed (non-fatal):', dbErr);
+      console.error('Encounter save failed (non-fatal):', dbErr);
       // Don't surface this error to the user — report still shows
     }
   };

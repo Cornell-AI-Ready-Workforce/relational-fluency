@@ -2,16 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { getInterviews } from '@/lib/db';
+import { getInterviews, EncounterSummary } from '@/lib/db';
 
-interface InterviewRow {
-  id: string;
-  candidate_name: string;
-  format: string;
-  created_at: string;
-  start_time: number;
-  end_time: number;
-}
+type InterviewRow = EncounterSummary;
 
 function formatDuration(startTime: number, endTime: number): string {
   if (!startTime || !endTime) return '—';
@@ -144,21 +137,21 @@ export default function HistoryPage() {
                       <tr key={interview.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-4">
                           <span className="font-medium text-gray-900 text-sm">
-                            {interview.candidate_name}
+                            {interview.candidateName}
                           </span>
                         </td>
                         <td className="px-6 py-4">
                           <FormatBadge format={interview.format} />
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-500">
-                          {new Date(interview.created_at).toLocaleDateString('en-US', {
+                          {new Date(interview.savedAt).toLocaleDateString('en-US', {
                             year: 'numeric',
                             month: 'short',
                             day: 'numeric',
                           })}
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-500">
-                          {formatDuration(interview.start_time, interview.end_time)}
+                          {formatDuration(interview.startTime, interview.endTime)}
                         </td>
                         <td className="px-6 py-4">
                           <Link

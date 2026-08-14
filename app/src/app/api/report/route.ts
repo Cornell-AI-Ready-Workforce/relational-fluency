@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
 import { InterviewSession, InterviewReport, ScoreDimension } from '@/lib/types';
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// LLM judge served through the same LiteLLM gateway as the interviewer
+const BASE_URL = (process.env.OPENAI_BASE_URL ?? 'https://api.openai.com').replace(/\/$/, '');
+const JUDGE_MODEL = process.env.LITELLM_JUDGE_MODEL ?? 'nto.gemini-2.5-flash';
 
 export async function POST(request: NextRequest) {
   try {
@@ -95,19 +96,33 @@ Respond ONLY with a valid JSON object in exactly this format:
   ]
 }`;
 
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2048,
-      messages: [{ role: 'user', content: scoringPrompt }],
+    const response = await fetch(`${BASE_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: JUDGE_MODEL,
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: scoringPrompt }],
+      }),
     });
 
-    const rawContent = response.content[0];
-    if (rawContent.type !== 'text') {
+    if (!response.ok) {
+      const err = await response.text();
+      console.error('Judge model error:', err.slice(0, 500));
+      return NextResponse.json({ error: 'Judge model request failed' }, { status: 502 });
+    }
+
+    const completion = await response.json();
+    const rawText: string | undefined = completion.choices?.[0]?.message?.content;
+    if (!rawText) {
       return NextResponse.json({ error: 'Unexpected response format' }, { status: 500 });
     }
 
     // Extract JSON from the response
-    const jsonMatch = rawContent.text.match(/\{[\s\S]*\}/);
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return NextResponse.json({ error: 'Could not parse scoring response' }, { status: 500 });
     }
@@ -139,7 +154,7 @@ Respond ONLY with a valid JSON object in exactly this format:
       areasForGrowth: parsed.areasForGrowth,
       transcript: session.messages,
       selfReport: session.selfReport,
-      judgeModel: response.model,
+      judgeModel: completion.model ?? JUDGE_MODEL,
     };
 
     return NextResponse.json(report);

@@ -1,6 +1,5 @@
-import { useState, useCallback } from 'react';
-import { InterviewFormat, Student } from '@/lib/types';
-import AutocompleteInput from '@/components/AutocompleteInput';
+import { useState } from 'react';
+import { InterviewFormat } from '@/lib/types';
 import FormatCard from '@/components/FormatCard';
 
 interface InterviewSetupFormProps {
@@ -14,11 +13,6 @@ export default function InterviewSetupForm({ onStart }: InterviewSetupFormProps)
 
   const canStart = candidateName.trim().length > 0 && netId.trim().length > 0 && selectedFormat !== null;
 
-  const handleSelect = useCallback((student: Student) => {
-    setCandidateName(student.name);
-    setNetId(student.net_id);
-  }, []);
-
   const handleStart = () => {
     if (!canStart) return;
     onStart({
@@ -30,26 +24,30 @@ export default function InterviewSetupForm({ onStart }: InterviewSetupFormProps)
 
   return (
     <>
-      {/* Name + NetID with autocomplete */}
+      {/* Name + participant ID */}
       <div className="mb-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <AutocompleteInput
-          label="Your name"
-          placeholder="Start typing your name..."
-          value={candidateName}
-          onChange={setCandidateName}
-          onSelect={handleSelect}
-          searchField="name"
-          onKeyDown={(e) => { if (e.key === 'Enter' && canStart) handleStart(); }}
-        />
-        <AutocompleteInput
-          label="Your NetID"
-          placeholder="e.g. abc123"
-          value={netId}
-          onChange={setNetId}
-          onSelect={handleSelect}
-          searchField="net_id"
-          onKeyDown={(e) => { if (e.key === 'Enter' && canStart) handleStart(); }}
-        />
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Your name</label>
+          <input
+            type="text"
+            value={candidateName}
+            onChange={(e) => setCandidateName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && canStart) handleStart(); }}
+            placeholder="Enter your name"
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-900 placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Participant ID</label>
+          <input
+            type="text"
+            value={netId}
+            onChange={(e) => setNetId(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && canStart) handleStart(); }}
+            placeholder="e.g. abc123"
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-900 placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+          />
+        </div>
       </div>
 
       {/* Format Selection */}
@@ -99,7 +97,7 @@ export default function InterviewSetupForm({ onStart }: InterviewSetupFormProps)
           }
         `}
       >
-        {canStart ? `Start Interview as ${candidateName}` : 'Enter your name and NetID to begin'}
+        {canStart ? `Start Interview as ${candidateName}` : 'Enter your name and participant ID to begin'}
       </button>
 
       <p className="text-center text-xs text-gray-400 mt-4">

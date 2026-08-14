@@ -8,19 +8,9 @@ import { ScoreCard } from '@/components/ScoreCard';
 import { TranscriptView } from '@/components/TranscriptView';
 import { ScoreDimension, SelfReport, Message } from '@/lib/types';
 
-interface DetailData {
-  interview: { id: string; candidate_name: string; format: string; created_at: string };
-  messages: Array<{ role: string; content: string; timestamp: number }>;
-  report: {
-    overall_score: number;
-    summary: string;
-    strengths: string[];
-    areas_for_growth: string[];
-    scores: unknown;
-    self_report: unknown;
-  } | null;
-  audio: { storage_path: string; duration_seconds: number } | null;
-}
+import type { EncounterDetail } from '@/lib/db';
+
+type DetailData = EncounterDetail;
 
 function OverallScoreCircle({ score }: { score: number }) {
   const percentage = (score / 5) * 100;
@@ -133,7 +123,7 @@ export default function InterviewDetailPage() {
     );
   }
 
-  const { interview, messages, report, audio } = data;
+  const { interview, messages, report, audio, audioUrl } = data;
 
   const formatLabel = interview.format === 'star' ? 'STAR Behavioral Interview' : 'Role Play Scenarios';
   const formattedDate = new Date(interview.created_at).toLocaleDateString('en-US', {
@@ -142,14 +132,7 @@ export default function InterviewDetailPage() {
     day: 'numeric',
   });
 
-  // Build the public audio URL from Supabase storage
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const audioUrl =
-    audio && supabaseUrl
-      ? `${supabaseUrl}/storage/v1/object/public/interview-audio/${audio.storage_path}`
-      : null;
-
-  // Cast stored JSONB back to typed arrays
+  // Audio is served via a short-lived signed S3 URL from the API
   const scores = (report?.scores ?? []) as ScoreDimension[];
   const selfReport = report?.self_report as SelfReport | undefined;
   const typedMessages = messages as Message[];

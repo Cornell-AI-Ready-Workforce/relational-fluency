@@ -2,11 +2,6 @@ import React from 'react';
 
 export type InterviewFormat = 'star' | 'roleplay';
 
-export interface Student {
-  name: string;
-  net_id: string;
-}
-
 export interface FormatCardProps {
   format: InterviewFormat;
   title: string;
