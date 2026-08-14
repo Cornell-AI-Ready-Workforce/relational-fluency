@@ -2,11 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Message, InterviewFormat, InterviewSession, SelfReport } from '@/lib/types';
-import { getSystemPrompt } from '@/lib/prompts';
-import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
-import { useSpeechSynthesis } from '@/hooks/useSpeechSynthesis';
-import { useAudioRecorder } from '@/hooks/useAudioRecorder';
+import { InterviewFormat, InterviewSession, SelfReport } from '@/lib/types';
+import { useRealtimeSession } from '@/hooks/useRealtimeSession';
 import { setAudioBlob } from '@/lib/audioStore';
 
 // ─── Woman Avatar SVG ────────────────────────────────────────────────────────
@@ -216,94 +213,32 @@ function SelfReportModal({ candidateName, onSubmit }: SelfReportModalProps) {
   );
 }
 
-// ─── Text input fallback ─────────────────────────────────────────────────────
-interface TextInputFallbackProps {
-  onSubmit: (text: string) => void;
-  isProcessing: boolean;
-}
-
-function TextInputFallback({ onSubmit, isProcessing }: TextInputFallbackProps) {
-  const [text, setText] = useState('');
-
-  const handleSubmit = () => {
-    if (text.trim() && !isProcessing) {
-      onSubmit(text.trim());
-      setText('');
-    }
-  };
-
-  return (
-    <div className="flex gap-2 w-full max-w-md">
-      <input
-        type="text"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) handleSubmit(); }}
-        placeholder="Type your response..."
-        disabled={isProcessing}
-        className="flex-1 px-4 py-2 rounded-xl bg-[#3a3a3a] text-white placeholder-gray-500 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-      />
-      <button
-        onClick={handleSubmit}
-        disabled={!text.trim() || isProcessing}
-        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 text-white rounded-xl font-medium transition-colors text-sm"
-      >
-        Send
-      </button>
-    </div>
-  );
-}
-
-// ─── Synced subtitle component — one sentence at a time ─────────────────────
-function SyncedSubtitle({ text, progress, isSpeaking }: { text: string; progress: number; isSpeaking: boolean }) {
-  // Split into sentences on . ! ?
-  const sentences = text.match(/[^.!?]+[.!?]*/g)?.map(s => s.trim()).filter(Boolean) ?? [text];
-
-  if (!isSpeaking) {
-    // Interview done speaking — show last sentence
-    return (
-      <p className="text-white text-sm leading-relaxed text-center">
-        {sentences[sentences.length - 1]}
-      </p>
-    );
-  }
-
-  // Show the sentence currently being spoken
-  const idx = Math.min(
-    Math.floor(progress * sentences.length),
-    sentences.length - 1
-  );
-
-  return (
-    <p key={idx} className="text-white text-sm leading-relaxed text-center animate-fade-in">
-      {sentences[idx]}
-    </p>
-  );
-}
-
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function InterviewPage() {
   const router = useRouter();
   const [candidateName, setCandidateName] = useState('');
   const [netId, setNetId] = useState('');
   const [format, setFormat] = useState<InterviewFormat>('star');
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [streamingContent, setStreamingContent] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isComplete, setIsComplete] = useState(false);
   const [showSelfReport, setShowSelfReport] = useState(false);
-  const [selfReport, setSelfReport] = useState<SelfReport | undefined>();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [startTime] = useState(Date.now());
-  const [hasStarted, setHasStarted] = useState(false);
-  const [hasJoined, setHasJoined] = useState(false); // user must click Join before audio plays
+  const [hasJoined, setHasJoined] = useState(false); // user gesture unlocks mic + audio
+  const finishingRef = useRef(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const sessionRef = useRef<{ candidateName: string; netId: string; format: InterviewFormat } | null>(null);
-
-  const { transcript, isListening, isTranscribing, startListening, stopListening, error: speechError, isSupported } = useSpeechRecognition();
-  const { speak, cancel: cancelSpeech, unlockAudio, isSpeaking, audioProgress } = useSpeechSynthesis();
-  const { startRecording, stopRecording, durationSeconds: audioDuration } = useAudioRecorder();
+  const {
+    status,
+    messages,
+    liveAssistantText,
+    isSpeaking,
+    isUserSpeaking,
+    isComplete,
+    muted,
+    error,
+    connect,
+    toggleMute,
+    skipResponse,
+    end,
+  } = useRealtimeSession();
 
   // Load session config
   useEffect(() => {
@@ -313,171 +248,65 @@ export default function InterviewPage() {
     setCandidateName(config.candidateName);
     setNetId(config.netId ?? '');
     setFormat(config.format);
-    sessionRef.current = config;
   }, [router]);
 
   // Timer
   useEffect(() => {
+    if (!hasJoined) return;
     const interval = setInterval(() => setElapsedSeconds(s => s + 1), 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [hasJoined]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingContent]);
-
-  const startInterview = useCallback(async (name: string, fmt: InterviewFormat) => {
-    if (hasStarted) return;
-    setHasStarted(true);
-    setIsProcessing(true);
-
-    try { await startRecording(); } catch { /* optional */ }
-
-    const systemPrompt = getSystemPrompt(fmt);
-    const initialMessages: Message[] = [{
-      role: 'candidate',
-      content: 'Hello, I am ready to begin the interview.',
-      timestamp: Date.now(),
-    }];
+  const finishInterview = useCallback(async (report?: SelfReport) => {
+    if (finishingRef.current) return;
+    finishingRef.current = true;
 
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: initialMessages, format: fmt, candidateName: name, systemPrompt }),
-      });
-
-      if (!response.ok || !response.body) throw new Error('Failed to get AI response');
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let fullContent = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        fullContent += decoder.decode(value);
-        setStreamingContent(fullContent);
-      }
-
-      const aiMessage: Message = { role: 'interviewer', content: fullContent, timestamp: Date.now() };
-      setMessages([aiMessage]);
-      setStreamingContent('');
-
-      if (fullContent.includes('"action": "complete"') || fullContent.includes('"action":"complete"')) {
-        setIsComplete(true);
-        if (fmt === 'star') setShowSelfReport(true);
-        else finishInterview([], undefined, name, fmt, fullContent);
-      } else {
-        speak(fullContent);
-      }
-    } catch (err) {
-      console.error('Error starting interview:', err);
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [hasStarted, speak, startRecording]);
-
-  // Only start the interview once the user has clicked "Join" (ensures Chrome autoplay works)
-  useEffect(() => {
-    if (candidateName && format && !hasStarted && hasJoined) startInterview(candidateName, format);
-  }, [candidateName, format, hasStarted, hasJoined, startInterview]);
-
-  useEffect(() => {
-    if (transcript && !isListening && !isTranscribing && !isProcessing && !isSpeaking) {
-      handleCandidateResponse(transcript);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transcript, isListening, isTranscribing]);
-
-  const handleCandidateResponse = async (text: string) => {
-    if (!text.trim() || isProcessing || isComplete) return;
-    cancelSpeech();
-
-    const candidateMessage: Message = { role: 'candidate', content: text, timestamp: Date.now() };
-    const updatedMessages = [...messages, candidateMessage];
-    setMessages(updatedMessages);
-    setIsProcessing(true);
-
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: updatedMessages, format, candidateName }),
-      });
-
-      if (!response.ok || !response.body) throw new Error('Failed to get AI response');
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let fullContent = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        fullContent += decoder.decode(value);
-        setStreamingContent(fullContent);
-      }
-
-      const aiMessage: Message = { role: 'interviewer', content: fullContent, timestamp: Date.now() };
-      const finalMessages = [...updatedMessages, aiMessage];
-      setMessages(finalMessages);
-      setStreamingContent('');
-
-      if (fullContent.includes('"action": "complete"') || fullContent.includes('"action":"complete"')) {
-        setIsComplete(true);
-        speak(fullContent);
-        if (format === 'star') setTimeout(() => setShowSelfReport(true), 500);
-        else setTimeout(() => finishInterview(finalMessages, undefined, candidateName, format, fullContent), 2000);
-      } else {
-        speak(fullContent);
-      }
-    } catch (err) {
-      console.error('Error getting AI response:', err);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const finishInterview = async (
-    finalMessages: Message[],
-    report: SelfReport | undefined,
-    name: string,
-    fmt: InterviewFormat,
-    lastAiMessage?: string
-  ) => {
-    void lastAiMessage;
-    const messagesToSave = finalMessages.length > 0 ? finalMessages : messages;
-
-    try {
-      const blob = await stopRecording();
-      if (blob) setAudioBlob(blob, audioDuration);
-    } catch { /* optional */ }
+      const { blob, durationSeconds } = await end();
+      if (blob) setAudioBlob(blob, durationSeconds);
+    } catch { /* recording is optional */ }
 
     const session: InterviewSession = {
-      format: fmt, candidateName: name, netId,
-      messages: messagesToSave, selfReport: report,
-      startTime, endTime: Date.now(),
+      format,
+      candidateName,
+      netId,
+      messages,
+      selfReport: report,
+      startTime,
+      endTime: Date.now(),
     };
     sessionStorage.setItem('interviewSession', JSON.stringify(session));
     router.push('/report');
+  }, [end, format, candidateName, netId, messages, startTime, router]);
+
+  // When the model calls complete_interview, wait for its goodbye audio to
+  // finish, then move to self-report (STAR) or straight to the report.
+  useEffect(() => {
+    if (!isComplete || isSpeaking || finishingRef.current) return;
+    const timeout = setTimeout(() => {
+      if (format === 'star') setShowSelfReport(true);
+      else finishInterview();
+    }, 800);
+    return () => clearTimeout(timeout);
+  }, [isComplete, isSpeaking, format, finishInterview]);
+
+  const handleJoin = async () => {
+    setHasJoined(true);
+    try {
+      await connect(format, candidateName);
+    } catch {
+      // error state is surfaced by the hook
+    }
   };
 
   const handleSelfReportSubmit = (report: SelfReport) => {
-    setSelfReport(report);
     setShowSelfReport(false);
-    finishInterview(messages, report, candidateName, format);
+    finishInterview(report);
   };
 
   const handleFinishEarly = () => {
-    cancelSpeech();
     if (format === 'star') setShowSelfReport(true);
-    else finishInterview(messages, undefined, candidateName, format);
-  };
-
-  const handleMicClick = () => {
-    if (isListening) stopListening();
-    else startListening();
+    else finishInterview();
   };
 
   const formatTime = (seconds: number) => {
@@ -488,17 +317,14 @@ export default function InterviewPage() {
 
   const formatTitle = format === 'star' ? 'STAR Behavioral Interview' : 'Role Play Scenarios';
 
-  // Clean display content
+  // Caption: live transcript while the agent speaks, else its last message
   const lastInterviewerMessage = [...messages].reverse().find(m => m.role === 'interviewer');
-  const displayContent = streamingContent || lastInterviewerMessage?.content || '';
-  const cleanDisplayContent = displayContent
-    .replace(/\{"action":\s*"complete"\}/g, '')
-    .replace(/\{"action":"complete"\}/g, '')
-    .trim();
+  const captionText = (liveAssistantText || lastInterviewerMessage?.content || '').trim();
 
-  const micDisabled = isComplete || messages.length === 0 || isProcessing || isSpeaking || isTranscribing;
+  const isConnecting = status === 'connecting';
 
-  // ── Join screen (shown before interview starts, ensures Chrome autoplay gesture) ──
+  // ── Join screen (shown before interview starts; the click is the browser
+  //    gesture that unlocks microphone capture and audio playback) ──
   if (!hasJoined) {
     return (
       <div className="flex flex-col h-screen bg-[#1c1c1c] text-white items-center justify-center gap-8">
@@ -526,14 +352,14 @@ export default function InterviewPage() {
             {candidateName && <p className="text-gray-400 text-sm mt-1">Ready to join, {candidateName}?</p>}
           </div>
 
-          {/* Browser note */}
+          {/* Session note */}
           <div className="bg-[#2d2d2d] rounded-xl px-4 py-3 text-xs text-gray-400 text-left space-y-1">
-            <p><span className="text-green-400 font-medium">Voice input & output:</span> powered by ElevenLabs</p>
-            <p><span className="text-green-400 font-medium">Works in all browsers</span> — Chrome, Firefox, Safari</p>
+            <p><span className="text-green-400 font-medium">Live voice conversation</span> — just talk naturally, no buttons needed</p>
+            <p><span className="text-green-400 font-medium">Interruptions are okay</span> — the interviewer will stop and listen</p>
           </div>
 
           <button
-            onClick={() => { unlockAudio(); setHasJoined(true); }}
+            onClick={handleJoin}
             className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold text-base transition-colors"
           >
             Join Interview
@@ -559,10 +385,18 @@ export default function InterviewPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Recording dot */}
+          {/* Connection / recording status */}
           <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-gray-400 text-xs font-mono">{formatTime(elapsedSeconds)}</span>
+            {status === 'live' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-gray-400 text-xs font-mono">{formatTime(elapsedSeconds)}</span>
+              </>
+            ) : (
+              <span className="text-gray-500 text-xs">
+                {isConnecting ? 'Connecting…' : status === 'error' ? 'Disconnected' : ''}
+              </span>
+            )}
           </div>
         </div>
       </header>
@@ -588,8 +422,8 @@ export default function InterviewPage() {
           <div className="flex flex-col items-center gap-5">
             <WomanAvatar speaking={isSpeaking} />
 
-            {/* Processing dots */}
-            {isProcessing && (
+            {/* Connecting dots */}
+            {isConnecting && (
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                 <span className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -604,22 +438,16 @@ export default function InterviewPage() {
             </div>
           </div>
 
-          {/* AI message caption — synced word-by-word to audio when speaking */}
-          {cleanDisplayContent && !isProcessing && (
+          {/* Live caption of the interviewer's speech */}
+          {captionText && !isConnecting && (
             <div className="absolute top-4 left-4 right-4">
-              <div className="bg-black/60 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                {streamingContent ? (
-                  <>
-                    <p className="text-white text-sm leading-relaxed">{cleanDisplayContent}</p>
+              <div className="bg-black/60 backdrop-blur-sm rounded-xl px-4 py-3 text-center max-h-28 overflow-hidden flex flex-col justify-end">
+                <p className="text-white text-sm leading-relaxed">
+                  {captionText}
+                  {liveAssistantText && (
                     <span className="inline-block w-1 h-4 ml-1 bg-white/70 animate-pulse rounded-sm align-middle" />
-                  </>
-                ) : (
-                  <SyncedSubtitle
-                    text={cleanDisplayContent}
-                    progress={audioProgress}
-                    isSpeaking={isSpeaking}
-                  />
-                )}
+                  )}
+                </p>
               </div>
             </div>
           )}
@@ -664,14 +492,14 @@ export default function InterviewPage() {
             width: 160,
             height: 110,
             background: '#2d2d2d',
-            boxShadow: isListening
+            boxShadow: isUserSpeaking
               ? '0 0 0 2px #4ade80'
-              : isTranscribing
-              ? '0 0 0 2px #facc15'
+              : muted
+              ? '0 0 0 2px #ef4444'
               : '0 0 0 1px rgba(255,255,255,0.08)',
           }}
         >
-          {isListening ? (
+          {isUserSpeaking && !muted ? (
             <div className="flex flex-col items-center gap-2">
               <div className="flex items-end gap-0.5 h-8">
                 {[1,2,3,4,5,6,7,8].map((i) => (
@@ -686,23 +514,16 @@ export default function InterviewPage() {
                   />
                 ))}
               </div>
-              <span className="text-green-400 text-[10px] font-medium">Recording...</span>
-            </div>
-          ) : isTranscribing ? (
-            <div className="flex flex-col items-center gap-2">
-              <div className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
-              <span className="text-yellow-400 text-[10px] font-medium">Transcribing...</span>
+              <span className="text-green-400 text-[10px] font-medium">Speaking...</span>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-2">
               <div className="w-10 h-10 rounded-full bg-[#4a4a6a] flex items-center justify-center text-white text-sm font-semibold">
                 {candidateName ? candidateName[0].toUpperCase() : 'Y'}
               </div>
-              <span className="text-gray-400 text-[10px]">{candidateName || 'You'} (You)</span>
+              <span className="text-gray-400 text-[10px]">
+                {muted ? 'Muted' : `${candidateName || 'You'} (You)`}
+              </span>
             </div>
           )}
 
@@ -710,49 +531,33 @@ export default function InterviewPage() {
             <span className="text-gray-400 text-[9px]">{candidateName || 'You'}</span>
           </div>
         </div>
-
-        {/* Status bubble — transcribing */}
-        {isTranscribing && (
-          <div className="absolute bottom-28 left-1/2 -translate-x-1/2 bg-black/70 rounded-xl px-4 py-2 max-w-sm text-center">
-            <p className="text-yellow-300 text-xs">Processing your response...</p>
-          </div>
-        )}
       </div>
 
       {/* ── Bottom toolbar ── */}
       <div className="flex-shrink-0 bg-[#242424] border-t border-gray-800 py-4 px-6">
         <div className="flex items-center justify-center gap-4">
 
-          {/* Mic / unmute button */}
-          {isSupported ? (
-            <div className="flex flex-col items-center gap-1">
-              <button
-                onClick={handleMicClick}
-                disabled={micDisabled}
-                title={isListening ? 'Click to stop' : isSpeaking ? 'Wait for interviewer' : 'Click to speak'}
-                className={`
-                  flex items-center justify-center w-12 h-12 rounded-full transition-all duration-200
-                  ${isListening
-                    ? 'bg-red-500 hover:bg-red-600 ring-4 ring-red-400/30'
-                    : micDisabled
-                    ? 'bg-[#3a3a3a] text-gray-500 cursor-not-allowed'
-                    : 'bg-[#3a3a3a] hover:bg-[#4a4a4a] text-white'}
-                `}
-              >
-                <MicIcon muted={!isListening && !micDisabled ? false : micDisabled && !isListening} />
-              </button>
-              <span className="text-gray-400 text-[10px]">
-                {isListening ? 'Stop' : isTranscribing ? 'Reading...' : isSpeaking ? 'Wait...' : isProcessing ? 'Thinking...' : 'Speak'}
-              </span>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-1">
-              <div className="w-12 h-12 rounded-full bg-[#3a3a3a] flex items-center justify-center text-gray-500">
-                <MicIcon muted={true} />
-              </div>
-              <span className="text-gray-500 text-[10px]">No mic</span>
-            </div>
-          )}
+          {/* Mute / unmute button */}
+          <div className="flex flex-col items-center gap-1">
+            <button
+              onClick={toggleMute}
+              disabled={status !== 'live'}
+              title={muted ? 'Unmute' : 'Mute'}
+              className={`
+                flex items-center justify-center w-12 h-12 rounded-full transition-all duration-200
+                ${muted
+                  ? 'bg-red-500 hover:bg-red-600 ring-4 ring-red-400/30 text-white'
+                  : status !== 'live'
+                  ? 'bg-[#3a3a3a] text-gray-500 cursor-not-allowed'
+                  : 'bg-[#3a3a3a] hover:bg-[#4a4a4a] text-white'}
+              `}
+            >
+              <MicIcon muted={muted} />
+            </button>
+            <span className="text-gray-400 text-[10px]">
+              {muted ? 'Unmute' : 'Mute'}
+            </span>
+          </div>
 
           {/* Stop Video button (decorative) */}
           <div className="flex flex-col items-center gap-1">
@@ -762,11 +567,11 @@ export default function InterviewPage() {
             <span className="text-gray-400 text-[10px]">Stop Video</span>
           </div>
 
-          {/* Skip audio */}
+          {/* Skip the interviewer's current speech */}
           {isSpeaking && (
             <div className="flex flex-col items-center gap-1">
               <button
-                onClick={cancelSpeech}
+                onClick={skipResponse}
                 className="flex items-center justify-center w-12 h-12 rounded-full bg-[#3a3a3a] hover:bg-[#4a4a4a] text-white transition-colors"
                 title="Skip audio"
               >
@@ -808,17 +613,11 @@ export default function InterviewPage() {
           )}
         </div>
 
-        {/* Speech error */}
-        {speechError && (
-          <p className="mt-3 text-xs text-red-400 text-center">{speechError}</p>
-        )}
-
-        {false && (
-          <p className="mt-2 text-xs text-red-400 text-center">{speechError}</p>
+        {/* Session error */}
+        {error && (
+          <p className="mt-3 text-xs text-red-400 text-center">{error}</p>
         )}
       </div>
-
-      <div ref={messagesEndRef} />
 
       {showSelfReport && (
         <SelfReportModal candidateName={candidateName} onSubmit={handleSelfReportSubmit} />
