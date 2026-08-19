@@ -1,14 +1,18 @@
-# Builds the agent image on pushes to main that touch agents/, pushes to ECR.
-# Requires repo secrets: AWS_ROLE_ARN (OIDC deploy role), AWS_REGION.
-# Deploy remains a manual `terraform apply -var container_image=...` —
-# intentional: the agent version must not change silently during a study wave.
+# Builds the legacy agents/ image and pushes it to ECR.
+#
+# Manual-only on purpose. The agents/ service is the retired ElevenLabs
+# custom-LLM packaging (see agents/README.md) and is not on the live path, so
+# it should not build on every push — a docs edit under agents/ was enough to
+# trigger a failing run. Deploy stays a manual
+# `terraform apply -var container_image=...` so the agent version cannot change
+# silently during a study wave.
+#
+# Requires repo secret AWS_ROLE_ARN (OIDC deploy role). Region comes from the
+# AWS_REGION repo variable, defaulting to us-east-1.
 
 name: build-agent-image
 
 on:
-  push:
-    branches: [main]
-    paths: ["agents/**"]
   workflow_dispatch:
 
 permissions:
@@ -19,12 +23,20 @@ jobs:
   build-push:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Check deploy credentials are configured
+        run: |
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+            echo "AWS_ROLE_ARN is not set in this repository's secrets." >&2
+            echo "Add the OIDC deploy role ARN before running this workflow." >&2
+            exit 1
+          fi
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v5
+
+      - uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
 
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
