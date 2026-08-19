@@ -20,15 +20,33 @@ jobs:
         working-directory: agents
         run: pytest
 
-  app-build:
+  platform-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: "22"
-      - name: Install and build app
-        working-directory: app
+          python-version: "3.12"
+      - name: Install platform dependencies
+        run: pip install -r requirements.txt
+      # Imports the FastAPI app with no credentials present — catches syntax
+      # errors, bad imports, and anything that reaches for a key at import time.
+      - name: Import check
+        run: python -c "import server.app; print('server.app imports OK')"
+      - name: Validate scenario definitions
         run: |
-          npm install
-          npm run build
+          python - <<'PY'
+          import glob, sys, yaml
+          bad = []
+          files = sorted(glob.glob("scenarios/*.yaml"))
+          for path in files:
+              try:
+                  if not isinstance(yaml.safe_load(open(path)), dict):
+                      bad.append(f"{path}: not a mapping")
+              except yaml.YAMLError as exc:
+                  bad.append(f"{path}: {exc}")
+          print(f"checked {len(files)} scenarios")
+          if bad:
+              print("\n".join(bad), file=sys.stderr)
+              sys.exit(1)
+          PY
