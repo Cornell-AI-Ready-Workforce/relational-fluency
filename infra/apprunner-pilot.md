@@ -1,5 +1,13 @@
 # Pilot deployment — App Runner (no domain, no Terraform)
 
+> **Superseded (2026-08).** This runbook deploys the director–actor endpoint as
+> a custom LLM for **ElevenLabs Agents**, which is retired — voice now runs as a
+> single Gemini Live speech-to-speech session through the Cornell LiteLLM
+> gateway, hosted in the platform's own session broker. Kept because the Cornell
+> AWS authentication steps (§0) and the App Runner mechanics are still accurate
+> and useful. For current design see [`../docs/architecture.md`](../docs/architecture.md);
+> for production deployment use `infra/terraform/`.
+
 Fast path to a live HTTPS agent endpoint for the ElevenLabs pilot. Prereqs: AWS CLI
 configured, Docker running. Cost: ~$45–55/mo while running; **pause the service
 between pilot sessions** (~$2/mo paused). Production (data collection) uses

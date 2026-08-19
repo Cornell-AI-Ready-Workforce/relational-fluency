@@ -1,5 +1,11 @@
 # Deploying the relational-fluency platform to Fly.io
 
+> **Demo path only (2026-08).** Study deployment targets **AWS ECS/Fargate**
+> behind an ALB, with study data in encrypted S3 — see
+> [`architecture.md`](architecture.md) and `infra/terraform/`. Fly is fine for
+> quick demos and dogfooding, but participant data must not be collected here:
+> the persistent volume below sits outside the IRB data-management plan.
+
 A demo/dogfood deployment with HTTPS, persistent volume for the dataset, and
 WebSocket support. Roughly 30 minutes end-to-end.
 

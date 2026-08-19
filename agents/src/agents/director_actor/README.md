@@ -1,5 +1,14 @@
 # Director–actor agent (ElevenLabs custom LLM)
 
+> **Superseded transport (2026-08).** The director–actor *method* below is
+> current and central to the study. Its packaging is not: this service answers
+> `POST /v1/chat/completions` as a custom LLM for ElevenLabs Agents, which is
+> retired. The live implementation is `server/director.py` + `server/steering.py`
+> in the platform, driving Gemini Live through the session broker. The lasting
+> value here is the persona text and director policies in `scenarios.py`.
+> These two implementations should converge — see
+> [`../../../../docs/architecture.md`](../../../../docs/architecture.md).
+
 Closed-loop steering for the simulation encounters (Research Note v2): a cheap
 **director** model reads the transcript each turn, classifies the conversation state
 against the scenario's pressure points and yield conditions, and injects a one-line

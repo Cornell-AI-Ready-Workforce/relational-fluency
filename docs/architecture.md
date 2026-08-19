@@ -1,49 +1,85 @@
 # Architecture
 
-Interactive diagram: `architecture-diagram.html` (also in the Cowork artifact gallery).
 Cost detail: `RelationalFluency_AWS_Cost_Estimation.pdf`.
+Migration state and verified gateway findings: [`migration-plan.md`](migration-plan.md).
+
+> **Superseded approach.** Until 2026-08 this document described voice
+> encounters running on **ElevenLabs Agents** with a custom-LLM callback to a
+> director–actor service, calling Anthropic through LiteLLM. ElevenLabs and
+> Deepgram are retired, and models now go through the Cornell LiteLLM gateway.
+> The design below replaces it.
 
 ## Overview
 
-Voice encounters run on **ElevenLabs Agents** (STT, turn-taking, TTS); **AWS** hosts
-the participant web app, the director–actor steering endpoint, and all study data.
+Voice encounters run as a **single speech-to-speech session** with Gemini Live,
+reached through the Cornell LiteLLM gateway. **AWS** hosts the participant web
+app, the session broker, and all study data.
 
 ```
-Participant browser (Prolific worker)
- ├─ web app UI ───────────────► ALB ─► Web app (Fargate) ─► RDS (PIDs, assignment)
- ├─ ElevenLabs voice widget ◄─► ElevenLabs Agents
- │                                  └─ per turn ─► ALB ─► Director–actor (Fargate)
- │                                                   ├─► LiteLLM → Anthropic
- │                                                   │    (Haiku director, Sonnet actor)
- │                                                   └─► S3 steering logs
+Participant browser (via CloudResearch Connect → Qualtrics)
+ ├─ web app UI ──────────────► ALB ─► Web app + session broker (Fargate)
+ ├─ mic/speaker over WSS ◄──► session broker
+ │                              ├─ relays audio both ways
+ │                              ├─ end-of-turn detection (see note)
+ │                              ├─ director: transcript → one stage direction/turn
+ │                              │    └─► LiteLLM → Gemini Flash (text)
+ │                              ├─► LiteLLM → Gemini Live (speech-to-speech, the actor)
+ │                              └─► S3: audio, transcript, steering log
  └─ webcam (MediaRecorder) ── presigned upload ────────► S3 recordings
-                                                          ▲
- Post-call worker: ElevenLabs audio+transcript ──────────┘ (keyed by conversation_id)
 
  S3 ─► CloudFront (signed URLs) ─► raters ─► Qualtrics (ESCI items)
                                      └─► gold labels ─► scorer + feedback models
                                                           └─► Phase-4 RCT
 ```
 
-## The ten flows
+One **aligned record per encounter** in S3: video, audio, transcript, and
+steering log under a single encounter id, so the modalities stay joined.
 
-1. Prolific sends the participant with PID; completion code returns at the end.
-2. Web app handles consent, session, scenario/variation assignment (state in RDS).
-3. Live voice conversation (WebRTC) between participant and the ElevenLabs agent.
-4. Each turn, ElevenLabs calls our custom-LLM endpoint through the ALB.
-5. Director (Haiku) classifies conversation state → one-line stage direction;
-   actor (Sonnet) speaks the next line. See `agents/src/agents/director_actor/`.
-6. Every stage direction is logged to S3 — the steering audit trail.
-7. Webcam video uploads browser → presigned S3 URL (never transits app servers/NAT).
-8. Post-call worker pulls ElevenLabs audio + transcript via API into S3, keyed by
-   `conversation_id` so video / audio / transcript stay aligned per encounter.
-9. Raters stream recordings via CloudFront signed URLs.
-10. Qualtrics ratings → reliability gates (ICC/κ) → scorer & feedback model training.
+## The flows
 
-## Key decisions (see docs/decisions/ and project notes)
+1. CloudResearch Connect recruits and pays; Qualtrics issues the participant key
+   and collects the WEIP baseline before the app opens.
+2. Web app handles consent, webcam permission, and counterbalanced assignment of
+   the four scenarios; state keyed by participant.
+3. Live voice conversation over a WebSocket to the session broker.
+4. The broker relays participant audio to Gemini Live and streams agent audio
+   back, holding the gateway key so it never reaches the browser.
+5. Each turn, the director reads the transcript and emits one stage direction;
+   the actor follows it on the next turn. Every direction is logged.
+6. Webcam video uploads browser → presigned S3 URL, never transiting app servers.
+7. Raters stream recordings via CloudFront signed URLs and score 22 ESCI items
+   in Qualtrics.
+8. Ratings → reliability gates (ICC/κ) → scorer and feedback model training →
+   Phase-4 RCT.
 
-- The agent is the measurement instrument: frozen during collection; steering happens
-  only through the director loop. Fine-tuning applies to the scorer/feedback models.
-- ElastiCache omitted at study scale; ngrok is pilot-only (ALB in production).
-- Fixed First Message lives in ElevenLabs config; personas and director policies in
-  `agents/src/agents/director_actor/scenarios.py`.
+## Turn-taking is ours to implement
+
+Gemini Live's native VAD is **not exposed through the LiteLLM bridge**:
+`turn_detection` is accepted but inert, and without an explicit
+`input_audio_buffer.commit` + `response.create` the model never replies. So the
+broker owns end-of-turn detection (silence threshold on the participant stream)
+and barge-in (dropping queued agent audio when the participant starts speaking).
+
+This is the one capability the architecture slide assumes is free and is not.
+Going direct to Google would restore it, at the cost of GCP credentials and
+leaving the gateway. Exact working session config is in the migration plan.
+
+## Key decisions
+
+- **The agent is the measurement instrument.** It is frozen during collection;
+  the only variation comes through the director loop. Fine-tuning applies to the
+  scorer and feedback models, never to the encounter agent mid-study.
+- **Fixed opening beat per scenario** for comparability; the agent improvises
+  within its behavior policy afterwards.
+- **Canonical scenario specs** live in `reddit-analysis/scenarios/S{1..4}-*.yaml`
+  and are compiled into runnable personas, rather than being hand-copied into
+  engine YAML.
+- ElastiCache omitted at study scale.
+
+## Known duplication
+
+There are currently **two director–actor implementations**: `server/director.py`
+plus `server/steering.py` (live, used by the running platform) and
+`agents/src/agents/director_actor/` (built for the retired ElevenLabs
+custom-LLM callback). These should converge on the `server/` one; `agents/`
+retains value mainly for its persona text and scenario policies.

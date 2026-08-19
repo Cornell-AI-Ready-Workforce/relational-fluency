@@ -1,16 +1,22 @@
-# Infrastructure — director–actor agent on AWS
+# Infrastructure — AWS (Terraform)
 
-Terraform for the agent endpoint described in `docs/architecture.md` and priced in
+Terraform for the AWS side of `docs/architecture.md`, priced in
 `docs/RelationalFluency_AWS_Cost_Estimation.pdf`: VPC (2 AZ, single NAT), ALB + ACM
 (HTTPS), ECS Fargate service, ECR, KMS-encrypted S3 study-data bucket, Secrets
-Manager, CloudWatch logs. **Scope: the agent endpoint only** — the participant web
-app, RDS, and CloudFront land in a later pass once the Phase-1 app exists.
+Manager, CloudWatch logs.
+
+**Scope:** currently provisions the agent endpoint only. Serving the simulation
+platform itself (web app + session broker) and adding CloudFront for rater
+review land in a later pass, as part of the migration.
 
 ## Prerequisites
 
 - AWS account + credentials (`aws sts get-caller-identity` works)
 - Terraform ≥ 1.6, Docker, AWS CLI v2
-- A Route 53 hosted zone for a domain you control (e.g. `yourlab.org`)
+- A Route 53 hosted zone. Cornell IT has already delegated
+  `ai-ready-workforce.ai.cornell.edu` to Route 53, so subdomains are
+  self-service. The study hostnames `rf.` and `api.rf.` under that zone still
+  need records and an ACM certificate.
 
 ## Deploy (first time, ~20 minutes)
 
@@ -23,8 +29,10 @@ terraform apply -var domain_name=yourlab.org
 # note the outputs: agent_url, ecr_repository
 
 # 2) Set the two secrets (values never touch git or Terraform state)
+# The LLM key is the Cornell LiteLLM virtual key (sk-...), used for both the
+# Gemini Live actor and the director. The secret id is unchanged for now.
 aws secretsmanager put-secret-value \
-  --secret-id relational-fluency/anthropic-api-key --secret-string 'sk-ant-...'
+  --secret-id relational-fluency/anthropic-api-key --secret-string 'sk-...'
 aws secretsmanager put-secret-value \
   --secret-id relational-fluency/agent-api-key --secret-string "$(openssl rand -hex 32)"
 
@@ -45,7 +53,11 @@ terraform apply -var domain_name=yourlab.org -var container_image=$REPO:$SHA
 curl https://agent.yourlab.org/health
 ```
 
-## Wire into ElevenLabs
+## Wire into ElevenLabs (superseded)
+
+> Retired — voice no longer runs on ElevenLabs Agents. Kept only because the
+> `agent_url` output and TLS wiring below are still how you verify the endpoint
+> is reachable. Current design: [`../docs/architecture.md`](../docs/architecture.md).
 
 In the agent's settings → LLM → **Custom LLM**:
 
@@ -72,8 +84,10 @@ In the agent's settings → LLM → **Custom LLM**:
 
 ## What's deliberately NOT here yet
 
-- Web app service + RDS (needs the Phase-1 app first)
+- Serve the simulation platform (web app + session broker) on Fargate behind the
+  ALB, with WSS for the participant audio stream — next build item
+- `rf.` / `api.rf.` records in the delegated Route 53 zone + ACM certificate
 - CloudFront + rater access (needs recordings to exist)
-- Post-call sync worker (ElevenLabs → S3) — next build item
+- RDS for participant keys and scenario assignment
 - Remote Terraform state backend (uncomment in `versions.tf` after creating a
   state bucket)

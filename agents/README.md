@@ -1,4 +1,11 @@
-# agents/ — Conversational AI agent service (Phases 2 & 6)
+# agents/ — Conversational AI agent service (legacy)
+
+> **Status (2026-08):** not on the live path. This service was built to sit
+> behind ElevenLabs Agents as a custom LLM, and the `app/` it was written to
+> serve no longer exists — the simulation platform at the repo root took its
+> place. Encounters now run through `server/` (session broker + director +
+> multi-agent engine). Retained for its persona text and director policies,
+> which should be folded into the platform's scenario compiler.
 
 FastAPI service that powers the conversational agents embedded in the simulation app.
 
