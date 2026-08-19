@@ -44,26 +44,63 @@ Today: Deepgram STT → Claude → ElevenLabs TTS (`server/voice/stt.py`,
 Target: a single speech-to-speech session with native turn-taking and
 barge-in.
 
-**Findings (verified 2026-08-19, Cornell LiteLLM gateway):**
+### Verified working: `nto.gemini-live-2.5-flash` via Cornell LiteLLM
 
-| Model | Result |
-|---|---|
-| `gpt-realtime-2.1` | Works fully — speech in, transcription, audio + transcript out, server VAD |
-| `nto.gemini-live-2.5-flash` | Session opens, then silence. No response events. |
-| `nto.gemini-live-2.5-flash-native-audio` | Same — non-functional |
+Confirmed end to end on 2026-08-19 with real speech: participant audio in,
+input transcription, agent audio + transcript out, function calling. No Google
+credentials needed — it runs on the Cornell gateway key.
 
-Transport notes: the WebRTC path (`/v1/realtime/client_secrets`) is not wired up
-on the gateway; the working path is a **WebSocket** at
-`/v1/realtime?model=…`, and the upgrade requires HTTP/1.1 (HTTP/2 returns 404).
+**Connection**
 
-**Consequence:** Gemini Live must be reached **directly on GCP credit**, as the
-architecture slide shows — not proxied through Cornell LiteLLM. This needs
-Google credentials, which are not present on this machine (no `gcloud`, no ADC,
-no API key).
+- `wss://api.ai.it.cornell.edu/v1/realtime?model=nto.gemini-live-2.5-flash`
+- Header `Authorization: Bearer <litellm-key>`
+- The upgrade **requires HTTP/1.1** — over HTTP/2 the endpoint 404s.
+- The WebRTC path (`/v1/realtime/client_secrets`) is not wired up for any model
+  on this gateway. WebSocket is the only transport.
 
-Design the voice layer behind one provider interface so the model is a config
-choice: `gemini-3.1-flash-live-preview` (target), `gpt-realtime-2.1` (verified
-fallback via LiteLLM, useful for pilots while GCP access is arranged).
+**Session config — keep it flat and minimal.** This is the trap that cost a day:
+an over-specified `session.update` leaves the session alive but permanently
+mute (`session.created` arrives, then nothing, forever — no error).
+
+```jsonc
+// works
+{ "type": "session.update",
+  "session": { "instructions": "...", "voice": "Puck",
+               "tools": [ /* function defs */ ] } }
+```
+
+Do **not** send `modalities` / `output_modalities`, the nested GA
+`audio: { input: {...}, output: {...} }` block, `input_audio_format`,
+`output_audio_format`, or `input_audio_transcription`. Any of these silently
+kills the session.
+
+**Audio + turn-taking**
+
+- Input: 16 kHz mono PCM16, base64, via `input_audio_buffer.append`.
+- Output: `response.output_audio.delta` (base64 PCM) plus
+  `response.output_audio_transcript.delta`.
+- Input transcription is on by default —
+  `conversation.item.input_audio_transcription.completed` arrives without asking.
+- **Server VAD does not work through the bridge.** `turn_detection` is accepted
+  but has no effect: without an explicit
+  `input_audio_buffer.commit` + `response.create`, the model never responds.
+
+That last point contradicts "turn-taking & interruptions built in" on the
+architecture slide. Through LiteLLM they are not built in, so **the broker must
+run its own end-of-turn detection** (silence threshold on the participant
+stream) and drive commits. Barge-in likewise has to be handled locally by
+dropping queued agent audio when the participant starts speaking. Budget for
+this; it is the main piece the gateway does not give us for free.
+
+**Alternatives.** `gpt-realtime-2.1` also works on the same gateway and *does*
+provide server VAD natively — useful as a comparison or fallback.
+`nto.gemini-live-2.5-flash-native-audio` exists but was not re-tested after the
+config fix. Going direct to Google for `gemini-3.1-flash-live-preview` remains
+an option later (it would restore native VAD), but is not needed to start
+Phase 1 and would require GCP credentials that are not on this machine.
+
+Keep the voice layer behind one provider interface so the model stays a config
+choice.
 
 Reference implementation of the working browser↔broker↔gateway transport —
 24 kHz PCM16 capture, gapless playback, barge-in, two-sided recording — is at
