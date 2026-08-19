@@ -1,0 +1,77 @@
+# Full spec: scenario-specifications.md / Scenario_Specifications_Full.pdf
+# Situation grounding: situation-taxonomy.md
+id: S1
+title: Scenario 1 — Conflict Management
+competency: conflict_management
+focal_esci_items: 8, 14, 15 (R), 26, 46
+duration_minutes: 7-12
+modality: voice
+situation: A peer has repeatedly wronged the participant despite polite requests to stop (see
+  variations), and a colleague is urging a public, sarcastic call-out. The participant first
+  talks with the instigating colleague, then has a live conversation with the peer.
+fixed_opening_prompt: 'Riley (message read aloud): “Okay, I saw what happened today. You cannot
+  let this slide again. Say something in the team channel — want me to draft it? Because honestly,
+  I have some ideas.”'
+ai_partners:
+- name: Riley
+  role: instigating colleague
+  behavior: Friendly ally who is outraged on the participant's behalf and pushes for a public,
+    sarcastic call-out. Offers to draft the message. Backs down gracefully if redirected; needles
+    (“so you're just letting it go?”) if the participant avoids the issue entirely.
+- name: Sam
+  role: the peer
+  behavior: 'The counterpart in the dispute. Opens defensive: minimizes, cites technicalities,
+    deflects blame. Escalates if attacked publicly or insulted; offers a partial, face-saving
+    concession (“fine, I guess I could have handled it differently”) once the participant raises
+    the issue directly and non-aggressively. Full resolution only if the participant works with
+    the concession rather than demanding total capitulation.'
+pressure_points:
+- name: Retaliation fork
+  setup: Riley pushes the public call-out and offers a draft.
+  skill_shown: Declines retaliation and redirects to a direct conversation (items 8, 26)
+  skill_missed: Endorses the public message, or avoids the issue entirely (items 15, 8)
+- name: Raising it
+  setup: The conversation with Sam begins; Sam does not know what it is about.
+  skill_shown: Names the issue plainly, factually, without accusation (items 26, 46)
+  skill_missed: Hints, sarcasm, or never quite saying it (items 15, 46)
+- name: Defensive spike
+  setup: Sam minimizes and cites technicalities; tension rises.
+  skill_shown: De-escalates — acknowledges Sam's view, lowers the temperature, returns to the
+    issue (item 14)
+  skill_missed: Matches the defensiveness, interrupts, threatens escalation (item 14)
+- name: Audience decision
+  setup: Sam asks that this stay “between us”; Riley separately asks “so, do I get to post it?”
+  skill_shown: Keeps it between the parties while securing real resolution (items 8, 26)
+  skill_missed: Widens the audience punitively (item 14)
+- name: Face-saving concession
+  setup: Sam offers a partial concession without full admission.
+  skill_shown: Accepts the opening, converts it into concrete agreement (items 8, 14)
+  skill_missed: Rejects it as insufficient and reopens the fight, or takes it as total victory
+    and gloats (items 14, 15)
+variations:
+- label: A
+  name: Taken credit (IRB overview default)
+  description: 'Sam has repeatedly presented the participant''s work as their own. Assignment
+    rule: not used in sessions that include Scenario 4.'
+  source_situations:
+  - credit_misattribution
+- label: B
+  name: Hostile after-hours message
+  description: Sam sent the participant an aggressive 11pm message about a shared deliverable,
+    cc'ing two teammates.
+  source_situations:
+  - hostile_message
+- label: C
+  name: Public blame
+  description: Sam blamed the participant in front of the manager for a mistake that was demonstrably
+    shared.
+  source_situations:
+  - blame_humiliation
+surface_randomization:
+- names (gender-balanced pool)
+- industry (software / retail ops / healthcare admin / logistics)
+- channel framing (video call / phone call)
+emotional_register_sources:
+- quitting_resignation
+- unfair_rule_policy
+situation_taxonomy: ../situation-taxonomy.md

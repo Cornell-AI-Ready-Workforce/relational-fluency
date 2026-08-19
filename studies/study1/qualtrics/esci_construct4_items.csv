@@ -1,0 +1,23 @@
+item_no,competency,item_text,reverse_scored
+8,conflict_management,Tries to resolve conflict instead of allowing it to fester,FALSE
+14,conflict_management,Resolves conflict by de-escalating the emotions in a situation,FALSE
+15,conflict_management,Allows conflict to fester,TRUE
+26,conflict_management,Tries to resolve conflict by openly talking about disagreements with those involved,FALSE
+46,conflict_management,Resolves conflict by bringing it into the open,FALSE
+3,influence,Convinces others by getting support from key people,FALSE
+17,influence,Convinces others by using multiple approaches,FALSE
+20,influence,Convinces others by appealing to their self-interest,FALSE
+38,influence,Anticipates how others will respond when trying to convince them,FALSE
+49,influence,Convinces others by developing behind-the-scenes support,FALSE
+68,influence,Convinces others through discussion,FALSE
+5,inspirational_leadership,Leads by building pride in the group,FALSE
+7,inspirational_leadership,Leads by inspiring people,FALSE
+24,inspirational_leadership,Does not inspire followers,TRUE
+27,inspirational_leadership,Leads by bringing out the best in people,FALSE
+61,inspirational_leadership,Leads by articulating a compelling vision,FALSE
+11,teamwork,Does not cooperate with others,TRUE
+12,teamwork,Works well in teams by being supportive,FALSE
+25,teamwork,Works well in teams by encouraging cooperation,FALSE
+33,teamwork,Works well in teams by soliciting others' input,FALSE
+37,teamwork,Works well in teams by being respectful of others,FALSE
+56,teamwork,Works well in teams by encouraging participation of everyone present,FALSE

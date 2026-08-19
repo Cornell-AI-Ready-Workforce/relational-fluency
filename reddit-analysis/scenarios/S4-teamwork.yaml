@@ -1,0 +1,84 @@
+# Full spec: scenario-specifications.md / Scenario_Specifications_Full.pdf
+# Situation grounding: situation-taxonomy.md
+id: S4
+title: Scenario 4 — Teamwork
+competency: teamwork
+focal_esci_items: 11 (R), 12, 25, 33, 37, 56
+duration_minutes: 7-12
+modality: voice
+situation: A four-person group task (see variations for the task). One AI teammate is quietly
+  excluded and another dominates and restates others' ideas as their own. The session ends with
+  the group allocating named, visible pieces of the final deliverable.
+fixed_opening_prompt: 'Drew (as the working session starts): “Okay — I already sketched most
+  of this out last night, so the fastest thing is I walk you through my plan and we split whatever''s
+  left. Sound good?”'
+ai_partners:
+- name: Drew
+  role: the dominator
+  behavior: Arrives with a pre-built plan; talks over others; restates others' ideas in own
+    words moments later (“right, so what I'm saying is…”) and later attributes a key idea to
+    self. Not malicious — responds well to structured turn-taking and explicit credit norms
+    if someone establishes them; steamrolls if no one does.
+- name: Quinn
+  role: the excluded member
+  behavior: Has the task-critical insight but is interrupted the one time they offer it, then
+    goes quiet. Will not re-enter unless invited by name. If included, contributes substantially;
+    if not, the group's output is visibly worse.
+- name: Jesse
+  role: neutral member
+  behavior: 'Cooperative, mildly deferential to Drew, follows whatever norms emerge. Mirrors
+    the participant: includes Quinn if the participant does, defers to Drew if the participant
+    does.'
+pressure_points:
+- name: The takeover bid
+  setup: Drew's opening claims the plan and the process.
+  skill_shown: Redirects to a process where everyone contributes, without attacking Drew (items
+    25, 56)
+  skill_missed: Accepts Drew's frame; the session becomes Drew's briefing (items 11, 56)
+- name: The interruption
+  setup: Quinn starts to offer the critical insight; Drew talks over it; Quinn goes quiet.
+  skill_shown: 'Notices unprompted and retrieves it: “Quinn, you were saying —?” (items 56,
+    33)'
+  skill_missed: Lets it vanish; the insight is lost (items 56, 33)
+- name: Idea laundering
+  setup: Drew restates Quinn's (or the participant's) idea as “what I'm saying”.
+  skill_shown: 'Re-attributes casually and without humiliation: “right — building on Quinn''s
+    point…” (items 37, 12)'
+  skill_missed: Says nothing, or corrects Drew in a way that shames (items 37, 25)
+- name: Soliciting the quiet
+  setup: Decision nears with Quinn (and possibly Jesse) having said little.
+  skill_shown: Actively solicits their input before closing (items 33, 56)
+  skill_missed: Closes with whoever spoke loudest (items 33, 11)
+- name: Credit allocation
+  setup: The group must put names on visible pieces of the deliverable.
+  skill_shown: Distributes visible, credited work fairly, reflecting actual contributions incl.
+    Quinn's insight (items 12, 25)
+  skill_missed: Lets Drew take the visible pieces; keeps or accepts an unfair split (items 11,
+    12)
+variations:
+- label: A
+  name: Rollout plan (default)
+  description: The group plans the rollout of a new internal process; Quinn's insight concerns
+    a failure mode from a previous rollout.
+  source_situations:
+  - excluded_ignored
+  - credit_misattribution
+- label: B
+  name: Client presentation
+  description: The group prepares a client-facing presentation; Quinn's insight concerns the
+    client's actual priorities.
+  source_situations:
+  - excluded_ignored
+  - credit_misattribution
+- label: C
+  name: Backlog triage
+  description: The group prioritizes a shared project backlog; Quinn's insight concerns a dependency
+    that reorders everything.
+  source_situations:
+  - excluded_ignored
+  - credit_misattribution
+surface_randomization:
+- names (gender-balanced pool)
+- industry (software / retail ops / healthcare admin / logistics)
+- channel framing (video call / phone call)
+situation_taxonomy: ../situation-taxonomy.md

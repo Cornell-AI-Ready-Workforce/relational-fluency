@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Relational Fluency — Platform Architecture</title>
+<style>
+  body { margin:0; background:#f9f9f7; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .wrap { max-width:1280px; margin:0 auto; padding:20px; }
+  h1 { font-size:20px; color:#0b0b0b; margin:8px 0 2px; }
+  .sub { font-size:13px; color:#52514e; margin-bottom:14px; }
+  svg { background:#fcfcfb; border:1px solid #e1e0d9; border-radius:10px; width:100%; height:auto; }
+  .zone { fill:none; stroke-width:1.4; rx:10; }
+  .zlabel { font-size:12.5px; font-weight:700; }
+  .box { rx:7; stroke-width:1.2; }
+  .t { font-size:11.5px; fill:#0b0b0b; }
+  .ts { font-size:10px; fill:#52514e; }
+  .flow { fill:none; stroke-width:1.8; }
+  .badge { font-size:10.5px; font-weight:700; fill:#ffffff; }
+  .leg { font-size:11px; fill:#0b0b0b; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Relational Fluency — Simulation Platform Architecture</h1>
+<div class="sub">Voice encounters run on ElevenLabs; AWS hosts the app, the director–actor steering endpoint, and the study data. Numbered flows are listed bottom-left.</div>
+<svg viewBox="0 0 1240 880" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L8,4.5 L0,9 z" fill="#52514e"/>
+    </marker>
+  </defs>
+
+  <!-- ================= ZONES ================= -->
+  <rect class="zone" x="20" y="55" width="300" height="315" stroke="#2a78d6"/>
+  <text class="zlabel" x="32" y="78" fill="#2a78d6">PARTICIPANT BROWSER (Prolific worker)</text>
+
+  <rect class="zone" x="370" y="55" width="250" height="250" stroke="#eb6834"/>
+  <text class="zlabel" x="382" y="78" fill="#eb6834">ELEVENLABS AGENTS</text>
+
+  <rect class="zone" x="680" y="55" width="430" height="500" stroke="#1baf7a"/>
+  <text class="zlabel" x="692" y="78" fill="#1baf7a">AWS VPC (us-east-1)</text>
+
+  <rect class="zone" x="370" y="345" width="250" height="120" stroke="#4a3aa7"/>
+  <text class="zlabel" x="382" y="368" fill="#4a3aa7">LLM (via Cornell LiteLLM proxy)</text>
+
+  <rect class="zone" x="370" y="600" width="740" height="180" stroke="#898781"/>
+  <text class="zlabel" x="382" y="623" fill="#52514e">DOWNSTREAM — RATING &amp; MODELING (Phases 2–4)</text>
+
+  <!-- ============ PARTICIPANT boxes ============ -->
+  <rect class="box" x="40" y="95"  width="260" height="66" fill="#eef4fc" stroke="#2a78d6"/>
+  <text class="t" x="52" y="115" font-weight="600">Study web app UI</text>
+  <text class="ts" x="52" y="131">consent → scenario intro → encounter</text>
+  <text class="ts" x="52" y="146">→ completion code back to Prolific</text>
+
+  <rect class="box" x="40" y="175" width="260" height="56" fill="#eef4fc" stroke="#2a78d6"/>
+  <text class="t" x="52" y="196" font-weight="600">ElevenLabs voice widget</text>
+  <text class="ts" x="52" y="212">WebRTC audio, turn-taking handled remotely</text>
+
+  <rect class="box" x="40" y="245" width="260" height="56" fill="#eef4fc" stroke="#2a78d6"/>
+  <text class="t" x="52" y="266" font-weight="600">Webcam capture (MediaRecorder)</text>
+  <text class="ts" x="52" y="282">chunked upload, presigned URLs</text>
+
+  <rect class="box" x="40" y="315" width="260" height="40" fill="#ffffff" stroke="#c3c2b7"/>
+  <text class="t" x="52" y="340">Prolific — recruitment, PID, payment</text>
+
+  <!-- ============ ELEVENLABS boxes ============ -->
+  <rect class="box" x="388" y="95" width="214" height="60" fill="#fdf0ea" stroke="#eb6834"/>
+  <text class="t" x="400" y="116" font-weight="600">STT · turn-taking · TTS</text>
+  <text class="ts" x="400" y="132">fixed First Message; dynamic variables</text>
+
+  <rect class="box" x="388" y="167" width="214" height="52" fill="#fdf0ea" stroke="#eb6834"/>
+  <text class="t" x="400" y="187" font-weight="600">Custom-LLM call per turn</text>
+  <text class="ts" x="400" y="203">POST /v1/chat/completions</text>
+
+  <rect class="box" x="388" y="231" width="214" height="56" fill="#fdf0ea" stroke="#eb6834"/>
+  <text class="t" x="400" y="252" font-weight="600">Call audio + transcript</text>
+  <text class="ts" x="400" y="268">retained; fetched post-call via API</text>
+
+  <!-- ============ LLM boxes ============ -->
+  <rect class="box" x="388" y="380" width="214" height="66" fill="#f1effa" stroke="#4a3aa7"/>
+  <text class="t" x="400" y="401" font-weight="600">Anthropic API</text>
+  <text class="ts" x="400" y="417">Haiku = director (state + direction)</text>
+  <text class="ts" x="400" y="432">Sonnet = actor (the character)</text>
+
+  <!-- ============ AWS boxes ============ -->
+  <rect class="box" x="700" y="95" width="130" height="46" fill="#eafaf3" stroke="#1baf7a"/>
+  <text class="t" x="712" y="114" font-weight="600">ALB + ACM</text>
+  <text class="ts" x="712" y="130">public HTTPS</text>
+
+  <rect class="box" x="700" y="165" width="180" height="56" fill="#eafaf3" stroke="#1baf7a"/>
+  <text class="t" x="712" y="186" font-weight="600">Web app (Fargate)</text>
+  <text class="ts" x="712" y="202">sessions, assignment, uploads</text>
+
+  <rect class="box" x="700" y="243" width="180" height="70" fill="#eafaf3" stroke="#1baf7a"/>
+  <text class="t" x="712" y="264" font-weight="600">Director–actor server</text>
+  <text class="ts" x="712" y="280">(Fargate) steers the agent each</text>
+  <text class="ts" x="712" y="295">turn; logs every stage direction</text>
+
+  <rect class="box" x="920" y="165" width="170" height="56" fill="#eafaf3" stroke="#1baf7a"/>
+  <text class="t" x="932" y="186" font-weight="600">RDS PostgreSQL</text>
+  <text class="ts" x="932" y="202">PIDs, scenarios, metadata</text>
+
+  <rect class="box" x="920" y="243" width="170" height="84" fill="#eafaf3" stroke="#1baf7a"/>
+  <text class="t" x="932" y="264" font-weight="600">S3 — study data</text>
+  <text class="ts" x="932" y="280">video · audio · transcripts</text>
+  <text class="ts" x="932" y="295">steering logs (audit trail)</text>
+  <text class="ts" x="932" y="310">KMS-encrypted, versioned</text>
+
+  <rect class="box" x="920" y="350" width="170" height="46" fill="#eafaf3" stroke="#1baf7a"/>
+  <text class="t" x="932" y="369" font-weight="600">CloudFront</text>
+  <text class="ts" x="932" y="385">signed URLs for raters</text>
+
+  <rect class="box" x="700" y="350" width="180" height="46" fill="#ffffff" stroke="#c3c2b7"/>
+  <text class="ts" x="712" y="369">Secrets Manager · KMS · ECR</text>
+  <text class="ts" x="712" y="385">CloudWatch alarms · IAM</text>
+
+  <rect class="box" x="700" y="470" width="390" height="60" fill="#ffffff" stroke="#c3c2b7"/>
+  <text class="t" x="712" y="491" font-weight="600">Post-call sync worker</text>
+  <text class="ts" x="712" y="507">pulls ElevenLabs audio+transcript via API → S3, keyed by</text>
+  <text class="ts" x="712" y="521">conversation_id so video / audio / transcript stay aligned</text>
+
+  <!-- ============ DOWNSTREAM boxes ============ -->
+  <rect class="box" x="390" y="640" width="220" height="90" fill="#ffffff" stroke="#898781"/>
+  <text class="t" x="402" y="661" font-weight="600">Trained raters</text>
+  <text class="ts" x="402" y="677">stream recordings (CloudFront),</text>
+  <text class="ts" x="402" y="692">rate 22 ESCI items in Qualtrics,</text>
+  <text class="ts" x="402" y="707">open-ended “what could be better”</text>
+
+  <rect class="box" x="650" y="640" width="200" height="90" fill="#ffffff" stroke="#898781"/>
+  <text class="t" x="662" y="661" font-weight="600">Gold labels</text>
+  <text class="ts" x="662" y="677">ICC / κ reliability gates;</text>
+  <text class="ts" x="662" y="692">expert-rated anchor subsample</text>
+
+  <rect class="box" x="890" y="640" width="200" height="90" fill="#ffffff" stroke="#898781"/>
+  <text class="t" x="902" y="661" font-weight="600">Scorer + feedback models</text>
+  <text class="ts" x="902" y="677">LLM-as-judge vs. human κ;</text>
+  <text class="ts" x="902" y="692">feedback model → Phase-4 RCT</text>
+  <text class="ts" x="902" y="707">(agent stays frozen)</text>
+
+  <!-- ================= FLOWS ================= -->
+  <!-- 1 Prolific -> web app UI -->
+  <path class="flow" d="M170,315 L170,165" stroke="#52514e" marker-end="url(#a)"/>
+  <circle cx="170" cy="308" r="9" fill="#2a78d6"/><text class="badge" x="167" y="312">1</text>
+
+  <!-- 2 web app UI -> ALB -->
+  <path class="flow" d="M300,120 C480,30 620,50 700,105" stroke="#52514e" marker-end="url(#a)"/>
+  <circle cx="520" cy="52" r="9" fill="#2a78d6"/><text class="badge" x="517" y="56">2</text>
+
+  <!-- 3 widget <-> ElevenLabs -->
+  <path class="flow" d="M300,203 L388,160" stroke="#52514e" marker-end="url(#a)"/>
+  <path class="flow" d="M388,140 L305,185" stroke="#52514e" marker-end="url(#a)"/>
+  <circle cx="345" cy="177" r="9" fill="#eb6834"/><text class="badge" x="342" y="181">3</text>
+
+  <!-- 4 ElevenLabs -> ALB -> director-actor -->
+  <path class="flow" d="M602,193 L700,135" stroke="#52514e" marker-end="url(#a)"/>
+  <path class="flow" d="M765,141 L775,243" stroke="#52514e" marker-end="url(#a)"/>
+  <circle cx="652" cy="167" r="9" fill="#eb6834"/><text class="badge" x="649" y="171">4</text>
+
+  <!-- 5 director-actor -> LLM -->
+  <path class="flow" d="M700,290 C650,320 630,370 602,395" stroke="#52514e" marker-end="url(#a)"/>
+  <circle cx="643" cy="337" r="9" fill="#4a3aa7"/><text class="badge" x="640" y="341">5</text>
+
+  <!-- 6 director-actor -> S3 (steering logs) -->
+  <path class="flow" d="M880,280 L920,282" stroke="#52514e" marker-end="url(#a)"/>
+  <circle cx="899" cy="272" r="9" fill="#1baf7a"/><text class="badge" x="896" y="276">6</text>
+
+  <!-- 7 webcam -> S3 presigned (big arc under everything) -->
+  <path class="flow" d="M300,273 C480,540 720,430 920,315" stroke="#52514e" stroke-dasharray="5 4" marker-end="url(#a)"/>
+  <circle cx="475" cy="452" r="9" fill="#2a78d6"/><text class="badge" x="472" y="456">7</text>
+
+  <!-- 8 ElevenLabs recordings -> sync worker -> S3 -->
+  <path class="flow" d="M495,287 C520,430 600,490 700,500" stroke="#52514e" marker-end="url(#a)"/>
+  <path class="flow" d="M1000,470 L1000,327" stroke="#52514e" marker-end="url(#a)"/>
+  <circle cx="655" cy="480" r="9" fill="#eb6834"/><text class="badge" x="652" y="484">8</text>
+
+  <!-- web app <-> RDS -->
+  <path class="flow" d="M880,193 L920,193" stroke="#52514e" marker-end="url(#a)"/>
+
+  <!-- 9 CloudFront -> raters -->
+  <path class="flow" d="M920,380 C700,420 560,560 505,640" stroke="#52514e" marker-end="url(#a)"/>
+  <circle cx="545" cy="580" r="9" fill="#898781"/><text class="badge" x="542" y="584">9</text>
+
+  <!-- 10 raters -> gold labels -> scorer -->
+  <path class="flow" d="M610,685 L650,685" stroke="#52514e" marker-end="url(#a)"/>
+  <path class="flow" d="M850,685 L890,685" stroke="#52514e" marker-end="url(#a)"/>
+  <circle cx="870" cy="675" r="9" fill="#898781"/><text class="badge" x="866" y="679">10</text>
+
+  <!-- ================= LEGEND ================= -->
+  <text class="zlabel" x="30" y="415" fill="#0b0b0b">FLOWS</text>
+  <text class="leg" x="30" y="437">1  Prolific sends participant with PID; completion code returns</text>
+  <text class="leg" x="30" y="456">2  App session, consent, scenario/variation assignment (→ RDS)</text>
+  <text class="leg" x="30" y="475">3  Live voice conversation (WebRTC) with the agent</text>
+  <text class="leg" x="30" y="494">4  Each turn: ElevenLabs calls the custom-LLM endpoint</text>
+  <text class="leg" x="30" y="513">5  Director (Haiku) classifies state → stage direction;</text>
+  <text class="leg" x="43" y="530">actor (Sonnet) speaks the next line</text>
+  <text class="leg" x="30" y="549">6  Every stage direction logged to S3 (audit trail)</text>
+  <text class="leg" x="30" y="568">7  Webcam video: browser → presigned S3 upload (bypasses servers)</text>
+  <text class="leg" x="30" y="587">8  Post-call: worker pulls ElevenLabs audio + transcript → S3</text>
+  <text class="leg" x="30" y="606">9  Raters stream recordings via CloudFront signed URLs</text>
+  <text class="leg" x="30" y="625">10 Ratings → reliability gates → scorer &amp; feedback training</text>
+  <text class="ts" x="30" y="660">Solid = request/response · Dashed = direct-to-storage upload</text>
+  <text class="ts" x="30" y="676">Agent is frozen during collection; steering via director only.</text>
+</svg>
+</div>
+</body>
+</html>

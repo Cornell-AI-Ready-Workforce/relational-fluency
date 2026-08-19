@@ -8,3 +8,24 @@ logs/*.jsonl
 # Session dataset — participant audio + transcripts (PII), large; never commit
 data/
 *.wav
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.env*.local
+# Python
+*.py[cod]
+venv/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+# Secrets & environment
+*.pem
+# Data — raw research data never goes in git
+reddit-analysis/data/raw/
+finetuning/data/*.jsonl
+studies/**/data/raw/
+# OS / editor
+.vscode/
+.idea/
