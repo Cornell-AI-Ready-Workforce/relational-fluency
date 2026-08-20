@@ -10,14 +10,21 @@ variable "region" {
 }
 
 variable "domain_name" {
-  description = "Root domain with an existing Route 53 hosted zone (e.g. example.org)"
+  description = "Zone delegated to Route 53 by Cornell IT"
   type        = string
+  default     = "ai-ready-workforce.ai.cornell.edu"
 }
 
-variable "agent_subdomain" {
-  description = "Subdomain for the agent endpoint (agent.<domain_name>)"
+variable "app_subdomain" {
+  description = "Participant entrance — the web app and session broker (WSS)"
   type        = string
-  default     = "agent"
+  default     = "rf"
+}
+
+variable "api_subdomain" {
+  description = "Backend API"
+  type        = string
+  default     = "api.rf"
 }
 
 variable "container_image" {
@@ -26,22 +33,22 @@ variable "container_image" {
   default     = ""
 }
 
-variable "anthropic_base_url" {
-  description = "Cornell LiteLLM proxy base URL (empty = direct Anthropic API)"
+variable "llm_base_url" {
+  description = "Cornell LiteLLM gateway base URL. Serves both the realtime actor and the text director."
   type        = string
-  default     = ""
+  default     = "https://api.ai.it.cornell.edu"
 }
 
 variable "actor_model" {
-  description = "Model for the actor (pin a snapshot and freeze for the study wave)"
+  description = "Speech-to-speech model the participant talks to. Frozen for the study wave — the agent is the measurement instrument."
   type        = string
-  default     = "claude-sonnet-4-5"
+  default     = "nto.gemini-live-2.5-flash"
 }
 
 variable "director_model" {
-  description = "Model for the director (LiteLLM alias; Gemini Flash per 2026-08-03 decision)"
+  description = "Text model that reads each turn and writes one stage direction (LiteLLM alias)"
   type        = string
-  default     = "gemini-3.6-flash"
+  default     = "nto.gemini-2.5-flash"
 }
 
 variable "scenario_id" {

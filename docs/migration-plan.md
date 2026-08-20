@@ -161,9 +161,19 @@ issuance, and resumability across four 7–12 minute encounters.
 Today: `fly.toml` + Dockerfile.
 
 Target: ECS/Fargate behind an ALB with HTTPS/WSS, per `infra/terraform/`.
-DNS is ready — Cornell delegated `ai-ready-workforce.ai.cornell.edu` to
-Route 53; `rf` and `api.rf` records still need creating, and an ACM cert
-issued (do this early; it gates HTTPS and is independent of app work).
+DNS is wired in code — `infra/terraform/dns_tls.tf` now provisions one ACM cert
+covering both study hostnames and alias records pointing at the ALB:
+
+| Hostname | Role |
+|---|---|
+| `rf.ai-ready-workforce.ai.cornell.edu` | participant entrance (app + broker WSS) |
+| `api.rf.ai-ready-workforce.ai.cornell.edu` | backend API |
+
+The zone (`Z03157053G6CGLIYWMAH4`) is delegated to Route 53, so this is
+self-service. The records do not exist yet because they are ALB aliases — they
+come into being with the first `terraform apply`, which also validates the
+certificate via DNS. Nothing in this Terraform is deployed yet (no state, no
+ACM certs; the `aiw-staging` ALB in the account is a separate environment).
 
 ## Open items for the team
 

@@ -90,7 +90,7 @@ resource "aws_ecs_task_definition" "agent" {
       { name = "SCENARIO_ID",        value = var.scenario_id },
       { name = "ACTOR_MODEL",        value = var.actor_model },
       { name = "DIRECTOR_MODEL",     value = var.director_model },
-      { name = "ANTHROPIC_BASE_URL", value = var.anthropic_base_url },
+      { name = "LLM_BASE_URL",       value = var.llm_base_url },
       { name = "PORT",               value = "8100" },
     ]
     secrets = [

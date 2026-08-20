@@ -1,6 +1,16 @@
-output "agent_url" {
-  description = "Paste into ElevenLabs custom-LLM settings (server URL)"
-  value       = "https://${local.agent_fqdn}/v1"
+output "app_url" {
+  description = "Participant entrance — consent, WEIP handoff, encounters"
+  value       = "https://${local.app_fqdn}"
+}
+
+output "broker_wss_url" {
+  description = "Session broker WebSocket endpoint for participant audio"
+  value       = "wss://${local.app_fqdn}/ws/participant/voice"
+}
+
+output "api_url" {
+  description = "Backend API"
+  value       = "https://${local.api_fqdn}"
 }
 
 output "ecr_repository" {

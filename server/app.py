@@ -27,6 +27,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from .engine import DEFAULT_MODEL
 from .multi_agent_session import MultiAgentVoiceSessionRunner
@@ -45,7 +48,37 @@ CONFIG_DIR = ROOT_DIR / "config"
 # Mirror storage.py — DATA_DIR may be a mounted volume in production.
 from .storage import SESSIONS_DIR as SESSIONS_DIR  # re-export
 
+# Public hostnames. Cornell IT delegated ai-ready-workforce.ai.cornell.edu to
+# Route 53; rf.* is the participant entrance (app + broker WSS) and api.rf.* is
+# the backend API. Comma-separated overrides let staging and local dev differ.
+APP_HOST = os.getenv("APP_HOST", "rf.ai-ready-workforce.ai.cornell.edu").strip()
+API_HOST = os.getenv("API_HOST", "api.rf.ai-ready-workforce.ai.cornell.edu").strip()
+
+# Host header allowlist. Empty ALLOWED_HOSTS disables the check (local dev).
+_DEFAULT_ALLOWED = f"{APP_HOST},{API_HOST},localhost,127.0.0.1"
+ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", _DEFAULT_ALLOWED).split(",") if h.strip()]
+
+# Browser origins permitted to call the API. The app and the API are separate
+# hostnames, so calls from the participant page are cross-origin.
+_DEFAULT_ORIGINS = f"https://{APP_HOST},http://localhost:{os.getenv('PORT', '8765')},http://127.0.0.1:{os.getenv('PORT', '8765')}"
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",") if o.strip()]
+
 app = FastAPI(title="Relational Fluency Platform")
+
+# Behind the ALB, honour X-Forwarded-Proto so generated URLs are https/wss.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+if ALLOWED_HOSTS:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
