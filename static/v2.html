@@ -474,20 +474,32 @@
 
   async function showRunComplete() {
     const code = run?.completion_code || '';
-    $('nextTitle').textContent = 'All encounters complete';
+    $('nextTitle').textContent = 'All conversations complete';
 
     let cfg = { return_url: '', return_label: 'Return to the survey' };
     try { cfg = await (await fetch('/api/run/config' + keyParamFirst)).json(); } catch {}
 
-    // The completion code is shown whether or not the return link is
-    // configured, so a participant is never stranded without proof they
-    // finished, that is what their payment depends on.
+    // The survey tab that opened this one is usually still there, with the
+    // response in progress. Sending the participant back to it beats making
+    // them hunt for it; the code stays visible as the fallback proof.
+    const opener = window.opener && !window.opener.closed ? window.opener : null;
+
     $('nextBody').innerHTML =
       `<p>You have finished all ${run ? run.total : 4} conversations. Thank you.</p>` +
-      (code ? `<p>Your completion code is <b class="code">${esc(code)}</b>` +
-              `, you will be asked for it in the survey.</p>` : '');
+      (code ? `<p>Your completion code is <b class="code">${esc(code)}</b>.` +
+              ` It has been copied to your clipboard; paste it into the survey if asked.</p>` : '');
+    if (code) { try { navigator.clipboard.writeText(code); } catch {} }
 
-    if (cfg.return_url) {
+    if (opener) {
+      $('nextBtn').textContent = 'Return to the survey';
+      $('nextBtn').style.display = 'inline-block';
+      $('nextBtn').onclick = () => {
+        try { opener.focus(); } catch {}
+        // Closing this tab lands them on the survey tab even if focus() was
+        // not honoured; close() is permitted because the survey opened us.
+        try { window.close(); } catch {}
+      };
+    } else if (cfg.return_url) {
       const sep = cfg.return_url.includes('?') ? '&' : '?';
       const back = `${cfg.return_url}${sep}` + new URLSearchParams({
         run: run?.run_id || '', code, pid: run?.participant_id || '',
@@ -497,7 +509,8 @@
       $('nextBtn').onclick = () => { location.href = back; };
     } else {
       $('nextBtn').style.display = 'none';
-      $('nextBody').innerHTML += '<p>You can close this window and return to the survey.</p>';
+      $('nextBody').innerHTML +=
+        '<p>Please return to the survey tab to continue.</p>';
     }
     $('nextOverlay').style.display = 'flex';
   }
