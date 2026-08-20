@@ -207,3 +207,48 @@ old task is gone**. Pull first.
 | `No scenario: SxX` | Deployed image predates the scenario bank — check the running image tag |
 | Agent replies but no transcript | `verify_record` — look for `transcript_missing` |
 | Encounter ends after ~3 turns | `INTERACTION_MIN_TURNS` / `INTERACTION_MIN_SECONDS` on the task |
+
+---
+
+## The participant URL (Qualtrics → app → Qualtrics)
+
+**Put this in Qualtrics**, at the point where participants move from the WEIP
+survey to the encounters:
+
+```
+https://rf.ai-ready-workforce.ai.cornell.edu/start?pid=${e://Field/ParticipantKey}&key=<SESSION_KEY>
+```
+
+- `${e://Field/ParticipantKey}` is Qualtrics piped text — replace
+  `ParticipantKey` with whatever the embedded field holding the CloudResearch
+  Connect key is actually called in your survey.
+- `<SESSION_KEY>` is the app's access gate, from Secrets Manager:
+  `aws secretsmanager get-secret-value --secret-id relational-fluency/agent-api-key --query SecretString --output text`
+  It stops drive-by access; it is not secret from participants.
+
+`/start` assigns a four-encounter run and redirects into the first. A
+participant who closes the tab and reopens the same link **resumes their run**
+rather than starting a second one.
+
+### Sending them back
+
+Set the Qualtrics continuation link so the app can return them:
+
+```bash
+# infra/terraform/terraform.tfvars
+survey_return_url = "https://cornell.qualtrics.com/jfe/form/SV_xxxxx?..."
+```
+
+then `tofu apply`. After the fourth encounter the participant sees their
+completion code and a **Return to the survey** button, which appends:
+
+```
+?run=<run_id>&code=RF-XXXXXXXX&pid=<participant key>
+```
+
+Capture `code` in Qualtrics as proof of completion. A partial run yields
+`RF-PARTIAL-…`, so an unfinished session is visibly not a finished one.
+
+With `survey_return_url` unset the participant still sees the completion code
+and is told to return to the survey — they are never stranded — but the
+one-click return is missing.

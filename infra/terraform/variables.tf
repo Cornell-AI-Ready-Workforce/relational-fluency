@@ -61,3 +61,9 @@ variable "desired_count" {
   type        = number
   default     = 1
 }
+
+variable "survey_return_url" {
+  description = "Qualtrics continuation link. Participants are sent here after all four encounters, with run id, completion code, and pid appended."
+  type        = string
+  default     = ""
+}
