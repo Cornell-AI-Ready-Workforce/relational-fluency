@@ -137,8 +137,26 @@ def _load_consent() -> dict:
 
 
 def check_key(key: Optional[str]) -> None:
+    """Guard for researcher and study-data routes.
+
+    SESSION_KEY protects recorded encounters, downloads, and the researcher
+    views. It must NOT be required of participants: their link is handed to
+    every recruited person, and a key that opens the whole dataset should not
+    travel that way.
+    """
     if SESSION_KEY and key != SESSION_KEY:
         raise HTTPException(status_code=401, detail="Bad or missing key")
+
+
+# Participants arrive from Qualtrics with their CloudResearch key in the URL and
+# nothing else. Set PARTICIPANT_KEY_REQUIRED=1 to also demand SESSION_KEY on
+# their routes (useful while the study is not yet open).
+PARTICIPANT_KEY_REQUIRED = os.getenv("PARTICIPANT_KEY_REQUIRED", "").strip() not in ("", "0", "false")
+
+
+def check_participant(key: Optional[str]) -> None:
+    if PARTICIPANT_KEY_REQUIRED:
+        check_key(key)
 
 
 # --- HTML routes ---
@@ -180,7 +198,7 @@ async def start_run(
     accepted. A returning participant resumes their run rather than starting a
     second one under the same key.
     """
-    check_key(key)
+    check_participant(key)
     from fastapi.responses import RedirectResponse
 
     from . import runs
@@ -200,7 +218,7 @@ async def start_run(
 async def v2_page(scenario: Optional[str] = None, key: Optional[str] = None):
     """Zoom-like multi-agent voice UI. Works for both single-agent and group
     scenarios (single-agent just shows one tile)."""
-    check_key(key)
+    check_participant(key)
     return (STATIC_DIR / "v2.html").read_text()
 
 
@@ -208,14 +226,14 @@ async def v2_page(scenario: Optional[str] = None, key: Optional[str] = None):
 
 @app.get("/api/scenarios")
 async def api_scenarios(key: Optional[str] = None):
-    check_key(key)
+    check_participant(key)
     return list_scenarios()
 
 
 @app.get("/api/scenarios/{scenario_id}")
 async def api_scenario_detail(scenario_id: str, key: Optional[str] = Query(None),
                               participant_id: Optional[str] = Query(None)):
-    check_key(key)
+    check_participant(key)
     try:
         sc = load_scenario(scenario_id, participant_id or "")
     except FileNotFoundError:
@@ -431,13 +449,13 @@ async def api_post_debrief(
 
 @app.get("/api/consent")
 async def api_get_consent(key: Optional[str] = None):
-    check_key(key)
+    check_participant(key)
     return _load_consent()
 
 
 @app.post("/api/consent")
 async def api_post_consent(payload: dict, key: Optional[str] = Query(None)):
-    check_key(key)
+    check_participant(key)
     code = (payload.get("code") or "").strip()
     consent_given = bool(payload.get("consent_given"))
     if not code:
@@ -452,7 +470,7 @@ async def api_post_consent(payload: dict, key: Optional[str] = Query(None)):
 @app.post("/api/run")
 async def api_run_create(request: Request, key: Optional[str] = None):
     """Start a run: four encounters, one per construct, counterbalanced."""
-    check_key(key)
+    check_participant(key)
     from . import runs
 
     body = {}
@@ -467,7 +485,7 @@ async def api_run_create(request: Request, key: Optional[str] = None):
 @app.get("/api/run/config")
 async def api_run_config(key: Optional[str] = None):
     """Where a finished participant is sent back to."""
-    check_key(key)
+    check_participant(key)
     return {
         "return_url": os.getenv("SURVEY_RETURN_URL", "").strip(),
         "return_label": os.getenv("SURVEY_RETURN_LABEL", "Return to the survey"),
@@ -476,7 +494,7 @@ async def api_run_config(key: Optional[str] = None):
 
 @app.get("/api/run/{run_id}")
 async def api_run_get(run_id: str, key: Optional[str] = None):
-    check_key(key)
+    check_participant(key)
     from . import runs
 
     run = runs.get(run_id)
@@ -489,7 +507,7 @@ async def api_run_get(run_id: str, key: Optional[str] = None):
 async def api_run_advance(run_id: str, session_id: Optional[str] = None,
                           key: Optional[str] = None):
     """Mark the current encounter complete and move to the next."""
-    check_key(key)
+    check_participant(key)
     from . import runs
 
     run = runs.advance(run_id, session_id)
@@ -668,7 +686,7 @@ async def ws_participant_text(
     launch: Optional[str] = Query(None),
     key: Optional[str] = Query(None),
 ):
-    if SESSION_KEY and key != SESSION_KEY:
+    if PARTICIPANT_KEY_REQUIRED and SESSION_KEY and key != SESSION_KEY:
         await ws.close(code=4401)
         return
     if participant_id and not get_participant(participant_id):
@@ -790,7 +808,7 @@ async def ws_participant_voice(
     launch: Optional[str] = Query(None),
     key: Optional[str] = Query(None),
 ):
-    if SESSION_KEY and key != SESSION_KEY:
+    if PARTICIPANT_KEY_REQUIRED and SESSION_KEY and key != SESSION_KEY:
         await ws.close(code=4401)
         return
     if not participant_id or not get_participant(participant_id):
@@ -848,7 +866,7 @@ async def ws_participant_voice(
 
 @app.websocket("/ws/researcher")
 async def ws_researcher(ws: WebSocket, session_id: str = Query(...), key: Optional[str] = Query(None)):
-    if SESSION_KEY and key != SESSION_KEY:
+    if PARTICIPANT_KEY_REQUIRED and SESSION_KEY and key != SESSION_KEY:
         await ws.close(code=4401)
         return
 
