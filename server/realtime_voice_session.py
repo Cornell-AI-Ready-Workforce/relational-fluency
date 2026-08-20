@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 from .director import Director
 from .llm import provenance
+from .group_room import GroupRoom
 from .voice.realtime import RealtimeVoiceSession, SilenceDetector
 
 if TYPE_CHECKING:
@@ -99,6 +100,8 @@ class RealtimeVoiceSessionRunner:
         self._interaction_started_at = time.time()
         self._finalizing = False
         self._switching = False
+        self.room: Optional[GroupRoom] = None
+        self._pumps: List[asyncio.Task] = []
         self._floor = asyncio.Lock()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -253,6 +256,116 @@ class RealtimeVoiceSessionRunner:
         self.session.store.event("segment_start", **payload)
         await self._send({"type": "segment_start", **payload})
 
+    async def _open_room(self) -> None:
+        """Group interaction: one session per character, all listening."""
+        await self._close_room()
+        agents = self._resolve_agents()
+        self.room = GroupRoom(
+            agents,
+            instructions_for=lambda a: self._instructions_for(a),
+            voice_for=lambda a: self._voice_for(a),
+            tools=[END_SEGMENT_TOOL],
+        )
+        await self.room.open()
+        self.session.store.event(
+            "group_room_opened", agents=[a.id for a in agents]
+        )
+        # One pump per character, so a reply is attributed to whoever produced
+        # it rather than to whoever happens to hold a shared session.
+        for a in agents:
+            rt = self.room.session_for(a.id)
+            if rt is not None:
+                self._pumps.append(asyncio.ensure_future(self._pump_member(a, rt)))
+
+    async def _close_room(self) -> None:
+        for t in self._pumps:
+            t.cancel()
+        self._pumps = []
+        if self.room is not None:
+            await self.room.close()
+            self.room = None
+
+    def _instructions_for(self, agent) -> str:
+        prev, self.agent, self.agent_id = self.agent, agent, agent.id
+        try:
+            return self._instructions()
+        finally:
+            self.agent, self.agent_id = prev, prev.id
+
+    def _voice_for(self, agent) -> str:
+        prev, self.agent, self.agent_id = self.agent, agent, agent.id
+        try:
+            return self._voice()
+        finally:
+            self.agent, self.agent_id = prev, prev.id
+
+    async def _pump_member(self, agent, rt) -> None:
+        """Relay one character's events, attributed to that character.
+
+        Only the character currently holding the floor is heard: the others are
+        listening, and their sessions stay silent because they were never asked
+        to respond.
+        """
+        try:
+            async for ev in rt.events():
+                etype = ev["type"]
+                if etype == "agent_audio":
+                    if self.room and self.room.speaking != agent.id:
+                        continue
+                    self.agent, self.agent_id = agent, agent.id
+                    await self._begin_agent_turn()
+                    self.session.store.append_assistant_audio(ev["pcm"], agent_id=agent.id)
+                    await self._send_bytes(ev["pcm"])
+                    # The rest of the room hears the speaker, which is what lets
+                    # a later turn react to what was actually said.
+                    if self.room:
+                        await self.room.hear(ev["pcm"], exclude=agent.id)
+
+                elif etype == "agent_transcript_delta":
+                    if self.room and self.room.speaking != agent.id:
+                        continue
+                    self.agent, self.agent_id = agent, agent.id
+                    await self._begin_agent_turn()
+                    self._agent_text.append(ev["text"])
+                    await self._send({
+                        "type": "assistant_text_delta",
+                        "text": ev["text"],
+                        "agent_id": agent.id,
+                    })
+
+                elif etype == "user_transcript":
+                    # Every session transcribes the participant; take it once.
+                    if self.room and agent.id != self.agent_order()[0]:
+                        continue
+                    await self._record_user_turn(ev["text"])
+
+                elif etype == "response_done":
+                    if self.room and self.room.speaking != agent.id:
+                        continue
+                    self.agent, self.agent_id = agent, agent.id
+                    await self._finalize_turn()
+
+                elif etype == "error":
+                    self.session.store.event(
+                        "voice_error", where=f"room:{agent.id}", message=ev["message"]
+                    )
+        except asyncio.CancelledError:
+            return
+
+    def agent_order(self) -> List[str]:
+        return [a.id for a in self._resolve_agents()]
+
+    async def _record_user_turn(self, text: str) -> None:
+        if not text:
+            return
+        self._last_user_text = text
+        self.session.append_user(text)
+        self.session.store.event("user_turn", text=text, channel="voice")
+        await self._send({"type": "user_transcript", "text": text, "final": True})
+        await self.session.broadcast(
+            {"type": "transcript", "role": "user", "text": text}
+        )
+
     async def _switch_character(self, agent) -> None:
         """Start a fresh realtime session as `agent`.
 
@@ -286,7 +399,11 @@ class RealtimeVoiceSessionRunner:
         self.vad.reset()
         self._speaking = False
         self._agent_text = []
-        if changed:
+        if self.is_group():
+            await self._open_room()
+            self.rt = self.room.session_for(self.agent_id) or self.rt
+        elif changed:
+            await self._close_room()
             await self._switch_character(agent)
         else:
             self.rt.voice = self._voice()
@@ -311,12 +428,16 @@ class RealtimeVoiceSessionRunner:
         await self._send({"type": "segment_start", **payload})
 
     async def run(self) -> None:
-        self.rt = RealtimeVoiceSession(
-            instructions=self._instructions(),
-            voice=self._voice(),
-            tools=[END_SEGMENT_TOOL],
-        )
-        await self.rt.connect()
+        if self.is_group():
+            await self._open_room()
+            self.rt = self.room.session_for(self.agent_id) or None
+        else:
+            self.rt = RealtimeVoiceSession(
+                instructions=self._instructions(),
+                voice=self._voice(),
+                tools=[END_SEGMENT_TOOL],
+            )
+            await self.rt.connect()
         await self._announce_opening()
         # Record what served this encounter, the audit trail has to say which
         # gateway and which models produced the data.
@@ -331,6 +452,7 @@ class RealtimeVoiceSessionRunner:
             )
         finally:
             self._closed = True
+            await self._close_room()
             if self.rt:
                 await self.rt.close()
 
@@ -367,12 +489,15 @@ class RealtimeVoiceSessionRunner:
                         self._speaking = False
                         await self._send({"type": "assistant_interrupted"})
 
-                await self.rt.send_audio(pcm)
+                if self.room is not None:
+                    await self.room.hear(pcm)
+                else:
+                    await self.rt.send_audio(pcm)
 
                 if mark == "turn_ended":
                     self._turn_started_at = time.time()
-                    if self.is_group():
-                        await self.rt.commit_input()
+                    if self.is_group() and self.room is not None:
+                        await self.room.commit_all()
                         asyncio.ensure_future(self._run_group_turn())
                     else:
                         await self._brief_next_beat(probing=False)
@@ -390,6 +515,10 @@ class RealtimeVoiceSessionRunner:
         so when one ends this loop picks up the next one.
         """
         while not self._closed:
+            if self.room is not None:
+                # Group interactions are pumped per character by _pump_member.
+                await asyncio.sleep(0.5)
+                continue
             rt = self.rt
             if rt is None:
                 return
@@ -701,32 +830,70 @@ class RealtimeVoiceSessionRunner:
             self.session.store.event("group_turn_timeout", agent_id=agent.id)
             self.rt.clear_response_state()
 
-    async def _run_group_turn(self) -> None:
+    async def _run_group_turn(self) -> None:  # noqa: C901
         """One participant turn in a group room: the director picks who speaks
         and in what order, then each character takes the floor in turn. The
         floor lock keeps a fast second participant turn from interleaving
         speakers mid-sequence."""
-        if self._floor.locked():
+        if self._floor.locked() or self.room is None:
             return
         async with self._floor:
+            # Routing needs the participant's words, and the transcript arrives
+            # after the commit that triggered this turn. Without a short wait
+            # the director routes blind, and "Priya, did you want to add
+            # something?" reaches whoever spoke last instead of Priya.
+            before = self._last_user_text
+            deadline = time.time() + float(os.getenv("ROUTE_TRANSCRIPT_WAIT", "4"))
+            while self._last_user_text == before and time.time() < deadline:
+                await asyncio.sleep(0.15)
+
             try:
                 routed = await self.director.route(
                     self.session.shared_history, self._last_user_text
                 )
             except Exception as exc:  # noqa: BLE001, never break the room
                 self.session.store.event("director_error", message=str(exc))
-                routed = [{"agent_id": self.cast[0].id}]
+                routed = []
+
+            # Addressing someone by name should reach them. The director is a
+            # model call and misses this often enough to matter, so a direct
+            # address overrides its choice.
+            named = self._named_in(self._last_user_text)
+            if named:
+                routed = [{"agent_id": named}] + [
+                    r for r in routed if r.get("agent_id") != named
+                ]
+            if not routed:
+                routed = [{"agent_id": self.agent_order()[0]}]
 
             self.session.store.event(
-                "director_route", speakers=[r.get("agent_id") for r in routed]
+                "director_route",
+                speakers=[r.get("agent_id") for r in routed],
+                addressed=named,
             )
-            by_id = {a.id: a for a in self.cast}
-            for slot in routed:
-                agent = by_id.get(slot.get("agent_id"))
-                if agent is None or self._closed:
+
+            for slot in routed[:3]:
+                aid = slot.get("agent_id")
+                if aid not in self.room.sessions or self._closed:
                     continue
-                await self._speak_as(agent, slot.get("intent"))
+                self._response_done.clear()
+                await self.room.ask(aid)
+                try:
+                    await asyncio.wait_for(self._response_done.wait(), timeout=45)
+                except asyncio.TimeoutError:
+                    self.session.store.event("group_turn_timeout", agent_id=aid)
+            self.room.speaking = None
             await self._steer()
+
+    def _named_in(self, text: str) -> Optional[str]:
+        """The character the participant addressed by name, if any."""
+        if not text:
+            return None
+        lowered = text.lower()
+        for a in self._resolve_agents():
+            if a.name.lower() in lowered:
+                return a.id
+        return None
 
     # ── director ───────────────────────────────────────────────────────────
     async def _steer(self) -> None:

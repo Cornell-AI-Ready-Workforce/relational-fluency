@@ -34,7 +34,7 @@
   /* The transcript is what the participant reads while talking, so give it the
      larger share: description narrow, conversation wide. */
   .lower-row > * { min-width: 0; }
-  .lower-row > *:first-child { flex: 0 1 320px; }
+  .lower-row > *:first-child { flex: 0 1 420px; }
   .lower-row > *:last-child { flex: 1 1 auto; }
   .brief {
     padding: 16px 18px;
@@ -134,7 +134,6 @@
     white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
   .tile .talk-btn:hover { filter: brightness(1.08); }
   .tile .talk-btn[disabled] { opacity: .6; cursor: default; }
-  #sceneNow { font-size: 12px; color: var(--muted); margin-left: 8px; }
   .ai-banner { position: sticky; top: 0; z-index: 40; text-align: center;
     background: #2f2f2f; color: #fff; font-size: 12.5px; letter-spacing: .01em;
     padding: 6px 12px; }
@@ -393,7 +392,6 @@
 <header>
   <div>
     <div class="title" id="title">Loading…<span id="runChip" class="run-chip" style="display:none"></span></div>
-    <div class="meta" id="sid"></div>
   </div>
   <div class="controls" id="controls">
     <span class="timer" id="timer" title="Time in this conversation">00:00</span>
@@ -435,7 +433,6 @@
       <div class="body" id="briefBody"></div>
       <div class="cast-line" id="castLine"></div>
     </div>
-    <div id="sceneNow" aria-live="polite"></div>
     <div class="transcript" id="transcript" aria-live="polite"></div>
   </div>
 </main>
@@ -1064,14 +1061,12 @@
           el.innerHTML = `${label}<span class="with">, you are now with ${names}</span>`;
           $('transcript').appendChild(el);
           $('transcript').scrollTop = $('transcript').scrollHeight;
-          $('sceneNow').textContent = `Now: ${label}, with ${names}`;
           applyPresence();
         } else if (m.type === 'encounter_complete') {
           const el = document.createElement('div');
           el.className = 'scene';
           el.textContent = 'Encounter complete, thank you.';
           $('transcript').appendChild(el);
-          $('sceneNow').textContent = 'Encounter complete';
           onEncounterComplete();
         } else if (m.type === 'silence') {
           finalizeUserCaption();
