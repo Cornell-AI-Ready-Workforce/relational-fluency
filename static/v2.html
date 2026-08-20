@@ -396,7 +396,7 @@
   <div class="controls" id="controls">
     <span class="timer" id="timer" title="Time in this conversation">00:00</span>
     <button id="startBtn">Start session</button>
-    <button id="stopBtn" class="secondary" style="display:none">End</button>
+    <button id="stopBtn" class="secondary" style="display:none">End conversation</button>
   </div>
 </header>
 
@@ -992,6 +992,12 @@
     }
     $('startBtn').style.display = 'none';
     $('stopBtn').style.display = 'inline-block';
+    if (runId && run && !run.done) {
+      $('stopBtn').textContent =
+        run.position < run.total
+          ? `End conversation (go to encounter ${run.position + 1} of ${run.total})`
+          : 'End conversation (finish)';
+    }
     started = true;
     userTurns = 0;
     speechQueue = [];
@@ -1169,7 +1175,17 @@
   }
 
   $('startBtn').addEventListener('click', startSession);
-  $('stopBtn').addEventListener('click', () => endSession());
+  $('stopBtn').addEventListener('click', () => {
+    if (runId) {
+      // In a run, ending the conversation is how you move on. Confirm, because
+      // it cannot be rejoined; then advance to the next encounter.
+      if (!confirm('Finish this conversation and move on?')) return;
+      endSession({ debrief: false });
+      onEncounterComplete();
+    } else {
+      endSession();
+    }
+  });
   $('debriefClose').addEventListener('click', () => { $('debriefOverlay').style.display = 'none'; });
 
   // ---------- feedback page (post-attempt, scored) ----------
