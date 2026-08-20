@@ -61,9 +61,15 @@ class RealtimeVoiceSessionRunner:
     def __init__(self, session: "Session", ws: "WebSocket"):
         self.session = session
         self.ws = ws
+        # An encounter is a sequence of interactions, each with its own mode
+        # and its own cast slice. Segment indexes interactions — NOT the cast:
+        # S2 has one agent across two interactions, and S3's second interaction
+        # is a series of two one-on-ones.
         self.segment = 0
         self.cast = list(session.scenario.cast)
-        self.agent = self.cast[0]
+        self.interactions = list(getattr(session.scenario, "interactions", []) or [])
+        self._series_idx = 0
+        self.agent = self._resolve_agents()[0]
         self.agent_id = self.agent.id
         self.rt: Optional[RealtimeVoiceSession] = None
         self.vad = SilenceDetector()
@@ -74,9 +80,9 @@ class RealtimeVoiceSessionRunner:
         # Group rooms: several characters share one realtime session, taking
         # turns. Only one can hold the audio stream at a time, so the director
         # picks an order and each speaker is served in sequence.
-        self.is_group = session.is_group
+        self._scenario_is_group = session.is_group
         self.director = getattr(session, "director", None) or (
-            Director(session.scenario) if self.is_group else None
+            Director(session.scenario) if session.is_group else None
         )
         self._response_done = asyncio.Event()
         self._last_user_text = ""
@@ -104,10 +110,32 @@ class RealtimeVoiceSessionRunner:
         )
         return base + voice_rules
 
+    def is_group(self) -> bool:
+        """Group only while the *current* interaction puts several characters in
+        the room — S3 opens as a group meeting and continues as one-on-ones."""
+        if self.interactions:
+            return self._interaction_mode() == "group"
+        return self._scenario_is_group
+
+    def _resolve_agents(self) -> List:
+        """Characters active in the current interaction, in order. Falls back to
+        the whole cast for legacy scenarios that have no interaction list."""
+        by_id = {a.id: a for a in self.cast}
+        interaction = self._interaction()
+        spec = interaction.get("agents") or interaction.get("agent")
+        if isinstance(spec, str):
+            spec = [spec]
+        if not spec:
+            return self.cast or []
+        resolved = [by_id[a] for a in spec if a in by_id]
+        return resolved or self.cast
+
+    def _interaction_mode(self) -> str:
+        return self._interaction().get("mode", "group" if len(self.cast) > 1 else "one_to_one")
+
     def _interaction(self) -> dict:
-        interactions = getattr(self.session.scenario, "interactions", None) or []
-        if self.segment < len(interactions):
-            return interactions[self.segment]
+        if self.segment < len(self.interactions):
+            return self.interactions[self.segment]
         return {}
 
     def _triggers(self) -> List[dict]:
@@ -145,36 +173,55 @@ class RealtimeVoiceSessionRunner:
         return self._trigger_instruction(trigger, probing=probing)
 
     def _interaction_id(self) -> str:
-        interactions = getattr(self.session.scenario, "interactions", None)
-        if interactions and self.segment < len(interactions):
-            return interactions[self.segment].get("id", f"i{self.segment + 1}")
-        return f"i{self.segment + 1}"
+        return self._interaction().get("id", f"i{self.segment + 1}")
 
     def _voice(self) -> str:
-        explicit = getattr(self.agent, "realtime_voice", None)
-        return explicit or GEMINI_VOICES[self.segment % len(GEMINI_VOICES)]
+        """Each character keeps one voice for the whole encounter, so a
+        participant hears the same person across interactions."""
+        explicit = getattr(self.agent, "voice_id", None) or getattr(self.agent, "realtime_voice", None)
+        if explicit:
+            return explicit
+        idx = next((i for i, a in enumerate(self.cast) if a.id == self.agent_id), 0)
+        return GEMINI_VOICES[idx % len(GEMINI_VOICES)]
 
     async def _advance_segment(self) -> bool:
-        """Move to the next character. Returns False when the scenario is done."""
-        if self.segment + 1 >= len(self.cast):
+        """Move to the next beat. Within a one_to_one_series that means the next
+        character in the same interaction; otherwise the next interaction.
+        Returns False when the encounter is over."""
+        agents = self._resolve_agents()
+
+        # Still characters left in this series (e.g. Jordan then Casey).
+        if self._interaction_mode() == "one_to_one_series" and self._series_idx + 1 < len(agents):
+            self._series_idx += 1
+            await self._enter(agents[self._series_idx], new_interaction=False)
+            return True
+
+        if self.segment + 1 >= len(self.interactions):
             return False
+
         self.segment += 1
+        self._series_idx = 0
         self._trigger_idx = 0
-        self.agent = self.cast[self.segment] if self.segment < len(self.cast) else self.cast[-1]
-        self.agent_id = self.agent.id
+        await self._enter(self._resolve_agents()[0], new_interaction=True)
+        return True
+
+    async def _enter(self, agent, *, new_interaction: bool) -> None:
+        self.agent = agent
+        self.agent_id = agent.id
         self.rt.voice = self._voice()
         self.vad.reset()
-        self.session.store.event(
-            "segment_start", index=self.segment, agent_id=self.agent_id, agent_name=self.agent.name
-        )
-        await self.rt.update_instructions(self._instructions())
-        await self._send({
-            "type": "segment_start",
+        payload = {
             "index": self.segment,
+            "interaction": self._interaction_id(),
+            "label": self._interaction().get("label", ""),
+            "mode": self._interaction_mode(),
             "agent_id": self.agent_id,
             "agent_name": self.agent.name,
-        })
-        return True
+            "new_interaction": new_interaction,
+        }
+        self.session.store.event("segment_start", **payload)
+        await self.rt.update_instructions(self._instructions())
+        await self._send({"type": "segment_start", **payload})
 
     async def run(self) -> None:
         self.rt = RealtimeVoiceSession(
@@ -231,7 +278,7 @@ class RealtimeVoiceSessionRunner:
 
                 if mark == "turn_ended":
                     self._turn_started_at = time.time()
-                    if self.is_group:
+                    if self.is_group():
                         await self.rt.commit_input()
                         asyncio.ensure_future(self._run_group_turn())
                     else:
@@ -321,7 +368,7 @@ class RealtimeVoiceSessionRunner:
                     )
                 await self._send({"type": "assistant_done", "agent_id": self.agent_id})
                 self._response_done.set()
-                if not self.is_group:
+                if not self.is_group():
                     await self._steer()
 
             elif etype == "tool_call":
@@ -378,7 +425,7 @@ class RealtimeVoiceSessionRunner:
                 continue
             self._last_activity = time.time()
             await self._brief_next_beat(probing=True)
-            if not self.is_group:
+            if not self.is_group():
                 await self.rt.send_audio(b"\x00" * 3200)
                 await self.rt.commit_turn()
 
