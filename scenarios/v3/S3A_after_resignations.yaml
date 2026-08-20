@@ -1,0 +1,128 @@
+# Inspirational Leadership — Variant A. Research Note v3, slide 12.
+# NOTE: interaction 1 is a GROUP room — the planted trigger is Alex challenging
+# the participant publicly, in front of the others. That is the instrument.
+# Variant B is still to be authored.
+id: S3A
+construct: inspirational_leadership
+variant: A
+parallel_form: S3B   # not yet authored
+title: "After resignations over a pay dispute"
+duration_minutes: [7, 12]
+
+skill_measured: >-
+  Articulating a credible vision, building group pride, and bringing out
+  others' best.
+
+esci_items:
+  builds_pride: "Leads by building pride in the group"
+  inspires: "Leads by inspiring people"
+  not_inspire_r: "Does not inspire followers (R)"
+  brings_out_best: "Leads by bringing out the best in people"
+  compelling_vision: "Leads by articulating a compelling vision"
+
+setup: >-
+  You are interim lead. Two colleagues resigned over pay; the three who remain
+  are carrying the quarter with no new resources. Compensation is off the table.
+
+# Two short 1:1 notes stand in for the briefing — context lands in-scene.
+pre_reading:
+  - "Jordan — strong reviewer, quietest since Priya left."
+  - "Casey — junior, absorbed most of Priya's queue."
+
+agents:
+  alex:
+    name: Alex
+    role: vocal cynic
+    voice: Puck
+    system_prompt: |
+      You are Alex, on a three-person team that just lost two people over pay.
+      You are angry, articulate, and not wrong.
+
+      How you behave:
+      - In the team meeting, challenge the participant publicly and early:
+        "Why should we even care? They'll just let the next two walk too."
+      - Spin, cheerleading, or vague reassurance makes you sharper.
+      - Honesty about what cannot be fixed — said plainly — earns your grudging
+        engagement. You respect someone who names the limit and still commits to
+        something specific.
+      - You are not persuadable by optimism. You are persuadable by candour.
+      - One to three sentences per turn. In the group, react to what others say.
+
+  jordan:
+    name: Jordan
+    role: disengaged high performer
+    voice: Charon
+    system_prompt: |
+      You are Jordan, the strongest reviewer on the team. Since Priya left you
+      have gone quiet and stopped volunteering.
+
+      How you behave:
+      - In the group, say little. Agree flatly if asked directly.
+      - In a one-on-one, deflect first: "It's fine. Everything's fine. What do
+        you need from me?"
+      - You open up only if the participant notices the disengagement specifically
+        and names something concrete you own or care about — not if they ask a
+        generic "how are you doing".
+      - If they accept "fine" and move on, stay closed. That is a real outcome.
+      - One to three sentences per turn.
+
+  casey:
+    name: Casey
+    role: anxious junior
+    voice: Aoede
+    system_prompt: |
+      You are Casey, junior on the team, now carrying most of Priya's queue.
+      You are anxious and near the edge of your competence.
+
+      How you behave:
+      - In the group, stay quiet unless invited.
+      - In a one-on-one, surface the overload: "Am I supposed to absorb Priya's
+        whole queue? I don't know how to do half of it."
+      - You steady if given specific, owned commitments — what gets dropped, who
+        helps, by when. Vague encouragement does not steady you.
+      - One to three sentences per turn.
+
+interactions:
+  - id: i1
+    mode: group
+    agents: [alex, jordan, casey]
+    label: "Team meeting"
+    kind: group
+    opening: >-
+      The meeting is already convened. The bad news — no resources, comp off the
+      table — is common knowledge.
+    observe: "Honest vs spin · meet the challenge or deflect · credible pride vs cheerleading."
+    triggers:
+      - id: t1_public_challenge
+        cue: "Alex, publicly: 'Why should we even care? They'll just let the next two walk too.'"
+        on_silence: "Alex presses: 'No answer? That's kind of the point.'"
+        esci: [compelling_vision, builds_pride, not_inspire_r]
+        scores:
+          high:
+            answer: "You're right — pay drove this, and I won't pretend otherwise. I can't fix comp. Here's what I can fix, and why this quarter still matters for each of us."
+            why: "honest vision; builds credible pride"
+          low:
+            answer: "Let's keep it positive — we've got this, team!"
+            why: "spin → endorses does-not-inspire-followers (R)"
+
+  - id: i2
+    mode: one_to_one_series
+    agents: [jordan, casey]
+    label: "Brief one-on-ones"
+    kind: individuals
+    observe: "Probe beneath Jordan's 'fine' · steady Casey · few specific commitments, owned."
+    triggers:
+      - id: t2_jordans_flat_fine
+        cue: "Jordan, flat: 'It's fine. Everything's fine. What do you need from me?'"
+        on_silence: "Jordan waits, then: 'So... was there something specific?'"
+        esci: [brings_out_best, inspires]
+        scores:
+          high:
+            answer: "You've been quiet since Priya left — and your review pipeline is the best thing we ship. I want your call on what we drop this quarter."
+            why: "brings out the best; re-engages with real ownership"
+          low:
+            answer: "Great, glad you're fine. (moves on)"
+            why: "disengagement missed; low on bringing out others' best"
+      - id: t3_caseys_overload
+        cue: "Casey: 'Am I supposed to absorb Priya's whole queue? I don't know how to do half of it.'"
+        esci: [brings_out_best, builds_pride]

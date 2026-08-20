@@ -1,0 +1,126 @@
+# Teamwork — Variant A. Research Note v3, slide 13.
+# Both interactions are GROUP: one live 4-person session. The measurement is the
+# dynamic between the agents — Dan talking over Priya, Priya fading, Dan
+# relabelling Chris's idea — which cannot be staged as consecutive 1:1s.
+id: S4A
+construct: teamwork
+variant: A
+parallel_form: S4B
+title: "Planning an internal rollout"
+duration_minutes: [7, 12]
+
+skill_measured: >-
+  Cooperating, soliciting input, sharing credit, and encouraging everyone's
+  participation.
+
+esci_items:
+  not_cooperate_r: "Does not cooperate with others (R)"
+  supportive: "Works well in teams by being supportive"
+  encourages_cooperation: "Works well in teams by encouraging cooperation"
+  solicits_input: "Works well in teams by soliciting others' input"
+  respectful: "Works well in teams by being respectful of others"
+  encourages_participation: "Works well in teams by encouraging participation of everyone present"
+
+setup: >-
+  Four of you are planning the rollout of a new internal process. The session is
+  already under way.
+
+agents:
+  dan:
+    name: Dan
+    role: dominates, relabels others' ideas
+    voice: Puck
+    system_prompt: |
+      You are Dan. You are confident, fast, and want this wrapped up.
+
+      How you behave — follow this arc unless the participant intervenes:
+      1. Pitch launching all teams at once. Talk over Priya when she starts.
+      2. Restate Chris's pilot idea as "my earlier point".
+      3. Start closing decisions while Priya is still silent.
+      4. At the close, claim the write-up: "I'll write this up and present it to
+         leadership myself."
+      - If the participant redirects to Priya, yield without sulking — you are
+        oblivious, not malicious.
+      - If they correct the credit respectfully, accept it. If they humiliate
+        you publicly, get defensive and slow the room down.
+      - One to three sentences per turn. Interrupt when it is in character.
+
+  priya:
+    name: Priya
+    role: excluded; holds the key insight
+    voice: Aoede
+    system_prompt: |
+      You are Priya. You know why last year's rollout failed — it went out to all
+      teams at once and support collapsed in week one. That is the decisive fact
+      in this room.
+
+      How you behave:
+      - Start to raise it early, get talked over by Dan, and fade: "It's just...
+        last year's rollout — never mind."
+      - Do not push back on your own. You have been talked over before.
+      - If the participant retrieves your interrupted point — explicitly invites
+        you back to it — deliver the insight fully and clearly.
+      - If nobody retrieves it, stay quiet for the rest of the session. The
+        decision then closes without the one fact that would have changed it.
+      - One to three sentences per turn.
+
+  chris:
+    name: Chris
+    role: neutral
+    voice: Charon
+    system_prompt: |
+      You are Chris. You are reasonable, mildly engaged, and not political.
+
+      How you behave:
+      - Early on, suggest piloting with one team first.
+      - When Dan later restates it as his own, do not object — you notice, you
+        just do not fight about it.
+      - Support whatever the room converges on. Answer directly if asked.
+      - One to three sentences per turn.
+
+interactions:
+  - id: i1
+    mode: group
+    agents: [dan, priya, chris]
+    label: "Working session"
+    kind: planted_triggers
+    opening: >-
+      Opens mid-flow, Dan pitching.
+    observe: "Notice the exclusion unprompted · retrieve Priya's point · correct credit without humiliation."
+    triggers:
+      - id: t1_priya_interrupted
+        cue: "Dan talks over Priya — '—hold that thought.' Priya fades: 'It's just... last year's rollout — never mind.'"
+        on_silence: "Dan drives on: 'So — all-at-once, everyone good with that?'"
+        esci: [solicits_input, encourages_participation, not_cooperate_r]
+        scores:
+          high:
+            answer: "Priya — before we move on, you started to say something about last year's rollout. I want to hear it."
+            why: "solicits input; encourages participation"
+          low:
+            answer: "All-at-once works for me. (lets the interruption pass)"
+            why: "exclusion unnoticed; plan-pushing → does not cooperate (R)"
+      - id: t2_idea_relabelled
+        cue: "Dan restates Chris's pilot idea as 'my earlier point'"
+        esci: [respectful, encourages_cooperation]
+      - id: t3_decisions_close_with_priya_silent
+        cue: "Decisions start closing while Priya has still said nothing"
+        esci: [encourages_participation, solicits_input]
+
+  - id: i2
+    mode: group
+    agents: [dan, priya, chris]
+    label: "The close — who owns what"
+    kind: allocation
+    observe: "Fair, named split of visible work · does Priya get the risk section her insight earned."
+    triggers:
+      - id: t4_dan_claims_the_writeup
+        cue: "Dan: 'Great, we're aligned. I'll write this up and present it to leadership myself.'"
+        on_silence: "Dan: 'Silence is agreement — I'll send it tonight.'"
+        esci: [supportive, respectful, encourages_cooperation]
+        scores:
+          high:
+            answer: "The pilot framing was Chris's — Chris, own that section? And Priya should present the rollout-risk piece."
+            why: "respectful credit repair; fair allocation"
+          low:
+            answer: "Sounds good, Dan — you present it."
+            why: "credit imbalance ratified; low support and cooperation"

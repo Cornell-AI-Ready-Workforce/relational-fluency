@@ -184,8 +184,17 @@ class RealtimeVoiceSessionRunner:
                 })
 
             elif etype == "user_transcript":
+                # Gemini Live transcribes the participant for us — no separate
+                # STT service. Send it to the participant's own socket (the
+                # transcript panel listens for user_transcript) as well as
+                # broadcasting to any researcher view.
                 self.session.append_user(ev["text"])
                 self.session.store.event("user_turn", text=ev["text"], channel="voice")
+                await self._send({
+                    "type": "user_transcript",
+                    "text": ev["text"],
+                    "final": True,
+                })
                 await self.session.broadcast(
                     {"type": "transcript", "role": "user", "text": ev["text"]}
                 )

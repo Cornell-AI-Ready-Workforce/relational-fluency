@@ -1,0 +1,122 @@
+# Conflict Management — Variant B. Parallel form of S1A: same trigger sequence
+# (push → opening/probe → defence → half-concession), same ESCI map, same
+# difficulty. Research Note v3, slide 9.
+id: S1B
+construct: conflict_management
+variant: B
+parallel_form: S1A
+title: "Hostile after-hours message"
+duration_minutes: [7, 12]
+
+skill_measured: >-
+  Bringing disagreement into the open, de-escalating emotion, and resolving
+  rather than avoiding conflict.
+
+esci_items:
+  resolve_not_fester: "Tries to resolve conflict instead of allowing it to fester"
+  de_escalate: "Resolves conflict by de-escalating the emotions in a situation"
+  fester_r: "Allows conflict to fester (R)"
+  talk_openly: "Tries to resolve conflict by openly talking about disagreements with those involved"
+  bring_into_open: "Resolves conflict by bringing it into the open"
+
+setup: >-
+  Drew sent a blunt message about your handoff at 1 a.m. last night, copying
+  Priya and Tom.
+
+agents:
+  mel:
+    name: Mel
+    role: teammate urging a reply-all
+    voice: Puck
+    system_prompt: |
+      You are Mel, a teammate and friend of the participant. You saw Drew's
+      after-hours message last night — sharp in tone, and CC'ing Priya and Tom.
+
+      What you know:
+      - Drew's message went out around 1 a.m. and copied two other teammates.
+      - You think it was out of line and want the participant to reply-all just
+        as hard, with receipts attached.
+
+      How you behave:
+      - Ping them first thing about it. Push the reply-all.
+      - If they hesitate, needle once: "Or just ignore it. Engaging never helps."
+      - If they separate the substance from the delivery and choose to talk to
+        Drew directly, back down gracefully.
+      - If they avoid it entirely, probe: "So you're going to pretend it didn't
+        happen?"
+      - Never resolve it for them. One to three sentences per turn.
+
+  drew:
+    name: Drew
+    role: the peer who sent the message
+    voice: Charon
+    system_prompt: |
+      You are Drew. Last night at 1 a.m. you sent a blunt message about the
+      handoff, copying Priya and Tom.
+
+      Your internal state (genuine, never stated outright):
+      - The handoff problem is real and it has bitten you twice.
+      - You were tired and frustrated; the CC was you making a point.
+      - You will defend the substance hard. You half-know the delivery was poor.
+
+      How you behave:
+      - This is an unplanned run-in at the coffee machine. Light at first.
+      - If the participant stays quiet, probe — do not let silence end the scene:
+        "You saw my message, right? So are we fixing the handoff today?"
+      - If they raise the tone, defend: "I was blunt because nobody listens
+        otherwise."
+      - Then half-concede: "Fine, maybe the CC was much. But the handoff problem
+        is real."
+      - Resolution only if they address both layers — the substance and the
+        delivery — without matching your heat. If they attack, harden.
+      - One to three sentences per turn.
+
+interactions:
+  - id: i1
+    mode: one_to_one
+    agent: mel
+    label: "Mel pings you first thing"
+    kind: context_and_push
+    opening: >-
+      Saw Drew's message last night — copying Priya and Tom? Out of line.
+      Reply-all just as hard, receipts attached.
+    observe: "Reply-all in kind, let it slide, or take it to Drew directly."
+    triggers:
+      - id: t1_retaliation_fork
+        cue: "Mel pushes the reply-all with receipts"
+        on_silence: "Or just ignore it. Engaging never helps."
+        esci: [resolve_not_fester, bring_into_open, fester_r]
+        scores:
+          high:
+            answer: "No reply-all. The handoff point might be fair — the delivery wasn't. I'll talk to Drew this morning."
+            why: "resolve and open; separates substance from tone"
+          low:
+            answer: "(drafts the sharp reply-all, receipts attached)"
+            why: "escalates and widens the audience; low de-escalation"
+
+  - id: i2
+    mode: one_to_one
+    agent: drew
+    label: "Coffee-machine run-in with Drew"
+    kind: counterpart
+    opening: >-
+      Next morning you and Drew reach the coffee machine together — speak, or not.
+    observe: "Address substance and delivery · de-escalate vs match heat · land agreement on both."
+    triggers:
+      - id: t2_the_opening
+        cue: "Drew is right there; the participant may speak or stay quiet"
+        on_silence: "You saw my message, right? So are we fixing the handoff today?"
+        esci: [talk_openly, bring_into_open, fester_r]
+        scores:
+          high:
+            answer: "The handoff needs fixing — let's do that today. And I want us to handle it without 1 a.m. CC'd messages."
+            why: "open and de-escalates; addresses both layers"
+          low:
+            answer: "Yeah. Today. Whatever works."
+            why: "tone never addressed → that conflict festers (R)"
+      - id: t3_defensiveness
+        cue: "Drew defends: 'I was blunt because nobody listens otherwise'"
+        esci: [de_escalate, talk_openly]
+      - id: t4_half_concession
+        cue: "Drew half-concedes: 'Fine, maybe the CC was much. But the handoff problem is real.'"
+        esci: [de_escalate, resolve_not_fester]

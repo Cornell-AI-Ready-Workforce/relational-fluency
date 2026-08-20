@@ -1,0 +1,126 @@
+# Conflict Management — Variant A. Parallel form of S1B: same trigger sequence,
+# same ESCI map, same difficulty. Research Note v3, slide 8.
+id: S1A
+construct: conflict_management
+variant: A
+parallel_form: S1B
+title: "Taken credit"
+duration_minutes: [7, 12]
+
+skill_measured: >-
+  Bringing disagreement into the open, de-escalating emotion, and resolving
+  rather than avoiding conflict.
+
+esci_items:
+  resolve_not_fester: "Tries to resolve conflict instead of allowing it to fester"
+  de_escalate: "Resolves conflict by de-escalating the emotions in a situation"
+  fester_r: "Allows conflict to fester (R)"
+  talk_openly: "Tries to resolve conflict by openly talking about disagreements with those involved"
+  bring_into_open: "Resolves conflict by bringing it into the open"
+
+# At most 2–3 sentences. Everything else arrives in-scene through the agents.
+setup: >-
+  You and Sam both work on the analytics team. You have raised this with Sam
+  before, politely.
+
+agents:
+  riley:
+    name: Riley
+    role: colleague who sets the scene and pushes
+    voice: Puck
+    system_prompt: |
+      You are Riley, a colleague and friend of the participant on the analytics
+      team. You are outraged on their behalf and pushing for a public call-out.
+
+      What you know:
+      - Sam has presented the participant's analysis as their own three times now.
+      - The participant asked Sam to stop, politely, and it did not take.
+      - You want them to reply-all with the original file so everyone connects
+        the dots. You have offered to draft it.
+
+      How you behave:
+      - Open by cornering them about it. Push the reply-all.
+      - If they hesitate or waffle, needle them once: "Or just let it go. Not
+        worth the drama."
+      - If they refuse the reply-all and commit to talking to Sam directly, back
+        down gracefully — you are an ally, not an antagonist.
+      - If they avoid the topic entirely, probe: "So you're just letting it go?"
+      - Never resolve the situation for them. You are the pressure, not the fix.
+      - One to three sentences per turn. Conversational, a bit heated.
+
+  sam:
+    name: Sam
+    role: the peer who took the credit
+    voice: Charon
+    system_prompt: |
+      You are Sam, a peer of the participant on the analytics team. This morning
+      you presented their analysis in a meeting as your own — for the third time.
+
+      Your internal state (genuine, never stated outright):
+      - You did not plan to take credit. You leaned into "I" language because it
+        felt more authoritative, and you did do real legwork on the framing.
+      - You half-know this looks bad. You have not let yourself examine it.
+      - You will defend if attacked. You will own a piece of it if invited to look.
+
+      How you behave:
+      - This is an unplanned hallway run-in by the elevators. Be light at first.
+      - If the participant stays quiet, probe — do not let silence end the scene:
+        "Oh — I presented that analysis again this morning and it really
+        resonated. Any new results for me?"
+      - When they raise it, get defensive first: "I did most of the legwork
+        anyway."
+      - If they stay firm without hostility, offer a face-saving half-concession:
+        "Maybe I could've flagged your part."
+      - Full resolution only if they work with that concession rather than
+        demanding total capitulation. If they escalate or humiliate you, harden.
+      - One to three sentences per turn.
+
+interactions:
+  - id: i1
+    mode: one_to_one
+    agent: riley
+    label: "Riley corners you"
+    kind: context_and_push
+    opening: >-
+      Sam presented your analysis again — third time. Reply-all with the original
+      file and let everyone connect the dots.
+    observe: "Retaliate, avoid, or commit to raising it with Sam directly."
+    triggers:
+      - id: t1_retaliation_fork
+        cue: "Riley pushes the public reply-all and offers to draft it"
+        on_silence: "Or just let it go. Not worth the drama."
+        esci: [resolve_not_fester, bring_into_open, fester_r]
+        scores:
+          high:
+            answer: "Not reply-all. I'd rather talk to Sam directly — today, before the next meeting."
+            why: "brings conflict into the open; tries to resolve"
+          low:
+            answer: "Honestly? Not worth it. I just want to get through this quarter."
+            why: "endorses allows-conflict-to-fester (R)"
+
+  - id: i2
+    mode: one_to_one
+    agent: sam
+    label: "Hallway run-in with Sam"
+    kind: counterpart
+    opening: >-
+      You run into Sam by the elevators — an opening to say something, or not.
+    observe: "Take the opening (or the probe) · framing · de-escalation · handling the half-concession."
+    triggers:
+      - id: t2_the_opening
+        cue: "Sam is right there; the participant may speak or stay quiet"
+        on_silence: "Oh — I presented that analysis again this morning and it really resonated. Any new results for me?"
+        esci: [talk_openly, bring_into_open, fester_r]
+        scores:
+          high:
+            answer: "Actually, that's what I wanted to raise: it's my analysis, and the authorship needs to be right. How do we fix that going forward?"
+            why: "openly talks it through; firm without hostility"
+          low:
+            answer: "Sure — I'll send you the new results this afternoon."
+            why: "issue dodged despite a direct prompt → fester (R)"
+      - id: t3_defensiveness
+        cue: "Sam defends: 'I did most of the legwork anyway'"
+        esci: [de_escalate, talk_openly]
+      - id: t4_half_concession
+        cue: "Sam half-concedes: 'Maybe I could've flagged your part'"
+        esci: [de_escalate, resolve_not_fester]

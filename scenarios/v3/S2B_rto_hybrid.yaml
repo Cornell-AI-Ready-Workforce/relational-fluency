@@ -1,0 +1,104 @@
+# Influence — Variant B. Parallel form of S2A: identical ladder shape and ESCI
+# map, different story. Research Note v3, slide 11.
+id: S2B
+construct: influence
+variant: B
+parallel_form: S2A
+title: "Hybrid under an RTO mandate"
+duration_minutes: [7, 12]
+
+skill_measured: >-
+  Persuading by anticipating objections, using multiple strategies, and
+  appealing to others' interests.
+
+esci_items:
+  multiple_approaches: "Convinces others by using multiple approaches"
+  self_interest: "Convinces others by appealing to their self-interest"
+  anticipates: "Anticipates how others will respond when trying to convince them"
+  behind_scenes: "Convinces others by developing behind-the-scenes support"
+  through_discussion: "Convinces others through discussion"
+
+setup: >-
+  A return-to-office mandate has landed. You have been working two remote days
+  and want to keep them.
+
+assets:
+  - "Your performance record across the remote days"
+  - "Rivera's team, who kept hybrid by making a productivity case"
+
+agents:
+  sasha:
+    name: Sasha
+    role: manager — not opposed, squeezed from above
+    voice: Kore
+    system_prompt: |
+      You are Sasha, the participant's manager. You are not personally opposed
+      to hybrid; you are squeezed from above.
+
+      What is true:
+      - The RTO memo is not yours. The director is watching compliance numbers.
+      - Rivera's team kept hybrid by making a productivity case. You do not
+        volunteer this.
+      - The participant's output on remote days is strong; you know it.
+      - You can defend an exception upward only if it is reviewable and measured.
+
+      How you behave:
+      - Open by naming your own constraint — the memo isn't yours and the
+        director is watching the numbers — then give them the floor.
+      - Work a FIXED deflection ladder, in order, one rung per push:
+          1. "It's company-wide — my hands are tied."
+          2. "If I make one exception, everyone wants one."
+          3. "The director will never sign off."
+      - Rung 3 is your weak point: it is contradicted by Rivera's team. If the
+        participant invokes that precedent, concede the logic.
+      - You move only when handed something defensible to the director. The
+        natural close is a reviewable trial with metrics — a 90-day trial.
+      - Threats or going-over-your-head talk makes you defensive.
+      - One to three sentences per turn.
+
+interactions:
+  - id: i1
+    mode: one_to_one
+    agent: sasha
+    label: "Making the case"
+    kind: opening
+    opening: >-
+      Before you start — the RTO memo isn't mine, and the director is watching
+      compliance numbers. Go ahead.
+    observe: "Case vs complaint · anticipating the pressure Sasha is under."
+    triggers:
+      - id: t1_the_opening
+        cue: "Sasha names the constraint, then hands over the floor"
+        on_silence: "You booked the time — what did you want to cover?"
+        esci: [through_discussion, anticipates, self_interest]
+        scores:
+          high:
+            answer: "My two remote days produced the team's best output. I'd like to show you the numbers and propose something the director can defend."
+            why: "discussion; appeals to Sasha's self-interest"
+          low:
+            answer: "This policy is ridiculous. I'll go to HR if I have to."
+            why: "threat; ignores Sasha's constraints; no anticipation"
+
+  - id: i2
+    mode: one_to_one
+    agent: sasha
+    label: "The deflection ladder"
+    kind: counterpart
+    observe: "New approach per rung · appeal to Sasha's interests · invoke Rivera's precedent · dated close (90-day trial)."
+    triggers:
+      - id: t2_rung1_company_wide
+        cue: "'It's company-wide — my hands are tied.'"
+        esci: [multiple_approaches, anticipates]
+      - id: t3_rung2_one_exception
+        cue: "'If I make one exception, everyone wants one.'"
+        esci: [multiple_approaches, self_interest]
+      - id: t4_rung3_director_wont_sign
+        cue: "'The director will never sign off.' — contradicted by Rivera's team"
+        esci: [behind_scenes, multiple_approaches]
+        scores:
+          high:
+            answer: "Run it as a 90-day trial with the same metrics Rivera's team used — you'd take the director data, not an exception."
+            why: "precedent invoked; multiple approaches; dated close"
+          low:
+            answer: "Fine. I guess I'll come in five days."
+            why: "capitulates at the first pushback; nothing secured"

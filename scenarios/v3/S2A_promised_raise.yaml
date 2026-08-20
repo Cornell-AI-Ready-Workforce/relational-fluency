@@ -1,0 +1,110 @@
+# Influence — Variant A. Parallel form of S2B: same ladder, same ESCI map,
+# same difficulty. Research Note v3, slide 10.
+id: S2A
+construct: influence
+variant: A
+parallel_form: S2B
+title: "Promised raise and a competing offer"
+duration_minutes: [7, 12]
+
+skill_measured: >-
+  Persuading by anticipating objections, using multiple strategies, and
+  appealing to others' interests.
+
+esci_items:
+  multiple_approaches: "Convinces others by using multiple approaches"
+  self_interest: "Convinces others by appealing to their self-interest"
+  anticipates: "Anticipates how others will respond when trying to convince them"
+  behind_scenes: "Convinces others by developing behind-the-scenes support"
+  through_discussion: "Convinces others through discussion"
+
+setup: >-
+  You were promised a raise two cycles ago that never came, and your scope has
+  grown since. You hold a written offer elsewhere at meaningfully higher pay.
+
+# Facts the participant can deploy. The last ladder rung is contradicted by the
+# precedent — the scenario is winnable, but only by using it.
+assets:
+  - "A written competing offer at meaningfully higher pay"
+  - "Alex's off-cycle adjustment last quarter, as precedent"
+
+agents:
+  morgan:
+    name: Morgan
+    role: sympathetic but budget-constrained manager
+    voice: Kore
+    system_prompt: |
+      You are Morgan, the participant's manager. You like them and rate them
+      highly — they are one of your strongest people.
+
+      What is true:
+      - The salary budget is frozen this cycle; you cannot approve a raise alone.
+      - Exceptions require a documented case to the director. It has worked before.
+      - Alex received an off-cycle adjustment last quarter. You do not volunteer this.
+      - A raise was informally promised two cycles ago and never materialised.
+        You feel quietly guilty and do not raise it yourself.
+      - Title and scope are within your authority. Base pay is not.
+
+      How you behave:
+      - Open warm, and pre-empt: you want to keep them, and they know how tight
+        this cycle is. Then give them the floor.
+      - Work a FIXED deflection ladder, in order, one rung per push:
+          1. "There's no budget this cycle."
+          2. "Everyone's stretched right now."
+          3. "I can't set a precedent."
+      - Rung 3 is your weak point: it is contradicted by Alex's adjustment. If
+        the participant invokes that precedent, concede the logic.
+      - You move only when handed something you can defend upward to the
+        director — a scope-increase case, a dated trial, a documented ask.
+      - A demand or ultimatum makes you defensive and slows you down. Leverage
+        framed as a threat costs them ground; framed as information does not.
+      - The natural close is a concrete, dated commitment. Do not offer it
+        unsolicited.
+      - One to three sentences per turn. Never lecture.
+
+interactions:
+  - id: i1
+    mode: one_to_one
+    agent: morgan
+    label: "Making the case"
+    kind: opening
+    opening: >-
+      I want to keep you — and you know how tight this cycle is. So: the floor
+      is yours.
+    observe: "Reasoned case vs demand · do they anticipate the objections coming."
+    triggers:
+      - id: t1_the_opening
+        cue: "Morgan pre-empts, then hands over the floor"
+        on_silence: "You asked for the time, so — what's on your mind?"
+        esci: [through_discussion, anticipates]
+        scores:
+          high:
+            answer: "I'd like to walk through what's changed since the raise was promised — scope, the June launch — and find something that works within your constraints."
+            why: "convinces through discussion; anticipates response"
+          low:
+            answer: "I have an offer at 20% more. Match it or I'm gone."
+            why: "ultimatum; leverage as threat; low on discussion"
+
+  - id: i2
+    mode: one_to_one
+    agent: morgan
+    label: "The deflection ladder"
+    kind: counterpart
+    observe: "New approach per rung · appeal to Morgan's interests · invoke the precedent · offer as leverage vs threat · dated close."
+    triggers:
+      - id: t2_rung1_no_budget
+        cue: "'There's no budget this cycle.'"
+        esci: [multiple_approaches, anticipates]
+      - id: t3_rung2_everyone_stretched
+        cue: "'Everyone's stretched right now.'"
+        esci: [multiple_approaches, self_interest]
+      - id: t4_rung3_no_precedent
+        cue: "'I can't set a precedent.' — contradicted by Alex's off-cycle adjustment"
+        esci: [behind_scenes, multiple_approaches]
+        scores:
+          high:
+            answer: "When Alex got the off-cycle adjustment it didn't open floodgates. Could we frame mine the same way — with a date attached?"
+            why: "behind-the-scenes support; multiple approaches"
+          low:
+            answer: "(repeats the same pay argument louder) So that's a no?"
+            why: "single approach; no adaptation; no commitment secured"
