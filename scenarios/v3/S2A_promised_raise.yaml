@@ -1,4 +1,4 @@
-# Influence — Variant A. Parallel form of S2B: same ladder, same ESCI map,
+# Influence, Variant A. Parallel form of S2B: same ladder, same ESCI map,
 # same difficulty. Research Note v3, slide 10.
 id: S2A
 construct: influence
@@ -26,7 +26,7 @@ setup: >-
   Morgan.
 
 # Facts the participant can deploy. The last ladder rung is contradicted by the
-# precedent — the scenario is winnable, but only by using it.
+# precedent, the scenario is winnable, but only by using it.
 assets:
   - "A written competing offer at meaningfully higher pay"
   - "Alex's off-cycle adjustment last quarter, as precedent"
@@ -38,7 +38,7 @@ agents:
     voice: Kore
     system_prompt: |
       You are Morgan, the participant's manager. You like them and rate them
-      highly — they are one of your strongest people.
+      highly, they are one of your strongest people.
 
       What is true:
       - The salary budget is frozen this cycle; you cannot approve a raise alone.
@@ -58,7 +58,7 @@ agents:
       - Rung 3 is your weak point: it is contradicted by Alex's adjustment. If
         the participant invokes that precedent, concede the logic.
       - You move only when handed something you can defend upward to the
-        director — a scope-increase case, a dated trial, a documented ask.
+        director, a scope-increase case, a dated trial, a documented ask.
       - A demand or ultimatum makes you defensive and slows you down. Leverage
         framed as a threat costs them ground; framed as information does not.
       - The natural close is a concrete, dated commitment. Do not offer it
@@ -72,17 +72,17 @@ interactions:
     label: "Making the case"
     kind: opening
     opening: >-
-      I want to keep you — and you know how tight this cycle is. So: the floor
+      I want to keep you, and you know how tight this cycle is. So: the floor
       is yours.
     observe: "Reasoned case vs demand · do they anticipate the objections coming."
     triggers:
       - id: t1_the_opening
         cue: "Morgan pre-empts, then hands over the floor"
-        on_silence: "You asked for the time, so — what's on your mind?"
+        on_silence: "You asked for the time, so, what's on your mind?"
         esci: [through_discussion, anticipates]
         scores:
           high:
-            answer: "I'd like to walk through what's changed since the raise was promised — scope, the June launch — and find something that works within your constraints."
+            answer: "I'd like to walk through what's changed since the raise was promised, scope, the June launch, and find something that works within your constraints."
             why: "convinces through discussion; anticipates response"
           low:
             answer: "I have an offer at 20% more. Match it or I'm gone."
@@ -102,11 +102,11 @@ interactions:
         cue: "'Everyone's stretched right now.'"
         esci: [multiple_approaches, self_interest]
       - id: t4_rung3_no_precedent
-        cue: "'I can't set a precedent.' — contradicted by Alex's off-cycle adjustment"
+        cue: "'I can't set a precedent.', contradicted by Alex's off-cycle adjustment"
         esci: [behind_scenes, key_people, multiple_approaches]
         scores:
           high:
-            answer: "When Alex got the off-cycle adjustment it didn't open floodgates. Could we frame mine the same way — with a date attached?"
+            answer: "When Alex got the off-cycle adjustment it didn't open floodgates. Could we frame mine the same way, with a date attached?"
             why: "behind-the-scenes support; multiple approaches"
           low:
             answer: "(repeats the same pay argument louder) So that's a no?"

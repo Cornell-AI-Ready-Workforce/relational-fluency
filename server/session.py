@@ -1,4 +1,4 @@
-"""Session orchestration — unified across single-agent and multi-agent scenarios.
+"""Session orchestration, unified across single-agent and multi-agent scenarios.
 
 A Session owns:
   - The Scenario (loaded from YAML)

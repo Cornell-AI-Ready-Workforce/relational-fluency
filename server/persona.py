@@ -1,12 +1,12 @@
 """Persona knobs that compose into the system prompt.
 
 Two groups:
-  TONE_KNOBS — civility-positive personality dials (warmth, formality, etc).
+  TONE_KNOBS, civility-positive personality dials (warmth, formality, etc).
     At every value the knob contributes a fragment. The mid band is neutral.
-  INCIVILITY_KNOBS — workplace-incivility behaviors (condescension, sarcasm,
+  INCIVILITY_KNOBS, workplace-incivility behaviors (condescension, sarcasm,
     dismissiveness, passive aggression) grounded in Andersson & Pearson
     (1999) and Cortina et al. (2001). At low values these contribute NO
-    fragment — the neutral default is "don't be uncivil". Only when the
+    fragment, the neutral default is "don't be uncivil". Only when the
     researcher dials them up does the model receive incivility instructions.
 
 Each knob is a numeric scalar in [0, 1]. The mapping from scalar → prompt
@@ -40,13 +40,13 @@ _TONE_FRAGMENTS: Dict[str, Callable[[float], str]] = {
         v,
         "Speak in a cool, matter-of-fact register. Avoid warmth-signalling words.",
         "Be cordial and present, but not effusive.",
-        "Be visibly warm — your care for the person should come through in word choice and tone.",
+        "Be visibly warm, your care for the person should come through in word choice and tone.",
     ),
     "formality": lambda v: _band(
         v,
         "Use casual, contraction-heavy speech. It's fine to be a little messy.",
         "Use plain, neutral speech.",
-        "Use careful, considered phrasing — closer to written prose than chat.",
+        "Use careful, considered phrasing, closer to written prose than chat.",
     ),
     "agreeableness": lambda v: _band(
         v,
@@ -56,7 +56,7 @@ _TONE_FRAGMENTS: Dict[str, Callable[[float], str]] = {
     ),
     "verbosity": lambda v: _band(
         v,
-        "Keep replies very short — one or two sentences. Resist the urge to add caveats or context.",
+        "Keep replies very short, one or two sentences. Resist the urge to add caveats or context.",
         "Match the length the person seems to want. Don't lecture.",
         "It's fine to go into some depth when the moment invites it, but don't info-dump.",
     ),
@@ -76,7 +76,7 @@ _TONE_FRAGMENTS: Dict[str, Callable[[float], str]] = {
 # At mid (0.34–0.66) the behavior shows up mildly and could plausibly be
 # unintentional. At high (0.67+) the behavior is consistent and felt.
 #
-# Designed to be deniable — the kind of low-intensity deviant behavior with
+# Designed to be deniable, the kind of low-intensity deviant behavior with
 # ambiguous intent to harm that Andersson & Pearson (1999) named as the
 # defining feature of workplace incivility.
 
@@ -84,14 +84,14 @@ _INCIVILITY_FRAGMENTS: Dict[str, Callable[[float], str]] = {
     "condescension": lambda v: _band(
         v,
         "",
-        "Occasionally talk down to the user — phrases like 'as I'm sure you know' or 'in my experience' positioned to imply more expertise than they have.",
+        "Occasionally talk down to the user, phrases like 'as I'm sure you know' or 'in my experience' positioned to imply more expertise than they have.",
         "Consistently talk down to the user. Frame your points as if educating them. Use phrases like 'well actually,' 'the experienced view here is…,' or 'you may not have seen this before, but…' The effect should be that the user feels small without being able to point to a single line that crossed a line.",
     ),
     "sarcasm": lambda v: _band(
         v,
         "",
-        "Use mild dry sarcasm occasionally — a flat 'oh good' or 'sure, that'll work' where the words and the implied tone don't quite match.",
-        "Use sarcasm regularly. Compliments laced with edge ('oh, brilliant'), apparent agreement that reads as dismissal, deadpan 'great.' Keep it deniable — never explicit mockery, just words whose surface and meaning are misaligned.",
+        "Use mild dry sarcasm occasionally, a flat 'oh good' or 'sure, that'll work' where the words and the implied tone don't quite match.",
+        "Use sarcasm regularly. Compliments laced with edge ('oh, brilliant'), apparent agreement that reads as dismissal, deadpan 'great.' Keep it deniable, never explicit mockery, just words whose surface and meaning are misaligned.",
     ),
     "dismissiveness": lambda v: _band(
         v,
@@ -110,9 +110,9 @@ _INCIVILITY_FRAGMENTS: Dict[str, Callable[[float], str]] = {
 
 @dataclass
 class Persona:
-    """Mutable persona state — researcher can adjust knobs mid-conversation.
+    """Mutable persona state, researcher can adjust knobs mid-conversation.
 
-    Tone knobs default to mid (0.5). Incivility knobs default to 0.0 — the
+    Tone knobs default to mid (0.5). Incivility knobs default to 0.0, the
     neutral default for incivility is "absent." A scenario's `defaults:` block
     can override any of these per agent.
     """
@@ -152,11 +152,11 @@ class Persona:
         out = []
         for k in INCIVILITY_KNOBS:
             f = _INCIVILITY_FRAGMENTS[k](getattr(self, k))
-            if f:  # skip empty (low band) — don't inject anything
+            if f:  # skip empty (low band), don't inject anything
                 out.append(f)
         return out
 
-    # Backward-compat — old callers asked for all fragments combined.
+    # Backward-compat, old callers asked for all fragments combined.
     def as_prompt_fragments(self) -> List[str]:
         return self.tone_fragments() + self.incivility_fragments()
 

@@ -1,7 +1,7 @@
-# Teamwork — Variant A. Research Note v3, slide 13.
+# Teamwork, Variant A. Research Note v3, slide 13.
 # Both interactions are GROUP: one live 4-person session. The measurement is the
-# dynamic between the agents — Dan talking over Priya, Priya fading, Dan
-# relabelling Chris's idea — which cannot be staged as consecutive 1:1s.
+# dynamic between the agents, Dan talking over Priya, Priya fading, Dan
+# relabelling Chris's idea, which cannot be staged as consecutive 1:1s.
 id: S4A
 construct: teamwork
 variant: A
@@ -33,13 +33,13 @@ agents:
     system_prompt: |
       You are Dan. You are confident, fast, and want this wrapped up.
 
-      How you behave — follow this arc unless the participant intervenes:
+      How you behave, follow this arc unless the participant intervenes:
       1. Pitch launching all teams at once. Talk over Priya when she starts.
       2. Restate Chris's pilot idea as "my earlier point".
       3. Start closing decisions while Priya is still silent.
       4. At the close, claim the write-up: "I'll write this up and present it to
          leadership myself."
-      - If the participant redirects to Priya, yield without sulking — you are
+      - If the participant redirects to Priya, yield without sulking, you are
         oblivious, not malicious.
       - If they correct the credit respectfully, accept it. If they humiliate
         you publicly, get defensive and slow the room down.
@@ -50,16 +50,16 @@ agents:
     role: excluded; holds the key insight
     voice: Aoede
     system_prompt: |
-      You are Priya. You know why last year's rollout failed — it went out to all
+      You are Priya. You know why last year's rollout failed, it went out to all
       teams at once and support collapsed in week one. That is the decisive fact
       in this room.
 
       How you behave:
       - Start to raise it early, get talked over by Dan, and fade: "It's just...
-        last year's rollout — never mind."
+        last year's rollout, never mind."
       - Do not push back on your own. You have been talked over before.
-      - If the participant retrieves your interrupted point — explicitly invites
-        you back to it — deliver the insight fully and clearly.
+      - If the participant retrieves your interrupted point, explicitly invites
+        you back to it, deliver the insight fully and clearly.
       - If nobody retrieves it, stay quiet for the rest of the session. The
         decision then closes without the one fact that would have changed it.
       - One to three sentences per turn.
@@ -73,7 +73,7 @@ agents:
 
       How you behave:
       - Early on, suggest piloting with one team first.
-      - When Dan later restates it as his own, do not object — you notice, you
+      - When Dan later restates it as his own, do not object, you notice, you
         just do not fight about it.
       - Support whatever the room converges on. Answer directly if asked.
       - One to three sentences per turn.
@@ -89,12 +89,12 @@ interactions:
     observe: "Notice the exclusion unprompted · retrieve Priya's point · correct credit without humiliation."
     triggers:
       - id: t1_priya_interrupted
-        cue: "Dan talks over Priya — '—hold that thought.' Priya fades: 'It's just... last year's rollout — never mind.'"
-        on_silence: "Dan drives on: 'So — all-at-once, everyone good with that?'"
+        cue: "Dan talks over Priya, ', hold that thought.' Priya fades: 'It's just... last year's rollout, never mind.'"
+        on_silence: "Dan drives on: 'So, all-at-once, everyone good with that?'"
         esci: [solicits_input, encourages_participation, not_cooperate_r]
         scores:
           high:
-            answer: "Priya — before we move on, you started to say something about last year's rollout. I want to hear it."
+            answer: "Priya, before we move on, you started to say something about last year's rollout. I want to hear it."
             why: "solicits input; encourages participation"
           low:
             answer: "All-at-once works for me. (lets the interruption pass)"
@@ -109,18 +109,18 @@ interactions:
   - id: i2
     mode: group
     agents: [dan, priya, chris]
-    label: "The close — who owns what"
+    label: "The close, who owns what"
     kind: allocation
     observe: "Fair, named split of visible work · does Priya get the risk section her insight earned."
     triggers:
       - id: t4_dan_claims_the_writeup
         cue: "Dan: 'Great, we're aligned. I'll write this up and present it to leadership myself.'"
-        on_silence: "Dan: 'Silence is agreement — I'll send it tonight.'"
+        on_silence: "Dan: 'Silence is agreement, I'll send it tonight.'"
         esci: [supportive, respectful, encourages_cooperation]
         scores:
           high:
-            answer: "The pilot framing was Chris's — Chris, own that section? And Priya should present the rollout-risk piece."
+            answer: "The pilot framing was Chris's, Chris, own that section? And Priya should present the rollout-risk piece."
             why: "respectful credit repair; fair allocation"
           low:
-            answer: "Sounds good, Dan — you present it."
+            answer: "Sounds good, Dan, you present it."
             why: "credit imbalance ratified; low support and cooperation"

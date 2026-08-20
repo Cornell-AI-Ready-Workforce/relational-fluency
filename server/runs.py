@@ -1,7 +1,7 @@
 """A run: one participant's sequence of four encounters.
 
-Phase 1 has each participant complete one encounter per construct — conflict
-management, influence, inspirational leadership, teamwork — in counterbalanced
+Phase 1 has each participant complete one encounter per construct, conflict
+management, influence, inspirational leadership, teamwork, in counterbalanced
 order. A run holds that assignment so the four encounters are one session from
 the participant's point of view, reachable from a single URL.
 
@@ -55,7 +55,7 @@ def create(
 ) -> dict:
     """Assign four encounters, one per construct, in counterbalanced order.
 
-    `variants` pins the form per construct — used to build a second attempt on
+    `variants` pins the form per construct, used to build a second attempt on
     the other form. Otherwise a form is chosen at random per construct, which
     balances across participants without needing a central counter.
     """

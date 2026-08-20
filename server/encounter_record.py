@@ -1,6 +1,6 @@
 """The aligned encounter record.
 
-The architecture calls for "one aligned record per encounter" — video, audio,
+The architecture calls for "one aligned record per encounter", video, audio,
 transcript, and steering log under a single id. events.jsonl is the raw
 append-only trail; this builds the analysis-facing view from it, so a rater, a
 scorer, or a Phase-3 training job can read one file instead of replaying events.

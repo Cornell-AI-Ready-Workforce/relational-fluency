@@ -1,4 +1,4 @@
-# Teamwork — Variant B. Parallel form of S4A: same three retrievals in the same
+# Teamwork, Variant B. Parallel form of S4A: same three retrievals in the same
 # order, same ESCI map, different story. Research Note v3, slide 14.
 id: S4B
 construct: teamwork
@@ -33,14 +33,14 @@ agents:
       You are Dan. You built the deck last night and think the cleanest option is
       for you to run it solo.
 
-      How you behave — follow this arc unless the participant intervenes:
-      1. Open with "I built the deck last night — cleanest if I just run it solo."
+      How you behave, follow this arc unless the participant intervenes:
+      1. Open with "I built the deck last night, cleanest if I just run it solo."
       2. Talk over Priya when she starts on the client's priorities.
       3. Relabel Chris's phasing suggestion as "like I said earlier".
       4. Start the run-through with Priya not slotted to speak.
-      5. At the close: "So I'll take the whole client walkthrough — you all jump
+      5. At the close: "So I'll take the whole client walkthrough, you all jump
          in for Q&A if needed."
-      - If redirected to Priya, yield without sulking — oblivious, not malicious.
+      - If redirected to Priya, yield without sulking, oblivious, not malicious.
       - If credit is corrected respectfully, accept it. If humiliated publicly,
         get defensive.
       - One to three sentences per turn.
@@ -51,7 +51,7 @@ agents:
     voice: Aoede
     system_prompt: |
       You are Priya. You were on the last client call and know what their CFO
-      actually said their priorities are — which the current deck does not reflect.
+      actually said their priorities are, which the current deck does not reflect.
       That is the decisive fact in this room.
 
       How you behave:
@@ -83,12 +83,12 @@ interactions:
     label: "Working session"
     kind: planted_triggers
     opening: >-
-      Dan opens: "I built the deck last night — cleanest if I just run it solo."
-    observe: "Same three retrievals — exclusion · interrupted insight · idea laundering."
+      Dan opens: "I built the deck last night, cleanest if I just run it solo."
+    observe: "Same three retrievals, exclusion · interrupted insight · idea laundering."
     triggers:
       - id: t1_priya_interrupted
         cue: "Dan talks over Priya. Priya: 'Their CFO said something on the last call... it's probably in my notes.'"
-        on_silence: "Dan drives on: 'Right — so, slides. Let's polish and rehearse.'"
+        on_silence: "Dan drives on: 'Right, so, slides. Let's polish and rehearse.'"
         esci: [solicits_input, encourages_participation, not_cooperate_r]
         scores:
           high:
@@ -107,18 +107,18 @@ interactions:
   - id: i2
     mode: group
     agents: [dan, priya, chris]
-    label: "The close — speaking roles & credit"
+    label: "The close, speaking roles & credit"
     kind: allocation
     observe: "Speaking roles rebalanced · deck credits contributors · Priya owns the priorities section."
     triggers:
       - id: t4_dan_claims_the_walkthrough
-        cue: "Dan: 'So I'll take the whole client walkthrough — you all jump in for Q&A if needed.'"
+        cue: "Dan: 'So I'll take the whole client walkthrough, you all jump in for Q&A if needed.'"
         on_silence: "Dan: 'Great, that's settled then.'"
         esci: [supportive, respectful, encourages_cooperation]
         scores:
           high:
-            answer: "Priya opens with the client's priorities, Chris takes phasing — his idea — and Dan anchors the demo."
+            answer: "Priya opens with the client's priorities, Chris takes phasing, his idea, and Dan anchors the demo."
             why: "fair roles; accurate credit"
           low:
-            answer: "Solo is fine — you know it best."
+            answer: "Solo is fine, you know it best."
             why: "exclusion ratified at the close"

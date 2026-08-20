@@ -2,10 +2,10 @@
 
 A scenario is a YAML file. Two shapes are supported (auto-detected by loader):
 
-  Single-agent (v1 — legacy, used by missed_deadlines etc.):
+  Single-agent (v1, legacy, used by missed_deadlines etc.):
     id, title, intro, system_prompt, defaults, voice_id, branches, references
 
-  Multi-agent (v2 — group/team meeting scenarios):
+  Multi-agent (v2, group/team meeting scenarios):
     id, title, intro, mode: group, scene, director_prompt,
     cast: [ {id, name, photo, system_prompt, voice_id, defaults} ],
     branches, references
@@ -50,7 +50,7 @@ class Agent:
     name: str
     system_prompt: str
     role: str = ""  # short title shown under the name in the UI (e.g. "Product Manager")
-    hidden_agenda: str = ""  # internal — never sent to the participant pre/in-session; revealed at debrief
+    hidden_agenda: str = ""  # internal, never sent to the participant pre/in-session; revealed at debrief
     photo: str = "initials"  # "initials" or filename under static/agents/
     voice_id: Optional[str] = None
     defaults: Dict[str, float] = field(default_factory=dict)
@@ -67,7 +67,7 @@ class Scenario:
     intro_image: str = ""  # filename under static/agents/ shown on the brief screen (pre-start)
     cast: List[Agent] = field(default_factory=list)
     director_prompt: str = ""  # routing guidance for group mode
-    # When False, skip the per-gap route_continuation calls — use when the
+    # When False, skip the per-gap route_continuation calls, use when the
     # director already returns complete multi-speaker sequences (faster).
     chain_continuations: bool = True
     # Agents to route on the very first reaction, served WITHOUT a director LLM
@@ -139,7 +139,7 @@ def _scenario_from_dict(data: dict) -> Scenario:
                 defaults=entry.get("defaults", {}),
             ))
     else:
-        # Legacy single-agent — synthesize a one-element cast.
+        # Legacy single-agent, synthesize a one-element cast.
         cast.append(Agent(
             id="primary",
             name=data.get("agent_name", "AI"),
@@ -171,7 +171,7 @@ def list_scenarios() -> List[Dict[str, str]]:
     from .scenarios_v3 import available as _v3_available, compile_scenario
 
     out = []
-    # Study scenarios first — these are what Phase 1 collects.
+    # Study scenarios first, these are what Phase 1 collects.
     for sid in _v3_available():
         sc = compile_scenario(sid)
         out.append({
@@ -203,7 +203,7 @@ def compose_system_prompt_single(
     triggered_branches: List[Branch],
 ) -> str:
     """Compose the v1 single-agent system prompt. Used by the legacy
-    ConversationEngine — group mode goes through engine.AgentEngine instead.
+    ConversationEngine, group mode goes through engine.AgentEngine instead.
     """
     agent = scenario.cast[0]
     parts = [agent.system_prompt, "", "## Tone and manner"]
@@ -211,7 +211,7 @@ def compose_system_prompt_single(
     incivility = persona.incivility_fragments()
     if incivility:
         parts.append("")
-        parts.append("## Incivility behaviors (active — research dial)")
+        parts.append("## Incivility behaviors (active, research dial)")
         parts.extend(f"- {f}" for f in incivility)
     if triggered_branches:
         parts.append("")
@@ -226,7 +226,7 @@ def compose_system_prompt_single(
     parts.append("")
     parts.append(
         "Speak as if in a real-time voice conversation. Keep replies natural-length "
-        "for speech — not chat-text bullets. Do not narrate or describe what you are doing."
+        "for speech, not chat-text bullets. Do not narrate or describe what you are doing."
     )
     return "\n".join(parts)
 

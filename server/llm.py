@@ -3,7 +3,7 @@
 Clients are constructed with an explicit base URL and key rather than letting
 the SDK read ambient environment variables. A stray ANTHROPIC_BASE_URL in the
 shell (the desktop app exports one) would otherwise silently redirect study
-traffic to a different provider — encounters would fail, or worse, quietly run
+traffic to a different provider, encounters would fail, or worse, quietly run
 somewhere other than the configured gateway. For a measurement instrument the
 endpoint has to be deliberate and recorded.
 """
@@ -38,7 +38,7 @@ def gateway_api_key() -> str:
 
 
 def text_client() -> AsyncAnthropic:
-    """Client for the text models — director, steering, judge, debrief."""
+    """Client for the text models, director, steering, judge, debrief."""
     return AsyncAnthropic(base_url=gateway_base_url(), api_key=gateway_api_key())
 
 
@@ -60,7 +60,7 @@ def preflight() -> dict:
     """Check the configured gateway answers with the configured key.
 
     Called at startup. A misconfigured endpoint used to surface only as a 401
-    buried in a session log, halfway through an encounter — by which point the
+    buried in a session log, halfway through an encounter, by which point the
     participant's time is already spent. Better to say so before anyone joins.
     """
     import httpx

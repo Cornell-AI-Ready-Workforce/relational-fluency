@@ -1,14 +1,14 @@
 """High-quality re-transcription of the participant channel.
 
 The live transcript comes from the realtime bridge's own transcriber, which
-cannot be configured — passing a transcription model to session.update is
+cannot be configured, passing a transcription model to session.update is
 accepted and ignored (verified 2026-08-20). It is good enough to steer on, but
 it drops words, and the study's transcript is what raters read and what the
 scorer trains on.
 
 So the recorded participant audio is re-transcribed offline against a stronger
 multimodal model, and the result is stored alongside the live transcript rather
-than replacing it — the live text is the record of what the agent actually
+than replacing it, the live text is the record of what the agent actually
 heard and reacted to, which is not the same thing as what was said.
 
     python -m server.retranscribe <session_id>
@@ -33,7 +33,7 @@ MODEL = setting("TRANSCRIBE_MODEL", "nto.gemini-2.5-pro")
 
 PROMPT = (
     "Transcribe this audio verbatim. It is one side of a workplace conversation "
-    "— only the participant is audible. Output only the transcript text, with "
+    "only the participant is audible. Output only the transcript text, with "
     "normal punctuation and no speaker labels, timestamps, or commentary. "
     "If a passage is inaudible, write [inaudible]."
 )
@@ -120,7 +120,7 @@ def main(argv: List[str]) -> int:
         try:
             res = retranscribe(d, force=force)
         except Exception as exc:  # noqa: BLE001
-            print(f"{d.name}: FAILED — {exc}")
+            print(f"{d.name}: FAILED, {exc}")
             continue
         if res is None:
             print(f"{d.name}: skipped (no usable audio)")

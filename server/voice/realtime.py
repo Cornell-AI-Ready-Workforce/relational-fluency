@@ -8,7 +8,7 @@ Gateway notes, verified 2026-08-19 (see docs/migration-plan.md):
 
 * Transport is a WebSocket at /v1/realtime?model=...; the WebRTC path is not
   wired up. The upgrade needs HTTP/1.1.
-* `session.update` must stay FLAT and minimal — instructions, voice, tools.
+* `session.update` must stay FLAT and minimal, instructions, voice, tools.
   Sending `modalities`, the nested GA `audio: {...}` block, or
   `input_audio_transcription` leaves the session alive but permanently mute,
   with no error event. This is the single easiest way to break it.
@@ -30,7 +30,7 @@ from typing import AsyncIterator, Optional
 
 import websockets
 
-# Config comes from server.llm so the .env file wins over ambient environment —
+# Config comes from server.llm so the .env file wins over ambient environment,
 # a stray exported variable must not be able to redirect study traffic.
 from ..llm import gateway_api_key, gateway_base_url, setting
 
@@ -138,7 +138,7 @@ class RealtimeVoiceSession:
             session["voice"] = self.voice
         if self.tools:
             session["tools"] = self.tools
-        # Deliberately nothing else — see module docstring.
+        # Deliberately nothing else, see module docstring.
         await self._send({"type": "session.update", "session": session})
 
     async def _send(self, payload: dict) -> None:
@@ -174,7 +174,7 @@ class RealtimeVoiceSession:
     @property
     def responding(self) -> bool:
         """True while a reply is in flight. A group sequencer must wait for this
-        to clear before handing the floor to the next character — the gateway
+        to clear before handing the floor to the next character, the gateway
         rejects a second response.create with
         conversation_already_has_active_response."""
         return self._response_active
@@ -192,7 +192,7 @@ class RealtimeVoiceSession:
         await self._send({"type": "response.create"})
 
     async def commit_turn(self) -> None:
-        """Close the participant's turn and ask for a reply. Required — the
+        """Close the participant's turn and ask for a reply. Required, the
         gateway will not do this on its own."""
         if self._response_active:
             return

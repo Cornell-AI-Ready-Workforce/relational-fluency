@@ -1,6 +1,6 @@
 """Check that an encounter was captured completely.
 
-Run after a session — or over a whole collection wave — to catch the failures
+Run after a session, or over a whole collection wave, to catch the failures
 that are cheap to fix on day one and impossible to fix afterwards: an encounter
 with no participant audio, a transcript missing one side, triggers that never
 fired, or a record that cannot say which gateway produced it.
@@ -36,7 +36,7 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
     record = build(session_dir)
 
     # --- the record itself ---
-    checks.append((bool(record), "record built", record.get("encounter_id", "—")))
+    checks.append((bool(record), "record built", record.get("encounter_id", ", ")))
     prov = record.get("provenance") or {}
     checks.append((
         bool(prov.get("gateway") and prov.get("realtime_model")),
@@ -66,7 +66,7 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
               if t.get("role") == "agent" and t.get("stage_direction")]
     checks.append((len(directions) > 0, "stage directions logged", f"{len(directions)}"))
 
-    # An agent turn with audio but no text is unscoreable — catch it here rather
+    # An agent turn with audio but no text is unscoreable, catch it here rather
     # than in the rating queue.
     missing = [e for e in events if e.get("type") == "transcript_missing"]
     agent_turns = [e for e in events if e.get("type") == "assistant_turn"]
@@ -84,7 +84,7 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
         checks.append((
             len(ids) > 0,
             "planted triggers fired",
-            f"{len(ids)}/{len(expected)} — {', '.join(ids) or 'none'}",
+            f"{len(ids)}/{len(expected)}, {', '.join(ids) or 'none'}",
         ))
         esci_seen = {i for e in fired for i in (e.get("esci") or [])}
         checks.append((bool(esci_seen), "ESCI items exercised", f"{len(esci_seen)} distinct"))
@@ -123,7 +123,7 @@ def report(session_dir: Path) -> bool:
     print(f"\n{session_dir.name}")
     for passed, label, detail in checks:
         print(f"  {'PASS' if passed else 'FAIL'}  {label:30} {detail}")
-    print(f"  {'— complete' if ok else '— INCOMPLETE'}")
+    print(f"  {'complete' if ok else 'INCOMPLETE'}")
     return ok
 
 

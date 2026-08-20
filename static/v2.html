@@ -64,7 +64,7 @@
     .brief { max-height: none; }
   }
   main { flex: 1; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
-  /* Photos in a single row across the top — large for immersion. */
+  /* Photos in a single row across the top, large for immersion. */
   .grid { display: grid; gap: 14px; width: 100%; max-width: 1600px;
           grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
   .tile { background: var(--tile-bg); color: var(--fg-on-dark); border-radius: 14px;
@@ -151,7 +151,7 @@
   .transcript .speaker { font-weight: 600; color: var(--accent); }
   .transcript .speaker.self { color: var(--fg); }
   .transcript .meta { font-size: 11px; color: var(--muted); margin-left: 6px; }
-  /* Live (in-progress) caption — muted until the utterance is committed. */
+  /* Live (in-progress) caption, muted until the utterance is committed. */
   .transcript .turn.live .text { color: var(--muted); }
   .transcript .turn.live .speaker::after { content: " \2026"; color: var(--muted); font-weight: 400; }
   .director-note { font-size: 12px; color: var(--muted); font-style: italic; }
@@ -166,7 +166,7 @@
   .tile.has-photo .name { margin: 0 0 0 14px; font-size: 16px; font-weight: 600; }
   .tile.has-photo .role { margin: 2px 0 14px 14px; font-size: 12px; opacity: 0.92; }
 
-  /* User camera — live webcam fills the self tile during a session. */
+  /* User camera, live webcam fills the self tile during a session. */
   .tile.self video { position: absolute; inset: 0; width: 100%; height: 100%;
                  object-fit: cover; border-radius: 14px; transform: scaleX(-1); /* mirror */
                  display: none; }
@@ -182,7 +182,7 @@
   .brief .intro-photo { width: 100%; border-radius: 10px; margin: 0 0 18px; display: block;
                  border: 1px solid var(--line-soft); }
 
-  /* Situation popup (replaces the consent gate) — photo + scene explanation,
+  /* Situation popup (replaces the consent gate), photo + scene explanation,
      side by side so both are visible at once. */
   /* Higher specificity than the base .consent-card (which is defined later
      with max-width:620px) so the wider situation popup actually wins. */
@@ -205,6 +205,16 @@
   .situation-text { flex: 1; min-width: 0; }
   .situation-card h2 { font-size: 18px; margin: 0 0 12px; }
   .situation-card .body { font-size: 15px; line-height: 1.65; white-space: pre-wrap; color: var(--fg); }
+  /* Bodies built from markup rather than plain text: pre-wrap would render the
+     source indentation as gaps and hanging indents. */
+  .consent-card .body.rich, .situation-card .body.rich { white-space: normal; }
+  .consent-card .body.rich p { margin: 0 0 12px; }
+  .consent-card .body.rich ul { margin: 0 0 12px; padding-left: 22px; }
+  .consent-card .body.rich li { margin: 0 0 7px; }
+  /* Keep the action button reachable on short screens. */
+  .consent-card { max-height: 88vh; display: flex; flex-direction: column; }
+  .consent-card .body.rich, .situation-card .body { overflow-y: auto; }
+  .consent-card .actions { flex-shrink: 0; padding-top: 6px; }
   .situation-card .actions { margin-top: 22px; }
   .situation-card .actions button { width: 100%; padding: 13px; font-size: 15px; }
   @media (max-width: 680px) {
@@ -341,30 +351,30 @@
 <div class="consent-overlay" id="fictionOverlay" style="display:none">
   <div class="consent-card situation-card">
     <h2>Before you begin: please keep this fictional</h2>
-    <div class="body">
+    <div class="body rich">
       <p>These are made-up work situations with AI characters. You are playing a
       role, not telling us about your real life. To protect your privacy and
       other people's, please:</p>
       <ul>
-        <li><b>Don't use real names</b> — not your own, not your employer's, and
+        <li><b>Don't use real names</b>, not your own, not your employer's, and
         not those of real coworkers, managers, clients, friends, or family. Use
         the names the scenario gives you.</li>
-        <li><b>Don't describe real events</b> — real disputes, real pay or
+        <li><b>Don't describe real events</b>, real disputes, real pay or
         performance issues, real health, legal, or financial matters, or
         anything else about your own life or anyone else's.</li>
-        <li><b>Don't share contact or account details</b> — addresses, phone
+        <li><b>Don't share contact or account details</b>, addresses, phone
         numbers, emails, ID numbers, or similar. The AI partner has no use for
         them.</li>
         <li><b>Stay in the scenario.</b> If the conversation drifts toward your
         real situation, steer it back to the fictional one.</li>
       </ul>
-      <p>If something personal slips out by accident, that's okay — just keep
+      <p>If something personal slips out by accident, that's okay, just keep
       going. We remove personal details from transcripts before we analyze or
       share anything, and the AI partner is instructed not to ask follow-up
       questions about personal disclosures. You can end a conversation at any
       time.</p>
     </div>
-    <div class="actions"><button id="fictionAck">I understand — continue</button></div>
+    <div class="actions"><button id="fictionAck">I understand, continue</button></div>
   </div>
 </div>
 
@@ -474,11 +484,11 @@
 
     // The completion code is shown whether or not the return link is
     // configured, so a participant is never stranded without proof they
-    // finished — that is what their payment depends on.
+    // finished, that is what their payment depends on.
     $('nextBody').innerHTML =
       `<p>You have finished all ${run ? run.total : 4} conversations. Thank you.</p>` +
       (code ? `<p>Your completion code is <b class="code">${esc(code)}</b>` +
-              ` — you will be asked for it in the survey.</p>` : '');
+              `, you will be asked for it in the survey.</p>` : '');
 
     if (cfg.return_url) {
       const sep = cfg.return_url.includes('?') ? '&' : '?';
@@ -566,7 +576,7 @@
 
   // ---------- participant registration (silent) ----------
   // The voice path still needs a participant record (audio capture). For the
-  // demo we register one silently instead of showing a consent form — the
+  // demo we register one silently instead of showing a consent form, the
   // popup now carries the situation, not a consent gate.
   async function ensureParticipant() {
     if (participantId) return true;
@@ -603,11 +613,12 @@
       // Situation stays short by design (context lands in-scene). What we add
       // is orientation: who you will speak with, how it runs, and what to do.
       const people = (b.people || []).map(p =>
-        `<li><b>${esc(p.name)}</b>${p.role ? ` — ${esc(p.role)}` : ''}</li>`).join('');
+        `<li><b>${esc(p.name)}</b>${p.role ? `, ${esc(p.role)}` : ''}</li>`).join('');
       const parts = (b.parts || []).map((p, i) =>
-        `<li>${esc(p.label)}${p.with?.length ? ` — with ${esc(p.with.join(' and '))}` : ''}</li>`).join('');
+        `<li>${esc(p.label)}${p.with?.length ? `, with ${esc(p.with.join(' and '))}` : ''}</li>`).join('');
       const how = (b.howto || []).map(h => `<li>${esc(h)}</li>`).join('');
       const dur = b.duration ? `${b.duration[0]}–${b.duration[1]} minutes` : '';
+      $('situationBody').classList.add('rich');
       $('situationBody').innerHTML = `
         <p class="sit-lead">${esc(b.situation || d.intro || '')}</p>
         ${(b.assets || []).length ? `<div class="sit-assets">
@@ -638,7 +649,7 @@
       $('situationOverlay').style.display = 'none';
       // Start immediately. This click is the user gesture browsers require for
       // microphone capture and audio playback, so it has to be the one that
-      // opens the session — a second "Start session" click is friction and
+      // opens the session, a second "Start session" click is friction and
       // makes people think the first one failed.
       await startSession();
     }, { once: true });
@@ -700,7 +711,7 @@
 
   function renderGrid() {
     const g = $('grid'); g.innerHTML = '';
-    // Self tile — avatar pre-start, live webcam once the session begins.
+    // Self tile, avatar pre-start, live webcam once the session begins.
     const self = document.createElement('div');
     self.className = 'tile self'; self.id = 'tile-self';
     self.innerHTML = `
@@ -715,7 +726,7 @@
     g.appendChild(self);
     attachCamera();  // (re)bind the live stream if we already have one
     setTimeout(applyPresence, 0);  // keep greying consistent across re-renders
-    // Agent tiles — photo when the scenario provides one, else initials.
+    // Agent tiles, photo when the scenario provides one, else initials.
     cast.forEach(a => {
       const t = document.createElement('div');
       const hasPhoto = a.photo && a.photo !== 'initials';
@@ -750,7 +761,7 @@
   }
 
   function setActiveSpeaker(speakerId) {
-    if (speakerId === activeSpeaker) return;  // idempotent — called every animation frame
+    if (speakerId === activeSpeaker) return;  // idempotent, called every animation frame
     if (activeSpeaker) {
       const prev = $(`tile-${activeSpeaker === 'user' ? 'self' : activeSpeaker}`);
       if (prev) prev.classList.remove('speaking');
@@ -778,7 +789,7 @@
     return full.length;
   }
   // Reveal the turn up to the end of whichever sentence the audio is currently
-  // in — so the caption advances sentence by sentence in time with the voice.
+  // in, so the caption advances sentence by sentence in time with the voice.
   function revealTurn(turn, charN) {
     if (!turn.el) turn.el = appendTranscript('assistant', turn.agent_id, '');
     const cut = sentenceCut(turn.fullText, charN);
@@ -808,7 +819,7 @@
         if (turn.done) revealTurn(turn, turn.fullText.length);
         continue;
       }
-      // Audio is buffered but this turn is NOT playing yet — keep it hidden so a
+      // Audio is buffered but this turn is NOT playing yet, keep it hidden so a
       // later speaker's name doesn't appear before their voice is heard.
       if (t < turn.startCtx) continue;
       const dur = Math.max(0.05, turn.endCtx - turn.startCtx);
@@ -904,7 +915,7 @@
     await audioCtx.audioWorklet.addModule('/static/pcm-worklet.js');
     const audioConstraints = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
     // Camera-on by default for the Zoom-like tile. Fall back to audio-only if
-    // the camera is missing or permission is denied — the session still runs.
+    // the camera is missing or permission is denied, the session still runs.
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: audioConstraints,
@@ -966,7 +977,7 @@
     if (speechRaf == null) tickSpeech();
     src.onended = () => {
       if (audioCtx && audioCtx.currentTime >= playbackTime - 0.01 && assistantSpeaking) {
-        // Last scheduled chunk finished — the whole multi-speaker turn is done.
+        // Last scheduled chunk finished, the whole multi-speaker turn is done.
         assistantSpeaking = false;
         setMicMuted(false);
       }
@@ -990,7 +1001,7 @@
     if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
     startTimer();
     const pidParam = participantId ? `&participant_id=${encodeURIComponent(participantId)}` : '';
-    // The model is fixed by the server for the whole study wave — the agent is
+    // The model is fixed by the server for the whole study wave, the agent is
     // the measurement instrument, so participants never vary it. A researcher
     // launch may still pin one explicitly via ?model=.
     const urlModelVal = params.get('model');
@@ -1036,7 +1047,7 @@
           if (currentTurn) {
             currentTurn.done = true;
             if (m.latency_total_s != null) currentTurn.latency = m.latency_total_s;
-            // No audio arrived for this turn (e.g. TTS failed) — show it now.
+            // No audio arrived for this turn (e.g. TTS failed), show it now.
             if (currentTurn.startCtx == null) revealTurn(currentTurn, currentTurn.fullText.length);
           }
           currentTurn = null;
@@ -1050,15 +1061,15 @@
           const label = m.label || `Part ${m.index + 1}`;
           const el = document.createElement('div');
           el.className = 'scene';
-          el.innerHTML = `${label}<span class="with"> — you are now with ${names}</span>`;
+          el.innerHTML = `${label}<span class="with">, you are now with ${names}</span>`;
           $('transcript').appendChild(el);
           $('transcript').scrollTop = $('transcript').scrollHeight;
-          $('sceneNow').textContent = `Now: ${label} — with ${names}`;
+          $('sceneNow').textContent = `Now: ${label}, with ${names}`;
           applyPresence();
         } else if (m.type === 'encounter_complete') {
           const el = document.createElement('div');
           el.className = 'scene';
-          el.textContent = 'Encounter complete — thank you.';
+          el.textContent = 'Encounter complete, thank you.';
           $('transcript').appendChild(el);
           $('sceneNow').textContent = 'Encounter complete';
           onEncounterComplete();
@@ -1109,7 +1120,7 @@
 
   async function showDebrief(sid) {
     feedbackSid = sid;
-    $('debriefContent').innerHTML = `<div class="debrief-loading">Reading the room back to you — analyzing how each person responded…</div>`;
+    $('debriefContent').innerHTML = `<div class="debrief-loading">Reading the room back to you, analyzing how each person responded…</div>`;
     $('debriefOverlay').style.display = 'flex';
     try {
       const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/debrief` + keyParamFirst, {
@@ -1156,7 +1167,7 @@
           <div class="metrics">
             ${metric('Felt heard', p.felt_heard, RATING_TEXT[p.felt_heard] || p.felt_heard, p.felt_heard_evidence)}
             ${metric('Real concern addressed', p.concern_addressed, RATING_TEXT[p.concern_addressed] || p.concern_addressed, p.concern_addressed_evidence)}
-            ${metric('Stance', p.stance_direction, DIR_TEXT[p.stance_direction] || p.stance_direction, stanceVal + (p.stance_note ? ' — ' + p.stance_note : ''))}
+            ${metric('Stance', p.stance_direction, DIR_TEXT[p.stance_direction] || p.stance_direction, stanceVal + (p.stance_note ? ', ' + p.stance_note : ''))}
           </div>
         </div>`;
     });
@@ -1194,7 +1205,7 @@
     const ov = d.overall || {};
     const skill = d.skill || 'this skill';
     let html = `
-      <div class="fb-intro">Your relational-fluency feedback for <b>${esc(skill)}</b> — keeping a tense room feeling safe to speak. You're scored 1 to 5 on each part of the skill, based on what you actually said and did.</div>
+      <div class="fb-intro">Your relational-fluency feedback for <b>${esc(skill)}</b>, keeping a tense room feeling safe to speak. You're scored 1 to 5 on each part of the skill, based on what you actually said and did.</div>
       <div class="fb-hero">
         <div class="score-ring ${scoreClass(ov.score)}">${ov.score != null ? ov.score : '–'}<small>/5</small></div>
         <div class="summary">${esc(ov.summary)}</div>
@@ -1213,7 +1224,7 @@
     });
     const list = (arr) => (arr && arr.length)
       ? '<ul>' + arr.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>'
-      : '<p class="rationale" style="color:var(--muted)">—</p>';
+      : '<p class="rationale" style="color:var(--muted)">, </p>';
     html += `
       <div class="fb-cols">
         <div class="fb-col well"><h4>What you did well</h4>${list(ov.strengths)}</div>

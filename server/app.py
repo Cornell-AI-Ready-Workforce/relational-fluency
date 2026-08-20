@@ -1,12 +1,12 @@
-"""FastAPI server — participant + researcher endpoints.
+"""FastAPI server, participant + researcher endpoints.
 
 Two paths:
-  - /ws/participant  — text turn-taking (works without STT/TTS keys). Voice
+  - /ws/participant , text turn-taking (works without STT/TTS keys). Voice
                        endpoint /ws/participant/voice layers on STT/TTS.
-  - /ws/researcher   — live transcript + steering controls
+  - /ws/researcher  , live transcript + steering controls
 
 The text path is sufficient to "make sure the conversation is working well
-and steer the model" — voice is layered on top once a researcher has
+and steer the model", voice is layered on top once a researcher has
 validated scenarios and prompts.
 """
 from __future__ import annotations
@@ -43,7 +43,7 @@ SESSION_KEY = os.getenv("SESSION_KEY", "").strip()
 ROOT_DIR = Path(__file__).parent.parent
 STATIC_DIR = ROOT_DIR / "static"
 CONFIG_DIR = ROOT_DIR / "config"
-# Mirror storage.py — DATA_DIR may be a mounted volume in production.
+# Mirror storage.py, DATA_DIR may be a mounted volume in production.
 from .storage import SESSIONS_DIR as SESSIONS_DIR  # re-export
 
 # Public hostnames. Cornell IT delegated ai-ready-workforce.ai.cornell.edu to
@@ -68,7 +68,7 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Host-header allowlist. Implemented directly rather than with
 # TrustedHostMiddleware because the ALB health check addresses the task by its
-# private IP, which can never be in the allowlist — TrustedHostMiddleware would
+# private IP, which can never be in the allowlist, TrustedHostMiddleware would
 # answer 400 and the target would be marked unhealthy forever. /health is
 # therefore exempt; it exposes nothing.
 if ALLOWED_HOSTS:
@@ -97,7 +97,7 @@ _PREFLIGHT = _preflight()
 if _PREFLIGHT.get("ambient_override_ignored"):
     print(
         f"  note: ignoring ambient ANTHROPIC_BASE_URL="
-        f"{_PREFLIGHT['ambient_override_ignored']} — using {_PREFLIGHT['gateway']}"
+        f"{_PREFLIGHT['ambient_override_ignored']}, using {_PREFLIGHT['gateway']}"
     )
 if not _PREFLIGHT.get("ok"):
     print(
@@ -107,7 +107,7 @@ if not _PREFLIGHT.get("ok"):
     )
 
 # Participant-facing HTML must never be cached. A stale build is invisible to
-# the participant and looks like a broken feature — and during collection it
+# the participant and looks like a broken feature, and during collection it
 # would mean people running different versions of the instrument.
 @app.middleware("http")
 async def _no_store_html(request, call_next):
@@ -458,7 +458,7 @@ async def api_run_create(request: Request, key: Optional[str] = None):
     body = {}
     try:
         body = await request.json()
-    except Exception:  # noqa: BLE001 — empty body is fine
+    except Exception:  # noqa: BLE001, empty body is fine
         pass
     run = runs.create(body.get("participant_id"))
     return runs.view(run)
@@ -500,7 +500,7 @@ async def api_run_advance(run_id: str, session_id: Optional[str] = None,
 
 @app.get("/director", response_class=HTMLResponse)
 async def director_page(key: Optional[str] = None):
-    """Steering dashboard — what the director told each actor, and what it said."""
+    """Steering dashboard, what the director told each actor, and what it said."""
     check_key(key)
     return (STATIC_DIR / "director.html").read_text()
 
@@ -574,7 +574,7 @@ async def api_encounter_record(session_id: str, key: Optional[str] = None):
                 })
     record["triggers_fired"] = fired
 
-    # Attach the scenario's own plan so the dashboard can show coverage — which
+    # Attach the scenario's own plan so the dashboard can show coverage, which
     # interaction each turn belongs to by name, and which planted triggers were
     # reached out of those the instrument specifies.
     try:
@@ -794,7 +794,7 @@ async def ws_participant_voice(
         await ws.close(code=4401)
         return
     if not participant_id or not get_participant(participant_id):
-        # Voice path requires consent — no anonymous voice capture.
+        # Voice path requires consent, no anonymous voice capture.
         await ws.close(code=4403)
         return
     await ws.accept()
@@ -827,7 +827,7 @@ async def ws_participant_voice(
         "audio": {"sample_rate": 16000, "channels": 1, "encoding": "pcm_s16le"},
     })
 
-    # Every scenario runs as consecutive 1:1 conversations on Gemini Live —
+    # Every scenario runs as consecutive 1:1 conversations on Gemini Live,
     # the cast is played one character at a time, in order.
     runner = RealtimeVoiceSessionRunner(session, ws)
     try:
@@ -880,7 +880,7 @@ async def ws_researcher(ws: WebSocket, session_id: str = Query(...), key: Option
         while True:
             msg = await ws.receive_json()
             t = msg.get("type")
-            agent_id = msg.get("agent_id")  # optional — applies to that agent only
+            agent_id = msg.get("agent_id")  # optional, applies to that agent only
             if t == "set_knob":
                 await session.set_knob(msg["knob"], float(msg["value"]), agent_id=agent_id)
             elif t == "note":

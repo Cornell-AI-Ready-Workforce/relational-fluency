@@ -1,6 +1,6 @@
 """Voice encounters on Gemini Live (speech-to-speech).
 
-Replaces the v1 cascade — Deepgram STT -> text model -> ElevenLabs TTS — with a
+Replaces the v1 cascade, Deepgram STT -> text model -> ElevenLabs TTS, with a
 single realtime session against the Cornell LiteLLM gateway. The browser
 protocol is unchanged, so static/v2.html and participant.html keep working:
 PCM16 in over the WebSocket, PCM16 out as binary frames, JSON control events.
@@ -40,7 +40,7 @@ END_SEGMENT_TOOL = {
     "type": "function",
     "name": "end_conversation",
     "description": (
-        "Call this once this conversation has reached its natural end — the "
+        "Call this once this conversation has reached its natural end, the "
         "matter has been addressed, or the participant has clearly finished. "
         "Do not mention the tool."
     ),
@@ -51,7 +51,7 @@ END_SEGMENT_TOOL = {
 class RealtimeVoiceSessionRunner:
     """One participant working through a scenario as consecutive 1:1 conversations.
 
-    A scenario's cast is played in order, one character at a time — e.g. S1 is
+    A scenario's cast is played in order, one character at a time, e.g. S1 is
     the instigating colleague first, then the peer. Each character gets its own
     persona, voice, and brief; the actor signals the end of its conversation
     with a tool call, and the runner re-briefs the session as the next
@@ -63,7 +63,7 @@ class RealtimeVoiceSessionRunner:
         self.session = session
         self.ws = ws
         # An encounter is a sequence of interactions, each with its own mode
-        # and its own cast slice. Segment indexes interactions — NOT the cast:
+        # and its own cast slice. Segment indexes interactions, NOT the cast:
         # S2 has one agent across two interactions, and S3's second interaction
         # is a series of two one-on-ones.
         self.segment = 0
@@ -104,20 +104,20 @@ class RealtimeVoiceSessionRunner:
     # ── lifecycle ──────────────────────────────────────────────────────────
     def _instructions(self, director_note: str = "") -> str:
         # Reuse the engine's prompt builder so the voice agent and the text
-        # agent are the same character — persona knobs, branches, and the
+        # agent are the same character, persona knobs, branches, and the
         # director's intent all compose exactly as they do in text mode.
         engine = self.session.engines[self.agent_id]
         base = engine._system_prompt(self.session.triggered_branches, director_note or None)
         voice_rules = (
             "\n\nVOICE: You are in a live spoken conversation. Speak naturally and "
-            "concisely — one to three sentences per turn. Never read out JSON, "
+            "concisely, one to three sentences per turn. Never read out JSON, "
             "markdown, or stage directions."
         )
         return base + voice_rules
 
     def is_group(self) -> bool:
         """Group only while the *current* interaction puts several characters in
-        the room — S3 opens as a group meeting and continues as one-on-ones."""
+        the room, S3 opens as a group meeting and continues as one-on-ones."""
         if self.interactions:
             return self._interaction_mode() == "group"
         return self._scenario_is_group
@@ -258,7 +258,7 @@ class RealtimeVoiceSessionRunner:
 
         Re-briefing the existing session does not work: the conversation history
         keeps the model anchored to whoever it has been playing, and it will
-        answer as that character no matter what the new instructions say — in
+        answer as that character no matter what the new instructions say, in
         testing, "Sam" opened with "I'm Riley, Sam's not here."
 
         A new session is also the right model of the scenario. The hallway
@@ -302,7 +302,7 @@ class RealtimeVoiceSessionRunner:
             "agent_name": self.agent.name,
             "new_interaction": new_interaction,
             # Who the participant is actually with now, so the UI can show only
-            # them — otherwise every character stays on screen and it is unclear
+            # them, otherwise every character stays on screen and it is unclear
             # who is being spoken to.
             "present": [{"id": a.id, "name": a.name, "role": a.role} for a in present],
             "next": self._next_beat_hint(),
@@ -318,7 +318,7 @@ class RealtimeVoiceSessionRunner:
         )
         await self.rt.connect()
         await self._announce_opening()
-        # Record what served this encounter — the audit trail has to say which
+        # Record what served this encounter, the audit trail has to say which
         # gateway and which models produced the data.
         self.session.store.event(
             "realtime_session_started", model=self.rt.model, **provenance()
@@ -353,7 +353,7 @@ class RealtimeVoiceSessionRunner:
                     continue
 
                 # Always record the participant channel, even while the agent
-                # speaks — the study needs both sides of the audio.
+                # speaks, the study needs both sides of the audio.
                 self.session.store.append_user_audio(pcm)
 
                 mark = self.vad.feed(pcm)
@@ -379,7 +379,7 @@ class RealtimeVoiceSessionRunner:
                         await self.rt.commit_turn()
         except WebSocketDisconnect:
             return
-        except Exception as exc:  # noqa: BLE001 — surfaced in the session log
+        except Exception as exc:  # noqa: BLE001, surfaced in the session log
             self.session.store.event("voice_error", where="client_to_model", message=str(exc))
 
     # ── model -> participant ───────────────────────────────────────────────
@@ -421,7 +421,7 @@ class RealtimeVoiceSessionRunner:
                 })
 
             elif etype == "user_transcript":
-                # Gemini Live transcribes the participant for us — no separate
+                # Gemini Live transcribes the participant for us, no separate
                 # STT service. Send it to the participant's own socket (the
                 # transcript panel listens for user_transcript) as well as
                 # broadcasting to any researcher view.
@@ -440,7 +440,7 @@ class RealtimeVoiceSessionRunner:
             elif etype == "response_done":
                 # Do not finalise here. The gateway can deliver transcript
                 # events AFTER response.done, so reading the buffer now yields
-                # an empty turn — audio with no text, which is unscoreable.
+                # an empty turn, audio with no text, which is unscoreable.
                 asyncio.ensure_future(self._finalize_turn())
 
             elif etype == "tool_call":
@@ -465,7 +465,7 @@ class RealtimeVoiceSessionRunner:
             return
         # The participant chose to move on. Their judgement about when a
         # conversation is finished is better than a turn counter, so this
-        # bypasses the pacing gates — but the beats they skipped are recorded,
+        # bypasses the pacing gates, but the beats they skipped are recorded,
         # because an encounter that skipped scored moments must not look
         # complete.
         remaining = [t["id"] for t in self._triggers()[self._trigger_idx:]]
@@ -484,7 +484,7 @@ class RealtimeVoiceSessionRunner:
         """Move on once this interaction's planted beats are spent.
 
         The actor's end_conversation tool is the intended signal, but a
-        character in the middle of a natural conversation rarely calls it — an
+        character in the middle of a natural conversation rarely calls it, an
         encounter would then stall in interaction 1 and never reach the
         counterpart, which is where most of the scoring lives. So the runner
         also advances on its own once every trigger has fired and the
@@ -495,7 +495,7 @@ class RealtimeVoiceSessionRunner:
 
         # An encounter is meant to run 7-12 minutes across its interactions, so
         # firing the last planted trigger is a floor, not a finish line. Hold
-        # the scene open until it has had both enough turns and enough time —
+        # the scene open until it has had both enough turns and enough time,
         # otherwise a scenario with one planted beat ends after three exchanges
         # and there is nothing for a rater to score.
         min_turns = int(os.getenv("INTERACTION_MIN_TURNS", "8"))
@@ -521,8 +521,8 @@ class RealtimeVoiceSessionRunner:
 
         response.done can arrive before the transcript events that belong to the
         same reply. Finalising immediately produced turns with audio and no
-        text, which are unscoreable and — because the old code skipped empty
-        turns — vanished from the record entirely. So wait briefly for text, and
+        text, which are unscoreable and, because the old code skipped empty
+        turns, vanished from the record entirely. So wait briefly for text, and
         if it truly never comes, still record the turn and mark it, so a gap is
         visible to verify_record instead of silently absent.
         """
@@ -677,7 +677,7 @@ class RealtimeVoiceSessionRunner:
         }
         self.session.store.event("stage_direction", **self._pending_direction)
 
-        # Wait for the previous character to finish before taking the floor —
+        # Wait for the previous character to finish before taking the floor,
         # the gateway allows only one active response per conversation, and a
         # dropped request would silently mute this speaker.
         if self.rt.responding:
@@ -713,7 +713,7 @@ class RealtimeVoiceSessionRunner:
                 routed = await self.director.route(
                     self.session.shared_history, self._last_user_text
                 )
-            except Exception as exc:  # noqa: BLE001 — never break the room
+            except Exception as exc:  # noqa: BLE001, never break the room
                 self.session.store.event("director_error", message=str(exc))
                 routed = [{"agent_id": self.cast[0].id}]
 
@@ -735,7 +735,7 @@ class RealtimeVoiceSessionRunner:
         The director reviews the transcript and shifts persona knobs; the actor
         is then re-briefed with the updated persona, which is how a stage
         direction reaches a speech-to-speech model that has no separate system
-        channel. Steering is one turn behind by construction — the
+        channel. Steering is one turn behind by construction, the
         participant's words only exist once the model has transcribed them.
 
         Session.auto_steer() owns the review and swallows its own errors, so a
@@ -751,7 +751,7 @@ class RealtimeVoiceSessionRunner:
     async def _send(self, payload: dict) -> None:
         try:
             await self.ws.send_json(payload)
-        except Exception:  # noqa: BLE001 — client vanished
+        except Exception:  # noqa: BLE001, client vanished
             self._closed = True
 
     async def _send_bytes(self, payload: bytes) -> None:

@@ -1,7 +1,7 @@
 """The name and role a participant is given for an encounter.
 
-The IRB document has participants play an assigned character — "You are [NAME],
-a [ROLE] at a mid-sized company" — and asks them to use the names the scenario
+The IRB document has participants play an assigned character, "You are [NAME],
+a [ROLE] at a mid-sized company", and asks them to use the names the scenario
 provides rather than their own. That only works if the app actually issues a
 name, so it is assigned here, deterministically from the participant key: the
 same person keeps the same identity across all four encounters, which matters

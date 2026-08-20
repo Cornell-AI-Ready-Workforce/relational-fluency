@@ -1,4 +1,4 @@
-"""Offline scoring layer — measures relational skill from a session transcript.
+"""Offline scoring layer, measures relational skill from a session transcript.
 
 Reads ``data/sessions/{sid}/events.jsonl``, reconstructs the conversation, and
 runs a Claude judge against the construct rubric for that scenario's skill (see
@@ -19,7 +19,7 @@ CLI:
     python -m server.scoring <session_id> [--force] [--model claude-opus-4-8]
     python -m server.scoring --all [--force]
 
-The judge model defaults to Claude Opus 4.8 (most capable — appropriate for a
+The judge model defaults to Claude Opus 4.8 (most capable, appropriate for a
 research instrument). Override with --model or the JUDGE_MODEL env var. Scoring
 is intentionally offline/batch: it never runs in the live conversation path.
 """
@@ -43,7 +43,7 @@ from .rubrics import Construct, construct_for_skill
 from .scenarios import load_scenario
 from .storage import SESSIONS_DIR
 
-# Opus 4.8 — most capable; the right default for a measurement instrument.
+# Opus 4.8, most capable; the right default for a measurement instrument.
 # Configurable for cost (e.g. claude-sonnet-4-6) via env or --model.
 DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "nto.gemini-2.5-pro")
 SCORE_FILENAME = "score.json"
@@ -97,7 +97,7 @@ def load_transcript(session_dir: Path) -> Dict[str, Any]:
         intro = sc.intro
         names = {a.id: a.name for a in sc.cast}
     except Exception:
-        pass  # old/renamed scenario — score what we can; skill stays blank
+        pass  # old/renamed scenario, score what we can; skill stays blank
 
     turns: List[Dict[str, Any]] = []
     user_idx = 0
@@ -205,7 +205,7 @@ def _build_schema(construct: Construct) -> dict:
 def _system_prompt(construct: Construct) -> str:
     codebook = "\n".join(
         f"  - {b.id} ({'helps' if b.polarity == '+' else 'works against'}): "
-        f"{b.label} — {b.definition}"
+        f"{b.label}, {b.definition}"
         for b in construct.behaviors
     )
     dims = "\n".join(
@@ -220,7 +220,7 @@ def _system_prompt(construct: Construct) -> str:
         "human) demonstrates a single relational skill in a workplace "
         "conversation. The other speakers are AI characters; score ONLY the "
         "participant's turns (marked [U#]). Judge what the participant actually "
-        "does and says, grounded in the transcript — never reward intentions "
+        "does and says, grounded in the transcript, never reward intentions "
         "you have to assume.\n\n"
         f"## Construct: {construct.name}\n{construct.frame}\n\n"
         "## Behavioral codebook (tag each participant turn)\n"

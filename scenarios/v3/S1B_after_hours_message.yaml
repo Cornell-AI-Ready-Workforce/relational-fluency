@@ -1,4 +1,4 @@
-# Conflict Management — Variant B. Parallel form of S1A: same trigger sequence
+# Conflict Management, Variant B. Parallel form of S1A: same trigger sequence
 # (push → opening/probe → defence → half-concession), same ESCI map, same
 # difficulty. Research Note v3, slide 9.
 id: S1B
@@ -31,7 +31,7 @@ agents:
     voice: Leda
     system_prompt: |
       You are Mel, a teammate and friend of the participant. You saw Drew's
-      after-hours message last night — sharp in tone, and CC'ing Priya and Tom.
+      after-hours message last night, sharp in tone, and CC'ing Priya and Tom.
 
       What you know:
       - Drew's message went out around 1 a.m. and copied two other teammates.
@@ -62,14 +62,14 @@ agents:
 
       How you behave:
       - This is an unplanned run-in at the coffee machine. Light at first.
-      - If the participant stays quiet, probe — do not let silence end the scene:
+      - If the participant stays quiet, probe, do not let silence end the scene:
         "You saw my message, right? So are we fixing the handoff today?"
       - If they raise the tone, defend: "I was blunt because nobody listens
         otherwise."
       - Then half-concede: "Fine, maybe the CC was much. But the handoff problem
         is real."
-      - Resolution only if they address both layers — the substance and the
-        delivery — without matching your heat. If they attack, harden.
+      - Resolution only if they address both layers, the substance and the
+        delivery, without matching your heat. If they attack, harden.
       - One to three sentences per turn.
 
 interactions:
@@ -79,7 +79,7 @@ interactions:
     label: "Mel pings you first thing"
     kind: context_and_push
     opening: >-
-      Saw Drew's message last night — copying Priya and Tom? Out of line.
+      Saw Drew's message last night, copying Priya and Tom? Out of line.
       Reply-all just as hard, receipts attached.
     observe: "Reply-all in kind, let it slide, or take it to Drew directly."
     triggers:
@@ -89,7 +89,7 @@ interactions:
         esci: [resolve_not_fester, bring_into_open, fester_r]
         scores:
           high:
-            answer: "No reply-all. The handoff point might be fair — the delivery wasn't. I'll talk to Drew this morning."
+            answer: "No reply-all. The handoff point might be fair, the delivery wasn't. I'll talk to Drew this morning."
             why: "resolve and open; separates substance from tone"
           low:
             answer: "(drafts the sharp reply-all, receipts attached)"
@@ -101,7 +101,7 @@ interactions:
     label: "Coffee-machine run-in with Drew"
     kind: counterpart
     opening: >-
-      Next morning you and Drew reach the coffee machine together — speak, or not.
+      Next morning you and Drew reach the coffee machine together, speak, or not.
     observe: "Address substance and delivery · de-escalate vs match heat · land agreement on both."
     triggers:
       - id: t2_the_opening
@@ -110,7 +110,7 @@ interactions:
         esci: [talk_openly, bring_into_open, fester_r]
         scores:
           high:
-            answer: "The handoff needs fixing — let's do that today. And I want us to handle it without 1 a.m. CC'd messages."
+            answer: "The handoff needs fixing, let's do that today. And I want us to handle it without 1 a.m. CC'd messages."
             why: "open and de-escalates; addresses both layers"
           low:
             answer: "Yeah. Today. Whatever works."

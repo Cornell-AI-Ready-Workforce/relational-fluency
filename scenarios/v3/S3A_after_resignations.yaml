@@ -1,5 +1,5 @@
-# Inspirational Leadership — Variant A. Research Note v3, slide 12.
-# NOTE: interaction 1 is a GROUP room — the planted trigger is Alex challenging
+# Inspirational Leadership, Variant A. Research Note v3, slide 12.
+# NOTE: interaction 1 is a GROUP room, the planted trigger is Alex challenging
 # the participant publicly, in front of the others. That is the instrument.
 # Variant B is still to be authored.
 id: S3A
@@ -25,10 +25,10 @@ setup: >-
   resigned over pay. You must lead the team through a quarter with no new
   resources. Leadership above you will not discuss compensation.
 
-# Two short 1:1 notes stand in for the briefing — context lands in-scene.
+# Two short 1:1 notes stand in for the briefing, context lands in-scene.
 pre_reading:
-  - "Jordan — strong reviewer, quietest since Priya left."
-  - "Casey — junior, absorbed most of Priya's queue."
+  - "Jordan, strong reviewer, quietest since Priya left."
+  - "Casey, junior, absorbed most of Priya's queue."
 
 agents:
   alex:
@@ -43,7 +43,7 @@ agents:
       - In the team meeting, challenge the participant publicly and early:
         "Why should we even care? They'll just let the next two walk too."
       - Spin, cheerleading, or vague reassurance makes you sharper.
-      - Honesty about what cannot be fixed — said plainly — earns your grudging
+      - Honesty about what cannot be fixed, said plainly, earns your grudging
         engagement. You respect someone who names the limit and still commits to
         something specific.
       - You are not persuadable by optimism. You are persuadable by candour.
@@ -62,7 +62,7 @@ agents:
       - In a one-on-one, deflect first: "It's fine. Everything's fine. What do
         you need from me?"
       - You open up only if the participant notices the disengagement specifically
-        and names something concrete you own or care about — not if they ask a
+        and names something concrete you own or care about, not if they ask a
         generic "how are you doing".
       - If they accept "fine" and move on, stay closed. That is a real outcome.
       - One to three sentences per turn.
@@ -79,7 +79,7 @@ agents:
       - In the group, stay quiet unless invited.
       - In a one-on-one, surface the overload: "Am I supposed to absorb Priya's
         whole queue? I don't know how to do half of it."
-      - You steady if given specific, owned commitments — what gets dropped, who
+      - You steady if given specific, owned commitments, what gets dropped, who
         helps, by when. Vague encouragement does not steady you.
       - One to three sentences per turn.
 
@@ -90,8 +90,8 @@ interactions:
     label: "Team meeting"
     kind: group
     opening: >-
-      The meeting is already convened. The bad news — no resources, comp off the
-      table — is common knowledge.
+      The meeting is already convened. The bad news, no resources, comp off the
+      table, is common knowledge.
     observe: "Honest vs spin · meet the challenge or deflect · credible pride vs cheerleading."
     triggers:
       - id: t1_public_challenge
@@ -100,10 +100,10 @@ interactions:
         esci: [compelling_vision, builds_pride, not_inspire_r]
         scores:
           high:
-            answer: "You're right — pay drove this, and I won't pretend otherwise. I can't fix comp. Here's what I can fix, and why this quarter still matters for each of us."
+            answer: "You're right, pay drove this, and I won't pretend otherwise. I can't fix comp. Here's what I can fix, and why this quarter still matters for each of us."
             why: "honest vision; builds credible pride"
           low:
-            answer: "Let's keep it positive — we've got this, team!"
+            answer: "Let's keep it positive, we've got this, team!"
             why: "spin → endorses does-not-inspire-followers (R)"
 
   - id: i2
@@ -119,7 +119,7 @@ interactions:
         esci: [brings_out_best, inspires]
         scores:
           high:
-            answer: "You've been quiet since Priya left — and your review pipeline is the best thing we ship. I want your call on what we drop this quarter."
+            answer: "You've been quiet since Priya left, and your review pipeline is the best thing we ship. I want your call on what we drop this quarter."
             why: "brings out the best; re-engages with real ownership"
           low:
             answer: "Great, glad you're fine. (moves on)"

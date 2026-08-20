@@ -1,4 +1,4 @@
-# Conflict Management — Variant A. Parallel form of S1B: same trigger sequence,
+# Conflict Management, Variant A. Parallel form of S1B: same trigger sequence,
 # same ESCI map, same difficulty. Research Note v3, slide 8.
 id: S1A
 construct: conflict_management
@@ -44,7 +44,7 @@ agents:
       - If they hesitate or waffle, needle them once: "Or just let it go. Not
         worth the drama."
       - If they refuse the reply-all and commit to talking to Sam directly, back
-        down gracefully — you are an ally, not an antagonist.
+        down gracefully, you are an ally, not an antagonist.
       - If they avoid the topic entirely, probe: "So you're just letting it go?"
       - Never resolve the situation for them. You are the pressure, not the fix.
       - One to three sentences per turn. Conversational, a bit heated.
@@ -55,7 +55,7 @@ agents:
     voice: Charon
     system_prompt: |
       You are Sam, a peer of the participant on the analytics team. This morning
-      you presented their analysis in a meeting as your own — for the third time.
+      you presented their analysis in a meeting as your own, for the third time.
 
       Your internal state (genuine, never stated outright):
       - You did not plan to take credit. You leaned into "I" language because it
@@ -65,8 +65,8 @@ agents:
 
       How you behave:
       - This is an unplanned hallway run-in by the elevators. Be light at first.
-      - If the participant stays quiet, probe — do not let silence end the scene:
-        "Oh — I presented that analysis again this morning and it really
+      - If the participant stays quiet, probe, do not let silence end the scene:
+        "Oh, I presented that analysis again this morning and it really
         resonated. Any new results for me?"
       - When they raise it, get defensive first: "I did most of the legwork
         anyway."
@@ -83,7 +83,7 @@ interactions:
     label: "Riley corners you"
     kind: context_and_push
     opening: >-
-      Sam presented your analysis again — third time. Reply-all with the original
+      Sam presented your analysis again, third time. Reply-all with the original
       file and let everyone connect the dots.
     observe: "Retaliate, avoid, or commit to raising it with Sam directly."
     triggers:
@@ -93,7 +93,7 @@ interactions:
         esci: [resolve_not_fester, bring_into_open, fester_r]
         scores:
           high:
-            answer: "Not reply-all. I'd rather talk to Sam directly — today, before the next meeting."
+            answer: "Not reply-all. I'd rather talk to Sam directly, today, before the next meeting."
             why: "brings conflict into the open; tries to resolve"
           low:
             answer: "Honestly? Not worth it. I just want to get through this quarter."
@@ -105,19 +105,19 @@ interactions:
     label: "Hallway run-in with Sam"
     kind: counterpart
     opening: >-
-      You run into Sam by the elevators — an opening to say something, or not.
+      You run into Sam by the elevators, an opening to say something, or not.
     observe: "Take the opening (or the probe) · framing · de-escalation · handling the half-concession."
     triggers:
       - id: t2_the_opening
         cue: "Sam is right there; the participant may speak or stay quiet"
-        on_silence: "Oh — I presented that analysis again this morning and it really resonated. Any new results for me?"
+        on_silence: "Oh, I presented that analysis again this morning and it really resonated. Any new results for me?"
         esci: [talk_openly, bring_into_open, fester_r]
         scores:
           high:
             answer: "Actually, that's what I wanted to raise: it's my analysis, and the authorship needs to be right. How do we fix that going forward?"
             why: "openly talks it through; firm without hostility"
           low:
-            answer: "Sure — I'll send you the new results this afternoon."
+            answer: "Sure, I'll send you the new results this afternoon."
             why: "issue dodged despite a direct prompt → fester (R)"
       - id: t3_defensiveness
         cue: "Sam defends: 'I did most of the legwork anyway'"

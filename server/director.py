@@ -53,7 +53,7 @@ _DIRECTOR_TOOL = {
                                 "Short note describing what this speaker's turn should "
                                 "do (e.g., 'concede the technical point', 'stay silent "
                                 "but visibly tense', 'ask a clarifying question'). "
-                                "Optional — omit if a vanilla reply is fine."
+                                "Optional, omit if a vanilla reply is fine."
                             ),
                         },
                     },
@@ -81,7 +81,7 @@ def _format_cast(cast: List[Agent]) -> str:
     lines = []
     for a in cast:
         # First line of the agent's system prompt is usually the strongest
-        # character signal — keep the description compact for the director.
+        # character signal, keep the description compact for the director.
         first = a.system_prompt.strip().split("\n", 1)[0][:200]
         lines.append(f"- {a.id} ({a.name}): {first}")
     return "\n".join(lines)
@@ -107,7 +107,7 @@ class Director:
         shared_history: list,
         latest_user_text: str,
     ) -> List[dict]:
-        """Return [{agent_id, intent?}] — possibly empty."""
+        """Return [{agent_id, intent?}], possibly empty."""
         # Fast path: the very first reaction (no agent has spoken yet) is the
         # configured opener. Skip the director LLM call so the meeting opens fast.
         opener = getattr(self.scenario, "opener", None)
@@ -122,21 +122,21 @@ class Director:
 ## Cast
 {self._cast_block}
 
-## Decision procedure (apply in order — stop at the first that matches)
+## Decision procedure (apply in order, stop at the first that matches)
 
 1. **Did the user address an agent by name?** If the user's latest turn names
-   a specific agent (e.g. "Marcus, what do you think?", "Theo — your read?"),
+   a specific agent (e.g. "Marcus, what do you think?", "Theo, your read?"),
    route ONLY to that named agent. Do not also include others. Ignore all
    other heuristics. This rule has highest priority.
 
 2. **Otherwise, FOLLOW THE SCENARIO ROUTING GUIDANCE BELOW.** It decides who
    speaks and HOW MANY. If it asks for a multi-speaker sequence where agents
-   argue with each other (e.g. [arjun, claire, arjun]), return exactly that —
+   argue with each other (e.g. [arjun, claire, arjun]), return exactly that,
    do NOT trim it down to one speaker. The number of speakers is whatever the
    guidance says, up to the max.
 
 3. **Did the user say something purely transitional?** ("ok", "thanks") with
-   nothing substantive — a single brief responder or empty is fine.
+   nothing substantive, a single brief responder or empty is fine.
 
 ## Scene
 {self.scenario.scene or '(no scene description)'}
@@ -147,7 +147,7 @@ class Director:
 ## Hard rules
 - Use ONLY agent_ids from the cast above. Never invent new ones.
 - Return at most {DIRECTOR_MAX_SPEAKERS} speakers per turn.
-- Order matters — first speaker in the list speaks first.
+- Order matters, first speaker in the list speaks first.
 - Empty list = nobody speaks. Use for genuine silence or pure transitions.
 - If the user's turn explicitly names an agent, that agent MUST be the only
   speaker, regardless of personality defaults like "X tends to answer first."
@@ -169,7 +169,7 @@ Decide who speaks next."""
                 messages=[{"role": "user", "content": user_msg}],
             )
         except Exception:
-            # If routing fails, fall back to the first agent — preserves
+            # If routing fails, fall back to the first agent, preserves
             # liveness rather than hanging the conversation.
             return [{"agent_id": self.scenario.cast[0].id}]
 
@@ -197,7 +197,7 @@ Decide who speaks next."""
     ) -> List[dict]:
         """After an agent speaks, decide whether another agent must respond now
         *because the speaker handed them the floor by name*. Returns 0 or 1
-        speaker, never the agent who just spoke. Empty is the common case — the
+        speaker, never the agent who just spoke. Empty is the common case, the
         floor returns to the human facilitator. This is what lets an agent who
         is asked for their opinion answer without the human re-prompting them.
         """
@@ -214,11 +214,11 @@ Decide who speaks next."""
 ## Scenario routing guidance
 {self.scenario.director_prompt or '(none)'}
 
-## Route to one agent when {last_name}'s turn turns to a SPECIFIC other agent — any of these:
+## Route to one agent when {last_name}'s turn turns to a SPECIFIC other agent, any of these:
 - Asks them a question, by name or clearly implied ("Jordan, can you walk us through the timeline?", "What did you see on the dashboards, Rae?").
 - Names them as the person who should speak / would know best ("Sam can speak to the deploy side", "Jordan probably has a better read on this than I do", "I'd want Rae to weigh in").
 - Directly invites their response or pushes back on their stated position, expecting a reply.
-- Attacks, belittles, talks down to, or throws a pointed jab AT another agent by name (e.g. {last_name} just went after someone). Route the targeted agent so they can fire back — heated exchanges should ping-pong, not die.
+- Attacks, belittles, talks down to, or throws a pointed jab AT another agent by name (e.g. {last_name} just went after someone). Route the targeted agent so they can fire back, heated exchanges should ping-pong, not die.
 - The Scenario routing guidance above calls for a specific agent to jump in right after a remark like the one {last_name} just made (for example, to call out condescension or dismissiveness). Honor that guidance and route that agent NOW, even if {last_name} was addressing the human rather than another agent.
 Route to the agent who was turned to (or attacked, or who the guidance says should jump in).
 
@@ -226,11 +226,11 @@ Route to the agent who was turned to (or attacked, or who the guidance says shou
 - {last_name} answered or addressed the human, or made a general statement to the room with no specific person turned to.
 - {last_name} only mentioned, thanked, or agreed with someone without inviting them to speak ("thanks, Paul, for saying that").
 - {last_name} closed, summarized, or transitioned ("that's all from me", "let's move on").
-- It is ambiguous who, if anyone, should speak. When unsure, return empty — the human will route.
+- It is ambiguous who, if anyone, should speak. When unsure, return empty, the human will route.
 
 ## Rules
 - Use ONLY agent_ids from the cast above. Never invent ids.
-- Never return {last_speaker_id} — an agent cannot answer their own turn.
+- Never return {last_speaker_id}, an agent cannot answer their own turn.
 - At most ONE agent. An empty list is a common, correct answer."""
         user_msg = f"""## Recent transcript
 {transcript}

@@ -5,7 +5,7 @@ It reads the shared multi-party history at turn time and builds its own
 Claude messages view (own turns as 'assistant', everyone else's turns
 collapsed into 'user' messages with [Speaker]: prefixes).
 
-Single-agent scenarios use a 1-element cast — the same AgentEngine works,
+Single-agent scenarios use a 1-element cast, the same AgentEngine works,
 with the shared log simply containing only user + this agent's turns.
 """
 from __future__ import annotations
@@ -43,7 +43,7 @@ class AgentEngine:
         self.persona = persona
         self.model = model or scenario.model or DEFAULT_MODEL
         self.client = client or text_client()
-        # Per-agent steering — the researcher can add notes targeting one agent
+        # Per-agent steering, the researcher can add notes targeting one agent
         # specifically, separate from global scenario-level state.
         self.live_notes: List[str] = []
 
@@ -81,7 +81,7 @@ class AgentEngine:
         incivility = self.persona.incivility_fragments()
         if incivility:
             parts.append("")
-            parts.append("## Incivility behaviors (active — research dial)")
+            parts.append("## Incivility behaviors (active, research dial)")
             parts.extend(f"- {f}" for f in incivility)
         if triggered_branches:
             parts.append("")
@@ -100,19 +100,19 @@ class AgentEngine:
         parts.append("")
         if self.scenario.mode == "group":
             parts.append(
-                "You are in a multi-party voice conversation. Keep it SHORT — usually "
+                "You are in a multi-party voice conversation. Keep it SHORT, usually "
                 "one sentence, two at most. This is real speech, so be brief and to the "
-                "point; do not give little speeches. Use plain, everyday language — no "
+                "point; do not give little speeches. Use plain, everyday language, no "
                 "jargon, no buzzwords, no elaborate metaphors. Others may speak after "
                 "you. Do not narrate, summarize, or restate what others said.\n"
                 "Output ONLY the words you say out loud. Do NOT begin with your own name, "
-                "initials, or a 'Name:' speaker label — your name is shown separately. "
+                "initials, or a 'Name:' speaker label, your name is shown separately. "
                 "No stage directions, no quotation marks around your line."
             )
         else:
             parts.append(
                 "Speak as if in a real-time voice conversation. Keep replies natural-length "
-                "for speech — not chat-text bullets. Do not narrate or describe what you are doing."
+                "for speech, not chat-text bullets. Do not narrate or describe what you are doing."
             )
         return "\n".join(parts)
 
@@ -209,8 +209,8 @@ class AgentEngine:
         shared history when done."""
         messages = self._build_messages(shared_history, name_lookup)
         if not messages:
-            # No prior context — synthesize a kickoff prompt.
-            messages = [{"role": "user", "content": "(meeting begins — please open)"}]
+            # No prior context, synthesize a kickoff prompt.
+            messages = [{"role": "user", "content": "(meeting begins, please open)"}]
 
         async with self.client.messages.stream(
             model=self.model,

@@ -1,10 +1,10 @@
 """Persistent storage for the dataset.
 
 Per-session layout under data/sessions/{session_id}/:
-  manifest.json           — scenario, model, participant, consent, durations
-  events.jsonl            — turn-level events (replaces logs/{id}.jsonl)
-  user_audio.wav          — 16 kHz mono mic stream
-  assistant_audio.wav     — 16 kHz mono TTS stream
+  manifest.json          , scenario, model, participant, consent, durations
+  events.jsonl           , turn-level events (replaces logs/{id}.jsonl)
+  user_audio.wav         , 16 kHz mono mic stream
+  assistant_audio.wav    , 16 kHz mono TTS stream
 
 A SQLite index at data/index.db lets you query across sessions:
   sessions(id, participant_id, scenario, model, started_at, ended_at, duration_s,
@@ -12,7 +12,7 @@ A SQLite index at data/index.db lets you query across sessions:
   participants(id, code, consent_given, consent_text_version, created_at)
 
 The WavAppender writes incrementally so a crash mid-session still leaves a
-valid WAV — we patch the header on every flush.
+valid WAV, we patch the header on every flush.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def _record_dir(path: Path) -> str:
 
     Relative to the repo root when the data lives inside it (development), and
     absolute otherwise. In the container DATA_DIR is /data, outside /app, and an
-    unguarded relative_to() raised ValueError — which crashed every session at
+    unguarded relative_to() raised ValueError, which crashed every session at
     creation and closed the socket the moment a participant tried to speak.
     """
     try:
@@ -198,7 +198,7 @@ class SessionStore:
         if capture_audio:
             self.user_audio = WavAppender(self.dir / "user_audio.wav")
             if not self.agent_ids or len(self.agent_ids) <= 1:
-                # Single-agent — preserve legacy filename
+                # Single-agent, preserve legacy filename
                 key = self.agent_ids[0] if self.agent_ids else "__default__"
                 self.assistant_audio[key] = WavAppender(self.dir / "assistant_audio.wav")
             else:
@@ -282,7 +282,7 @@ class SessionStore:
         try:
             from .encounter_record import write as write_record
             write_record(self.dir)
-        except Exception:  # noqa: BLE001 — never fail a session close on this
+        except Exception:  # noqa: BLE001, never fail a session close on this
             pass
         with _db() as conn:
             conn.execute(

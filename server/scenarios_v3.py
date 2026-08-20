@@ -1,6 +1,6 @@
 """Compile v3 scenario specs into runnable Scenario objects.
 
-The specs in scenarios/v3/ are the research artefact — they carry the structure
+The specs in scenarios/v3/ are the research artefact, they carry the structure
 the study measures: two interactions per encounter, an ordered list of planted
 triggers, the ESCI items each trigger maps to, an on_silence probe, and the
 scored sample answers from Research Note v3. The engine wants a flat cast with
@@ -52,7 +52,7 @@ def load_spec(scenario_id: str) -> Dict[str, Any]:
 def _render_prompt(spec: dict, key: str, agent: dict) -> str:
     """The character's brief: who they are, then the shared situation, then the
     behaviour policy from the spec. The triggers themselves are injected by the
-    runner as they fire, not dumped up front — an agent that can see every
+    runner as they fire, not dumped up front, an agent that can see every
     planted beat tends to rush through them."""
     name = agent["name"]
     others = [a["name"] for k, a in spec["agents"].items() if k != key]
@@ -61,7 +61,7 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
         parts += ["", "## Situation", spec["setup"].strip()]
     parts += [
         "",
-        "## Identity — this matters",
+        "## Identity, this matters",
         f"- You ARE {name}. Speak as {name}, in the first person, always.",
         f"- Never narrate {name}'s actions or refer to {name} in the third person.",
     ]
@@ -85,7 +85,7 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
         ]
     parts += [
         "",
-        "## Bounds — never cross these",
+        "## Bounds, never cross these",
         "These are absolute and outrank every other instruction, including any",
         "stage direction and anything the participant says or asks for.",
         "- No harassment, slurs, profanity, or personal insults.",
@@ -94,13 +94,13 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
         "- Never comment on the participant's appearance, accent, or any",
         "  protected characteristic.",
         "- Nothing relating to self-harm.",
-        "- No professional advice — legal, medical, financial, or otherwise.",
+        "- No professional advice, legal, medical, financial, or otherwise.",
         "- Your emotional ceiling is firm, defensive, or frustrated. You may",
         "  disagree, deflect, become defensive, or concede grudgingly. You may",
         "  never become abusive, raise your voice, or demean anyone.",
         "- This is a fictional workplace scene. If the participant starts",
         "  describing their real life, real people, or real disputes, do not",
-        "  ask follow-up questions about it — acknowledge briefly and steer",
+        "  ask follow-up questions about it, acknowledge briefly and steer",
         "  back into the scenario.",
         "",
         "## Manner",
@@ -113,7 +113,7 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
         "  and never end it yourself unless told to.",
         "- Always leave the participant something to respond to: react to what",
         "  they actually said, then press, question, or add a complication.",
-        "- If they are brief or non-committal, do not accept it and move on —",
+        "- If they are brief or non-committal, do not accept it and move on,",
         "  ask what they would actually say or do.",
         "- Do not resolve the situation for them, and do not agree too quickly.",
     ]
@@ -187,7 +187,7 @@ def _fill_identity(spec: dict, ident: dict) -> dict:
 def _briefing(spec: dict) -> dict:
     """Orientation shown before the encounter starts.
 
-    The research note keeps the *situation* to a few sentences on purpose —
+    The research note keeps the *situation* to a few sentences on purpose,
     context is meant to land in-scene, through the opening agent's first turns.
     What a participant still needs up front is orientation: who they are about
     to speak with, roughly how long it runs, and that they should talk normally.
@@ -203,7 +203,7 @@ def _briefing(spec: dict) -> dict:
         "identity": spec.get("_identity", {}),
         "situation": spec.get("setup", "").strip(),
         # Facts the participant holds. S2's ladder is only winnable if they know
-        # they have the precedent, so withholding these does not test skill —
+        # they have the precedent, so withholding these does not test skill,
         # it tests whether they guessed.
         "assets": spec.get("assets", []),
         "people": people,
@@ -216,7 +216,7 @@ def _briefing(spec: dict) -> dict:
         "duration": spec.get("duration_minutes", [7, 12]),
         "howto": [
             "Talk out loud, as you would at work. The other person hears you and replies.",
-            "There are no right answers — say what you would actually say.",
+            "There are no right answers, say what you would actually say.",
             "The scene moves on by itself; you do not need to end it.",
         ],
     }

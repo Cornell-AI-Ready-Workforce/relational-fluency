@@ -1,12 +1,12 @@
 """Per-persona debrief for group scenarios.
 
-After a group session ends, this produces — for EACH AI persona — a structured
+After a group session ends, this produces, for EACH AI persona, a structured
 read of three things the live characters were implicitly tracking:
 
-  * felt_heard       — did the participant make this persona feel heard?
-  * concern_addressed — was the persona's *underlying* concern (their hidden
+  * felt_heard      , did the participant make this persona feel heard?
+  * concern_addressed, was the persona's *underlying* concern (their hidden
                         agenda, not just their stated objection) addressed?
-  * stance_shift     — how did this persona's position move across the scene?
+  * stance_shift    , how did this persona's position move across the scene?
 
 It also surfaces each persona's hidden agenda (which the participant never saw
 during the scene) so the debrief can explain what was *really* driving the room.
@@ -15,7 +15,7 @@ This is intentionally separate from scoring.py: scoring measures the
 participant's relational skill against a construct rubric; the debrief explains
 the room back to the participant (and the researcher) persona by persona. The
 result is cached to data/sessions/{sid}/debrief.json so it sits alongside the
-other downloadable session artifacts — that file is the researcher-facing copy,
+other downloadable session artifacts, that file is the researcher-facing copy,
 and the same JSON is rendered on-screen at the end of the session.
 
 CLI:
@@ -40,7 +40,7 @@ from .scenarios import load_scenario
 from .scoring import TranscriptError, load_transcript, _render_transcript
 from .storage import SESSIONS_DIR
 
-# Opus 4.8 — the debrief is reflective and shown to the participant; use the
+# Opus 4.8, the debrief is reflective and shown to the participant; use the
 # most capable model by default. Override with --model or DEBRIEF_MODEL.
 DEFAULT_DEBRIEF_MODEL = os.getenv("DEBRIEF_MODEL", "nto.gemini-2.5-pro")
 DEBRIEF_FILENAME = "debrief.json"
@@ -128,7 +128,7 @@ def _build_prompt(scenario, transcript: Dict[str, Any]) -> tuple[str, str]:
         block = [f"### {a.name} (agent_id: {a.id})"]
         if a.role:
             block.append(f"Role: {a.role}")
-        # The hidden agenda is the key — it tells the judge what this persona's
+        # The hidden agenda is the key, it tells the judge what this persona's
         # *underlying* concern actually was, behind their stated objections.
         if a.hidden_agenda:
             block.append(f"Hidden agenda (their real, unspoken motive): {a.hidden_agenda}")
@@ -142,19 +142,19 @@ people in the room are AI personas, each with a STATED objection and a HIDDEN
 AGENDA (their real motive, which the participant could not see). Your job is to
 read the transcript and, for each persona, assess three things honestly:
 
-1. felt_heard — Did the participant make this persona feel genuinely heard
+1. felt_heard, Did the participant make this persona feel genuinely heard
    (acknowledged their point, reflected it back, did not just defend)? Rate on
    the scale and cite evidence. Being under attack does not lower this; the
    question is purely what the PARTICIPANT did toward this persona.
 
-2. concern_addressed — Did the participant address this persona's UNDERLYING
+2. concern_addressed, Did the participant address this persona's UNDERLYING
    concern (the hidden agenda), not merely their surface objection? A
    participant can answer the stated question while completely missing the real
    driver. Judge against the hidden agenda.
 
-3. stance_shift — Where did this persona start, where did they end, and which
+3. stance_shift, Where did this persona start, where did they end, and which
    direction did they move (hardened / unchanged / softened / shifted)? Be
-   faithful to the transcript — many personas will NOT soften.
+   faithful to the transcript, many personas will NOT soften.
 
 Be specific and grounded in the transcript. Do not flatter the participant. If
 the room steamrolled them, say so in room_summary.

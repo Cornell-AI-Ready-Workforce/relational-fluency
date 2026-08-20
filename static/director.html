@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Steering — Relational Fluency</title>
+<title>Steering, Relational Fluency</title>
 <style>
   :root {
     --bg:#ededec; --panel:#fff; --ink:#1c1c1c; --muted:#6b6b68;
@@ -80,7 +80,7 @@ async function loadList() {
   if (!encounters.length) { el.innerHTML = '<div class="empty">No encounters yet.</div>'; return; }
   el.innerHTML = encounters.map(e => `
     <div class="enc${e.study ? '' : ' legacy'}" data-id="${esc(e.id)}">
-      <div class="scen">${esc(e.scenario || '—')}${e.title ? ` · ${esc(e.title)}` : ''}</div>
+      <div class="scen">${esc(e.scenario || ', ')}${e.title ? ` · ${esc(e.title)}` : ''}</div>
       <div class="sid">${e.construct ? esc(e.construct.replace(/_/g, ' ')) + ' · var ' + esc(e.variant) : esc(e.id)}</div>
     </div>`).join('');
   el.querySelectorAll('.enc').forEach(n =>
@@ -112,7 +112,7 @@ function render(rec) {
     if (t.interaction && t.interaction !== scene) {
       scene = t.interaction;
       const m = iMeta[scene];
-      const label = m ? `${esc(m.label)} — ${esc(m.mode.replace(/_/g, ' '))}` : esc(scene);
+      const label = m ? `${esc(m.label)}, ${esc(m.mode.replace(/_/g, ' '))}` : esc(scene);
       const plan = (m?.triggers || []).map(tr =>
         `<span class="tag trig ${firedIds.has(tr.id) ? 'hit' : 'miss'}">${esc(tr.id)}</span>`).join('');
       rows.push(`<div class="scene">${label}${m?.observe ? `<div class="observe">${esc(m.observe)}</div>` : ''}
@@ -151,9 +151,9 @@ function render(rec) {
 
   document.getElementById('detail').innerHTML = `
     <div class="meta">
-      <span><b>${esc(rec.scenario || '—')}</b>${spec ? ` · ${esc(spec.title)}` : ''}</span>
-      ${spec ? `<span>${esc(spec.construct.replace(/_/g, ' '))} · variant <b>${esc(spec.variant)}</b> · pair <b>${esc(spec.parallel_form || '—')}</b></span>` : ''}
-      <span>participant <b>${esc(rec.participant_id || '—')}</b></span>
+      <span><b>${esc(rec.scenario || ', ')}</b>${spec ? ` · ${esc(spec.title)}` : ''}</span>
+      ${spec ? `<span>${esc(spec.construct.replace(/_/g, ' '))} · variant <b>${esc(spec.variant)}</b> · pair <b>${esc(spec.parallel_form || ', ')}</b></span>` : ''}
+      <span>participant <b>${esc(rec.participant_id || ', ')}</b></span>
       <span>turns <b>${c.participant_turns || 0}</b> / <b>${c.agent_turns || 0}</b></span>
       <span>directions <b>${c.stage_directions || 0}</b></span>
       <span>${esc(p.realtime_model || '')} · ${esc(p.text_model || '')}</span>

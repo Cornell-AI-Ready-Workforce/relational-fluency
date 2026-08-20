@@ -1,4 +1,4 @@
-# Influence — Variant B. Parallel form of S2A: identical ladder shape and ESCI
+# Influence, Variant B. Parallel form of S2A: identical ladder shape and ESCI
 # map, different story. Research Note v3, slide 11.
 id: S2B
 construct: influence
@@ -32,7 +32,7 @@ assets:
 agents:
   sasha:
     name: Sasha
-    role: manager — not opposed, squeezed from above
+    role: manager, not opposed, squeezed from above
     voice: Aoede
     system_prompt: |
       You are Sasha, the participant's manager. You are not personally opposed
@@ -46,16 +46,16 @@ agents:
       - You can defend an exception upward only if it is reviewable and measured.
 
       How you behave:
-      - Open by naming your own constraint — the memo isn't yours and the
-        director is watching the numbers — then give them the floor.
+      - Open by naming your own constraint, the memo isn't yours and the
+        director is watching the numbers, then give them the floor.
       - Work a FIXED deflection ladder, in order, one rung per push:
-          1. "It's company-wide — my hands are tied."
+          1. "It's company-wide, my hands are tied."
           2. "If I make one exception, everyone wants one."
           3. "The director will never sign off."
       - Rung 3 is your weak point: it is contradicted by Rivera's team. If the
         participant invokes that precedent, concede the logic.
       - You move only when handed something defensible to the director. The
-        natural close is a reviewable trial with metrics — a 90-day trial.
+        natural close is a reviewable trial with metrics, a 90-day trial.
       - Threats or going-over-your-head talk makes you defensive.
       - One to three sentences per turn.
 
@@ -66,13 +66,13 @@ interactions:
     label: "Making the case"
     kind: opening
     opening: >-
-      Before you start — the RTO memo isn't mine, and the director is watching
+      Before you start, the RTO memo isn't mine, and the director is watching
       compliance numbers. Go ahead.
     observe: "Case vs complaint · anticipating the pressure Sasha is under."
     triggers:
       - id: t1_the_opening
         cue: "Sasha names the constraint, then hands over the floor"
-        on_silence: "You booked the time — what did you want to cover?"
+        on_silence: "You booked the time, what did you want to cover?"
         esci: [through_discussion, anticipates, self_interest]
         scores:
           high:
@@ -90,17 +90,17 @@ interactions:
     observe: "New approach per rung · appeal to Sasha's interests · invoke Rivera's precedent · dated close (90-day trial)."
     triggers:
       - id: t2_rung1_company_wide
-        cue: "'It's company-wide — my hands are tied.'"
+        cue: "'It's company-wide, my hands are tied.'"
         esci: [multiple_approaches, anticipates]
       - id: t3_rung2_one_exception
         cue: "'If I make one exception, everyone wants one.'"
         esci: [multiple_approaches, self_interest]
       - id: t4_rung3_director_wont_sign
-        cue: "'The director will never sign off.' — contradicted by Rivera's team"
+        cue: "'The director will never sign off.', contradicted by Rivera's team"
         esci: [behind_scenes, key_people, multiple_approaches]
         scores:
           high:
-            answer: "Run it as a 90-day trial with the same metrics Rivera's team used — you'd take the director data, not an exception."
+            answer: "Run it as a 90-day trial with the same metrics Rivera's team used, you'd take the director data, not an exception."
             why: "precedent invoked; multiple approaches; dated close"
           low:
             answer: "Fine. I guess I'll come in five days."

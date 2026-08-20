@@ -3,11 +3,11 @@
 Each scenario stresses one of four relational constructs (its ``skill``). This
 module defines, per construct, a two-layer rubric:
 
-  1. A behavioral codebook  — discrete micro-behaviors a rater can tag on each
+  1. A behavioral codebook , discrete micro-behaviors a rater can tag on each
      participant turn. Each code carries a polarity (+ helps the construct,
      - works against it) and a definition. Counting these across a transcript
      gives behavior *rates* (a behavioral-coding layer).
-  2. Rubric dimensions      — construct-level 1-5 scales that the behaviors
+  2. Rubric dimensions     , construct-level 1-5 scales that the behaviors
      feed into, each with anchored descriptions at 1 / 3 / 5.
 
 The participant (the human) is the one being measured; the AI plays the
@@ -60,7 +60,7 @@ class Construct:
 
 
 # --------------------------------------------------------------------------
-# Perspective taking — Eyal/Steffel/Epley (2018); Ku/Wang/Galinsky (2015);
+# Perspective taking, Eyal/Steffel/Epley (2018); Ku/Wang/Galinsky (2015);
 # Galinsky et al. (2008); Stone/Patton/Heen (1999). Get perspective (elicit),
 # don't take perspective (assume).
 # --------------------------------------------------------------------------
@@ -116,7 +116,7 @@ PERSPECTIVE_TAKING = Construct(
 
 
 # --------------------------------------------------------------------------
-# Emotional regulation — Gross (2015) reappraisal vs suppression vs response
+# Emotional regulation, Gross (2015) reappraisal vs suppression vs response
 # amplification; David & Congleton (2013) emotional agility.
 # --------------------------------------------------------------------------
 
@@ -155,7 +155,7 @@ EMOTIONAL_REGULATION = Construct(
         Dimension("modulation", "Modulation",
                   "Either buries the emotion or is swept up in it.",
                   "Partly regulates; some leakage of suppression or escalation.",
-                  "Holds intensity in a workable band — neither suppressed nor amplified."),
+                  "Holds intensity in a workable band, neither suppressed nor amplified."),
         Dimension("constructive_use", "Constructive use",
                   "The emotion derails the conversation or is wasted.",
                   "Some movement toward the underlying goal despite the affect.",
@@ -170,7 +170,7 @@ EMOTIONAL_REGULATION = Construct(
 
 
 # --------------------------------------------------------------------------
-# Apology and repair — Lewicki, Polin & Lount (2016) six components
+# Apology and repair, Lewicki, Polin & Lount (2016) six components
 # (responsibility highest, repair second); Schumann (2018) barriers;
 # Lazare (2004) failed-apology taxonomy.
 # --------------------------------------------------------------------------
@@ -183,7 +183,7 @@ APOLOGY_REPAIR = Construct(
         "responsibility weighted highest and an offer of repair second. Reward "
         "specific ownership of the actual harm, genuine regret, and a concrete "
         "offer to make it right; penalize the canonical failed-apology "
-        "patterns — conditional ('I'm sorry if'), vague non-admission, and "
+        "patterns, conditional ('I'm sorry if'), vague non-admission, and "
         "blame-shifting."
     ),
     behaviors=[
@@ -198,7 +198,7 @@ APOLOGY_REPAIR = Construct(
         Behavior("commits_change", "Commits to change", "+",
                  "States what will be different going forward."),
         Behavior("conditional_apology", "Conditional apology", "-",
-                 "Qualifies it — 'I'm sorry if/but…' — undercutting the admission."),
+                 "Qualifies it, 'I'm sorry if/but…', undercutting the admission."),
         Behavior("vague_nonadmission", "Vague non-admission", "-",
                  "Diffuse regret that never names the actual harm or one's part in it."),
         Behavior("shifts_blame", "Shifts blame", "-",
@@ -215,7 +215,7 @@ APOLOGY_REPAIR = Construct(
                   "Makes a concrete, proportionate offer of repair."),
         Dimension("sincerity", "Sincerity",
                   "Reads as performed, defensive, or self-protective.",
-                  "Mixed — some genuine regret alongside self-justification.",
+                  "Mixed, some genuine regret alongside self-justification.",
                   "Regret reads as genuine and other-focused."),
     ],
     references=[
@@ -227,7 +227,7 @@ APOLOGY_REPAIR = Construct(
 
 
 # --------------------------------------------------------------------------
-# Psychological safety — Edmondson (1999, 2003); Edmondson & Bransby (2023);
+# Psychological safety, Edmondson (1999, 2003); Edmondson & Bransby (2023);
 # Google re:Work (Project Aristotle). Make it safe for interpersonal risk
 # without coercing the disclosure.
 # --------------------------------------------------------------------------
@@ -237,9 +237,9 @@ PSYCHOLOGICAL_SAFETY = Construct(
     name="Psychological safety",
     frame=(
         "Psychological safety is felt safety to take interpersonal risk. The "
-        "participant's job is to make it safe for the other to speak up — by "
+        "participant's job is to make it safe for the other to speak up, by "
         "framing the work as learning, inviting voice, modeling fallibility, "
-        "and receiving hard input without punishing it — while not making the "
+        "and receiving hard input without punishing it, while not making the "
         "invitation itself feel like pressure. Reward genuine inquiry that "
         "lowers the risk of speaking; penalize coercive invitations, "
         "shutting-down responses, and hollow reassurance."
@@ -256,7 +256,7 @@ PSYCHOLOGICAL_SAFETY = Construct(
         Behavior("asks_genuine_inquiry", "Genuine inquiry", "+",
                  "Asks open questions out of real curiosity, not to extract a predetermined answer."),
         Behavior("coercive_invitation", "Coercive invitation", "-",
-                 "Pressures the other to speak/agree — a loaded ask that raises rather than lowers the risk."),
+                 "Pressures the other to speak/agree, a loaded ask that raises rather than lowers the risk."),
         Behavior("shuts_down", "Shuts down disclosure", "-",
                  "Dismisses, interrupts, talks over, or penalizes what the other surfaces."),
         Behavior("performative_reassurance", "Performative reassurance", "-",
