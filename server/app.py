@@ -431,12 +431,22 @@ async def api_encounters(key: Optional[str] = None, limit: int = 60):
             m = json.loads(manifest.read_text())
         except ValueError:
             continue
-        out.append({
+        entry = {
             "id": d.name,
             "scenario": m.get("scenario"),
             "started_at": m.get("started_at"),
             "participant_id": m.get("participant_id"),
-        })
+        }
+        try:
+            from .scenarios_v3 import load_spec
+            spec = load_spec(m.get("scenario"))
+            entry.update(
+                construct=spec["construct"], variant=spec["variant"],
+                title=spec["title"], study=True,
+            )
+        except Exception:
+            entry["study"] = False
+        out.append(entry)
     return out
 
 
@@ -469,6 +479,35 @@ async def api_encounter_record(session_id: str, key: Optional[str] = None):
                     "probing": e.get("probing"),
                 })
     record["triggers_fired"] = fired
+
+    # Attach the scenario's own plan so the dashboard can show coverage — which
+    # interaction each turn belongs to by name, and which planted triggers were
+    # reached out of those the instrument specifies.
+    try:
+        from .scenarios_v3 import load_spec
+        spec = load_spec(record.get("scenario"))
+        record["spec"] = {
+            "construct": spec["construct"],
+            "variant": spec["variant"],
+            "title": spec["title"],
+            "parallel_form": spec.get("parallel_form"),
+            "skill_measured": spec.get("skill_measured", "").strip(),
+            "esci_items": spec.get("esci_items", {}),
+            "interactions": [
+                {
+                    "id": i["id"], "label": i.get("label", ""), "mode": i["mode"],
+                    "observe": i.get("observe", ""),
+                    "triggers": [
+                        {"id": t["id"], "esci": t.get("esci", []), "cue": t.get("cue", ""),
+                         "probe": bool(t.get("on_silence")), "scored": bool(t.get("scores"))}
+                        for t in i.get("triggers", [])
+                    ],
+                }
+                for i in spec.get("interactions", [])
+            ],
+        }
+    except Exception:
+        record["spec"] = None  # legacy scenario, not part of the study bank
     return record
 
 

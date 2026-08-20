@@ -45,6 +45,12 @@
   .tag.probe { border-color:#d8c68a; color:#8a6d1e; }
   .empty { padding:36px; text-align:center; color:var(--muted); }
   .missing { color:var(--red); font-style:italic; }
+  .tag.hit { border-color:#9ec7a4; color:#2f7d4f; background:#f2f9f4; }
+  .tag.miss { border-color:var(--line); color:#a3a3a0; background:#fafaf9; }
+  .ok { color:#2f7d4f; } .warn { color:#8a6d1e; }
+  .scene .observe { font-weight:400; text-transform:none; letter-spacing:0;
+    color:var(--muted); font-size:12px; margin-top:3px; }
+  .enc.legacy .scen { color:var(--muted); font-weight:400; }
   button { font:inherit; }
 </style>
 
@@ -73,9 +79,9 @@ async function loadList() {
   const el = document.getElementById('list');
   if (!encounters.length) { el.innerHTML = '<div class="empty">No encounters yet.</div>'; return; }
   el.innerHTML = encounters.map(e => `
-    <div class="enc" data-id="${esc(e.id)}">
-      <div class="scen">${esc(e.scenario || '—')}</div>
-      <div class="sid">${esc(e.id)}</div>
+    <div class="enc${e.study ? '' : ' legacy'}" data-id="${esc(e.id)}">
+      <div class="scen">${esc(e.scenario || '—')}${e.title ? ` · ${esc(e.title)}` : ''}</div>
+      <div class="sid">${e.construct ? esc(e.construct.replace(/_/g, ' ')) + ' · var ' + esc(e.variant) : esc(e.id)}</div>
     </div>`).join('');
   el.querySelectorAll('.enc').forEach(n =>
     n.addEventListener('click', () => select(n.dataset.id)));
@@ -91,7 +97,12 @@ async function select(id) {
 }
 
 function render(rec) {
-  const p = rec.provenance || {}, c = rec.counts || {};
+  const p = rec.provenance || {}, c = rec.counts || {}, spec = rec.spec;
+  const firedIds = new Set((rec.triggers_fired || []).map(f => f.trigger_id));
+  // Name each interaction from the spec, so scene headings read as the research
+  // note describes them instead of "i1".
+  const iMeta = {};
+  (spec?.interactions || []).forEach(i => { iMeta[i.id] = i; });
   const rows = [];
   let scene = null;
 
@@ -100,7 +111,12 @@ function render(rec) {
     // is with when each direction was issued.
     if (t.interaction && t.interaction !== scene) {
       scene = t.interaction;
-      rows.push(`<div class="scene">${esc(scene)}</div>`);
+      const m = iMeta[scene];
+      const label = m ? `${esc(m.label)} — ${esc(m.mode.replace(/_/g, ' '))}` : esc(scene);
+      const plan = (m?.triggers || []).map(tr =>
+        `<span class="tag trig ${firedIds.has(tr.id) ? 'hit' : 'miss'}">${esc(tr.id)}</span>`).join('');
+      rows.push(`<div class="scene">${label}${m?.observe ? `<div class="observe">${esc(m.observe)}</div>` : ''}
+        <div class="tags">${plan}</div></div>`);
     }
     if (t.role === 'participant') {
       rows.push(`<div class="row"><div class="who p">Participant</div>
@@ -121,21 +137,28 @@ function render(rec) {
       <div>${dir}${body}</div></div>`);
   }
 
-  const fired = (rec.triggers_fired || []).map(f => `
-    <span class="tag trig">${esc(f.trigger_id)}</span>` +
-    (f.probing ? '<span class="tag probe">probe</span>' : '') +
-    (f.esci || []).map(i => `<span class="tag">${esc(i)}</span>`).join('')
-  ).join(' ');
+  const planned = (spec?.interactions || []).flatMap(i => i.triggers.map(t => t.id));
+  const hit = planned.filter(id => firedIds.has(id));
+  const allItems = Object.keys(spec?.esci_items || {});
+  const seenItems = new Set((rec.triggers_fired || []).flatMap(f => f.esci || []));
+  const coverage = spec ? `
+    <div class="meta">
+      <span>triggers <b class="${hit.length === planned.length ? 'ok' : 'warn'}">${hit.length}/${planned.length}</b></span>
+      <span>ESCI items reached <b class="${seenItems.size === allItems.length ? 'ok' : 'warn'}">${seenItems.size}/${allItems.length}</b></span>
+      <span class="tags">${allItems.map(k =>
+        `<span class="tag ${seenItems.has(k) ? 'hit' : 'miss'}">${esc(k)}</span>`).join('')}</span>
+    </div>` : '';
 
   document.getElementById('detail').innerHTML = `
     <div class="meta">
-      <span><b>${esc(rec.scenario || '—')}</b></span>
+      <span><b>${esc(rec.scenario || '—')}</b>${spec ? ` · ${esc(spec.title)}` : ''}</span>
+      ${spec ? `<span>${esc(spec.construct.replace(/_/g, ' '))} · variant <b>${esc(spec.variant)}</b> · pair <b>${esc(spec.parallel_form || '—')}</b></span>` : ''}
       <span>participant <b>${esc(rec.participant_id || '—')}</b></span>
       <span>turns <b>${c.participant_turns || 0}</b> / <b>${c.agent_turns || 0}</b></span>
       <span>directions <b>${c.stage_directions || 0}</b></span>
       <span>${esc(p.realtime_model || '')} · ${esc(p.text_model || '')}</span>
     </div>
-    ${fired ? `<div class="meta"><span>triggers fired</span><span class="tags">${fired}</span></div>` : ''}
+    ${coverage}
     <div class="flow">${rows.join('') || '<div class="empty">No turns recorded.</div>'}</div>`;
 }
 

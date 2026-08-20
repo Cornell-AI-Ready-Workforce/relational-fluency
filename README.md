@@ -123,8 +123,16 @@ produced it, with the planted trigger and ESCI items it was firing. Scene
 headings mark where the interaction changed, so it is clear which character was
 being steered.
 
+It aligns to the scenario bank: each encounter is labelled by construct,
+variant, and parallel form; scene headings use the interaction names from the
+research note ("Hallway run-in with Sam") with what to observe; and coverage is
+reported against the instrument — planted triggers reached out of those the
+scenario specifies, and ESCI items exercised out of the construct's full set,
+with unreached ones greyed.
+
 This is the audit view for the closed-loop steering the study claims: a reply
-and the instruction behind it are shown together rather than in separate logs.
+and the instruction behind it are shown together rather than in separate logs,
+and an encounter that only exercised part of the instrument is visible as such.
 
 ### Checking a capture
 
