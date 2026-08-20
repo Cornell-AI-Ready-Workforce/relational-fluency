@@ -114,6 +114,13 @@
                 background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px;
                 padding: 14px 18px; font-size: 13px; line-height: 1.5; }
   .transcript .turn { margin-bottom: 8px; }
+  /* Scene change: the participant must never be unsure who they are talking to. */
+  .transcript .scene { margin: 14px 0 10px; padding: 6px 10px; border-radius: 6px;
+    background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;
+    letter-spacing: .02em; }
+  .transcript .scene .with { font-weight: 400; opacity: .9; }
+  .tile.absent { opacity: .18; filter: grayscale(1); }
+  #sceneNow { font-size: 12px; color: var(--muted); margin-left: 8px; }
   .transcript .speaker { font-weight: 600; color: var(--accent); }
   .transcript .speaker.self { color: var(--fg); }
   .transcript .meta { font-size: 11px; color: var(--muted); margin-left: 6px; }
@@ -335,6 +342,7 @@
       <div class="body" id="briefBody"></div>
       <div class="cast-line" id="castLine"></div>
     </div>
+    <div id="sceneNow" aria-live="polite"></div>
     <div class="transcript" id="transcript" aria-live="polite"></div>
   </div>
 </main>
@@ -444,6 +452,19 @@
     return d;
   }
 
+  // Characters in the current interaction. Empty means "everyone" (legacy
+  // scenarios that have no interaction structure).
+  let presentIds = [];
+
+  function applyPresence() {
+    cast.forEach(a => {
+      const t = document.getElementById(`tile-${a.id}`);
+      if (!t) return;
+      const here = presentIds.length === 0 || presentIds.includes(a.id);
+      t.classList.toggle('absent', !here);
+    });
+  }
+
   function renderGrid() {
     const g = $('grid'); g.innerHTML = '';
     // Self tile — avatar pre-start, live webcam once the session begins.
@@ -460,6 +481,7 @@
     `;
     g.appendChild(self);
     attachCamera();  // (re)bind the live stream if we already have one
+    setTimeout(applyPresence, 0);  // keep greying consistent across re-renders
     // Agent tiles — photo when the scenario provides one, else initials.
     cast.forEach(a => {
       const t = document.createElement('div');
@@ -786,6 +808,25 @@
           }
           currentTurn = null;
           // Mic re-opens when the last audio chunk finishes (playPcmChunk.onended).
+        } else if (m.type === 'segment_start') {
+          // A new interaction: say plainly who the participant is now with, and
+          // grey out anyone not in the room for this beat.
+          presentIds = (m.present || []).map(p => p.id);
+          const names = (m.present || []).map(p => p.name).join(' · ');
+          const label = m.label || `Part ${m.index + 1}`;
+          const el = document.createElement('div');
+          el.className = 'scene';
+          el.innerHTML = `${label}<span class="with"> — you are now with ${names}</span>`;
+          $('transcript').appendChild(el);
+          $('transcript').scrollTop = $('transcript').scrollHeight;
+          $('sceneNow').textContent = `Now: ${label} — with ${names}`;
+          applyPresence();
+        } else if (m.type === 'encounter_complete') {
+          const el = document.createElement('div');
+          el.className = 'scene';
+          el.textContent = 'Encounter complete — thank you.';
+          $('transcript').appendChild(el);
+          $('sceneNow').textContent = 'Encounter complete';
         } else if (m.type === 'silence') {
           finalizeUserCaption();
           assistantSpeaking = false;

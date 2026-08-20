@@ -209,11 +209,34 @@ class RealtimeVoiceSessionRunner:
         await self._enter(self._resolve_agents()[0], new_interaction=True)
         return True
 
+    async def _announce_opening(self) -> None:
+        """The first interaction needs the same scene banner as later ones."""
+        if not self.interactions:
+            return
+        present = self._resolve_agents()
+        if self._interaction_mode() == "one_to_one_series":
+            present = [self.agent]
+        payload = {
+            "index": 0,
+            "interaction": self._interaction_id(),
+            "label": self._interaction().get("label", ""),
+            "mode": self._interaction_mode(),
+            "agent_id": self.agent_id,
+            "agent_name": self.agent.name,
+            "new_interaction": True,
+            "present": [{"id": a.id, "name": a.name, "role": a.role} for a in present],
+        }
+        self.session.store.event("segment_start", **payload)
+        await self._send({"type": "segment_start", **payload})
+
     async def _enter(self, agent, *, new_interaction: bool) -> None:
         self.agent = agent
         self.agent_id = agent.id
         self.rt.voice = self._voice()
         self.vad.reset()
+        present = self._resolve_agents()
+        if self._interaction_mode() == "one_to_one_series":
+            present = [agent]  # a series is one person at a time
         payload = {
             "index": self.segment,
             "interaction": self._interaction_id(),
@@ -222,6 +245,10 @@ class RealtimeVoiceSessionRunner:
             "agent_id": self.agent_id,
             "agent_name": self.agent.name,
             "new_interaction": new_interaction,
+            # Who the participant is actually with now, so the UI can show only
+            # them — otherwise every character stays on screen and it is unclear
+            # who is being spoken to.
+            "present": [{"id": a.id, "name": a.name, "role": a.role} for a in present],
         }
         self.session.store.event("segment_start", **payload)
         await self.rt.update_instructions(self._instructions())
@@ -234,6 +261,7 @@ class RealtimeVoiceSessionRunner:
             tools=[END_SEGMENT_TOOL],
         )
         await self.rt.connect()
+        await self._announce_opening()
         # Record what served this encounter — the audit trail has to say which
         # gateway and which models produced the data.
         self.session.store.event(

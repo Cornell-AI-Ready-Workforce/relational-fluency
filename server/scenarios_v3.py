@@ -21,6 +21,12 @@ from .scenarios import Agent, Scenario
 
 V3_DIR = Path(__file__).parent.parent / "scenarios" / "v3"
 
+def _join(names: list) -> str:
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + f" and {names[-1]}"
+
+
 # Gemini Live voices, assigned per cast position when the spec does not name one.
 _VOICES = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
 
@@ -48,10 +54,25 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
     behaviour policy from the spec. The triggers themselves are injected by the
     runner as they fire, not dumped up front — an agent that can see every
     planted beat tends to rush through them."""
-    parts = [agent["system_prompt"].strip()]
+    name = agent["name"]
+    others = [a["name"] for k, a in spec["agents"].items() if k != key]
+    parts = [f"# You are {name}", "", agent["system_prompt"].strip()]
     if spec.get("setup"):
         parts += ["", "## Situation", spec["setup"].strip()]
     parts += [
+        "",
+        "## Identity — this matters",
+        f"- You ARE {name}. Speak as {name}, in the first person, always.",
+        f"- Never narrate {name}'s actions or refer to {name} in the third person.",
+    ]
+    if others:
+        parts += [
+            f"- {_join(others)} {'is' if len(others) == 1 else 'are'} "
+            f"{'another person' if len(others) == 1 else 'other people'} in this scene, "
+            "not you. You never speak for them or as them.",
+        ]
+    parts += [
+        "- If asked who you are, answer as yourself and stay in the scene.",
         "",
         "## Manner",
         "- This is a live spoken conversation. One to three sentences per turn.",
