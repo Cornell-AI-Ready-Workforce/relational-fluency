@@ -140,7 +140,7 @@ resource "aws_ecs_service" "agent" {
   load_balancer {
     target_group_arn = aws_lb_target_group.agent.arn
     container_name   = "platform"
-    container_port   = 8100
+    container_port   = 8080
   }
 
   # New task must be healthy before old one drains: no dropped mid-encounter turns

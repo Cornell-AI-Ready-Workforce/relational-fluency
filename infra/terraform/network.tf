@@ -49,14 +49,14 @@ resource "aws_security_group" "agent" {
   vpc_id      = module.vpc.vpc_id
 
   ingress {
-    description     = "Agent port from ALB only"
-    from_port       = 8100
-    to_port         = 8100
+    description     = "Platform port from ALB only"
+    from_port       = 8080
+    to_port         = 8080
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
   }
   egress {
-    description = "Outbound to Anthropic/LiteLLM via NAT"
+    description = "Outbound to the Cornell LiteLLM gateway via NAT"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
