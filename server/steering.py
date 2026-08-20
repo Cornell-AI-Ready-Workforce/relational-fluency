@@ -31,7 +31,7 @@ from .scenarios import Scenario
 
 # Same speed-over-deliberation tradeoff as the Director. Override via env to
 # A/B a smarter controller.
-STEERING_MODEL = os.getenv("STEERING_MODEL", "claude-haiku-4-5-20251001")
+STEERING_MODEL = os.getenv("STEERING_MODEL", "nto.gemini-2.5-flash")
 MAX_ADJUSTMENTS_PER_TURN = 2
 STEERABLE_KNOBS = TONE_KNOBS + INCIVILITY_KNOBS  # cognition is not auto-steered
 

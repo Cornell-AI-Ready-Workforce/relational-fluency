@@ -252,7 +252,6 @@
   @media (max-width: 640px) {
     header { padding: 11px 14px 9px; gap: 10px; flex-wrap: wrap; }
     header .title { font-size: 15px; }
-    #modelPicker { font-size: 12px; padding: 8px 9px; }
     header .meta { font-size: 11px; }
     .controls { gap: 8px; padding: 0; }
     button { padding: 10px 16px; font-size: 13px; }
@@ -298,7 +297,6 @@
   </div>
   <div class="controls" id="controls">
     <span class="timer" id="timer" title="Time in this conversation">00:00</span>
-    <select id="modelPicker" title="Model — locked once the session starts"></select>
     <button id="startBtn">Start session</button>
     <button id="stopBtn" class="secondary" style="display:none">End</button>
   </div>
@@ -353,7 +351,6 @@
 
   let participantId = params.get('participant_id') || null;
   let started = false;       // is a session currently running
-  let activeModel = null;    // model the running session was started with
   let sessionId = null;      // server session id once connected
   let sessionMode = 'single';// 'single' | 'group'
   let userTurns = 0;         // committed participant turns this session (gates debrief)
@@ -737,11 +734,12 @@
     speechQueue = [];
     if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
     startTimer();
-    activeModel = $('modelPicker').value;
-
     const pidParam = participantId ? `&participant_id=${encodeURIComponent(participantId)}` : '';
-    const modelVal = $('modelPicker').value;
-    const modelParam = modelVal ? `&model=${encodeURIComponent(modelVal)}` : '';
+    // The model is fixed by the server for the whole study wave — the agent is
+    // the measurement instrument, so participants never vary it. A researcher
+    // launch may still pin one explicitly via ?model=.
+    const urlModelVal = params.get('model');
+    const modelParam = urlModelVal ? `&model=${encodeURIComponent(urlModelVal)}` : '';
     const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/participant/voice?scenario=${encodeURIComponent(scenario)}${pidParam}${modelParam}${launchParam}${keyParam}`;
     ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
@@ -956,20 +954,6 @@
     $('transcript').innerHTML = '';   // clear for a fresh attempt; press Start to go again
   });
 
-  // A session runs one model end to end. Changing the model mid-session ends
-  // the current conversation and starts a fresh session on the new model — two
-  // models never share a transcript.
-  $('modelPicker').addEventListener('change', async () => {
-    if (!started) return;  // pre-start: the new value is simply used at Start
-    if (!confirm('Switching the model starts a new conversation. The current one will end. Continue?')) {
-      $('modelPicker').value = activeModel;  // revert the dropdown
-      return;
-    }
-    endSession({ debrief: false });  // model swap, not a real session end — no debrief
-    $('transcript').innerHTML = '';
-    setActiveSpeaker(null);
-    await startSession();  // brand-new session on the newly selected model
-  });
 
   async function loadBrief() {
     try {
@@ -982,22 +966,6 @@
       // The first-person "entering the room" photo lives in the situation popup
       // now (see showSituation), so keep the brief itself text-only.
       $('introPhoto').style.display = 'none';
-      // Pre-start model picker, preselected to this scenario's effective default.
-      // The chosen model is fixed for the whole session (sent at WS connect).
-      const MODEL_OPTIONS = [
-        ['claude-opus-4-8', 'Opus 4.8'],
-        ['claude-sonnet-4-6', 'Sonnet 4.6'],
-        ['claude-haiku-4-5', 'Haiku 4.5'],
-      ];
-      const mp = $('modelPicker');
-      const opts = MODEL_OPTIONS.slice();
-      if (d.model && !opts.find(o => o[0] === d.model)) opts.unshift([d.model, d.model]);
-      // URL model (set by a researcher launch) wins over the scenario default.
-      const urlModel = params.get('model');
-      if (urlModel && !opts.find(o => o[0] === urlModel)) opts.unshift([urlModel, urlModel]);
-      mp.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
-      if (d.model) mp.value = d.model;
-      if (urlModel) mp.value = urlModel;
       if (d.cast && d.cast.length) {
         const names = d.cast.map(a => a.name);
         let label;

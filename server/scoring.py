@@ -43,7 +43,7 @@ from .storage import SESSIONS_DIR
 
 # Opus 4.8 — most capable; the right default for a measurement instrument.
 # Configurable for cost (e.g. claude-sonnet-4-6) via env or --model.
-DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "claude-opus-4-8")
+DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "nto.gemini-2.5-pro")
 SCORE_FILENAME = "score.json"
 
 

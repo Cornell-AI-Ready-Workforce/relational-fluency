@@ -35,7 +35,7 @@ from .multi_agent_session import MultiAgentVoiceSessionRunner
 from .scenarios import list_scenarios, load_scenario
 from .session import Session, registry
 from .storage import create_participant, get_participant, init_storage
-from .voice_session import VoiceSessionRunner
+from .realtime_voice_session import RealtimeVoiceSessionRunner
 
 load_dotenv()
 init_storage()
@@ -610,9 +610,11 @@ async def ws_participant_voice(
     })
 
     if session.is_group:
+        # Group rooms still run the v1 path until the realtime runner handles
+        # multiple simultaneous characters.
         runner = MultiAgentVoiceSessionRunner(session, ws)
     else:
-        runner = VoiceSessionRunner(session, ws)
+        runner = RealtimeVoiceSessionRunner(session, ws)
     try:
         await runner.run()
     except WebSocketDisconnect:

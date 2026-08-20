@@ -40,7 +40,7 @@ from .storage import SESSIONS_DIR
 
 # Opus 4.8 — the debrief is reflective and shown to the participant; use the
 # most capable model by default. Override with --model or DEBRIEF_MODEL.
-DEFAULT_DEBRIEF_MODEL = os.getenv("DEBRIEF_MODEL", "claude-opus-4-8")
+DEFAULT_DEBRIEF_MODEL = os.getenv("DEBRIEF_MODEL", "nto.gemini-2.5-pro")
 DEBRIEF_FILENAME = "debrief.json"
 
 _RATING_ENUM = ["no", "barely", "somewhat", "mostly", "yes"]

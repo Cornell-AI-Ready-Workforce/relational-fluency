@@ -1,3 +1,6 @@
+# LEGACY — group scenarios only. Single-agent encounters run on Gemini Live
+# (server/voice/realtime.py). This cascade is deleted once the multi-agent
+# runner is migrated; do not build on it.
 """ElevenLabs streaming TTS via WebSocket multi-stream-input.
 
 Lets us start synthesizing while Claude is still generating — the single

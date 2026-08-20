@@ -16,7 +16,7 @@ from .persona import Persona
 from .scenarios import Branch, Scenario, compose_system_prompt
 
 
-DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "nto.gemini-2.5-flash")
 # Voice replies should be short; cap output tokens so a runaway model doesn't
 # block the speaker for 30 seconds.
 DEFAULT_MAX_TOKENS = 400

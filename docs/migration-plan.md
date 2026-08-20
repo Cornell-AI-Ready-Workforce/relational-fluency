@@ -36,13 +36,24 @@ transcript, and video.
 
 ## Gaps, in dependency order
 
-### 1. Voice layer — the blocking item
+### 1. Voice layer — single-agent DONE, group mode pending
 
-Today: Deepgram STT → Claude → ElevenLabs TTS (`server/voice/stt.py`,
-`server/voice/tts.py`). A cascade, retired by decision.
+**Single-agent encounters now run on Gemini Live** (`server/voice/realtime.py`
++ `server/realtime_voice_session.py`), verified end to end through the real
+`/ws/participant/voice` endpoint: participant audio in, input transcription,
+agent audio and transcript out, both channels recorded, and the director
+re-briefing the actor between turns. The browser protocol is unchanged, so the
+existing UI needed no edits.
 
-Target: a single speech-to-speech session with native turn-taking and
-barge-in.
+**Group scenarios still run the v1 cascade** (`server/voice/stt.py`,
+`server/voice/tts.py`, `server/multi_agent_session.py`). That is the remaining
+ElevenLabs/Deepgram dependency and the next thing to remove — S3 (three team
+members) and S4 (four-person group task) both need it, so this blocks two of
+the four study constructs.
+
+The realtime session re-briefs the actor per turn via `update_instructions`,
+which is also the mechanism a group runner would use to switch character and
+voice between speakers.
 
 ### Verified working: `nto.gemini-live-2.5-flash` via Cornell LiteLLM
 

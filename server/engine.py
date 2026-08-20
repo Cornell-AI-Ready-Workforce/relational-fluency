@@ -20,7 +20,7 @@ from .persona import Persona
 from .scenarios import Agent, Branch, Scenario
 
 
-DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "nto.gemini-2.5-flash")
 DEFAULT_MAX_TOKENS = 130
 
 

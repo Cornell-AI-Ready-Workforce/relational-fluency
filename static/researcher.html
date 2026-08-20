@@ -451,9 +451,8 @@
 
   // ---------- launch: configure gears first, then start ----------
   const LAUNCH_MODEL_OPTIONS = [
-    ['claude-opus-4-8', 'Opus 4.8'],
-    ['claude-sonnet-4-6', 'Sonnet 4.6'],
-    ['claude-haiku-4-5', 'Haiku 4.5'],
+    ['nto.gemini-2.5-flash', 'Gemini 2.5 Flash'],
+    ['nto.gemini-2.5-pro', 'Gemini 2.5 Pro'],
   ];
   const bandIdx = (v) => v < 0.34 ? 0 : v < 0.67 ? 1 : 2;
   const L_TONE = [{ label: 'Low', value: 0.2 }, { label: 'Med', value: 0.5 }, { label: 'High', value: 0.85 }];

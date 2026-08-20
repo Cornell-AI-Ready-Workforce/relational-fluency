@@ -1,3 +1,6 @@
+# LEGACY — group scenarios only. Single-agent encounters run on Gemini Live
+# (server/voice/realtime.py). This cascade is deleted once the multi-agent
+# runner is migrated; do not build on it.
 """Deepgram streaming STT wrapper.
 
 Holds a live Deepgram WebSocket for the duration of a session. Callers feed
