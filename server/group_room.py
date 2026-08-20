@@ -40,7 +40,7 @@ class GroupRoom:
                 voice=self._voice_for(agent),
                 tools=self._tools,
             )
-            await rt.connect()
+            await rt.connect(open_conversation=False)
             self.sessions[agent.id] = rt
 
         await asyncio.gather(*(start(a) for a in self.agents))
@@ -52,20 +52,26 @@ class GroupRoom:
             for aid, rt in self.sessions.items() if aid != exclude
         ), return_exceptions=True)
 
-    async def commit_all(self) -> None:
-        """Close the participant's turn in every character's session, so each
-        has heard it before any of them is asked to respond."""
-        await asyncio.gather(*(
-            rt.commit_input() for rt in self.sessions.values()
-        ), return_exceptions=True)
+    async def give_floor(self, agent_id: str) -> Optional[RealtimeVoiceSession]:
+        """Give one character the floor by committing their input buffer.
 
-    async def ask(self, agent_id: str) -> Optional[RealtimeVoiceSession]:
-        """Give one character the floor."""
+        On this bridge, committing IS the response trigger: any session whose
+        buffer is committed replies on its own, and an explicit response.create
+        is neither needed nor reliable. So turn-taking is: fan the audio to
+        every session, but commit only the character who should speak. The
+        others keep the turn in their (uncommitted) buffer and will hear the
+        speaker's reply fanned in afterwards, so context stays shared.
+        """
         rt = self.sessions.get(agent_id)
         if rt is None:
             return None
         self.speaking = agent_id
-        await rt.request_response()
+        try:
+            await rt.commit_input()
+            await rt.request_response()
+        except Exception:  # noqa: BLE001, a dead session must not kill the turn
+            self.sessions.pop(agent_id, None)
+            return None
         return rt
 
     def session_for(self, agent_id: str) -> Optional[RealtimeVoiceSession]:

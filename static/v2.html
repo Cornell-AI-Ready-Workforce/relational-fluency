@@ -535,6 +535,7 @@
 
   let participantId = params.get('participant_id') || null;
   let started = false;       // is a session currently running
+  let sessionStartedAt = 0;  // wall clock when the current encounter began
   let sessionId = null;      // server session id once connected
   let sessionMode = 'single';// 'single' | 'group'
   let userTurns = 0;         // committed participant turns this session (gates debrief)
@@ -999,6 +1000,7 @@
           : 'End conversation (finish)';
     }
     started = true;
+    sessionStartedAt = Date.now();
     userTurns = 0;
     speechQueue = [];
     if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
@@ -1177,8 +1179,16 @@
   $('startBtn').addEventListener('click', startSession);
   $('stopBtn').addEventListener('click', () => {
     if (runId) {
-      // In a run, ending the conversation is how you move on. Confirm, because
-      // it cannot be rejoined; then advance to the next encounter.
+      // Study encounters must run at least 7 minutes; the encounter is the
+      // measurement, and a 3-minute conversation has not exercised it.
+      // Internal test runs skip the gate so the team can move fast.
+      const MIN_S = 7 * 60;
+      const elapsed = sessionStartedAt ? (Date.now() - sessionStartedAt) / 1000 : 0;
+      if (run && run.cohort !== 'internal' && elapsed < MIN_S) {
+        const left = Math.ceil((MIN_S - elapsed) / 60);
+        alert(`Please keep the conversation going a little longer, about ${left} more minute${left === 1 ? '' : 's'}. Each conversation needs at least 7 minutes before you can move on.`);
+        return;
+      }
       if (!confirm('Finish this conversation and move on?')) return;
       endSession({ debrief: false });
       onEncounterComplete();

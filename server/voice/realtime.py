@@ -25,6 +25,7 @@ import audioop
 import base64
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import AsyncIterator, Optional
 
@@ -123,8 +124,9 @@ class RealtimeVoiceSession:
         self._agent_buffer = ""
         self._response_active = False
         self._done_ids: set = set()
+        self.debug_log: list | None = [] if os.getenv("RT_DEBUG") else None
 
-    async def connect(self) -> None:
+    async def connect(self, *, open_conversation: bool = True) -> None:
         if not self.api_key:
             raise RuntimeError("No gateway API key (set LITELLM_API_KEY)")
         self.ws = await websockets.connect(
@@ -223,6 +225,8 @@ class RealtimeVoiceSession:
                 except (ValueError, TypeError):
                     continue
                 etype = ev.get("type", "")
+                if self.debug_log is not None:
+                    self.debug_log.append((time.time(), etype, str(ev)[:160]))
 
                 if etype in ("response.output_audio.delta", "response.audio.delta"):
                     pcm = base64.b64decode(ev.get("delta") or "")
