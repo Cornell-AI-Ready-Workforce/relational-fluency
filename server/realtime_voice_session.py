@@ -95,6 +95,7 @@ class RealtimeVoiceSessionRunner:
         self._fired: List[str] = []
         self._last_activity = time.time()
         self._turns_this_interaction = 0
+        self._finalizing = False
         self._floor = asyncio.Lock()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -334,46 +335,10 @@ class RealtimeVoiceSessionRunner:
                 )
 
             elif etype == "response_done":
-                text = "".join(self._agent_text).strip()
-                self._agent_text = []
-                self._speaking = False
-                if text:
-                    self.session.append_agent(self.agent_id, text)
-                    await self.session.broadcast({
-                        "type": "transcript",
-                        "role": "assistant",
-                        "agent_id": self.agent_id,
-                        "text": text,
-                    })
-                if text:
-                    self._turn_index += 1
-                    self._turns_this_interaction += 1
-                    # One aligned entry per exchange: the direction that shaped
-                    # the reply, and the reply itself.
-                    self.session.store.event(
-                        "steering_pair",
-                        direction=self._pending_direction,
-                        actor={
-                            "agent_id": self.agent_id,
-                            "text": text,
-                            "voice": getattr(self.rt, "voice", None),
-                        },
-                        participant=self._last_user_text,
-                    )
-                    self._pending_direction = None
-                    latency = (
-                        round(time.time() - self._turn_started_at, 3)
-                        if self._turn_started_at else None
-                    )
-                    self.session.store.event(
-                        "assistant_turn", agent_id=self.agent_id, text=text,
-                        latency_s=latency, segment=self.segment,
-                    )
-                await self._send({"type": "assistant_done", "agent_id": self.agent_id})
-                self._response_done.set()
-                if not self.is_group():
-                    await self._steer()
-                    await self._maybe_advance()
+                # Do not finalise here. The gateway can deliver transcript
+                # events AFTER response.done, so reading the buffer now yields
+                # an empty turn — audio with no text, which is unscoreable.
+                asyncio.ensure_future(self._finalize_turn())
 
             elif etype == "tool_call":
                 self.session.store.event(
@@ -405,6 +370,81 @@ class RealtimeVoiceSessionRunner:
         self._turns_this_interaction = 0
         if not await self._advance_segment():
             await self._send({"type": "encounter_complete"})
+
+    async def _finalize_turn(self) -> None:
+        """Close out an agent turn once its transcript has settled.
+
+        response.done can arrive before the transcript events that belong to the
+        same reply. Finalising immediately produced turns with audio and no
+        text, which are unscoreable and — because the old code skipped empty
+        turns — vanished from the record entirely. So wait briefly for text, and
+        if it truly never comes, still record the turn and mark it, so a gap is
+        visible to verify_record instead of silently absent.
+        """
+        # A turn exists only if it was announced (first audio or text). The
+        # gateway emits response.done more than once per reply, and without this
+        # each duplicate would wait out the grace period and then log a phantom
+        # empty turn.
+        if self._finalizing or not self._speaking:
+            return
+        self._finalizing = True
+        try:
+            grace = float(os.getenv("TRANSCRIPT_GRACE_SECONDS", "3"))
+            deadline = time.time() + grace
+            while not self._agent_text and time.time() < deadline:
+                await asyncio.sleep(0.15)
+
+            text = "".join(self._agent_text).strip()
+            self._agent_text = []
+            self._speaking = False
+            missing = not text
+
+            self._turn_index += 1
+            self._turns_this_interaction += 1
+
+            if text:
+                self.session.append_agent(self.agent_id, text)
+                await self.session.broadcast({
+                    "type": "transcript",
+                    "role": "assistant",
+                    "agent_id": self.agent_id,
+                    "text": text,
+                })
+            else:
+                self.session.store.event(
+                    "transcript_missing", agent_id=self.agent_id, segment=self.segment
+                )
+
+            self.session.store.event(
+                "steering_pair",
+                direction=self._pending_direction,
+                actor={
+                    "agent_id": self.agent_id,
+                    "text": text,
+                    "voice": getattr(self.rt, "voice", None),
+                    "transcript_missing": missing,
+                },
+                participant=self._last_user_text,
+            )
+            self._pending_direction = None
+
+            latency = (
+                round(time.time() - self._turn_started_at, 3)
+                if self._turn_started_at else None
+            )
+            self.session.store.event(
+                "assistant_turn", agent_id=self.agent_id, text=text,
+                latency_s=latency, segment=self.segment, transcript_missing=missing,
+            )
+            await self._send({"type": "assistant_done", "agent_id": self.agent_id})
+        finally:
+            self._finalizing = False
+            # Released only now, so a group's next speaker cannot start while
+            # this turn is still settling.
+            self._response_done.set()
+            if not self.is_group():
+                await self._steer()
+                await self._maybe_advance()
 
     async def _begin_agent_turn(self) -> None:
         """Announce the speaker once per turn, on the first event of any kind."""

@@ -65,6 +65,16 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
     paired = [t for t in record.get("transcript", [])
               if t.get("role") == "agent" and t.get("stage_direction")]
     checks.append((len(directions) > 0, "stage directions logged", f"{len(directions)}"))
+
+    # An agent turn with audio but no text is unscoreable — catch it here rather
+    # than in the rating queue.
+    missing = [e for e in events if e.get("type") == "transcript_missing"]
+    agent_turns = [e for e in events if e.get("type") == "assistant_turn"]
+    checks.append((
+        not missing,
+        "every agent turn transcribed",
+        "all" if not missing else f"{len(missing)}/{len(agent_turns)} MISSING TEXT",
+    ))
     checks.append((len(paired) > 0, "directions paired to replies", f"{len(paired)}"))
 
     # --- triggers vs the scenario's plan ---

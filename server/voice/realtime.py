@@ -122,6 +122,7 @@ class RealtimeVoiceSession:
         self._resample_state = None
         self._agent_buffer = ""
         self._response_active = False
+        self._done_ids: set = set()
 
     async def connect(self) -> None:
         if not self.api_key:
@@ -252,6 +253,13 @@ class RealtimeVoiceSession:
 
                 elif etype == "response.done":
                     self._response_active = False
+                    # The gateway can repeat response.done for one reply; emit
+                    # it once per response id.
+                    rid = (ev.get("response") or {}).get("id") or ev.get("response_id")
+                    if rid and rid in self._done_ids:
+                        continue
+                    if rid:
+                        self._done_ids.add(rid)
                     yield {"type": "response_done"}
 
                 elif etype == "response.function_call_arguments.done":
