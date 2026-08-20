@@ -29,3 +29,11 @@ studies/**/data/raw/
 # OS / editor
 .vscode/
 .idea/
+
+# OpenTofu/Terraform working dirs — provider binaries and module caches (hundreds of MB)
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+.terraformrc
+terraform.rc

@@ -16,8 +16,15 @@ bucket · Secrets Manager · CloudWatch logs.
 
 ## Prerequisites
 
+We use **OpenTofu** (`tofu`), the MPL-licensed fork. HashiCorp Terraform left
+Homebrew core when it moved to the BUSL licence; `tofu` is a drop-in
+replacement and reads these configs unchanged. Swap in `terraform` for `tofu`
+below if you prefer the HashiCorp build (`brew tap hashicorp/tap`).
+
 ```bash
-brew install terraform          # not installed by default
+brew install opentofu           # or, if brew is blocked by an untrusted tap,
+                                # grab the release from github.com/opentofu/opentofu
+                                # and verify against its SHA256SUMS
 aws sts get-caller-identity     # must succeed
 docker info                     # must be running
 ```
@@ -29,10 +36,11 @@ yet, so the service starts with zero healthy targets. That is expected.
 
 ```bash
 cd infra/terraform
-terraform init
-terraform apply
+tofu init
+tofu apply
 ```
 
+Verified 2026-08-19: `tofu plan` is clean — 50 resources to add, none destroyed.
 Certificate validation adds DNS records automatically and takes a few minutes.
 Note the outputs: `ecr_repository`, `app_url`, `api_url`, `study_data_bucket`.
 
@@ -57,7 +65,7 @@ aws secretsmanager put-secret-value \
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 REGION=us-east-1
-REPO=$(terraform -chdir=infra/terraform output -raw ecr_repository)
+REPO=$(tofu -chdir=infra/terraform output -raw ecr_repository)
 SHA=$(git rev-parse --short HEAD)
 
 aws ecr get-login-password --region $REGION \
@@ -77,7 +85,7 @@ Image tags are immutable and deploys are explicit, so the running version
 cannot change silently during a study wave.
 
 ```bash
-terraform -chdir=infra/terraform apply -var container_image=$REPO:$SHA
+tofu -chdir=infra/terraform apply -var container_image=$REPO:$SHA
 ```
 
 ## 5. Verify

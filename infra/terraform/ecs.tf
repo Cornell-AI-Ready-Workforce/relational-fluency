@@ -93,25 +93,25 @@ resource "aws_ecs_task_definition" "agent" {
   task_role_arn            = aws_iam_role.task.arn
 
   container_definitions = jsonencode([{
-    name      = "platform"
-    image     = var.container_image != "" ? var.container_image : "${aws_ecr_repository.platform.repository_url}:bootstrap"
-    essential = true
+    name         = "platform"
+    image        = var.container_image != "" ? var.container_image : "${aws_ecr_repository.platform.repository_url}:bootstrap"
+    essential    = true
     portMappings = [{ containerPort = 8080, protocol = "tcp" }]
     environment = [
-      { name = "ACTOR_MODEL",    value = var.actor_model },
+      { name = "ACTOR_MODEL", value = var.actor_model },
       { name = "DIRECTOR_MODEL", value = var.director_model },
-      { name = "LLM_BASE_URL",   value = var.llm_base_url },
-      { name = "APP_HOST",       value = local.app_fqdn },
-      { name = "API_HOST",       value = local.api_fqdn },
-      { name = "S3_BUCKET",      value = aws_s3_bucket.study_data.bucket },
-      { name = "AWS_REGION",     value = var.region },
-      { name = "HOST",           value = "0.0.0.0" },
-      { name = "PORT",           value = "8080" },
+      { name = "LLM_BASE_URL", value = var.llm_base_url },
+      { name = "APP_HOST", value = local.app_fqdn },
+      { name = "API_HOST", value = local.api_fqdn },
+      { name = "S3_BUCKET", value = aws_s3_bucket.study_data.bucket },
+      { name = "AWS_REGION", value = var.region },
+      { name = "HOST", value = "0.0.0.0" },
+      { name = "PORT", value = "8080" },
     ]
     secrets = [
       # Cornell LiteLLM virtual key — serves both the realtime actor and the director.
       { name = "ANTHROPIC_API_KEY", valueFrom = aws_secretsmanager_secret.anthropic_key.arn },
-      { name = "SESSION_KEY",       valueFrom = aws_secretsmanager_secret.agent_api_key.arn },
+      { name = "SESSION_KEY", valueFrom = aws_secretsmanager_secret.agent_api_key.arn },
     ]
     logConfiguration = {
       logDriver = "awslogs"
