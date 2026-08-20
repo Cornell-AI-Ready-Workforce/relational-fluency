@@ -20,8 +20,9 @@ esci_items:
   encourages_participation: "Works well in teams by encouraging participation of everyone present"
 
 setup: >-
-  Four of you are preparing tomorrow's client presentation. Dan has already
-  built the deck.
+  You are one of four people preparing tomorrow's client presentation. Dan
+  built the deck last night and wants to present it solo. Not everyone in the
+  room has been heard, and the client's actual priorities are in question.
 
 agents:
   dan:

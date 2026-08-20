@@ -124,7 +124,16 @@
     background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;
     letter-spacing: .02em; }
   .transcript .scene .with { font-weight: 400; opacity: .9; }
-  .tile.absent { opacity: .18; filter: grayscale(1); }
+  .tile.absent { opacity: .3; filter: grayscale(1); }
+  /* The next character's tile offers a way in, so the participant can move on
+     when the current conversation is done rather than waiting it out. */
+  .tile.upnext { opacity: .75; filter: none; outline: 2px dashed var(--accent); }
+  .tile .talk-btn { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    background: var(--accent); color: #fff; border: 0; border-radius: 999px;
+    padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+    white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+  .tile .talk-btn:hover { filter: brightness(1.08); }
+  .tile .talk-btn[disabled] { opacity: .6; cursor: default; }
   #sceneNow { font-size: 12px; color: var(--muted); margin-left: 8px; }
   .transcript .speaker { font-weight: 600; color: var(--accent); }
   .transcript .speaker.self { color: var(--fg); }
@@ -172,6 +181,9 @@
     color: var(--muted, #6b6b68); margin: 10px 0 5px; }
   .situation-text ul { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.5; }
   .sit-note { font-size: 12px; color: var(--muted, #6b6b68); margin: 6px 0 0; }
+  .sit-assets { background: #f6f6f4; border-left: 3px solid var(--accent, #b3181b);
+    padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 14px; }
+  .sit-assets h4 { margin-top: 0; }
   .situation-main { display: flex; gap: 24px; align-items: flex-start; }
   .situation-card .situation-img { width: 300px; flex-shrink: 0; border-radius: 12px; margin: 4px 0 0; display: block;
                  box-shadow: 0 6px 20px rgba(47,47,47,0.18); }
@@ -453,6 +465,9 @@
       const dur = b.duration ? `${b.duration[0]}–${b.duration[1]} minutes` : '';
       $('situationBody').innerHTML = `
         <p class="sit-lead">${esc(b.situation || d.intro || '')}</p>
+        ${(b.assets || []).length ? `<div class="sit-assets">
+          <h4>What you have</h4>
+          <ul>${b.assets.map(a => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
         <div class="sit-cols">
           <div><h4>Who you'll speak with</h4><ul>${people}</ul></div>
           <div><h4>How it runs</h4><ul>${parts}</ul>
@@ -498,13 +513,44 @@
   // scenarios that have no interaction structure).
   let presentIds = [];
 
+  let upNext = null;   // {agent_id, agent_name, label} for the following beat
+
   function applyPresence() {
     cast.forEach(a => {
       const t = document.getElementById(`tile-${a.id}`);
       if (!t) return;
       const here = presentIds.length === 0 || presentIds.includes(a.id);
-      t.classList.toggle('absent', !here);
+      const next = upNext && upNext.agent_id === a.id && !here;
+      t.classList.toggle('absent', !here && !next);
+      t.classList.toggle('upnext', !!next);
+
+      const existing = t.querySelector('.talk-btn');
+      if (next && started) {
+        if (!existing) {
+          const b = document.createElement('button');
+          b.className = 'talk-btn';
+          b.textContent = `Talk to ${a.name}`;
+          b.addEventListener('click', () => advanceTo(a.name, b));
+          t.appendChild(b);
+        }
+      } else if (existing) {
+        existing.remove();
+      }
     });
+  }
+
+  function advanceTo(name, btn) {
+    if (!ws || ws.readyState !== 1) return;
+    btn.disabled = true;
+    btn.textContent = `Moving to ${name}…`;
+    // Mark the move in the transcript so the record of what the participant
+    // saw matches what they did.
+    const el = document.createElement('div');
+    el.className = 'scene';
+    el.innerHTML = `<span class="with">You chose to move on to ${esc(name)}.</span>`;
+    $('transcript').appendChild(el);
+    $('transcript').scrollTop = $('transcript').scrollHeight;
+    ws.send(JSON.stringify({ type: 'advance_interaction' }));
   }
 
   function renderGrid() {
@@ -854,6 +900,7 @@
           // A new interaction: say plainly who the participant is now with, and
           // grey out anyone not in the room for this beat.
           presentIds = (m.present || []).map(p => p.id);
+          upNext = m.next || null;
           const names = (m.present || []).map(p => p.name).join(' · ');
           const label = m.label || `Part ${m.index + 1}`;
           const el = document.createElement('div');

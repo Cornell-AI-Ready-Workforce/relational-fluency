@@ -20,8 +20,10 @@ esci_items:
 
 # At most 2–3 sentences. Everything else arrives in-scene through the agents.
 setup: >-
-  You and Sam both work on the analytics team. You have raised this with Sam
-  before, politely.
+  You are an analyst. For the third time, your peer Sam has presented your
+  analysis to leadership as their own — you asked them to stop after the first
+  time, politely, and it keeps happening. Your colleague Riley has just
+  cornered you about it.
 
 agents:
   riley:

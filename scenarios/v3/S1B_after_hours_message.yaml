@@ -20,8 +20,10 @@ esci_items:
   bring_into_open: "Resolves conflict by bringing it into the open"
 
 setup: >-
-  Drew sent a blunt message about your handoff at 1 a.m. last night, copying
-  Priya and Tom.
+  At 1 a.m. last night your peer Drew sent a blunt message criticising your
+  handoff, copying two teammates. The handoff problem they raised may be fair;
+  the way they raised it was not. Your teammate Mel has just pinged you about
+  it.
 
 agents:
   mel:

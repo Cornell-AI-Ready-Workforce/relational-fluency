@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import time
 from typing import TYPE_CHECKING, List, Optional
@@ -213,6 +214,24 @@ class RealtimeVoiceSessionRunner:
         await self._enter(self._resolve_agents()[0], new_interaction=True)
         return True
 
+    def _next_beat_hint(self) -> Optional[dict]:
+        """Who comes next, so the UI can offer a way to move on."""
+        agents = self._resolve_agents()
+        if self._interaction_mode() == "one_to_one_series" and self._series_idx + 1 < len(agents):
+            nxt = agents[self._series_idx + 1]
+            return {"agent_id": nxt.id, "agent_name": nxt.name,
+                    "label": self._interaction().get("label", "")}
+        if self.segment + 1 < len(self.interactions):
+            nxt_i = self.interactions[self.segment + 1]
+            spec = nxt_i.get("agents") or nxt_i.get("agent")
+            spec = [spec] if isinstance(spec, str) else (spec or [])
+            by_id = {a.id: a for a in self.cast}
+            names = [by_id[a].name for a in spec if a in by_id]
+            return {"agent_id": spec[0] if spec else None,
+                    "agent_name": " and ".join(names),
+                    "label": nxt_i.get("label", "")}
+        return None
+
     async def _announce_opening(self) -> None:
         """The first interaction needs the same scene banner as later ones."""
         if not self.interactions:
@@ -229,6 +248,7 @@ class RealtimeVoiceSessionRunner:
             "agent_name": self.agent.name,
             "new_interaction": True,
             "present": [{"id": a.id, "name": a.name, "role": a.role} for a in present],
+            "next": self._next_beat_hint(),
         }
         self.session.store.event("segment_start", **payload)
         await self._send({"type": "segment_start", **payload})
@@ -285,6 +305,7 @@ class RealtimeVoiceSessionRunner:
             # them — otherwise every character stays on screen and it is unclear
             # who is being spoken to.
             "present": [{"id": a.id, "name": a.name, "role": a.role} for a in present],
+            "next": self._next_beat_hint(),
         }
         self.session.store.event("segment_start", **payload)
         await self._send({"type": "segment_start", **payload})
@@ -322,6 +343,11 @@ class RealtimeVoiceSessionRunner:
                 msg = await self.ws.receive()
                 if msg["type"] == "websocket.disconnect":
                     return
+                text = msg.get("text")
+                if text:
+                    await self._handle_client_command(text)
+                    continue
+
                 pcm = msg.get("bytes")
                 if not pcm:
                     continue
@@ -428,6 +454,31 @@ class RealtimeVoiceSessionRunner:
             elif etype == "error":
                 self.session.store.event("voice_error", where="model", message=ev["message"])
                 await self._send({"type": "error", "message": ev["message"]})
+
+    async def _handle_client_command(self, raw: str) -> None:
+        """Control messages from the participant UI."""
+        try:
+            msg = json.loads(raw)
+        except ValueError:
+            return
+        if msg.get("type") != "advance_interaction":
+            return
+        # The participant chose to move on. Their judgement about when a
+        # conversation is finished is better than a turn counter, so this
+        # bypasses the pacing gates — but the beats they skipped are recorded,
+        # because an encounter that skipped scored moments must not look
+        # complete.
+        remaining = [t["id"] for t in self._triggers()[self._trigger_idx:]]
+        self.session.store.event(
+            "advance_requested",
+            interaction=self._interaction_id(),
+            turns=self._turns_this_interaction,
+            seconds=round(time.time() - self._interaction_started_at, 1),
+            skipped_triggers=remaining,
+        )
+        self._turns_this_interaction = 0
+        if not await self._advance_segment():
+            await self._send({"type": "encounter_complete"})
 
     async def _maybe_advance(self) -> None:
         """Move on once this interaction's planted beats are spent.

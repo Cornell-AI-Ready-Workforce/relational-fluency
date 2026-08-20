@@ -137,6 +137,23 @@ and an encounter that only exercised part of the instrument is visible as such.
 Operational commands — health, logs, pulling data off the server — are in
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
+### Transcription quality
+
+The live participant transcript comes from the realtime bridge's own
+transcriber, which cannot be swapped — passing a transcription model to
+`session.update` is accepted and silently ignored. It is good enough to steer
+on, but it drops words.
+
+The recorded participant channel is therefore re-transcribed offline against a
+stronger multimodal model, and stored *alongside* the live transcript rather
+than replacing it: the live text is the record of what the agent actually heard
+and reacted to, which is not the same thing as what was said.
+
+```bash
+python -m server.retranscribe <session_id>
+python -m server.retranscribe --all
+```
+
 ### Checking a capture
 
 ```bash

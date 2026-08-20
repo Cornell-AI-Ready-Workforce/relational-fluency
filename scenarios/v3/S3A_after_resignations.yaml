@@ -21,8 +21,10 @@ esci_items:
   compelling_vision: "Leads by articulating a compelling vision"
 
 setup: >-
-  You are interim lead. Two colleagues resigned over pay; the three who remain
-  are carrying the quarter with no new resources. Compensation is off the table.
+  You have just become interim lead. Two colleagues resigned over pay, the
+  three who remain are carrying the quarter with no new resources, and
+  leadership above you will not discuss compensation. You are about to run
+  your first team meeting.
 
 # Two short 1:1 notes stand in for the briefing — context lands in-scene.
 pre_reading:

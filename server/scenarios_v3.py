@@ -148,6 +148,10 @@ def _briefing(spec: dict) -> dict:
     ]
     return {
         "situation": spec.get("setup", "").strip(),
+        # Facts the participant holds. S2's ladder is only winnable if they know
+        # they have the precedent, so withholding these does not test skill —
+        # it tests whether they guessed.
+        "assets": spec.get("assets", []),
         "people": people,
         "parts": [
             {"label": i.get("label", ""), "mode": i["mode"],

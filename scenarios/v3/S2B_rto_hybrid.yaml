@@ -19,8 +19,9 @@ esci_items:
   through_discussion: "Convinces others through discussion"
 
 setup: >-
-  A return-to-office mandate has landed. You have been working two remote days
-  and want to keep them.
+  A return-to-office mandate has just landed. You have been working two remote
+  days a week and your output on them is the team's strongest. You asked your
+  manager Sasha for this meeting to make the case for keeping them.
 
 assets:
   - "Your performance record across the remote days"

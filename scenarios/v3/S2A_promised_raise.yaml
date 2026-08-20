@@ -19,8 +19,9 @@ esci_items:
   through_discussion: "Convinces others through discussion"
 
 setup: >-
-  You were promised a raise two cycles ago that never came, and your scope has
-  grown since. You hold a written offer elsewhere at meaningfully higher pay.
+  Two cycles ago your manager Morgan promised you a raise. It never
+  materialised, your scope has grown since, and you now hold a written offer
+  elsewhere at meaningfully higher pay. You asked Morgan for this meeting.
 
 # Facts the participant can deploy. The last ladder rung is contradicted by the
 # precedent — the scenario is winnable, but only by using it.

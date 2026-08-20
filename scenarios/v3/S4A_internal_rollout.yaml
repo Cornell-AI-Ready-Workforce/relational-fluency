@@ -22,8 +22,9 @@ esci_items:
   encourages_participation: "Works well in teams by encouraging participation of everyone present"
 
 setup: >-
-  Four of you are planning the rollout of a new internal process. The session is
-  already under way.
+  You are one of four people planning the rollout of a new internal process.
+  The session is already under way and Dan is pitching his plan. Last year's
+  rollout failed, and not everyone in the room has been heard.
 
 agents:
   dan:
