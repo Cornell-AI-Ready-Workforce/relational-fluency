@@ -85,6 +85,7 @@ Open:
 - Participant, single-agent text: <http://127.0.0.1:8765/?scenario=missed_deadlines>
 - Participant, single-agent voice: <http://127.0.0.1:8765/?scenario=missed_deadlines&mode=voice>
 - Researcher view: <http://127.0.0.1:8765/researcher>
+- Steering dashboard: <http://127.0.0.1:8765/director>
 
 Mic capture needs a secure context — `127.0.0.1` counts, remote hosts need
 HTTPS. Chrome or Safari.
@@ -113,6 +114,17 @@ HTTPS. Chrome or Safari.
   | `user_audio.wav` | participant channel |
   | `assistant_audio*.wav` | agent channel, one per character |
   | `manifest.json` | session metadata and durations |
+
+### Reading the steering trail
+
+`/director` shows, per encounter, the participant's turns interleaved with each
+actor's replies and — immediately above each reply — the stage direction that
+produced it, with the planted trigger and ESCI items it was firing. Scene
+headings mark where the interaction changed, so it is clear which character was
+being steered.
+
+This is the audit view for the closed-loop steering the study claims: a reply
+and the instruction behind it are shown together rather than in separate logs.
 
 ### Checking a capture
 

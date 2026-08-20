@@ -404,6 +404,74 @@ async def api_post_consent(payload: dict, key: Optional[str] = Query(None)):
     return {"participant_id": pid, "consent_text_version": version}
 
 
+@app.get("/director", response_class=HTMLResponse)
+async def director_page(key: Optional[str] = None):
+    """Steering dashboard — what the director told each actor, and what it said."""
+    check_key(key)
+    return (STATIC_DIR / "director.html").read_text()
+
+
+@app.get("/api/encounters")
+async def api_encounters(key: Optional[str] = None, limit: int = 60):
+    """Recorded encounters, newest first, for the steering dashboard."""
+    check_key(key)
+    from .storage import SESSIONS_DIR
+
+    out = []
+    dirs = sorted(
+        (d for d in SESSIONS_DIR.iterdir() if d.is_dir()),
+        key=lambda d: d.stat().st_mtime,
+        reverse=True,
+    )[:limit]
+    for d in dirs:
+        manifest = d / "manifest.json"
+        if not manifest.exists():
+            continue
+        try:
+            m = json.loads(manifest.read_text())
+        except ValueError:
+            continue
+        out.append({
+            "id": d.name,
+            "scenario": m.get("scenario"),
+            "started_at": m.get("started_at"),
+            "participant_id": m.get("participant_id"),
+        })
+    return out
+
+
+@app.get("/api/encounters/{session_id}/record")
+async def api_encounter_record(session_id: str, key: Optional[str] = None):
+    """The aligned record: transcript, stage directions, triggers, provenance."""
+    check_key(key)
+    from .encounter_record import build
+    from .storage import SESSIONS_DIR
+
+    d = SESSIONS_DIR / session_id
+    if not d.exists():
+        raise HTTPException(status_code=404, detail="No such encounter")
+    record = build(d)
+    # Trigger firings are not in the aligned record; the dashboard wants them.
+    fired = []
+    ev = d / "events.jsonl"
+    if ev.exists():
+        for line in ev.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("type") == "trigger_fired":
+                fired.append({
+                    "t": e.get("t"), "trigger_id": e.get("trigger_id"),
+                    "interaction": e.get("interaction"), "esci": e.get("esci", []),
+                    "probing": e.get("probing"),
+                })
+    record["triggers_fired"] = fired
+    return record
+
+
 @app.get("/api/sessions")
 async def api_sessions(key: Optional[str] = None):
     check_key(key)

@@ -1,0 +1,143 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Steering — Relational Fluency</title>
+<style>
+  :root {
+    --bg:#ededec; --panel:#fff; --ink:#1c1c1c; --muted:#6b6b68;
+    --line:#dcdcda; --red:#b3181b; --dir:#2f4f7d; --dirbg:#eef3fa;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  header { background:var(--panel); border-bottom:1px solid var(--line);
+    padding:14px 20px; display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  h1 { font-size:16px; margin:0; }
+  .sub { color:var(--muted); font-size:12px; }
+  main { display:grid; grid-template-columns:290px 1fr; gap:18px; padding:18px 20px; align-items:start; }
+  @media (max-width:820px){ main{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; }
+  .list { max-height:78vh; overflow:auto; }
+  .enc { padding:10px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .enc:hover { background:#f6f6f5; }
+  .enc.sel { background:var(--dirbg); border-left:3px solid var(--dir); }
+  .enc .sid { font:11px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted); }
+  .enc .scen { font-weight:600; }
+  .meta { padding:12px 16px; border-bottom:1px solid var(--line); display:flex;
+    gap:20px; flex-wrap:wrap; font-size:12px; color:var(--muted); }
+  .meta b { color:var(--ink); font-weight:600; }
+  .flow { padding:8px 16px 18px; }
+  .scene { margin:16px 0 10px; font-size:12px; font-weight:700; letter-spacing:.04em;
+    text-transform:uppercase; color:var(--red); }
+  .row { display:grid; grid-template-columns:96px 1fr; gap:12px; padding:7px 0;
+    border-top:1px solid #f0f0ee; }
+  .who { font-size:12px; color:var(--muted); padding-top:2px; }
+  .who.p { color:var(--ink); font-weight:600; }
+  .who.a { color:var(--red); font-weight:600; }
+  .direction { background:var(--dirbg); border-left:3px solid var(--dir);
+    padding:8px 11px; border-radius:0 6px 6px 0; margin:2px 0 4px; }
+  .direction .lbl { font-size:10px; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--dir); }
+  .direction .txt { font-size:13px; }
+  .tags { margin-top:5px; display:flex; gap:5px; flex-wrap:wrap; }
+  .tag { font:10px ui-monospace,SFMono-Regular,Menlo,monospace; background:#fff;
+    border:1px solid #c8d4e4; color:var(--dir); border-radius:9px; padding:1px 7px; }
+  .tag.trig { border-color:#e2c3c3; color:var(--red); }
+  .tag.probe { border-color:#d8c68a; color:#8a6d1e; }
+  .empty { padding:36px; text-align:center; color:var(--muted); }
+  .missing { color:var(--red); font-style:italic; }
+  button { font:inherit; }
+</style>
+
+<header>
+  <h1>Steering</h1>
+  <span class="sub">what the director told each actor, and what the actor said</span>
+  <span class="sub" id="count"></span>
+</header>
+
+<main>
+  <div class="card list" id="list"><div class="empty">loading…</div></div>
+  <div class="card" id="detail"><div class="empty">Select an encounter.</div></div>
+</main>
+
+<script>
+const KEY = new URLSearchParams(location.search).get('key') || '';
+const q = p => KEY ? `${p}${p.includes('?') ? '&' : '?'}key=${encodeURIComponent(KEY)}` : p;
+const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+let encounters = [], selected = null;
+
+async function loadList() {
+  const r = await fetch(q('/api/encounters'));
+  encounters = await r.json();
+  document.getElementById('count').textContent = `${encounters.length} encounters`;
+  const el = document.getElementById('list');
+  if (!encounters.length) { el.innerHTML = '<div class="empty">No encounters yet.</div>'; return; }
+  el.innerHTML = encounters.map(e => `
+    <div class="enc" data-id="${esc(e.id)}">
+      <div class="scen">${esc(e.scenario || '—')}</div>
+      <div class="sid">${esc(e.id)}</div>
+    </div>`).join('');
+  el.querySelectorAll('.enc').forEach(n =>
+    n.addEventListener('click', () => select(n.dataset.id)));
+  select(encounters[0].id);
+}
+
+async function select(id) {
+  selected = id;
+  document.querySelectorAll('.enc').forEach(n =>
+    n.classList.toggle('sel', n.dataset.id === id));
+  const r = await fetch(q(`/api/encounters/${encodeURIComponent(id)}/record`));
+  render(await r.json());
+}
+
+function render(rec) {
+  const p = rec.provenance || {}, c = rec.counts || {};
+  const rows = [];
+  let scene = null;
+
+  for (const t of (rec.transcript || [])) {
+    // A new interaction gets a heading, so it is obvious who the participant
+    // is with when each direction was issued.
+    if (t.interaction && t.interaction !== scene) {
+      scene = t.interaction;
+      rows.push(`<div class="scene">${esc(scene)}</div>`);
+    }
+    if (t.role === 'participant') {
+      rows.push(`<div class="row"><div class="who p">Participant</div>
+        <div>${esc(t.text)}</div></div>`);
+      continue;
+    }
+    // The direction that shaped this reply, shown immediately above it.
+    let dir = '';
+    if (t.stage_direction) {
+      dir = `<div class="direction">
+        <div class="lbl">Director → ${esc(t.agent_id || 'actor')}</div>
+        <div class="txt">${esc(t.stage_direction)}</div></div>`;
+    }
+    const body = t.text
+      ? esc(t.text)
+      : '<span class="missing">(no transcript recorded for this turn)</span>';
+    rows.push(`<div class="row"><div class="who a">${esc(t.agent_id || 'agent')}</div>
+      <div>${dir}${body}</div></div>`);
+  }
+
+  const fired = (rec.triggers_fired || []).map(f => `
+    <span class="tag trig">${esc(f.trigger_id)}</span>` +
+    (f.probing ? '<span class="tag probe">probe</span>' : '') +
+    (f.esci || []).map(i => `<span class="tag">${esc(i)}</span>`).join('')
+  ).join(' ');
+
+  document.getElementById('detail').innerHTML = `
+    <div class="meta">
+      <span><b>${esc(rec.scenario || '—')}</b></span>
+      <span>participant <b>${esc(rec.participant_id || '—')}</b></span>
+      <span>turns <b>${c.participant_turns || 0}</b> / <b>${c.agent_turns || 0}</b></span>
+      <span>directions <b>${c.stage_directions || 0}</b></span>
+      <span>${esc(p.realtime_model || '')} · ${esc(p.text_model || '')}</span>
+    </div>
+    ${fired ? `<div class="meta"><span>triggers fired</span><span class="tags">${fired}</span></div>` : ''}
+    <div class="flow">${rows.join('') || '<div class="empty">No turns recorded.</div>'}</div>`;
+}
+
+loadList();
+</script>
