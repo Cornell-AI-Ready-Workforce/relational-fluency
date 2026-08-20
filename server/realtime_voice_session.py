@@ -96,6 +96,7 @@ class RealtimeVoiceSessionRunner:
         self._last_activity = time.time()
         self._turns_this_interaction = 0
         self._finalizing = False
+        self._switching = False
         self._floor = asyncio.Lock()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -229,11 +230,43 @@ class RealtimeVoiceSessionRunner:
         self.session.store.event("segment_start", **payload)
         await self._send({"type": "segment_start", **payload})
 
+    async def _switch_character(self, agent) -> None:
+        """Start a fresh realtime session as `agent`.
+
+        Re-briefing the existing session does not work: the conversation history
+        keeps the model anchored to whoever it has been playing, and it will
+        answer as that character no matter what the new instructions say — in
+        testing, "Sam" opened with "I'm Riley, Sam's not here."
+
+        A new session is also the right model of the scenario. The hallway
+        run-in with Sam is a different scene; Sam was not present for the
+        conversation with Riley and should not remember it.
+        """
+        old = self.rt
+        self._switching = True
+        self.rt = RealtimeVoiceSession(
+            instructions=self._instructions(),
+            voice=self._voice(),
+            tools=[END_SEGMENT_TOOL],
+        )
+        await self.rt.connect()
+        self.session.store.event(
+            "realtime_session_switched", agent_id=agent.id, agent_name=agent.name
+        )
+        if old is not None:
+            await old.close()   # ends the old pump; the outer loop picks up the new session
+
     async def _enter(self, agent, *, new_interaction: bool) -> None:
+        changed = agent.id != self.agent_id or new_interaction
         self.agent = agent
         self.agent_id = agent.id
-        self.rt.voice = self._voice()
         self.vad.reset()
+        self._speaking = False
+        self._agent_text = []
+        if changed:
+            await self._switch_character(agent)
+        else:
+            self.rt.voice = self._voice()
         present = self._resolve_agents()
         if self._interaction_mode() == "one_to_one_series":
             present = [agent]  # a series is one person at a time
@@ -251,7 +284,6 @@ class RealtimeVoiceSessionRunner:
             "present": [{"id": a.id, "name": a.name, "role": a.role} for a in present],
         }
         self.session.store.event("segment_start", **payload)
-        await self.rt.update_instructions(self._instructions())
         await self._send({"type": "segment_start", **payload})
 
     async def run(self) -> None:
@@ -323,8 +355,22 @@ class RealtimeVoiceSessionRunner:
 
     # ── model -> participant ───────────────────────────────────────────────
     async def _model_to_client(self) -> None:
-        assert self.rt is not None
-        async for ev in self.rt.events():
+        """Relay model events, following the session across interaction changes.
+
+        Each interaction gets a *new* realtime session (see _switch_character),
+        so when one ends this loop picks up the next one.
+        """
+        while not self._closed:
+            rt = self.rt
+            if rt is None:
+                return
+            await self._pump(rt)
+            if not self._switching:
+                return
+            self._switching = False
+
+    async def _pump(self, rt) -> None:
+        async for ev in rt.events():
             etype = ev["type"]
 
             if etype == "agent_audio":
