@@ -1,4 +1,13 @@
 # ECR for the agent image
+resource "aws_ecr_repository" "platform" {
+  name                 = "${var.project}/platform"
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
 resource "aws_ecr_repository" "agent" {
   name                 = "${var.project}/agent"
   image_tag_mutability = "IMMUTABLE" # release-SHA images; audit which version ran

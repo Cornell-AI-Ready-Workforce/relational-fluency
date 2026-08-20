@@ -82,6 +82,15 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+@app.get("/health")
+async def health() -> dict:
+    """Liveness probe for the ALB target group. Deliberately unauthenticated and
+    dependency-free: it answers whether this process can serve, not whether the
+    model gateway is reachable, so a transient upstream blip cannot cause ECS to
+    kill healthy tasks mid-encounter."""
+    return {"status": "ok"}
+
+
 def _load_consent() -> dict:
     return yaml.safe_load((CONFIG_DIR / "consent.yaml").read_text())
 

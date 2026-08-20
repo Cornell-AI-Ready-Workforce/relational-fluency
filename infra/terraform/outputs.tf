@@ -14,6 +14,11 @@ output "api_url" {
 }
 
 output "ecr_repository" {
+  description = "Push the platform image here, then apply with -var container_image=<uri>:<tag>"
+  value       = aws_ecr_repository.platform.repository_url
+}
+
+output "ecr_repository_legacy_agent" {
   value = aws_ecr_repository.agent.repository_url
 }
 

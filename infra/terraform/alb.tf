@@ -9,7 +9,7 @@ resource "aws_lb" "main" {
 
 resource "aws_lb_target_group" "agent" {
   name        = "${var.project}-agent"
-  port        = 8100
+  port        = 8080
   protocol    = "HTTP"
   vpc_id      = module.vpc.vpc_id
   target_type = "ip"
