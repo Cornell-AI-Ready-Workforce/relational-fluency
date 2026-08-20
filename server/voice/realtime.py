@@ -161,14 +161,38 @@ class RealtimeVoiceSession:
             "audio": base64.b64encode(pcm16).decode("ascii"),
         })
 
+    async def commit_input(self) -> None:
+        """Close the participant's turn without asking for a reply. Group rooms
+        need this separately: one commit, then a reply per speaker."""
+        await self._send({"type": "input_audio_buffer.commit"})
+
+    @property
+    def responding(self) -> bool:
+        """True while a reply is in flight. A group sequencer must wait for this
+        to clear before handing the floor to the next character — the gateway
+        rejects a second response.create with
+        conversation_already_has_active_response."""
+        return self._response_active
+
+    def clear_response_state(self) -> None:
+        """Force the in-flight flag down after a timeout, so one stalled reply
+        cannot mute every character that follows it."""
+        self._response_active = False
+
+    async def request_response(self) -> None:
+        """Ask the current character to speak."""
+        if self._response_active:
+            return
+        self._response_active = True
+        await self._send({"type": "response.create"})
+
     async def commit_turn(self) -> None:
         """Close the participant's turn and ask for a reply. Required — the
         gateway will not do this on its own."""
         if self._response_active:
             return
-        self._response_active = True
-        await self._send({"type": "input_audio_buffer.commit"})
-        await self._send({"type": "response.create"})
+        await self.commit_input()
+        await self.request_response()
 
     async def cancel_response(self) -> None:
         """Barge-in: stop the agent mid-utterance."""

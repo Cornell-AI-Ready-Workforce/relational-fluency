@@ -118,6 +118,41 @@ Reference implementation of the working browser↔broker↔gateway transport —
 `~/Desktop/AI_Interview/_deprecated/nextjs-prototype/app/` (`server.mjs`,
 `src/lib/realtime/websocketAdapter.ts`). Port, don't rewrite.
 
+### 1b. Group rooms — blocked on a gateway constraint
+
+S3 and S4 need several characters live in one room (Research Note v3: S3-A opens
+with a public challenge in a team meeting; S4 is "one live 4-person session").
+Half the constructs depend on it.
+
+**What works.** `server/realtime_voice_session.py` sequences a group turn: the
+director picks an ordered speaker list, and each character takes the floor via
+`update_instructions` with its own persona and Gemini voice. Verified: the
+director routes correctly (`director_route ['jordan','sam']`), the first
+character speaks in role, and its audio and transcript reach the participant.
+
+**What does not.** Every speaker *after the first* times out. Through the
+LiteLLM bridge a conversation appears to yield exactly **one response per
+committed participant turn** — a second `response.create` produces no events at
+all, and no error. Tried and ruled out:
+
+- waiting for `response.done` before handing over the floor (the gateway rejects
+  overlapping responses with `conversation_already_has_active_response`, so this
+  is necessary but not sufficient)
+- forcing the in-flight flag down after a timeout
+- committing a short silent frame before the second `response.create`, to give
+  the model fresh input to answer
+
+Text conversation items are not an option either: injecting one closes the
+socket with 1006.
+
+**Recommended next step: one realtime session per character.** Open N
+connections — one per agent, each permanently briefed as its own character with
+its own voice — and have the broker fan participant audio out to all of them
+while serialising which one is allowed to answer. That sidesteps the
+one-response-per-turn limit entirely and removes the per-turn re-briefing
+latency, at the cost of N concurrent sessions per encounter (relevant to the
+gateway quota question in the cost estimate).
+
 ### 2. Scenarios → the four ESCI competencies
 
 Today: 13 ad-hoc scenarios (`scenarios/*.yaml`) from earlier exploration —

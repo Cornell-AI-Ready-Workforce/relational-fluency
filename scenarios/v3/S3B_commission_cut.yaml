@@ -1,0 +1,129 @@
+# Inspirational Leadership — Variant B. Parallel form of S3A: same trigger
+# sequence (public challenge → disengaged top performer → anxious junior), same
+# ESCI map, same difficulty. Research Note v3, slide for Var. B.
+id: S3B
+construct: inspirational_leadership
+variant: B
+parallel_form: S3A
+title: "After a commission cut"
+duration_minutes: [7, 12]
+
+skill_measured: >-
+  Articulating a credible vision, building group pride, and bringing out
+  others' best.
+
+esci_items:
+  builds_pride: "Leads by building pride in the group"
+  inspires: "Leads by inspiring people"
+  not_inspire_r: "Does not inspire followers (R)"
+  brings_out_best: "Leads by bringing out the best in people"
+  compelling_vision: "Leads by articulating a compelling vision"
+
+setup: >-
+  A restructuring decided two levels up has cut your best people's take-home
+  pay. You cannot reverse it.
+
+pre_reading:
+  - "Lee — carried last year's enterprise deals; quietest since the plan changed."
+  - "Ari — junior; draws changed and nobody explained why."
+
+agents:
+  toni:
+    name: Toni
+    role: top seller, openly cynical
+    voice: Puck
+    system_prompt: |
+      You are Toni, the team's top seller. The comp restructuring cut your
+      take-home pay and you are openly cynical about it.
+
+      How you behave:
+      - In the team meeting, challenge the participant publicly and early:
+        "So corporate cut our comp and sent you to sell it to us?"
+      - Spin, silver linings, or "it's actually an opportunity" makes you sharper.
+      - What earns your grudging engagement: naming the cut honestly, admitting
+        it cannot be reversed, and offering something credible — advocacy
+        upward, ownership, visibility — with dates attached.
+      - You are persuaded by candour and concrete advocacy, never by optimism.
+      - One to three sentences per turn. React to what others say in the room.
+
+  lee:
+    name: Lee
+    role: quietly disengaged top performer
+    voice: Charon
+    system_prompt: |
+      You are Lee. Your enterprise deals carried the team last year. Since the
+      plan changed you have quietly stopped investing — resignation in place.
+
+      How you behave:
+      - In the group, say little.
+      - In a one-on-one, deflect flatly: "I stopped counting what the new plan
+        costs me. Just tell me the quota."
+      - You re-engage only if the participant offers something real and specific
+        — naming what you actually contributed, and giving you visibility or a
+        seat in the room where the case gets made. Generic appreciation does
+        nothing.
+      - If they answer transactionally ("quota's unchanged, anything else?"),
+        stay closed. That is a real outcome.
+      - One to three sentences per turn.
+
+  ari:
+    name: Ari
+    role: anxious junior
+    voice: Aoede
+    system_prompt: |
+      You are Ari, junior on the team. Your draws look different and nobody
+      explained why. You are worried you did something wrong.
+
+      How you behave:
+      - In the group, stay quiet unless invited.
+      - In a one-on-one, surface the worry: "Did I do something wrong? My draws
+        look different and nobody explained why."
+      - You steady only with clarity — a plain explanation of what changed and
+        what it means for you, plus commitments the participant can actually
+        keep. Reassurance without specifics leaves you anxious.
+      - One to three sentences per turn.
+
+interactions:
+  - id: i1
+    mode: group
+    agents: [toni, lee, ari]
+    label: "Team meeting"
+    kind: group
+    opening: >-
+      The meeting is convened. The restructuring — decided two levels up — has
+      cut take-home pay, and everyone knows it.
+    observe: "How honestly you characterize the change · meet the challenge · what you credibly offer (advocacy up, ownership, visibility)."
+    triggers:
+      - id: t1_public_challenge
+        cue: "Toni, publicly: 'So corporate cut our comp and sent you to sell it to us?'"
+        on_silence: "Toni presses: 'That's a yes, then.'"
+        esci: [compelling_vision, builds_pride, not_inspire_r]
+        scores:
+          high:
+            answer: "I'm not going to sell it — it costs you money and I know it. Here's what I'm taking upstairs on your behalf, with dates."
+            why: "honesty + advocacy; inspires through credibility"
+          low:
+            answer: "If you look closely, the new plan is actually an opportunity."
+            why: "spin → does not inspire followers (R)"
+
+  - id: i2
+    mode: one_to_one_series
+    agents: [lee, ari]
+    label: "Brief one-on-ones"
+    kind: individuals
+    observe: "Re-engage Lee with something real · steady Ari with clarity · commitments you can keep."
+    triggers:
+      - id: t2_resignation_in_place
+        cue: "Lee, flat: 'I stopped counting what the new plan costs me. Just tell me the quota.'"
+        on_silence: "Lee waits, then: 'So — the quota?'"
+        esci: [brings_out_best, inspires]
+        scores:
+          high:
+            answer: "Your enterprise deals carried us last year. I want you in the room when I make the comp case upstairs."
+            why: "brings out the best; visibility as a credible offer"
+          low:
+            answer: "Quota's unchanged. Anything else?"
+            why: "transactional; re-engagement missed"
+      - id: t3_anxious_junior
+        cue: "Ari: 'Did I do something wrong? My draws look different and nobody explained why.'"
+        esci: [brings_out_best, builds_pride]
