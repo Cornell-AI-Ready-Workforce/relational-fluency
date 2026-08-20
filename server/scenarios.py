@@ -108,6 +108,13 @@ def _find_scenario_file(scenario_id: str) -> Path:
 
 
 def load_scenario(scenario_id: str) -> Scenario:
+    # v3 study scenarios are compiled from their spec files; the legacy
+    # exploratory YAMLs load directly.
+    from .scenarios_v3 import available as _v3_available, compile_scenario
+
+    if scenario_id in _v3_available():
+        return compile_scenario(scenario_id)
+
     path = _find_scenario_file(scenario_id)
     data = yaml.safe_load(path.read_text())
     return _scenario_from_dict(data)
@@ -161,7 +168,22 @@ def _scenario_from_dict(data: dict) -> Scenario:
 
 
 def list_scenarios() -> List[Dict[str, str]]:
+    from .scenarios_v3 import available as _v3_available, compile_scenario
+
     out = []
+    # Study scenarios first — these are what Phase 1 collects.
+    for sid in _v3_available():
+        sc = compile_scenario(sid)
+        out.append({
+            "id": sc.id,
+            "title": sc.title,
+            "skill": sc.skill,
+            "mode": sc.mode,
+            "cast_size": len(sc.cast),
+            "study": True,
+            "variant": getattr(sc, "variant", None),
+            "parallel_form": getattr(sc, "parallel_form", None),
+        })
     for p in sorted(SCENARIOS_DIR.glob("*.yaml")):
         data = yaml.safe_load(p.read_text())
         out.append({

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import time
 from typing import TYPE_CHECKING, List, Optional
 
@@ -81,6 +82,12 @@ class RealtimeVoiceSessionRunner:
         self._last_user_text = ""
         self._turn_index = 0
         self._pending_direction: Optional[dict] = None
+        # Planted triggers fire in order within the current interaction. They
+        # are the measurement: each maps to ESCI items, and the participant's
+        # response to it is what a rater scores.
+        self._trigger_idx = 0
+        self._fired: List[str] = []
+        self._last_activity = time.time()
         self._floor = asyncio.Lock()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -97,6 +104,46 @@ class RealtimeVoiceSessionRunner:
         )
         return base + voice_rules
 
+    def _interaction(self) -> dict:
+        interactions = getattr(self.session.scenario, "interactions", None) or []
+        if self.segment < len(interactions):
+            return interactions[self.segment]
+        return {}
+
+    def _triggers(self) -> List[dict]:
+        return self._interaction().get("triggers", []) or []
+
+    def _next_trigger(self) -> Optional[dict]:
+        triggers = self._triggers()
+        if self._trigger_idx < len(triggers):
+            return triggers[self._trigger_idx]
+        return None
+
+    def _trigger_instruction(self, trigger: dict, *, probing: bool) -> str:
+        """Turn a planted trigger into a stage direction for the actor. The cue
+        is what should happen next; on_silence is the probe that keeps a silent
+        participant from turning into missing data."""
+        if probing and trigger.get("on_silence"):
+            return (
+                f"The participant has not engaged. Probe now, in character, with the "
+                f"substance of: {trigger['on_silence']}"
+            )
+        return f"Bring about this beat now, in your own words: {trigger['cue']}"
+
+    def _fire_trigger(self, trigger: dict, *, probing: bool) -> str:
+        self._fired.append(trigger["id"])
+        self.session.store.event(
+            "trigger_fired",
+            trigger_id=trigger["id"],
+            interaction=self._interaction().get("id"),
+            segment=self.segment,
+            esci=trigger.get("esci", []),
+            probing=probing,
+            index=self._trigger_idx,
+        )
+        self._trigger_idx += 1
+        return self._trigger_instruction(trigger, probing=probing)
+
     def _interaction_id(self) -> str:
         interactions = getattr(self.session.scenario, "interactions", None)
         if interactions and self.segment < len(interactions):
@@ -112,7 +159,8 @@ class RealtimeVoiceSessionRunner:
         if self.segment + 1 >= len(self.cast):
             return False
         self.segment += 1
-        self.agent = self.cast[self.segment]
+        self._trigger_idx = 0
+        self.agent = self.cast[self.segment] if self.segment < len(self.cast) else self.cast[-1]
         self.agent_id = self.agent.id
         self.rt.voice = self._voice()
         self.vad.reset()
@@ -141,7 +189,11 @@ class RealtimeVoiceSessionRunner:
             "realtime_session_started", model=self.rt.model, **provenance()
         )
         try:
-            await asyncio.gather(self._client_to_model(), self._model_to_client())
+            await asyncio.gather(
+                self._client_to_model(),
+                self._model_to_client(),
+                self._silence_watchdog(),
+            )
         finally:
             self._closed = True
             if self.rt:
@@ -165,6 +217,8 @@ class RealtimeVoiceSessionRunner:
                 self.session.store.append_user_audio(pcm)
 
                 mark = self.vad.feed(pcm)
+                if mark:
+                    self._last_activity = time.time()
                 if mark == "speech_started":
                     await self._send({"type": "speech_started"})
                     if self._speaking:
@@ -181,6 +235,7 @@ class RealtimeVoiceSessionRunner:
                         await self.rt.commit_input()
                         asyncio.ensure_future(self._run_group_turn())
                     else:
+                        await self._brief_next_beat(probing=False)
                         await self.rt.commit_turn()
         except WebSocketDisconnect:
             return
@@ -280,6 +335,52 @@ class RealtimeVoiceSessionRunner:
             elif etype == "error":
                 self.session.store.event("voice_error", where="model", message=ev["message"])
                 await self._send({"type": "error", "message": ev["message"]})
+
+    async def _brief_next_beat(self, *, probing: bool) -> None:
+        """Re-brief the actor with the next planted trigger, and record it."""
+        trigger = self._next_trigger()
+        if trigger is None:
+            return
+        direction = self._fire_trigger(trigger, probing=probing)
+        instructions = self._instructions() + (
+            f"\n\nDIRECTOR NOTE (follow precisely, never mention): {direction}"
+        )
+        await self.rt.update_instructions(instructions)
+        self._pending_direction = {
+            "turn": self._turn_index,
+            "segment": self.segment,
+            "interaction": self._interaction_id(),
+            "agent_id": self.agent_id,
+            "agent_name": self.agent.name,
+            "voice": getattr(self.rt, "voice", None),
+            "stage_direction": direction,
+            "trigger_id": trigger["id"],
+            "esci": trigger.get("esci", []),
+            "probing": probing,
+            "instructions_sha256": hashlib.sha256(instructions.encode()).hexdigest()[:16],
+            "director_model": provenance()["text_model"],
+        }
+        self.session.store.event("stage_direction", **self._pending_direction)
+
+    async def _silence_watchdog(self) -> None:
+        """If the participant says nothing for a while, prompt the actor to
+        probe. Research Note v3: avoidance must become scoreable behaviour, not
+        missing data."""
+        idle = float(os.getenv("PROBE_AFTER_SECONDS", "12"))
+        while not self._closed:
+            await asyncio.sleep(idle)
+            if self._closed or self._speaking or self.vad.speaking:
+                continue
+            if time.time() - self._last_activity < idle:
+                continue
+            trigger = self._next_trigger()
+            if trigger is None or not trigger.get("on_silence"):
+                continue
+            self._last_activity = time.time()
+            await self._brief_next_beat(probing=True)
+            if not self.is_group:
+                await self.rt.send_audio(b"\x00" * 3200)
+                await self.rt.commit_turn()
 
     async def _speak_as(self, agent, intent: Optional[str] = None) -> None:
         """Give one character the floor: re-brief the session as them, with

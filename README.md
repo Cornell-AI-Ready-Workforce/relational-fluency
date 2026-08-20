@@ -114,6 +114,20 @@ HTTPS. Chrome or Safari.
   | `assistant_audio*.wav` | agent channel, one per character |
   | `manifest.json` | session metadata and durations |
 
+### Checking a capture
+
+```bash
+python -m server.verify_record <session_id>   # one encounter
+python -m server.verify_record --all          # a whole collection wave
+```
+
+Reports whether both transcript sides and both audio channels are present and
+non-trivial, whether the steering trail was logged and paired to replies, how
+many planted triggers fired out of the scenario's plan, how many distinct ESCI
+items were exercised, and whether the record can say which gateway produced it.
+Run it during the pilot and on a sample during collection — an encounter missing
+participant audio is cheap to catch on day one and impossible to recover later.
+
   `record.json` is the analysis-facing view, built from `events.jsonl` at close;
   raters, the scorer, and Phase-3 training read it rather than replaying events.
   A turn with `stage_direction: null` ran unsteered — distinguishable from a
