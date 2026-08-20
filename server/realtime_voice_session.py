@@ -306,12 +306,11 @@ class RealtimeVoiceSessionRunner:
         listening, and their sessions stay silent because they were never asked
         to respond.
         """
+        buf: List[str] = []
         try:
             async for ev in rt.events():
                 etype = ev["type"]
                 if etype == "agent_audio":
-                    if self.room and self.room.speaking != agent.id:
-                        continue
                     self.agent, self.agent_id = agent, agent.id
                     await self._begin_agent_turn()
                     self.session.store.append_assistant_audio(ev["pcm"], agent_id=agent.id)
@@ -322,11 +321,9 @@ class RealtimeVoiceSessionRunner:
                         await self.room.hear(ev["pcm"], exclude=agent.id)
 
                 elif etype == "agent_transcript_delta":
-                    if self.room and self.room.speaking != agent.id:
-                        continue
                     self.agent, self.agent_id = agent, agent.id
                     await self._begin_agent_turn()
-                    self._agent_text.append(ev["text"])
+                    buf.append(ev["text"])
                     await self._send({
                         "type": "assistant_text_delta",
                         "text": ev["text"],
@@ -340,10 +337,13 @@ class RealtimeVoiceSessionRunner:
                     await self._record_user_turn(ev["text"])
 
                 elif etype == "response_done":
-                    if self.room and self.room.speaking != agent.id:
-                        continue
-                    self.agent, self.agent_id = agent, agent.id
-                    await self._finalize_turn()
+                    # Trailing transcript deltas can arrive after response.done.
+                    grace = time.time() + 2.5
+                    while not buf and time.time() < grace:
+                        await asyncio.sleep(0.15)
+                    text = "".join(buf).strip()
+                    buf.clear()
+                    await self._finalize_member(agent, text)
 
                 elif etype == "error":
                     self.session.store.event(
@@ -351,6 +351,44 @@ class RealtimeVoiceSessionRunner:
                     )
         except asyncio.CancelledError:
             return
+
+    async def _finalize_member(self, agent, text: str) -> None:
+        """Close one character's turn in a group room.
+
+        Separate from _finalize_turn because each character has its own pump:
+        routing a turn through the shared buffers interleaved two speakers into
+        one unreadable line and left the other empty.
+        """
+        self._turn_index += 1
+        self._turns_this_interaction += 1
+        self._speaking = False
+
+        if text:
+            self.session.append_agent(agent.id, text)
+            await self.session.broadcast({
+                "type": "transcript", "role": "assistant",
+                "agent_id": agent.id, "text": text,
+            })
+        else:
+            self.session.store.event(
+                "transcript_missing", agent_id=agent.id, segment=self.segment
+            )
+
+        self.session.store.event(
+            "steering_pair",
+            direction=self._pending_direction,
+            actor={"agent_id": agent.id, "text": text,
+                   "voice": getattr(agent, "voice_id", None),
+                   "transcript_missing": not text},
+            participant=self._last_user_text,
+        )
+        self._pending_direction = None
+        self.session.store.event(
+            "assistant_turn", agent_id=agent.id, text=text,
+            segment=self.segment, transcript_missing=not text,
+        )
+        await self._send({"type": "assistant_done", "agent_id": agent.id})
+        self._response_done.set()
 
     def agent_order(self) -> List[str]:
         return [a.id for a in self._resolve_agents()]

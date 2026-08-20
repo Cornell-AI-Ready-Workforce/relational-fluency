@@ -391,7 +391,7 @@
 
 <header>
   <div>
-    <div class="title" id="title">Loading…<span id="runChip" class="run-chip" style="display:none"></span></div>
+    <div class="title"><span id="title">Loading…</span><span id="runChip" class="run-chip" style="display:none"></span></div>
   </div>
   <div class="controls" id="controls">
     <span class="timer" id="timer" title="Time in this conversation">00:00</span>
@@ -1012,7 +1012,6 @@
         const m = JSON.parse(ev.data);
         if (m.type === 'session') {
           $('title').textContent = m.scenario.title;
-          $('sid').textContent = `session: ${m.session_id} · mode: ${m.scenario.mode}`;
           sessionId = m.session_id;
           sessionMode = m.scenario.mode || 'single';
           cast = m.cast || [];
@@ -1245,7 +1244,6 @@
       if (!r.ok) return;
       const d = await r.json();
       $('title').textContent = d.title;
-      $('sid').textContent = `${d.mode === 'group' ? 'group meeting' : 'one on one'} · ${d.cast.length} character${d.cast.length === 1 ? '' : 's'}`;
       $('briefBody').textContent = flowText(d.intro);
       // The first-person "entering the room" photo lives in the situation popup
       // now (see showSituation), so keep the brief itself text-only.
