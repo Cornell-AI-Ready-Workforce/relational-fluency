@@ -11,7 +11,6 @@ primary_region = "ewr"          # newark — close to most US east; pick another
   HOST = "0.0.0.0"
   PORT = "8080"
   DATA_DIR = "/data"
-  # Secrets (ANTHROPIC_API_KEY, DEEPGRAM_API_KEY, ELEVENLABS_API_KEY,
   # SESSION_KEY) are set via `fly secrets set`, not here.
 
 [[mounts]]

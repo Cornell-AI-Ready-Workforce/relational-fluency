@@ -27,13 +27,39 @@ if TYPE_CHECKING:
     from .session import Session
 
 
+# Gemini Live voice names, assigned per segment so consecutive characters do
+# not sound like the same person.
+GEMINI_VOICES = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
+
+END_SEGMENT_TOOL = {
+    "type": "function",
+    "name": "end_conversation",
+    "description": (
+        "Call this once this conversation has reached its natural end — the "
+        "matter has been addressed, or the participant has clearly finished. "
+        "Do not mention the tool."
+    ),
+    "parameters": {"type": "object", "properties": {}, "required": []},
+}
+
+
 class RealtimeVoiceSessionRunner:
-    """One participant, one agent, one live conversation."""
+    """One participant working through a scenario as consecutive 1:1 conversations.
+
+    A scenario's cast is played in order, one character at a time — e.g. S1 is
+    the instigating colleague first, then the peer. Each character gets its own
+    persona, voice, and brief; the actor signals the end of its conversation
+    with a tool call, and the runner re-briefs the session as the next
+    character. Characters never share a turn, which is what the study design
+    calls for and what keeps each segment cleanly attributable.
+    """
 
     def __init__(self, session: "Session", ws: "WebSocket"):
         self.session = session
         self.ws = ws
-        self.agent = session.scenario.cast[0]
+        self.segment = 0
+        self.cast = list(session.scenario.cast)
+        self.agent = self.cast[0]
         self.agent_id = self.agent.id
         self.rt: Optional[RealtimeVoiceSession] = None
         self.vad = SilenceDetector()
@@ -56,8 +82,37 @@ class RealtimeVoiceSessionRunner:
         )
         return base + voice_rules
 
+    def _voice(self) -> str:
+        explicit = getattr(self.agent, "realtime_voice", None)
+        return explicit or GEMINI_VOICES[self.segment % len(GEMINI_VOICES)]
+
+    async def _advance_segment(self) -> bool:
+        """Move to the next character. Returns False when the scenario is done."""
+        if self.segment + 1 >= len(self.cast):
+            return False
+        self.segment += 1
+        self.agent = self.cast[self.segment]
+        self.agent_id = self.agent.id
+        self.rt.voice = self._voice()
+        self.vad.reset()
+        self.session.store.event(
+            "segment_start", index=self.segment, agent_id=self.agent_id, agent_name=self.agent.name
+        )
+        await self.rt.update_instructions(self._instructions())
+        await self._send({
+            "type": "segment_start",
+            "index": self.segment,
+            "agent_id": self.agent_id,
+            "agent_name": self.agent.name,
+        })
+        return True
+
     async def run(self) -> None:
-        self.rt = RealtimeVoiceSession(instructions=self._instructions())
+        self.rt = RealtimeVoiceSession(
+            instructions=self._instructions(),
+            voice=self._voice(),
+            tools=[END_SEGMENT_TOOL],
+        )
         await self.rt.connect()
         self.session.store.event("realtime_session_started", model=self.rt.model)
         try:
@@ -158,8 +213,12 @@ class RealtimeVoiceSessionRunner:
                 await self._steer()
 
             elif etype == "tool_call":
-                self.session.store.event("tool_call", name=ev.get("name"))
-                await self._send({"type": "encounter_complete"})
+                self.session.store.event(
+                    "tool_call", name=ev.get("name"), segment=self.segment
+                )
+                if not await self._advance_segment():
+                    await self._send({"type": "encounter_complete"})
+                    return
 
             elif etype == "error":
                 self.session.store.event("voice_error", where="model", message=ev["message"])

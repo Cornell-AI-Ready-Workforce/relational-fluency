@@ -31,7 +31,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from .engine import DEFAULT_MODEL
-from .multi_agent_session import MultiAgentVoiceSessionRunner
 from .scenarios import list_scenarios, load_scenario
 from .session import Session, registry
 from .storage import create_participant, get_participant, init_storage
@@ -609,12 +608,9 @@ async def ws_participant_voice(
         "audio": {"sample_rate": 16000, "channels": 1, "encoding": "pcm_s16le"},
     })
 
-    if session.is_group:
-        # Group rooms still run the v1 path until the realtime runner handles
-        # multiple simultaneous characters.
-        runner = MultiAgentVoiceSessionRunner(session, ws)
-    else:
-        runner = RealtimeVoiceSessionRunner(session, ws)
+    # Every scenario runs as consecutive 1:1 conversations on Gemini Live —
+    # the cast is played one character at a time, in order.
+    runner = RealtimeVoiceSessionRunner(session, ws)
     try:
         await runner.run()
     except WebSocketDisconnect:

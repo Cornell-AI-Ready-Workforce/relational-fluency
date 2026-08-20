@@ -20,6 +20,11 @@ grounded in an analysis of 39,301 r/antiwork posts.
 | S3 | Inspirational Leadership | After resignations over pay |
 | S4 | Teamwork | Planning an internal rollout |
 
+Each construct has **two variations**; variation B is being authored. An
+encounter is a sequence of **consecutive 1:1 conversations** — S1, for example,
+is the instigating colleague first, then the peer. Characters never share a
+turn.
+
 **Phase 1 target:** 100 participants × 4 encounters (7–12 min, counterbalanced)
 = 400 encounters with audio, transcript, and video.
 
@@ -51,9 +56,9 @@ silently breaks Gemini Live sessions.
 
 | Area | Now | Target |
 |---|---|---|
-| Voice | Deepgram STT → Claude → ElevenLabs TTS (cascade) | Gemini Live speech-to-speech via Cornell LiteLLM |
-| Models | Anthropic API direct | Cornell LiteLLM gateway |
-| Scenarios | 13 exploratory YAMLs in `scenarios/` | Compiled from canonical S1–S4 specs |
+| Voice | **Gemini Live speech-to-speech** via Cornell LiteLLM — done | — |
+| Models | **Cornell LiteLLM gateway** (Gemini) — done | — |
+| Scenarios | 13 exploratory YAMLs in `scenarios/` | 4 constructs × 2 variations, compiled from canonical specs |
 | Storage | local `data/` + `logs/` | encrypted S3, one aligned record per encounter |
 | Entry | direct `?scenario=` links | CloudResearch Connect → Qualtrics → app → completion code |
 | Deploy | Fly.io | ECS/Fargate behind ALB (`infra/terraform/`) |
@@ -94,9 +99,10 @@ HTTPS. Chrome or Safari.
 - **Live steering** — researchers inject inline notes ("be more skeptical"),
   adjust knobs, or trigger a scenario branch mid-conversation. Notes enter the
   next turn's system prompt and are logged.
-- **Turn routing (multi-agent)** — after each participant turn, a small model
-  call picks 0–3 speakers in order with optional per-speaker intent; each runs
-  through its own engine with its own persona and voice.
+- **Consecutive 1:1 segments** — a scenario's cast is played one character at a
+  time, in order. The actor calls `end_conversation` when its segment reaches a
+  natural close, and the runner re-briefs the live session as the next
+  character with a different voice.
 - **Logs** — `logs/{session_id}.jsonl` records every turn, latency, knob change,
   and steering note. Session artifacts (participant WAV, per-agent WAVs,
   transcript, manifest) land under `data/sessions/{session_id}/`.
@@ -129,15 +135,17 @@ the encrypted S3 bucket under the IRB data-management plan, never in the repo.
 
 ## Status
 
-**v0.4** — single-agent and multi-agent voice both work on the v1 cascade.
-13 scenarios (8 single-agent, 5 group). Researcher steering with per-agent knobs
-and notes. Dataset capture with separate participant and per-agent WAVs, SQLite
-index, and manifest. Offline scoring across the relational-fluency constructs.
+**v0.5** — voice encounters run on Gemini Live speech-to-speech through the
+Cornell LiteLLM gateway; ElevenLabs and Deepgram are gone from the codebase
+entirely. Scenarios play as consecutive 1:1 conversations. Researcher steering
+with per-agent knobs and notes. Dataset capture with separate participant and
+agent WAVs, SQLite index, and manifest. Offline scoring across the constructs.
 
 Next, in dependency order (see the migration plan): replace the voice cascade
 with Gemini Live plus broker-side turn detection; compile S1–S4 into runnable
 multi-agent sessions; move storage to S3; add the Connect/Qualtrics round trip;
 deploy to Fargate.
 
-Known gaps: no barge-in yet (mic is muted while the assistant speaks); photo
-tiles use initials placeholders.
+Known gaps: the legacy `g*` scenarios were authored as group rooms and read
+oddly when played 1:1 — they are superseded by the S1–S4 bank. Photo tiles use
+initials placeholders.
