@@ -14,6 +14,8 @@ import os
 from typing import AsyncIterator, Dict, List, Optional
 
 from anthropic import AsyncAnthropic
+
+from .llm import text_client
 from anthropic.types import MessageParam
 
 from .persona import Persona
@@ -40,7 +42,7 @@ class AgentEngine:
         self.scenario = scenario
         self.persona = persona
         self.model = model or scenario.model or DEFAULT_MODEL
-        self.client = client or AsyncAnthropic()
+        self.client = client or text_client()
         # Per-agent steering — the researcher can add notes targeting one agent
         # specifically, separate from global scenario-level state.
         self.live_notes: List[str] = []

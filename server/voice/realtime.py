@@ -30,9 +30,13 @@ from typing import AsyncIterator, Optional
 
 import websockets
 
-GATEWAY = os.getenv("LLM_BASE_URL", "https://api.ai.it.cornell.edu")
-MODEL = os.getenv("REALTIME_MODEL", "nto.gemini-live-2.5-flash")
-VOICE = os.getenv("REALTIME_VOICE", "Puck")
+# Config comes from server.llm so the .env file wins over ambient environment —
+# a stray exported variable must not be able to redirect study traffic.
+from ..llm import gateway_api_key, gateway_base_url, setting
+
+GATEWAY = gateway_base_url()
+MODEL = setting("REALTIME_MODEL", "nto.gemini-live-2.5-flash")
+VOICE = setting("REALTIME_VOICE", "Puck")
 
 # The browser captures and plays 16 kHz; the gateway emits 24 kHz PCM16.
 CLIENT_RATE = 16000
@@ -113,7 +117,7 @@ class RealtimeVoiceSession:
         self.model = model
         self.voice = voice
         self.tools = tools or []
-        self.api_key = api_key or os.getenv("LITELLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+        self.api_key = api_key or gateway_api_key()
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
         self._resample_state = None
         self._agent_buffer = ""

@@ -89,6 +89,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from .llm import preflight as _preflight
+
+# Verify the model gateway before anyone can join. A wrong endpoint used to show
+# up only as a 401 mid-encounter; now it is visible at boot and on /health.
+_PREFLIGHT = _preflight()
+if _PREFLIGHT.get("ambient_override_ignored"):
+    print(
+        f"  note: ignoring ambient ANTHROPIC_BASE_URL="
+        f"{_PREFLIGHT['ambient_override_ignored']} — using {_PREFLIGHT['gateway']}"
+    )
+if not _PREFLIGHT.get("ok"):
+    print(
+        f"  WARNING: model gateway {_PREFLIGHT['gateway']} did not answer "
+        f"({_PREFLIGHT.get('status') or _PREFLIGHT.get('detail')}). "
+        f"Encounters will fail until this is fixed."
+    )
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -98,7 +115,8 @@ async def health() -> dict:
     dependency-free: it answers whether this process can serve, not whether the
     model gateway is reachable, so a transient upstream blip cannot cause ECS to
     kill healthy tasks mid-encounter."""
-    return {"status": "ok"}
+    # Nested so the liveness field cannot be shadowed by preflight keys.
+    return {"status": "ok", "gateway": _PREFLIGHT}
 
 
 def _load_consent() -> dict:

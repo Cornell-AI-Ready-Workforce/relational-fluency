@@ -25,6 +25,8 @@ from typing import Dict, List, Optional
 
 from anthropic import AsyncAnthropic
 
+from .llm import text_client
+
 from .persona import INCIVILITY_KNOBS, TONE_KNOBS, Persona
 from .scenarios import Scenario
 
@@ -141,7 +143,7 @@ class SteeringController:
         model: Optional[str] = None,
     ):
         self.scenario = scenario
-        self.client = client or AsyncAnthropic()
+        self.client = client or text_client()
         self.model = model or STEERING_MODEL
         self._valid_ids = {a.id for a in scenario.cast}
 

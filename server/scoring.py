@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from anthropic import Anthropic
+
+from .llm import sync_text_client
 from dotenv import load_dotenv
 
 load_dotenv()  # so the CLI picks up ANTHROPIC_API_KEY from .env
@@ -363,7 +365,7 @@ def score_session(
         )
 
     judge_model = model or DEFAULT_JUDGE_MODEL
-    client = client or Anthropic()
+    client = client or sync_text_client()
     transcript = _render_transcript(meta["turns"])
 
     response = client.messages.create(
@@ -419,7 +421,7 @@ def main() -> None:
     if not args.all and not args.session_id:
         ap.error("provide a session_id or --all")
 
-    client = Anthropic()
+    client = sync_text_client()
     targets = _iter_session_ids() if args.all else [args.session_id]
     for sid in targets:
         try:

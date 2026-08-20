@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from anthropic import Anthropic
+
+from .llm import sync_text_client
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -205,7 +207,7 @@ def generate_debrief(
     schema = _build_schema(agent_ids)
     system, user = _build_prompt(scenario, transcript)
 
-    client = Anthropic()
+    client = sync_text_client()
     used_model = model or scenario.model or DEFAULT_DEBRIEF_MODEL
     resp = client.messages.create(
         model=used_model,

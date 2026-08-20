@@ -139,6 +139,29 @@ currently hidden behind `SHOW_SCORE = true` in `static/researcher.html`.
 This offline judge is the seed of the Phase 3 scorer, which will be benchmarked
 against human ICC/κ on the ESCI items rather than these interim rubrics.
 
+## Model configuration
+
+Every model client is built in [`server/llm.py`](server/llm.py) from explicit
+configuration — never from ambient environment variables. This matters more than
+it sounds: the desktop app exports `ANTHROPIC_BASE_URL=https://api.anthropic.com`,
+and `load_dotenv()` does not override variables that already exist, so a
+gateway key was being sent to the wrong provider and every director call
+returned 401. For a measurement instrument, the endpoint that served an
+encounter has to be deliberate and recorded, not inherited from a shell.
+
+Consequences of that rule:
+
+- `.env` wins over ambient environment for gateway settings.
+- Startup runs a preflight against the configured gateway and prints what it
+  ignored; `/health` reports the same, so a misconfigured endpoint is visible
+  before anyone joins rather than as a 401 mid-encounter.
+- The resolved gateway and model names are written into each session's
+  `record.json` under `provenance`.
+
+```bash
+curl -s localhost:8765/health | python3 -m json.tool
+```
+
 ## Privacy
 
 Participant audio, video, and transcripts are PII. `data/`, `logs/*.jsonl`,

@@ -12,6 +12,8 @@ from typing import List, Optional
 
 from anthropic import AsyncAnthropic
 
+from .llm import text_client
+
 from .scenarios import Agent, Scenario
 
 
@@ -94,7 +96,7 @@ class Director:
         model: Optional[str] = None,
     ):
         self.scenario = scenario
-        self.client = client or AsyncAnthropic()
+        self.client = client or text_client()
         self.model = model or DIRECTOR_MODEL
         self._cast_block = _format_cast(scenario.cast)
         self._valid_ids = {a.id for a in scenario.cast}
