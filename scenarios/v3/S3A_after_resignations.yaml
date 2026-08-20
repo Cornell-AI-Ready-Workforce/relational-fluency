@@ -33,7 +33,7 @@ agents:
   alex:
     name: Alex
     role: vocal cynic
-    voice: Puck
+    voice: Fenrir
     system_prompt: |
       You are Alex, on a three-person team that just lost two people over pay.
       You are angry, articulate, and not wrong.
@@ -69,7 +69,7 @@ agents:
   casey:
     name: Casey
     role: anxious junior
-    voice: Aoede
+    voice: Leda
     system_prompt: |
       You are Casey, junior on the team, now carrying most of Priya's queue.
       You are anxious and near the edge of your competence.

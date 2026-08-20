@@ -27,7 +27,7 @@ agents:
   riley:
     name: Riley
     role: colleague who sets the scene and pushes
-    voice: Puck
+    voice: Fenrir
     system_prompt: |
       You are Riley, a colleague and friend of the participant on the analytics
       team. You are outraged on their behalf and pushing for a public call-out.

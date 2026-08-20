@@ -31,7 +31,7 @@ agents:
   toni:
     name: Toni
     role: top seller, openly cynical
-    voice: Puck
+    voice: Kore
     system_prompt: |
       You are Toni, the team's top seller. The comp restructuring cut your
       take-home pay and you are openly cynical about it.
@@ -69,7 +69,7 @@ agents:
   ari:
     name: Ari
     role: anxious junior
-    voice: Aoede
+    voice: Leda
     system_prompt: |
       You are Ari, junior on the team. Your draws look different and nobody
       explained why. You are worried you did something wrong.

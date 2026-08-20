@@ -94,6 +94,7 @@ class RealtimeVoiceSessionRunner:
         self._trigger_idx = 0
         self._fired: List[str] = []
         self._last_activity = time.time()
+        self._turns_this_interaction = 0
         self._floor = asyncio.Lock()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -193,6 +194,7 @@ class RealtimeVoiceSessionRunner:
         # Still characters left in this series (e.g. Jordan then Casey).
         if self._interaction_mode() == "one_to_one_series" and self._series_idx + 1 < len(agents):
             self._series_idx += 1
+            self._turns_this_interaction = 0
             await self._enter(agents[self._series_idx], new_interaction=False)
             return True
 
@@ -202,6 +204,7 @@ class RealtimeVoiceSessionRunner:
         self.segment += 1
         self._series_idx = 0
         self._trigger_idx = 0
+        self._turns_this_interaction = 0
         await self._enter(self._resolve_agents()[0], new_interaction=True)
         return True
 
@@ -296,17 +299,16 @@ class RealtimeVoiceSessionRunner:
             etype = ev["type"]
 
             if etype == "agent_audio":
-                if not self._speaking:
-                    self._speaking = True
-                    await self._send({
-                        "type": "assistant_started",
-                        "agent_id": self.agent_id,
-                        "agent_name": self.agent.name,
-                    })
+                await self._begin_agent_turn()
                 self.session.store.append_assistant_audio(ev["pcm"], agent_id=self.agent_id)
                 await self._send_bytes(ev["pcm"])
 
             elif etype == "agent_transcript_delta":
+                # Transcript deltas usually arrive before the first audio chunk.
+                # The client buffers them into the turn opened by
+                # assistant_started, so that has to be sent first or the text is
+                # dropped and the agent appears to say nothing.
+                await self._begin_agent_turn()
                 self._agent_text.append(ev["text"])
                 await self._send({
                     "type": "assistant_text_delta",
@@ -345,6 +347,7 @@ class RealtimeVoiceSessionRunner:
                     })
                 if text:
                     self._turn_index += 1
+                    self._turns_this_interaction += 1
                     # One aligned entry per exchange: the direction that shaped
                     # the reply, and the reply itself.
                     self.session.store.event(
@@ -370,6 +373,7 @@ class RealtimeVoiceSessionRunner:
                 self._response_done.set()
                 if not self.is_group():
                     await self._steer()
+                    await self._maybe_advance()
 
             elif etype == "tool_call":
                 self.session.store.event(
@@ -382,6 +386,36 @@ class RealtimeVoiceSessionRunner:
             elif etype == "error":
                 self.session.store.event("voice_error", where="model", message=ev["message"])
                 await self._send({"type": "error", "message": ev["message"]})
+
+    async def _maybe_advance(self) -> None:
+        """Move on once this interaction's planted beats are spent.
+
+        The actor's end_conversation tool is the intended signal, but a
+        character in the middle of a natural conversation rarely calls it — an
+        encounter would then stall in interaction 1 and never reach the
+        counterpart, which is where most of the scoring lives. So the runner
+        also advances on its own once every trigger has fired and the
+        conversation has run a couple more turns past the last one.
+        """
+        if self._next_trigger() is not None:
+            return  # beats remain in this interaction
+        grace = int(os.getenv("INTERACTION_GRACE_TURNS", "2"))
+        if self._turns_this_interaction < len(self._triggers()) + grace:
+            return
+        self._turns_this_interaction = 0
+        if not await self._advance_segment():
+            await self._send({"type": "encounter_complete"})
+
+    async def _begin_agent_turn(self) -> None:
+        """Announce the speaker once per turn, on the first event of any kind."""
+        if self._speaking:
+            return
+        self._speaking = True
+        await self._send({
+            "type": "assistant_started",
+            "agent_id": self.agent_id,
+            "agent_name": self.agent.name,
+        })
 
     async def _brief_next_beat(self, *, probing: bool) -> None:
         """Re-brief the actor with the next planted trigger, and record it."""

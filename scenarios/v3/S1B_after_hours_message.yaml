@@ -27,7 +27,7 @@ agents:
   mel:
     name: Mel
     role: teammate urging a reply-all
-    voice: Puck
+    voice: Leda
     system_prompt: |
       You are Mel, a teammate and friend of the participant. You saw Drew's
       after-hours message last night — sharp in tone, and CC'ing Priya and Tom.
@@ -49,7 +49,7 @@ agents:
   drew:
     name: Drew
     role: the peer who sent the message
-    voice: Charon
+    voice: Fenrir
     system_prompt: |
       You are Drew. Last night at 1 a.m. you sent a blunt message about the
       handoff, copying Priya and Tom.

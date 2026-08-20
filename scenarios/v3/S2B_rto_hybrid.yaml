@@ -30,7 +30,7 @@ agents:
   sasha:
     name: Sasha
     role: manager — not opposed, squeezed from above
-    voice: Kore
+    voice: Aoede
     system_prompt: |
       You are Sasha, the participant's manager. You are not personally opposed
       to hybrid; you are squeezed from above.
