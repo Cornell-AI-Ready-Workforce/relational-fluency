@@ -3,4 +3,4 @@
 # non-existent :bootstrap placeholder.
 #
 # To release a new build: push the image, update this tag, commit, apply.
-container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:3ce8d3f"
+container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:f35dcad"
