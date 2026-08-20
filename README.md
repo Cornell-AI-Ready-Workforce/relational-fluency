@@ -134,6 +134,9 @@ This is the audit view for the closed-loop steering the study claims: a reply
 and the instruction behind it are shown together rather than in separate logs,
 and an encounter that only exercised part of the instrument is visible as such.
 
+Operational commands — health, logs, pulling data off the server — are in
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
 ### Checking a capture
 
 ```bash
