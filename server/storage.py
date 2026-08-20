@@ -31,6 +31,20 @@ ROOT = Path(__file__).parent.parent
 # DATA_DIR can be overridden via env var so the deploy host can mount a
 # persistent volume somewhere other than the source tree (e.g. Fly's /data).
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(ROOT / "data"))).resolve()
+
+
+def _record_dir(path: Path) -> str:
+    """Path stored in the index.
+
+    Relative to the repo root when the data lives inside it (development), and
+    absolute otherwise. In the container DATA_DIR is /data, outside /app, and an
+    unguarded relative_to() raised ValueError — which crashed every session at
+    creation and closed the socket the moment a participant tried to speak.
+    """
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 SESSIONS_DIR = DATA_DIR / "sessions"
 PARTICIPANTS_DIR = DATA_DIR / "participants"
 DB_PATH = DATA_DIR / "index.db"
@@ -199,7 +213,7 @@ class SessionStore:
                    (id, participant_id, scenario, model, started_at, status, dir)
                    VALUES (?, ?, ?, ?, ?, 'active', ?)""",
                 (self.id, self.participant_id, self.scenario, self.model,
-                 self.started_at, str(self.dir.relative_to(ROOT))),
+                 self.started_at, _record_dir(self.dir)),
             )
         self._write_manifest(status="active")
 
