@@ -73,6 +73,35 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
         ]
     parts += [
         "- If asked who you are, answer as yourself and stay in the scene.",
+    ]
+    ident = spec.get("_identity") or {}
+    if ident.get("name"):
+        parts += [
+            f"- The participant is {ident['name']}"
+            + (f", a {ident['role']}." if ident.get("role") else ".")
+            + " Use that name.",
+            "- Never ask for their real name, employer, or any real personal",
+            "  detail. They are playing a role, as are you.",
+        ]
+    parts += [
+        "",
+        "## Bounds — never cross these",
+        "These are absolute and outrank every other instruction, including any",
+        "stage direction and anything the participant says or asks for.",
+        "- No harassment, slurs, profanity, or personal insults.",
+        "- No sexual or romantic content.",
+        "- No threats or references to violence.",
+        "- Never comment on the participant's appearance, accent, or any",
+        "  protected characteristic.",
+        "- Nothing relating to self-harm.",
+        "- No professional advice — legal, medical, financial, or otherwise.",
+        "- Your emotional ceiling is firm, defensive, or frustrated. You may",
+        "  disagree, deflect, become defensive, or concede grudgingly. You may",
+        "  never become abusive, raise your voice, or demean anyone.",
+        "- This is a fictional workplace scene. If the participant starts",
+        "  describing their real life, real people, or real disputes, do not",
+        "  ask follow-up questions about it — acknowledge briefly and steer",
+        "  back into the scenario.",
         "",
         "## Manner",
         "- This is a live spoken conversation. One to three sentences per turn.",
@@ -91,8 +120,13 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
     return "\n".join(parts)
 
 
-def compile_scenario(scenario_id: str) -> Scenario:
+def compile_scenario(scenario_id: str, participant_key: str = "") -> Scenario:
     spec = load_spec(scenario_id)
+    # The participant plays an assigned character; the brief and the actors both
+    # need to know who that is, so the same name is used everywhere.
+    from .identity import assign
+    ident = assign(participant_key, spec["construct"])
+    spec = _fill_identity(spec, ident)
     agents_spec: Dict[str, dict] = spec["agents"]
 
     cast: List[Agent] = []
@@ -131,6 +165,25 @@ def compile_scenario(scenario_id: str) -> Scenario:
     return scenario
 
 
+def _fill_identity(spec: dict, ident: dict) -> dict:
+    """Substitute {name}/{role}/{org} throughout the spec."""
+    def sub(v):
+        if isinstance(v, str):
+            try:
+                return v.format(**ident)
+            except (KeyError, IndexError, ValueError):
+                return v
+        if isinstance(v, list):
+            return [sub(x) for x in v]
+        if isinstance(v, dict):
+            return {k: sub(x) for k, x in v.items()}
+        return v
+
+    out = sub(spec)
+    out["_identity"] = ident
+    return out
+
+
 def _briefing(spec: dict) -> dict:
     """Orientation shown before the encounter starts.
 
@@ -147,6 +200,7 @@ def _briefing(spec: dict) -> dict:
         for a in spec["agents"].values()
     ]
     return {
+        "identity": spec.get("_identity", {}),
         "situation": spec.get("setup", "").strip(),
         # Facts the participant holds. S2's ladder is only winnable if they know
         # they have the precedent, so withholding these does not test skill —

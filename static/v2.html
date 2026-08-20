@@ -135,6 +135,9 @@
   .tile .talk-btn:hover { filter: brightness(1.08); }
   .tile .talk-btn[disabled] { opacity: .6; cursor: default; }
   #sceneNow { font-size: 12px; color: var(--muted); margin-left: 8px; }
+  .ai-banner { position: sticky; top: 0; z-index: 40; text-align: center;
+    background: #2f2f2f; color: #fff; font-size: 12.5px; letter-spacing: .01em;
+    padding: 6px 12px; }
   .run-chip { display:inline-block; margin-left:10px; font-size:12px; font-weight:600;
     color:#fff; background:var(--accent); border-radius:999px; padding:2px 10px;
     vertical-align:middle; }
@@ -143,6 +146,8 @@
   #nextBody .run-steps li.done { color:#2f7d4f; }
   #nextBody .run-steps li.now { font-weight:700; }
   #nextBody .run-steps li.todo { color:#9a9a97; }
+  #nextBody .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background:#f2f2f0; border:1px solid #ddd; border-radius:5px; padding:2px 8px; }
   .transcript .speaker { font-weight: 600; color: var(--accent); }
   .transcript .speaker.self { color: var(--fg); }
   .transcript .meta { font-size: 11px; color: var(--muted); margin-left: 6px; }
@@ -192,6 +197,8 @@
   .sit-assets { background: #f6f6f4; border-left: 3px solid var(--accent, #b3181b);
     padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 14px; }
   .sit-assets h4 { margin-top: 0; }
+  .fiction-reminder { font-size: 13px; color: var(--muted, #6b6b68);
+    border-top: 1px solid #eee; padding-top: 10px; margin: 14px 0 0; }
   .situation-main { display: flex; gap: 24px; align-items: flex-start; }
   .situation-card .situation-img { width: 300px; flex-shrink: 0; border-radius: 12px; margin: 4px 0 0; display: block;
                  box-shadow: 0 6px 20px rgba(47,47,47,0.18); }
@@ -325,7 +332,39 @@
         <div class="body" id="situationBody"></div>
       </div>
     </div>
+    <p class="fiction-reminder">Reminder: this is a fictional scenario. Please use
+    the names provided and avoid real personal details.</p>
     <div class="actions"><button id="situationStart">I'm ready, let me in</button></div>
+  </div>
+</div>
+
+<div class="consent-overlay" id="fictionOverlay" style="display:none">
+  <div class="consent-card situation-card">
+    <h2>Before you begin: please keep this fictional</h2>
+    <div class="body">
+      <p>These are made-up work situations with AI characters. You are playing a
+      role, not telling us about your real life. To protect your privacy and
+      other people's, please:</p>
+      <ul>
+        <li><b>Don't use real names</b> — not your own, not your employer's, and
+        not those of real coworkers, managers, clients, friends, or family. Use
+        the names the scenario gives you.</li>
+        <li><b>Don't describe real events</b> — real disputes, real pay or
+        performance issues, real health, legal, or financial matters, or
+        anything else about your own life or anyone else's.</li>
+        <li><b>Don't share contact or account details</b> — addresses, phone
+        numbers, emails, ID numbers, or similar. The AI partner has no use for
+        them.</li>
+        <li><b>Stay in the scenario.</b> If the conversation drifts toward your
+        real situation, steer it back to the fictional one.</li>
+      </ul>
+      <p>If something personal slips out by accident, that's okay — just keep
+      going. We remove personal details from transcripts before we analyze or
+      share anything, and the AI partner is instructed not to ask follow-up
+      questions about personal disclosures. You can end a conversation at any
+      time.</p>
+    </div>
+    <div class="actions"><button id="fictionAck">I understand — continue</button></div>
   </div>
 </div>
 
@@ -335,6 +374,10 @@
     <div class="body" id="nextBody"></div>
     <div class="actions"><button id="nextBtn">Continue</button></div>
   </div>
+</div>
+
+<div class="ai-banner" id="aiBanner">
+  You are speaking with an AI character. This is a fictional scenario.
 </div>
 
 <header>
@@ -400,7 +443,7 @@
     const r = await fetch(`/api/run/${encodeURIComponent(runId)}` + keyParamFirst);
     if (!r.ok) return;
     run = await r.json();
-    if (run.done) { showRunComplete(); return; }
+    if (run.done) { await showRunComplete(); return; }
     scenario = run.current.id;
     const chip = $('runChip');
     chip.textContent = `Encounter ${run.position} of ${run.total}`;
@@ -422,12 +465,33 @@
     return `<ul class="run-steps">${items.join('')}</ul>`;
   }
 
-  function showRunComplete() {
+  async function showRunComplete() {
+    const code = run?.completion_code || '';
     $('nextTitle').textContent = 'All encounters complete';
+
+    let cfg = { return_url: '', return_label: 'Return to the survey' };
+    try { cfg = await (await fetch('/api/run/config' + keyParamFirst)).json(); } catch {}
+
+    // The completion code is shown whether or not the return link is
+    // configured, so a participant is never stranded without proof they
+    // finished — that is what their payment depends on.
     $('nextBody').innerHTML =
-      `<p>You have finished all ${run ? run.total : 4} conversations. Thank you — ` +
-      `you can close this window and return to the survey.</p>`;
-    $('nextBtn').style.display = 'none';
+      `<p>You have finished all ${run ? run.total : 4} conversations. Thank you.</p>` +
+      (code ? `<p>Your completion code is <b class="code">${esc(code)}</b>` +
+              ` — you will be asked for it in the survey.</p>` : '');
+
+    if (cfg.return_url) {
+      const sep = cfg.return_url.includes('?') ? '&' : '?';
+      const back = `${cfg.return_url}${sep}` + new URLSearchParams({
+        run: run?.run_id || '', code, pid: run?.participant_id || '',
+      });
+      $('nextBtn').textContent = cfg.return_label || 'Return to the survey';
+      $('nextBtn').style.display = 'inline-block';
+      $('nextBtn').onclick = () => { location.href = back; };
+    } else {
+      $('nextBtn').style.display = 'none';
+      $('nextBody').innerHTML += '<p>You can close this window and return to the survey.</p>';
+    }
     $('nextOverlay').style.display = 'flex';
   }
 
@@ -439,7 +503,7 @@
     const r = await fetch(url, { method: 'POST' });
     if (!r.ok) return;
     run = await r.json();
-    if (run.done) { showRunComplete(); return; }
+    if (run.done) { await showRunComplete(); return; }
     $('nextTitle').textContent = `Encounter ${run.position - 1} of ${run.total} complete`;
     $('nextBody').innerHTML =
       `<p>That conversation is finished. Ready for the next one?</p>` +
@@ -1196,9 +1260,32 @@
     } catch (e) {}
   }
 
+  // The fiction acknowledgment is shown in full before the first encounter and
+  // must be accepted; later encounters in the same run get the one-line
+  // reminder on the situation card instead.
+  const ACK_KEY = 'rf_fiction_ack';
+  function needsFictionAck() {
+    const scope = runId || scenario;
+    try { return sessionStorage.getItem(ACK_KEY) !== scope; } catch { return true; }
+  }
+  function markFictionAck() {
+    const scope = runId || scenario;
+    try { sessionStorage.setItem(ACK_KEY, scope); } catch {}
+  }
+
   (async () => {
     // Resolve the run first: it decides which scenario this page is serving.
     await loadRun();
+    if (needsFictionAck()) {
+      $('fictionOverlay').style.display = 'flex';
+      await new Promise(resolve => {
+        $('fictionAck').addEventListener('click', () => {
+          markFictionAck();
+          $('fictionOverlay').style.display = 'none';
+          resolve();
+        }, { once: true });
+      });
+    }
     await loadBrief();
   })();
 </script>

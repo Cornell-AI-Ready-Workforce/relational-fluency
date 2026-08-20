@@ -97,6 +97,41 @@ def create(
     return run
 
 
+def find_for_participant(participant_id: str) -> Optional[dict]:
+    """The participant's existing run, if any.
+
+    Participants close tabs, lose connection, and come back. Handing them a
+    fresh run would restart the sequence and produce a second partial record
+    under the same key, so a returning participant resumes where they were.
+    """
+    if not participant_id or not RUNS_DIR.exists():
+        return None
+    best = None
+    for f in RUNS_DIR.glob("*.json"):
+        try:
+            run = json.loads(f.read_text())
+        except ValueError:
+            continue
+        if run.get("participant_id") != participant_id:
+            continue
+        if best is None or run.get("created_at", 0) > best.get("created_at", 0):
+            best = run
+    return best
+
+
+def completion_code(run: dict) -> str:
+    """Code the participant carries back to the survey as proof of completion.
+
+    Derived from the run id so it can be checked later without a lookup table,
+    and prefixed so a partial run is visibly not a finished one.
+    """
+    import hashlib
+
+    digest = hashlib.sha256(run["run_id"].encode()).hexdigest()[:8].upper()
+    finished = run["index"] >= len(run["scenarios"])
+    return f"RF-{digest}" if finished else f"RF-PARTIAL-{digest}"
+
+
 def get(run_id: str) -> Optional[dict]:
     p = _path(run_id)
     if not p.exists():
@@ -134,6 +169,7 @@ def view(run: dict) -> dict:
     return {
         "run_id": run["run_id"],
         "participant_id": run.get("participant_id"),
+        "completion_code": completion_code(run),
         "position": min(i + 1, total),
         "total": total,
         "current": current,

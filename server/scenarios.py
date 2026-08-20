@@ -107,13 +107,13 @@ def _find_scenario_file(scenario_id: str) -> Path:
     raise FileNotFoundError(f"No scenario: {scenario_id}")
 
 
-def load_scenario(scenario_id: str) -> Scenario:
+def load_scenario(scenario_id: str, participant_key: str = "") -> Scenario:
     # v3 study scenarios are compiled from their spec files; the legacy
     # exploratory YAMLs load directly.
     from .scenarios_v3 import available as _v3_available, compile_scenario
 
     if scenario_id in _v3_available():
-        return compile_scenario(scenario_id)
+        return compile_scenario(scenario_id, participant_key)
 
     path = _find_scenario_file(scenario_id)
     data = yaml.safe_load(path.read_text())

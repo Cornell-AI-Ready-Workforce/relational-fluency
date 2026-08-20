@@ -20,10 +20,9 @@ esci_items:
   compelling_vision: "Leads by articulating a compelling vision"
 
 setup: >-
-  A restructuring decided two levels above you has cut your team's take-home
-  pay, and you cannot reverse it. Your top sellers are angry and your junior
-  does not understand what changed. You are about to run the team meeting
-  where this comes up.
+  You are {name}, interim lead of a three-person sales team. A restructuring
+  decided two levels above you has cut your team's take-home pay and cannot be
+  reversed. Leadership above you will not revisit it.
 
 pre_reading:
   - "Lee — carried last year's enterprise deals; quietest since the plan changed."

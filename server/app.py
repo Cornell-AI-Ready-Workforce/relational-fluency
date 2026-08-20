@@ -106,6 +106,19 @@ if not _PREFLIGHT.get("ok"):
         f"Encounters will fail until this is fixed."
     )
 
+# Participant-facing HTML must never be cached. A stale build is invisible to
+# the participant and looks like a broken feature — and during collection it
+# would mean people running different versions of the instrument.
+@app.middleware("http")
+async def _no_store_html(request, call_next):
+    response = await call_next(request)
+    ctype = response.headers.get("content-type", "")
+    if ctype.startswith("text/html"):
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -154,14 +167,29 @@ async def researcher_page(key: Optional[str] = None):
 
 
 @app.get("/start")
-async def start_run(key: Optional[str] = None, participant_id: Optional[str] = None):
-    """Single entry point for a participant: begins a four-encounter run."""
+async def start_run(
+    key: Optional[str] = None,
+    pid: Optional[str] = None,
+    participant_id: Optional[str] = None,
+    PROLIFIC_PID: Optional[str] = None,
+):
+    """Entry point from Qualtrics.
+
+    Qualtrics passes the participant key through as a query parameter; the exact
+    name varies by how the survey is piped, so the common spellings are all
+    accepted. A returning participant resumes their run rather than starting a
+    second one under the same key.
+    """
     check_key(key)
     from fastapi.responses import RedirectResponse
 
     from . import runs
 
-    run = runs.create(participant_id)
+    pkey = pid or participant_id or PROLIFIC_PID
+    run = runs.find_for_participant(pkey) if pkey else None
+    if run is None:
+        run = runs.create(pkey)
+
     q = f"?run={run['run_id']}"
     if key:
         q += f"&key={key}"
@@ -185,10 +213,11 @@ async def api_scenarios(key: Optional[str] = None):
 
 
 @app.get("/api/scenarios/{scenario_id}")
-async def api_scenario_detail(scenario_id: str, key: Optional[str] = Query(None)):
+async def api_scenario_detail(scenario_id: str, key: Optional[str] = Query(None),
+                              participant_id: Optional[str] = Query(None)):
     check_key(key)
     try:
-        sc = load_scenario(scenario_id)
+        sc = load_scenario(scenario_id, participant_id or "")
     except FileNotFoundError:
         raise HTTPException(404, "scenario not found")
     return {
@@ -433,6 +462,16 @@ async def api_run_create(request: Request, key: Optional[str] = None):
         pass
     run = runs.create(body.get("participant_id"))
     return runs.view(run)
+
+
+@app.get("/api/run/config")
+async def api_run_config(key: Optional[str] = None):
+    """Where a finished participant is sent back to."""
+    check_key(key)
+    return {
+        "return_url": os.getenv("SURVEY_RETURN_URL", "").strip(),
+        "return_label": os.getenv("SURVEY_RETURN_LABEL", "Return to the survey"),
+    }
 
 
 @app.get("/api/run/{run_id}")

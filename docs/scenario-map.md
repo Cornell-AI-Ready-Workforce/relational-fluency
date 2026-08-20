@@ -36,11 +36,11 @@ high/low sample answers from the research note, used as judge anchors.
 | `S2A` | `i1` | `t1_the_opening` | through_discussion, anticipates | probe scored |
 | `S2A` | `i2` | `t2_rung1_no_budget` | multiple_approaches, anticipates |  |
 | `S2A` | `i2` | `t3_rung2_everyone_stretched` | multiple_approaches, self_interest |  |
-| `S2A` | `i2` | `t4_rung3_no_precedent` | behind_scenes, multiple_approaches | scored |
+| `S2A` | `i2` | `t4_rung3_no_precedent` | behind_scenes, key_people, multiple_approaches | scored |
 | `S2B` | `i1` | `t1_the_opening` | through_discussion, anticipates, self_interest | probe scored |
 | `S2B` | `i2` | `t2_rung1_company_wide` | multiple_approaches, anticipates |  |
 | `S2B` | `i2` | `t3_rung2_one_exception` | multiple_approaches, self_interest |  |
-| `S2B` | `i2` | `t4_rung3_director_wont_sign` | behind_scenes, multiple_approaches | scored |
+| `S2B` | `i2` | `t4_rung3_director_wont_sign` | behind_scenes, key_people, multiple_approaches | scored |
 | `S3A` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe scored |
 | `S3A` | `i2` | `t2_jordans_flat_fine` | brings_out_best, inspires | probe scored |
 | `S3A` | `i2` | `t3_caseys_overload` | brings_out_best, builds_pride |  |
@@ -68,6 +68,7 @@ high/low sample answers from the research note, used as judge anchors.
 
 **influence**
 
+- `key_people` — Convinces others by getting support from key people
 - `multiple_approaches` — Convinces others by using multiple approaches
 - `self_interest` — Convinces others by appealing to their self-interest
 - `anticipates` — Anticipates how others will respond when trying to convince them

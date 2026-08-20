@@ -54,7 +54,10 @@ class Session:
         capture_audio: bool = False,
     ):
         self.id = new_session_id()
-        self.scenario: Scenario = load_scenario(scenario_id)
+        # The participant plays an assigned character; passing their key means
+        # the same name is used in the brief, by the actors, and across all four
+        # of their encounters.
+        self.scenario: Scenario = load_scenario(scenario_id, participant_id or "")
         self.personas: Dict[str, Persona] = self.scenario.initial_personas()
         self.model: str = model or self.scenario.model or DEFAULT_MODEL
 

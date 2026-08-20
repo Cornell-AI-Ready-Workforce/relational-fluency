@@ -20,10 +20,9 @@ esci_items:
   bring_into_open: "Resolves conflict by bringing it into the open"
 
 setup: >-
-  At 1 a.m. last night your peer Drew sent a blunt message criticising your
-  handoff, copying two teammates. The handoff problem they raised may be fair;
-  the way they raised it was not. Your teammate Mel has just pinged you about
-  it.
+  You are {name}, a {role} at {org}. Late last night your colleague Drew sent
+  a blunt message criticising your handoff, copying two teammates. The handoff
+  point may be fair; the way it was raised was not.
 
 agents:
   mel:

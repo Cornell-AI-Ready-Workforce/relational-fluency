@@ -12,6 +12,7 @@ skill_measured: >-
   appealing to others' interests.
 
 esci_items:
+  key_people: "Convinces others by getting support from key people"
   multiple_approaches: "Convinces others by using multiple approaches"
   self_interest: "Convinces others by appealing to their self-interest"
   anticipates: "Anticipates how others will respond when trying to convince them"
@@ -19,9 +20,10 @@ esci_items:
   through_discussion: "Convinces others through discussion"
 
 setup: >-
-  Two cycles ago your manager Morgan promised you a raise. It never
-  materialised, your scope has grown since, and you now hold a written offer
-  elsewhere at meaningfully higher pay. You asked Morgan for this meeting.
+  You are {name}. You were promised a raise that never came while your
+  workload grew. You now hold a written competing offer at higher pay. A peer
+  was kept last quarter with an off-cycle raise. You are meeting your manager,
+  Morgan.
 
 # Facts the participant can deploy. The last ladder rung is contradicted by the
 # precedent — the scenario is winnable, but only by using it.
@@ -101,7 +103,7 @@ interactions:
         esci: [multiple_approaches, self_interest]
       - id: t4_rung3_no_precedent
         cue: "'I can't set a precedent.' — contradicted by Alex's off-cycle adjustment"
-        esci: [behind_scenes, multiple_approaches]
+        esci: [behind_scenes, key_people, multiple_approaches]
         scores:
           high:
             answer: "When Alex got the off-cycle adjustment it didn't open floodgates. Could we frame mine the same way — with a date attached?"

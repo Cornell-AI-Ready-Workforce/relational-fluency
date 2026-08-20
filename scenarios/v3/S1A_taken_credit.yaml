@@ -20,10 +20,9 @@ esci_items:
 
 # At most 2–3 sentences. Everything else arrives in-scene through the agents.
 setup: >-
-  You are an analyst. For the third time, your peer Sam has presented your
-  analysis to leadership as their own — you asked them to stop after the first
-  time, politely, and it keeps happening. Your colleague Riley has just
-  cornered you about it.
+  You are {name}, a {role} at {org}. Over the past two months your colleague
+  Sam has twice presented your analysis in leadership meetings as his own
+  work. You asked him privately to credit you; it happened again last week.
 
 agents:
   riley:

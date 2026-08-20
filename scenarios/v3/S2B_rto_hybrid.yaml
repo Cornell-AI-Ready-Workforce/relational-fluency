@@ -12,6 +12,7 @@ skill_measured: >-
   appealing to others' interests.
 
 esci_items:
+  key_people: "Convinces others by getting support from key people"
   multiple_approaches: "Convinces others by using multiple approaches"
   self_interest: "Convinces others by appealing to their self-interest"
   anticipates: "Anticipates how others will respond when trying to convince them"
@@ -19,9 +20,10 @@ esci_items:
   through_discussion: "Convinces others through discussion"
 
 setup: >-
-  A return-to-office mandate has just landed. You have been working two remote
-  days a week and your output on them is the team's strongest. You asked your
-  manager Sasha for this meeting to make the case for keeping them.
+  You are {name}. A return-to-office mandate has just landed and you want to
+  keep your two remote days, on which your output is the team's strongest.
+  Rivera's team kept hybrid by making a productivity case. You are meeting
+  your manager, Sasha.
 
 assets:
   - "Your performance record across the remote days"
@@ -95,7 +97,7 @@ interactions:
         esci: [multiple_approaches, self_interest]
       - id: t4_rung3_director_wont_sign
         cue: "'The director will never sign off.' — contradicted by Rivera's team"
-        esci: [behind_scenes, multiple_approaches]
+        esci: [behind_scenes, key_people, multiple_approaches]
         scores:
           high:
             answer: "Run it as a 90-day trial with the same metrics Rivera's team used — you'd take the director data, not an exception."
