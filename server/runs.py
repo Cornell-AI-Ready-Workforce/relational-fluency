@@ -53,6 +53,8 @@ def create(
     variants: Optional[Dict[str, str]] = None,
     seed: Optional[int] = None,
     variant: Optional[str] = None,
+    qualtrics_id: Optional[str] = None,
+    cohort: str = "study",
 ) -> dict:
     """Assign four encounters, one per construct, in counterbalanced order.
 
@@ -92,6 +94,11 @@ def create(
     run = {
         "run_id": uuid.uuid4().hex[:12],
         "participant_id": participant_id,
+        # The join keys for analysis. qualtrics_id ties this run to one survey
+        # response; cohort separates internal test traffic from study data so a
+        # bug-hunting session can never contaminate the dataset.
+        "qualtrics_id": qualtrics_id,
+        "cohort": cohort,
         "created_at": time.time(),
         "scenarios": scenarios,
         "index": 0,
@@ -175,6 +182,8 @@ def view(run: dict) -> dict:
     return {
         "run_id": run["run_id"],
         "participant_id": run.get("participant_id"),
+        "qualtrics_id": run.get("qualtrics_id"),
+        "cohort": run.get("cohort", "study"),
         "completion_code": completion_code(run),
         "position": min(i + 1, total),
         "total": total,

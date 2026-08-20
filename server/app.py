@@ -184,6 +184,61 @@ async def researcher_page(key: Optional[str] = None):
     return (STATIC_DIR / "researcher.html").read_text()
 
 
+@app.get("/test")
+async def start_test_run(
+    name: Optional[str] = None,
+    variant: Optional[str] = None,
+):
+    """Internal testing entry. Tags the run cohort=internal so test traffic can
+    never be mistaken for study data, and needs no Qualtrics setup: pass a name
+    so bug reports can say whose session it was."""
+    from fastapi.responses import RedirectResponse
+
+    from . import runs
+
+    tester = (name or "anon").strip().replace(" ", "_")[:24]
+    run = runs.create(
+        f"test_{tester}_{int(time.time())}",
+        variant=variant, cohort="internal",
+    )
+    return RedirectResponse(url=f"/v2?run={run['run_id']}", status_code=307)
+
+
+@app.get("/api/runs")
+async def api_runs_export(key: Optional[str] = None, cohort: Optional[str] = None):
+    """The join table for analysis: every run with its participant key,
+    Qualtrics response id, cohort, completion code, and the session ids of the
+    encounters it produced."""
+    check_key(key)
+    from . import runs as runs_mod
+    from .runs import RUNS_DIR, completion_code
+
+    out = []
+    if RUNS_DIR.exists():
+        for f in sorted(RUNS_DIR.glob("*.json")):
+            try:
+                run = json.loads(f.read_text())
+            except ValueError:
+                continue
+            if cohort and run.get("cohort", "study") != cohort:
+                continue
+            out.append({
+                "run_id": run["run_id"],
+                "participant_id": run.get("participant_id"),
+                "qualtrics_id": run.get("qualtrics_id"),
+                "cohort": run.get("cohort", "study"),
+                "created_at": run.get("created_at"),
+                "finished": run.get("index", 0) >= len(run.get("scenarios", [])),
+                "completion_code": completion_code(run),
+                "encounters": [
+                    {"scenario": c.get("id"), "session_id": c.get("session_id")}
+                    for c in run.get("completed", [])
+                ],
+                "assigned": [sc.get("id") for sc in run.get("scenarios", [])],
+            })
+    return out
+
+
 @app.get("/start")
 async def start_run(
     key: Optional[str] = None,
@@ -191,6 +246,8 @@ async def start_run(
     participant_id: Optional[str] = None,
     PROLIFIC_PID: Optional[str] = None,
     variant: Optional[str] = None,
+    qid: Optional[str] = None,
+    cohort: Optional[str] = None,
 ):
     """Entry point from Qualtrics.
 
@@ -207,7 +264,14 @@ async def start_run(
     pkey = pid or participant_id or PROLIFIC_PID
     run = runs.find_for_participant(pkey) if pkey else None
     if run is None:
-        run = runs.create(pkey, variant=variant)
+        run = runs.create(
+            pkey, variant=variant, qualtrics_id=qid,
+            cohort=(cohort or "study"),
+        )
+    elif qid and not run.get("qualtrics_id"):
+        # A returning participant may arrive with the qid we did not have yet.
+        run["qualtrics_id"] = qid
+        runs.save(run)
 
     q = f"?run={run['run_id']}"
     if key:

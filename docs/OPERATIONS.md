@@ -210,6 +210,45 @@ old task is gone**. Pull first.
 
 ---
 
+## The two URLs
+
+### 1. Internal testing (bug hunting)
+
+```
+https://rf.ai-ready-workforce.ai.cornell.edu/test?name=jennie&variant=A
+```
+
+- `name` labels the run so a bug report can say whose session it was.
+- `variant=A` or `variant=B` pins all four scenarios to one form; omit for the
+  randomized mix.
+- These runs are tagged `cohort=internal` and are excluded from study data by
+  that tag; they can never be mistaken for a participant.
+
+### 2. The study URL (Qualtrics → app → Qualtrics)
+
+Full linkage: CloudResearch key ties recruitment to the survey, the Qualtrics
+response id ties the survey response to the app run, and the completion code
+carried back ties the run to the follow-up survey.
+
+```
+https://rf.ai-ready-workforce.ai.cornell.edu/start?pid=${e://Field/ParticipantKey}&qid=${e://Field/ResponseID}
+```
+
+`ResponseID` is built into Qualtrics (pipe it via embedded data); `qid` is
+stored on the run, so each run knows exactly which survey response preceded it.
+
+### Joining the data afterwards
+
+```bash
+curl -s "$RF/api/runs?key=$KEY" | python3 -m json.tool
+```
+
+One row per run: `participant_id` (CloudResearch key), `qualtrics_id`,
+`cohort`, `completion_code`, whether it finished, and the `session_id` of every
+encounter it produced, which is the key into the encounter records, audio, and
+transcripts. Filter test traffic out with `?cohort=study`, or inspect only test
+runs with `?cohort=internal`.
+
 ## The participant URL (Qualtrics → app → Qualtrics)
 
 **Put this in Qualtrics**, at the point where participants move from the WEIP
