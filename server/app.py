@@ -28,7 +28,6 @@ from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from .engine import DEFAULT_MODEL
@@ -68,8 +67,20 @@ app = FastAPI(title="Relational Fluency Platform")
 # Behind the ALB, honour X-Forwarded-Proto so generated URLs are https/wss.
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
+# Host-header allowlist. Implemented directly rather than with
+# TrustedHostMiddleware because the ALB health check addresses the task by its
+# private IP, which can never be in the allowlist — TrustedHostMiddleware would
+# answer 400 and the target would be marked unhealthy forever. /health is
+# therefore exempt; it exposes nothing.
 if ALLOWED_HOSTS:
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+
+    @app.middleware("http")
+    async def _guard_host(request, call_next):
+        if request.url.path != "/health":
+            host = (request.headers.get("host") or "").split(":")[0]
+            if host and host not in ALLOWED_HOSTS:
+                return JSONResponse({"detail": "Invalid host header"}, status_code=400)
+        return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,
