@@ -51,7 +51,7 @@ def provenance() -> dict:
     """Recorded with each session so the record shows what served it."""
     return {
         "gateway": gateway_base_url(),
-        "text_model": _cfg("CLAUDE_MODEL", "nto.gemini-2.5-flash"),
+        "text_model": _cfg("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite"),
         "realtime_model": _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash"),
     }
 

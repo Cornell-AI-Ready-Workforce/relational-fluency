@@ -19,7 +19,7 @@ from .scenarios import Agent, Scenario
 
 # Routing is high-frequency and benefits from speed > deliberation. Haiku is
 # fine; can be overridden via env if you want to A/B against Sonnet.
-DIRECTOR_MODEL = os.getenv("DIRECTOR_MODEL", "nto.gemini-2.5-flash")
+DIRECTOR_MODEL = os.getenv("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite")
 DIRECTOR_MAX_SPEAKERS = 3
 
 
