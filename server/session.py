@@ -19,6 +19,8 @@ from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 from anthropic import AsyncAnthropic
 
+from .llm import text_client
+
 from .director import Director
 from .engine import AgentEngine, DEFAULT_MODEL
 from .persona import Persona
@@ -56,7 +58,7 @@ class Session:
         self.personas: Dict[str, Persona] = self.scenario.initial_personas()
         self.model: str = model or self.scenario.model or DEFAULT_MODEL
 
-        client = AsyncAnthropic()
+        client = text_client()
         self.engines: Dict[str, AgentEngine] = {
             a.id: AgentEngine(
                 a, self.scenario, self.personas[a.id], client=client, model=self.model

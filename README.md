@@ -103,9 +103,21 @@ HTTPS. Chrome or Safari.
   time, in order. The actor calls `end_conversation` when its segment reaches a
   natural close, and the runner re-briefs the live session as the next
   character with a different voice.
-- **Logs** — `logs/{session_id}.jsonl` records every turn, latency, knob change,
-  and steering note. Session artifacts (participant WAV, per-agent WAVs,
-  transcript, manifest) land under `data/sessions/{session_id}/`.
+- **The encounter record** — every session writes to
+  `data/sessions/{session_id}/`:
+
+  | File | What it holds |
+  |---|---|
+  | `record.json` | the aligned record: transcript with participant and agent turns in order, each agent turn paired with the stage direction that shaped it, plus provenance (gateway + models), audio/video pointers, and counts |
+  | `events.jsonl` | raw append-only trail — every turn, latency, knob change, director route, and stage direction |
+  | `user_audio.wav` | participant channel |
+  | `assistant_audio*.wav` | agent channel, one per character |
+  | `manifest.json` | session metadata and durations |
+
+  `record.json` is the analysis-facing view, built from `events.jsonl` at close;
+  raters, the scorer, and Phase-3 training read it rather than replaying events.
+  A turn with `stage_direction: null` ran unsteered — distinguishable from a
+  direction that went unrecorded.
 
 ## Scoring
 

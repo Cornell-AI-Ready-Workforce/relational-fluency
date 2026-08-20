@@ -264,6 +264,12 @@ class SessionStore:
         except Exception:
             pass
         self._write_manifest(status="closed", ended_at=ended_at, n_turns=n_turns)
+        # Build the analysis-facing aligned record alongside the raw event log.
+        try:
+            from .encounter_record import write as write_record
+            write_record(self.dir)
+        except Exception:  # noqa: BLE001 — never fail a session close on this
+            pass
         with _db() as conn:
             conn.execute(
                 """UPDATE sessions

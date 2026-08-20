@@ -16,10 +16,12 @@ Turn-taking lives here because the gateway does not expose Gemini's native VAD
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from typing import TYPE_CHECKING, List, Optional
 
 from .director import Director
+from .llm import provenance
 from .voice.realtime import RealtimeVoiceSession, SilenceDetector
 
 if TYPE_CHECKING:
@@ -77,6 +79,8 @@ class RealtimeVoiceSessionRunner:
         )
         self._response_done = asyncio.Event()
         self._last_user_text = ""
+        self._turn_index = 0
+        self._pending_direction: Optional[dict] = None
         self._floor = asyncio.Lock()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -92,6 +96,12 @@ class RealtimeVoiceSessionRunner:
             "markdown, or stage directions."
         )
         return base + voice_rules
+
+    def _interaction_id(self) -> str:
+        interactions = getattr(self.session.scenario, "interactions", None)
+        if interactions and self.segment < len(interactions):
+            return interactions[self.segment].get("id", f"i{self.segment + 1}")
+        return f"i{self.segment + 1}"
 
     def _voice(self) -> str:
         explicit = getattr(self.agent, "realtime_voice", None)
@@ -125,7 +135,11 @@ class RealtimeVoiceSessionRunner:
             tools=[END_SEGMENT_TOOL],
         )
         await self.rt.connect()
-        self.session.store.event("realtime_session_started", model=self.rt.model)
+        # Record what served this encounter — the audit trail has to say which
+        # gateway and which models produced the data.
+        self.session.store.event(
+            "realtime_session_started", model=self.rt.model, **provenance()
+        )
         try:
             await asyncio.gather(self._client_to_model(), self._model_to_client())
         finally:
@@ -228,6 +242,20 @@ class RealtimeVoiceSessionRunner:
                         "text": text,
                     })
                 if text:
+                    self._turn_index += 1
+                    # One aligned entry per exchange: the direction that shaped
+                    # the reply, and the reply itself.
+                    self.session.store.event(
+                        "steering_pair",
+                        direction=self._pending_direction,
+                        actor={
+                            "agent_id": self.agent_id,
+                            "text": text,
+                            "voice": getattr(self.rt, "voice", None),
+                        },
+                        participant=self._last_user_text,
+                    )
+                    self._pending_direction = None
                     latency = (
                         round(time.time() - self._turn_started_at, 3)
                         if self._turn_started_at else None
@@ -265,6 +293,22 @@ class RealtimeVoiceSessionRunner:
         if intent:
             instructions += f"\n\nDIRECTOR NOTE (follow precisely, never mention): {intent}"
         await self.rt.update_instructions(instructions)
+
+        # The steering log is part of the study record: what the director told
+        # this actor, verbatim, before it spoke. Logged even when there is no
+        # direction, so an unsteered turn is distinguishable from a lost one.
+        self._pending_direction = {
+            "turn": self._turn_index,
+            "segment": self.segment,
+            "interaction": self._interaction_id(),
+            "agent_id": agent.id,
+            "agent_name": agent.name,
+            "voice": self.rt.voice,
+            "stage_direction": intent,
+            "instructions_sha256": hashlib.sha256(instructions.encode()).hexdigest()[:16],
+            "director_model": provenance()["text_model"],
+        }
+        self.session.store.event("stage_direction", **self._pending_direction)
 
         # Wait for the previous character to finish before taking the floor —
         # the gateway allows only one active response per conversation, and a
