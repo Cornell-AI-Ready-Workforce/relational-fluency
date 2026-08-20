@@ -135,6 +135,14 @@
   .tile .talk-btn:hover { filter: brightness(1.08); }
   .tile .talk-btn[disabled] { opacity: .6; cursor: default; }
   #sceneNow { font-size: 12px; color: var(--muted); margin-left: 8px; }
+  .run-chip { display:inline-block; margin-left:10px; font-size:12px; font-weight:600;
+    color:#fff; background:var(--accent); border-radius:999px; padding:2px 10px;
+    vertical-align:middle; }
+  #nextBody .run-steps { list-style:none; padding:0; margin:12px 0 0; }
+  #nextBody .run-steps li { padding:6px 0; border-top:1px solid #eee; font-size:14px; }
+  #nextBody .run-steps li.done { color:#2f7d4f; }
+  #nextBody .run-steps li.now { font-weight:700; }
+  #nextBody .run-steps li.todo { color:#9a9a97; }
   .transcript .speaker { font-weight: 600; color: var(--accent); }
   .transcript .speaker.self { color: var(--fg); }
   .transcript .meta { font-size: 11px; color: var(--muted); margin-left: 6px; }
@@ -321,9 +329,17 @@
   </div>
 </div>
 
+<div class="consent-overlay" id="nextOverlay" style="display:none">
+  <div class="consent-card">
+    <h2 id="nextTitle">Encounter complete</h2>
+    <div class="body" id="nextBody"></div>
+    <div class="actions"><button id="nextBtn">Continue</button></div>
+  </div>
+</div>
+
 <header>
   <div>
-    <div class="title" id="title">Loading…</div>
+    <div class="title" id="title">Loading…<span id="runChip" class="run-chip" style="display:none"></span></div>
     <div class="meta" id="sid"></div>
   </div>
   <div class="controls" id="controls">
@@ -373,7 +389,72 @@
 
 <script>
   const params = new URLSearchParams(location.search);
-  const scenario = params.get('scenario') || 'missed_deadlines';
+  // A run serves four encounters from one URL: ?run=<id> resolves to whichever
+  // encounter the participant is on, so a refresh or a rejoin lands correctly.
+  const runId = params.get('run');
+  let run = null;
+  let scenario = params.get('scenario') || 'missed_deadlines';
+
+  async function loadRun() {
+    if (!runId) return;
+    const r = await fetch(`/api/run/${encodeURIComponent(runId)}` + keyParamFirst);
+    if (!r.ok) return;
+    run = await r.json();
+    if (run.done) { showRunComplete(); return; }
+    scenario = run.current.id;
+    const chip = $('runChip');
+    chip.textContent = `Encounter ${run.position} of ${run.total}`;
+    chip.style.display = 'inline-block';
+  }
+
+  function runStepsHtml(activeIndexOffset = 0) {
+    if (!run) return '';
+    const done = new Set(run.completed || []);
+    const items = [];
+    // Only the current and completed encounters are named; naming the ones
+    // still to come would preview scenarios the participant has not met.
+    for (let i = 0; i < run.total; i++) {
+      const pos = i + 1;
+      if (pos < run.position + activeIndexOffset) items.push(`<li class="done">${pos}. Completed</li>`);
+      else if (pos === run.position + activeIndexOffset) items.push(`<li class="now">${pos}. Up next</li>`);
+      else items.push(`<li class="todo">${pos}. To come</li>`);
+    }
+    return `<ul class="run-steps">${items.join('')}</ul>`;
+  }
+
+  function showRunComplete() {
+    $('nextTitle').textContent = 'All encounters complete';
+    $('nextBody').innerHTML =
+      `<p>You have finished all ${run ? run.total : 4} conversations. Thank you — ` +
+      `you can close this window and return to the survey.</p>`;
+    $('nextBtn').style.display = 'none';
+    $('nextOverlay').style.display = 'flex';
+  }
+
+  async function onEncounterComplete() {
+    if (!runId) return;   // single-scenario link: nothing to advance to
+    const sid = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
+    const url = `/api/run/${encodeURIComponent(runId)}/advance${sid}` +
+                (sid ? keyParam : keyParamFirst);
+    const r = await fetch(url, { method: 'POST' });
+    if (!r.ok) return;
+    run = await r.json();
+    if (run.done) { showRunComplete(); return; }
+    $('nextTitle').textContent = `Encounter ${run.position - 1} of ${run.total} complete`;
+    $('nextBody').innerHTML =
+      `<p>That conversation is finished. Ready for the next one?</p>` +
+      runStepsHtml(0);
+    $('nextBtn').textContent = `Start encounter ${run.position} of ${run.total}`;
+    $('nextBtn').style.display = 'inline-block';
+    $('nextBtn').onclick = () => {
+      // Reload into the next encounter: a fresh page gives a clean audio
+      // context and session rather than reusing one mid-run.
+      const qs = new URLSearchParams({ run: runId });
+      if (key) qs.set('key', key);
+      location.href = `/v2?${qs}`;
+    };
+    $('nextOverlay').style.display = 'flex';
+  }
   const launchId = params.get('launch') || '';   // researcher-configured launch
   const launchParam = launchId ? `&launch=${encodeURIComponent(launchId)}` : '';
   const key = params.get('key') || '';
@@ -916,6 +997,7 @@
           el.textContent = 'Encounter complete — thank you.';
           $('transcript').appendChild(el);
           $('sceneNow').textContent = 'Encounter complete';
+          onEncounterComplete();
         } else if (m.type === 'silence') {
           finalizeUserCaption();
           assistantSpeaking = false;
@@ -1115,6 +1197,8 @@
   }
 
   (async () => {
+    // Resolve the run first: it decides which scenario this page is serving.
+    await loadRun();
     await loadBrief();
   })();
 </script>

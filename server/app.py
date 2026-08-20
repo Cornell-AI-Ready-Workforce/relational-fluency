@@ -153,6 +153,21 @@ async def researcher_page(key: Optional[str] = None):
     return (STATIC_DIR / "researcher.html").read_text()
 
 
+@app.get("/start")
+async def start_run(key: Optional[str] = None, participant_id: Optional[str] = None):
+    """Single entry point for a participant: begins a four-encounter run."""
+    check_key(key)
+    from fastapi.responses import RedirectResponse
+
+    from . import runs
+
+    run = runs.create(participant_id)
+    q = f"?run={run['run_id']}"
+    if key:
+        q += f"&key={key}"
+    return RedirectResponse(url=f"/v2{q}", status_code=307)
+
+
 @app.get("/v2", response_class=HTMLResponse)
 async def v2_page(scenario: Optional[str] = None, key: Optional[str] = None):
     """Zoom-like multi-agent voice UI. Works for both single-agent and group
@@ -403,6 +418,45 @@ async def api_post_consent(payload: dict, key: Optional[str] = Query(None)):
     version = _load_consent().get("version", "unknown")
     pid = create_participant(code=code, consent_given=True, consent_version=version)
     return {"participant_id": pid, "consent_text_version": version}
+
+
+@app.post("/api/run")
+async def api_run_create(request: Request, key: Optional[str] = None):
+    """Start a run: four encounters, one per construct, counterbalanced."""
+    check_key(key)
+    from . import runs
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — empty body is fine
+        pass
+    run = runs.create(body.get("participant_id"))
+    return runs.view(run)
+
+
+@app.get("/api/run/{run_id}")
+async def api_run_get(run_id: str, key: Optional[str] = None):
+    check_key(key)
+    from . import runs
+
+    run = runs.get(run_id)
+    if run is None:
+        raise HTTPException(404, "no such run")
+    return runs.view(run)
+
+
+@app.post("/api/run/{run_id}/advance")
+async def api_run_advance(run_id: str, session_id: Optional[str] = None,
+                          key: Optional[str] = None):
+    """Mark the current encounter complete and move to the next."""
+    check_key(key)
+    from . import runs
+
+    run = runs.advance(run_id, session_id)
+    if run is None:
+        raise HTTPException(404, "no such run")
+    return runs.view(run)
 
 
 @app.get("/director", response_class=HTMLResponse)
