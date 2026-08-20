@@ -79,7 +79,7 @@ cp .env.example .env   # fill in API keys
 python -m server.app
 ```
 
-Open:
+Open (to be updated):
 
 - Participant, Zoom-style multi-agent: <http://127.0.0.1:8765/v2?scenario=hidden_profile_vendor>
 - Participant, single-agent text: <http://127.0.0.1:8765/?scenario=missed_deadlines>
