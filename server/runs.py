@@ -52,6 +52,7 @@ def create(
     *,
     variants: Optional[Dict[str, str]] = None,
     seed: Optional[int] = None,
+    variant: Optional[str] = None,
 ) -> dict:
     """Assign four encounters, one per construct, in counterbalanced order.
 
@@ -71,6 +72,11 @@ def create(
         options = pool[construct]
         if variants and construct in variants:
             sid = variants[construct]
+        elif variant:
+            # Pin every construct to one form. Useful for piloting a single set
+            # rather than a random mix across participants.
+            wanted = [o for o in options if load_spec(o)["variant"].upper() == variant.upper()]
+            sid = wanted[0] if wanted else rng.choice(options)
         else:
             sid = rng.choice(options)
         chosen[construct] = sid

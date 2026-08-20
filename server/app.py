@@ -190,6 +190,7 @@ async def start_run(
     pid: Optional[str] = None,
     participant_id: Optional[str] = None,
     PROLIFIC_PID: Optional[str] = None,
+    variant: Optional[str] = None,
 ):
     """Entry point from Qualtrics.
 
@@ -206,7 +207,7 @@ async def start_run(
     pkey = pid or participant_id or PROLIFIC_PID
     run = runs.find_for_participant(pkey) if pkey else None
     if run is None:
-        run = runs.create(pkey)
+        run = runs.create(pkey, variant=variant)
 
     q = f"?run={run['run_id']}"
     if key:
