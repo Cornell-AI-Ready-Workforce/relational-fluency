@@ -78,6 +78,15 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
         "- This is a live spoken conversation. One to three sentences per turn.",
         "- Never read out stage directions, JSON, or anything meta.",
         "- Stay in character. Do not summarise or coach the participant.",
+        "",
+        "## Keep the scene alive",
+        "- This conversation runs for several minutes. Do not wrap it up early,",
+        "  and never end it yourself unless told to.",
+        "- Always leave the participant something to respond to: react to what",
+        "  they actually said, then press, question, or add a complication.",
+        "- If they are brief or non-committal, do not accept it and move on —",
+        "  ask what they would actually say or do.",
+        "- Do not resolve the situation for them, and do not agree too quickly.",
     ]
     return "\n".join(parts)
 
@@ -118,7 +127,41 @@ def compile_scenario(scenario_id: str) -> Scenario:
     scenario.construct = spec["construct"]           # type: ignore[attr-defined]
     scenario.variant = spec["variant"]               # type: ignore[attr-defined]
     scenario.parallel_form = spec.get("parallel_form")  # type: ignore[attr-defined]
+    scenario.briefing = _briefing(spec)                 # type: ignore[attr-defined]
     return scenario
+
+
+def _briefing(spec: dict) -> dict:
+    """Orientation shown before the encounter starts.
+
+    The research note keeps the *situation* to a few sentences on purpose —
+    context is meant to land in-scene, through the opening agent's first turns.
+    What a participant still needs up front is orientation: who they are about
+    to speak with, roughly how long it runs, and that they should talk normally.
+    That is not briefing away the scenario; it is removing confusion that would
+    otherwise be measured as hesitation.
+    """
+    interactions = spec.get("interactions", [])
+    people = [
+        {"name": a["name"], "role": a.get("role", "")}
+        for a in spec["agents"].values()
+    ]
+    return {
+        "situation": spec.get("setup", "").strip(),
+        "people": people,
+        "parts": [
+            {"label": i.get("label", ""), "mode": i["mode"],
+             "with": [spec["agents"][w]["name"] for w in
+                      ([i["agent"]] if isinstance(i.get("agent"), str) else i.get("agents", []))]}
+            for i in interactions
+        ],
+        "duration": spec.get("duration_minutes", [7, 12]),
+        "howto": [
+            "Talk out loud, as you would at work. The other person hears you and replies.",
+            "There are no right answers — say what you would actually say.",
+            "The scene moves on by itself; you do not need to end it.",
+        ],
+    }
 
 
 def _director_prompt(spec: dict) -> str:

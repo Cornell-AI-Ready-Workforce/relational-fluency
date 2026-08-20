@@ -95,6 +95,7 @@ class RealtimeVoiceSessionRunner:
         self._fired: List[str] = []
         self._last_activity = time.time()
         self._turns_this_interaction = 0
+        self._interaction_started_at = time.time()
         self._finalizing = False
         self._switching = False
         self._floor = asyncio.Lock()
@@ -197,6 +198,7 @@ class RealtimeVoiceSessionRunner:
         if self._interaction_mode() == "one_to_one_series" and self._series_idx + 1 < len(agents):
             self._series_idx += 1
             self._turns_this_interaction = 0
+            self._interaction_started_at = time.time()
             await self._enter(agents[self._series_idx], new_interaction=False)
             return True
 
@@ -207,6 +209,7 @@ class RealtimeVoiceSessionRunner:
         self._series_idx = 0
         self._trigger_idx = 0
         self._turns_this_interaction = 0
+        self._interaction_started_at = time.time()
         await self._enter(self._resolve_agents()[0], new_interaction=True)
         return True
 
@@ -438,9 +441,26 @@ class RealtimeVoiceSessionRunner:
         """
         if self._next_trigger() is not None:
             return  # beats remain in this interaction
-        grace = int(os.getenv("INTERACTION_GRACE_TURNS", "2"))
-        if self._turns_this_interaction < len(self._triggers()) + grace:
+
+        # An encounter is meant to run 7-12 minutes across its interactions, so
+        # firing the last planted trigger is a floor, not a finish line. Hold
+        # the scene open until it has had both enough turns and enough time —
+        # otherwise a scenario with one planted beat ends after three exchanges
+        # and there is nothing for a rater to score.
+        min_turns = int(os.getenv("INTERACTION_MIN_TURNS", "8"))
+        min_seconds = float(os.getenv("INTERACTION_MIN_SECONDS", "180"))
+        elapsed = time.time() - self._interaction_started_at
+        if self._turns_this_interaction < max(min_turns, len(self._triggers()) + 2):
             return
+        if elapsed < min_seconds:
+            return
+
+        self.session.store.event(
+            "interaction_complete",
+            interaction=self._interaction_id(),
+            turns=self._turns_this_interaction,
+            seconds=round(elapsed, 1),
+        )
         self._turns_this_interaction = 0
         if not await self._advance_segment():
             await self._send({"type": "encounter_complete"})

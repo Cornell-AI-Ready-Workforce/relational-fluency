@@ -180,6 +180,7 @@ async def api_scenario_detail(scenario_id: str, key: Optional[str] = Query(None)
         "id": sc.id,
         "title": sc.title,
         "intro": sc.intro,
+        "briefing": getattr(sc, "briefing", None),
         "skill": sc.skill,
         "mode": sc.mode,
         "model": sc.model or DEFAULT_MODEL,  # effective default for the pre-start picker
