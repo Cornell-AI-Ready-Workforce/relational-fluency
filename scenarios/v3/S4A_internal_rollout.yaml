@@ -22,7 +22,7 @@ esci_items:
   encourages_participation: "Works well in teams by encouraging participation of everyone present"
 
 setup: >-
-  You are {name}, part of a four-person group planning the rollout of a new
+  You are part of a four-person group planning the rollout of a new
   internal process. The session is already underway.
 
 agents:

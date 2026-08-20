@@ -13,8 +13,8 @@ Regenerate with `python tools/gen_scenario_map.py`.
 | `S2B` | influence | B | `S2A` | Sasha | **1:1** — Making the case (Sasha) | **1:1** — The deflection ladder (Sasha) |
 | `S3A` | inspirational leadership | A | `S3B` | Alex, Jordan, Casey | **group** — Team meeting (Alex + Jordan + Casey) | **1:1 series** — Brief one-on-ones (Jordan + Casey) |
 | `S3B` | inspirational leadership | B | `S3A` | Toni, Lee, Ari | **group** — Team meeting (Toni + Lee + Ari) | **1:1 series** — Brief one-on-ones (Lee + Ari) |
-| `S4A` | teamwork | A | `S4B` | Dan, Priya, Chris | **group** — Working session (Dan + Priya + Chris) | **group** — The close — who owns what (Dan + Priya + Chris) |
-| `S4B` | teamwork | B | `S4A` | Dan, Priya, Chris | **group** — Working session (Dan + Priya + Chris) | **group** — The close — speaking roles & credit (Dan + Priya + Chris) |
+| `S4A` | teamwork | A | `S4B` | Dan, Priya, Chris | **group** — Working session (Dan + Priya + Chris) | **group** — The close, who owns what (Dan + Priya + Chris) |
+| `S4B` | teamwork | B | `S4A` | Dan, Priya, Chris | **group** — Working session (Dan + Priya + Chris) | **group** — The close, speaking roles & credit (Dan + Priya + Chris) |
 
 ## Planted triggers → ESCI items
 

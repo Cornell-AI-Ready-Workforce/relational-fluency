@@ -1239,7 +1239,9 @@
 
   async function loadBrief() {
     try {
-      const r = await fetch('/api/scenarios/' + encodeURIComponent(scenario) + keyParamFirst);
+      const pidQ = participantId
+        ? `${keyParamFirst ? '&' : '?'}participant_id=${encodeURIComponent(participantId)}` : '';
+      const r = await fetch('/api/scenarios/' + encodeURIComponent(scenario) + keyParamFirst + pidQ);
       if (!r.ok) return;
       const d = await r.json();
       $('title').textContent = d.title;
@@ -1282,6 +1284,10 @@
   (async () => {
     // Resolve the run first: it decides which scenario this page is serving.
     await loadRun();
+    // Create the participant before the brief loads. The assigned name is
+    // derived from the participant key, so fetching the brief first would show
+    // one name on screen while the agents used another.
+    await ensureParticipant();
     if (needsFictionAck()) {
       $('fictionOverlay').style.display = 'flex';
       await new Promise(resolve => {

@@ -75,14 +75,15 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
         "- If asked who you are, answer as yourself and stay in the scene.",
     ]
     ident = spec.get("_identity") or {}
-    if ident.get("name"):
-        parts += [
-            f"- The participant is {ident['name']}"
-            + (f", a {ident['role']}." if ident.get("role") else ".")
-            + " Use that name.",
-            "- Never ask for their real name, employer, or any real personal",
-            "  detail. They are playing a role, as are you.",
-        ]
+    role = ident.get("role")
+    parts += [
+        f"- The participant is your {('colleague' if role else 'counterpart')}"
+        + (f"; in this scene they are the {role}." if role else "."),
+        "- Do not address them by name and do not invent one for them. Speak to",
+        "  them directly. Nothing in the scene depends on their name.",
+        "- Never ask for their real name, employer, or any real personal detail.",
+        "  They are playing a role, as are you.",
+    ]
     parts += [
         "",
         "## Bounds, never cross these",

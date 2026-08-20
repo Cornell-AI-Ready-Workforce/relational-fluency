@@ -20,7 +20,7 @@ esci_items:
   through_discussion: "Convinces others through discussion"
 
 setup: >-
-  You are {name}. A return-to-office mandate has just landed and you want to
+  You are a {role} at {org}. A return-to-office mandate has just landed and you want to
   keep your two remote days, on which your output is the team's strongest.
   Rivera's team kept hybrid by making a productivity case. You are meeting
   your manager, Sasha.

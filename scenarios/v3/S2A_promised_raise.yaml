@@ -20,7 +20,7 @@ esci_items:
   through_discussion: "Convinces others through discussion"
 
 setup: >-
-  You are {name}. You were promised a raise that never came while your
+  You are a {role} at {org}. You were promised a raise that never came while your
   workload grew. You now hold a written competing offer at higher pay. A peer
   was kept last quarter with an off-cycle raise. You are meeting your manager,
   Morgan.

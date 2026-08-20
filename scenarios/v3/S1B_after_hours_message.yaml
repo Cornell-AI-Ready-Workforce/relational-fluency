@@ -20,7 +20,7 @@ esci_items:
   bring_into_open: "Resolves conflict by bringing it into the open"
 
 setup: >-
-  You are {name}, a {role} at {org}. Late last night your colleague Drew sent
+  You are a {role} at {org}. Late last night your colleague Drew sent
   a blunt message criticising your handoff, copying two teammates. The handoff
   point may be fair; the way it was raised was not.
 

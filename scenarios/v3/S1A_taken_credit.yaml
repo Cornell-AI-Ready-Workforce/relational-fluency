@@ -20,7 +20,7 @@ esci_items:
 
 # At most 2–3 sentences. Everything else arrives in-scene through the agents.
 setup: >-
-  You are {name}, a {role} at {org}. Over the past two months your colleague
+  You are a {role} at {org}. Over the past two months your colleague
   Sam has twice presented your analysis in leadership meetings as his own
   work. You asked him privately to credit you; it happened again last week.
 

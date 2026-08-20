@@ -20,7 +20,7 @@ esci_items:
   encourages_participation: "Works well in teams by encouraging participation of everyone present"
 
 setup: >-
-  You are {name}, part of a four-person group preparing tomorrow's client
+  You are part of a four-person group preparing tomorrow's client
   presentation. Dan has already built the deck. The session is already
   underway.
 
