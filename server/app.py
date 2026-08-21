@@ -547,6 +547,38 @@ async def api_run_create(request: Request, key: Optional[str] = None):
     return runs.view(run)
 
 
+@app.get("/api/sessions/{session_id}/video-upload-url")
+async def api_video_upload_url(session_id: str, key: Optional[str] = None):
+    """Presigned PUT for the participant's webcam recording. Participant-open:
+    it grants a write to exactly one object, for one hour."""
+    check_participant(key)
+    from . import video
+
+    return video.presign_upload(session_id)
+
+
+@app.post("/api/sessions/{session_id}/video-uploaded")
+async def api_video_uploaded(session_id: str, key: Optional[str] = None):
+    """Client confirms the upload; verified against S3 and written into the
+    session's event trail so verify_record can check for it."""
+    check_participant(key)
+    from . import video
+    from .storage import SESSIONS_DIR
+
+    size = video.uploaded_size(session_id)
+    d = SESSIONS_DIR / session_id
+    if d.exists():
+        import json as _json
+        import time as _time
+
+        with open(d / "events.jsonl", "a") as fh:
+            fh.write(_json.dumps({
+                "t": None, "wall": _time.time(), "type": "video_uploaded",
+                "key": video.video_key(session_id), "bytes": size,
+            }) + "\n")
+    return {"ok": size > 0, "bytes": size, "key": video.video_key(session_id)}
+
+
 @app.get("/api/run/config")
 async def api_run_config(key: Optional[str] = None):
     """Where a finished participant is sent back to."""

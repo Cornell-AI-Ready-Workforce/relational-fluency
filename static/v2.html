@@ -510,6 +510,14 @@
     const r = await fetch(url, { method: 'POST' });
     if (!r.ok) return;
     run = await r.json();
+    if (videoUpload) {
+      $('nextTitle').textContent = 'Saving your recording…';
+      $('nextBody').innerHTML = '<p>One moment, your video is being saved.</p>';
+      $('nextBtn').style.display = 'none';
+      $('nextOverlay').style.display = 'flex';
+      try { await videoUpload; } catch (e) {}
+      videoUpload = null;
+    }
     if (run.done) { await showRunComplete(); return; }
     $('nextTitle').textContent = `Encounter ${run.position - 1} of ${run.total} complete`;
     $('nextBody').innerHTML =
@@ -536,6 +544,9 @@
   let participantId = params.get('participant_id') || null;
   let started = false;       // is a session currently running
   let sessionStartedAt = 0;  // wall clock when the current encounter began
+  let videoRecorder = null;  // MediaRecorder over the webcam stream
+  let videoChunks = [];      // recorded webm pieces
+  let videoUpload = null;    // promise resolving when the upload lands in S3
   let sessionId = null;      // server session id once connected
   let sessionMode = 'single';// 'single' | 'group'
   let userTurns = 0;         // committed participant turns this session (gates debrief)
@@ -923,6 +934,7 @@
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     }
     attachCamera();  // show the live feed in the self tile if we got video
+    startVideoRecording();
     micNode = audioCtx.createMediaStreamSource(mediaStream);
     workletNode = new AudioWorkletNode(audioCtx, 'pcm-capture', {
       processorOptions: { targetSampleRate: 16000 },
@@ -980,6 +992,47 @@
         setMicMuted(false);
       }
     };
+  }
+
+  // ---------- webcam recording (IRB 6a: browser -> storage, never a model) --
+  function startVideoRecording() {
+    videoChunks = []; videoRecorder = null;
+    if (!mediaStream || mediaStream.getVideoTracks().length === 0) return;
+    const mime = ['video/webm;codecs=vp8,opus', 'video/webm']
+      .find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+    if (!mime) return;
+    try {
+      videoRecorder = new MediaRecorder(mediaStream, { mimeType: mime,
+        videoBitsPerSecond: 600000 });
+      videoRecorder.ondataavailable = e => { if (e.data.size) videoChunks.push(e.data); };
+      videoRecorder.start(2000);
+    } catch (e) { videoRecorder = null; }
+  }
+
+  function finishVideoRecording() {
+    // Returns a promise for the S3 upload; null when nothing was recorded.
+    if (!videoRecorder || videoRecorder.state === 'inactive') return null;
+    const rec = videoRecorder; videoRecorder = null;
+    const sid = sessionId;
+    videoUpload = new Promise((resolve) => {
+      rec.onstop = async () => {
+        try {
+          const blob = new Blob(videoChunks, { type: 'video/webm' });
+          videoChunks = [];
+          if (!blob.size || !sid) { resolve(false); return; }
+          const g = await fetch(`/api/sessions/${encodeURIComponent(sid)}/video-upload-url` + keyParamFirst);
+          if (!g.ok) { resolve(false); return; }
+          const { url } = await g.json();
+          const put = await fetch(url, { method: 'PUT', body: blob,
+            headers: { 'Content-Type': 'video/webm' } });
+          if (!put.ok) { resolve(false); return; }
+          const c = await fetch(`/api/sessions/${encodeURIComponent(sid)}/video-uploaded` + keyParamFirst, { method: 'POST' });
+          resolve(c.ok ? (await c.json()).ok : false);
+        } catch (e) { resolve(false); }
+      };
+      try { rec.stop(); } catch (e) { resolve(false); }
+    });
+    return videoUpload;
   }
 
   // ---------- session start ----------
@@ -1100,6 +1153,7 @@
     const sid = sessionId;
     const wantDebrief = debrief && sessionMode === 'group' && userTurns > 0 && !!sid;
 
+    finishVideoRecording();   // upload starts now; tracks stop after onstop fires
     try { ws && ws.close(); } catch {}
     try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
     try { audioCtx && audioCtx.close(); } catch {}

@@ -67,3 +67,20 @@ resource "aws_secretsmanager_secret" "anthropic_key" {
 resource "aws_secretsmanager_secret" "agent_api_key" {
   name = "${var.project}/agent-api-key" # shared bearer token with ElevenLabs
 }
+
+# Browser-direct webcam upload (IRB 6a: video goes straight to storage and
+# never transits the model path). Presigned PUTs come from the app origins.
+resource "aws_s3_bucket_cors_configuration" "study_data" {
+  bucket = aws_s3_bucket.study_data.id
+
+  cors_rule {
+    allowed_methods = ["PUT"]
+    allowed_origins = [
+      "https://rf.ai-ready-workforce.ai.cornell.edu",
+      "http://127.0.0.1:8765",
+      "http://localhost:8765",
+    ]
+    allowed_headers = ["*"]
+    max_age_seconds = 3600
+  }
+}

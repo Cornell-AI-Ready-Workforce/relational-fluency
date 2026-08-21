@@ -89,6 +89,13 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
         esci_seen = {i for e in fired for i in (e.get("esci") or [])}
         checks.append((bool(esci_seen), "ESCI items exercised", f"{len(esci_seen)} distinct"))
 
+    video_ev = next((e for e in events if e.get("type") == "video_uploaded"), None)
+    checks.append((
+        bool(video_ev and video_ev.get("bytes")),
+        "webcam video in S3",
+        f"{video_ev['bytes']} bytes" if video_ev and video_ev.get("bytes") else "NOT UPLOADED",
+    ))
+
     ok = all(c[0] for c in checks)
     return ok, checks
 
