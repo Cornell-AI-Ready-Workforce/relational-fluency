@@ -135,7 +135,7 @@ def compile_scenario(scenario_id: str, participant_key: str = "") -> Scenario:
         cast.append(Agent(
             id=aid,
             name=a["name"],
-            role=a.get("role", ""),
+            role=a.get("display_role", ""),
             system_prompt=_render_prompt(spec, aid, a),
             voice_id=a.get("voice") or _VOICES[idx % len(_VOICES)],
         ))
@@ -197,7 +197,7 @@ def _briefing(spec: dict) -> dict:
     """
     interactions = spec.get("interactions", [])
     people = [
-        {"name": a["name"], "role": a.get("role", "")}
+        {"name": a["name"], "role": a.get("display_role", "")}
         for a in spec["agents"].values()
     ]
     return {

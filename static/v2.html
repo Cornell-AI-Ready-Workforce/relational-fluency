@@ -34,25 +34,34 @@
   /* The transcript is what the participant reads while talking, so give it the
      larger share: description narrow, conversation wide. */
   .lower-row > * { min-width: 0; }
-  .lower-row > *:first-child { flex: 0 1 420px; }
+  .lower-row > *:first-child { flex: 0 1 560px; }
   .lower-row > *:last-child { flex: 1 1 auto; }
   .brief {
-    padding: 16px 18px;
+    padding: 18px 20px;
     background: #ffffff;
     border: 1px solid var(--line-soft);
     border-radius: 12px;
     box-shadow: 0 1px 0 rgba(47,47,47,0.03), 0 4px 14px rgba(47,47,47,0.04);
     overflow-y: auto;
-    max-height: 360px;
+    max-height: 560px;
   }
   .brief .label {
     font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--accent); margin: 0 0 8px;
   }
   .brief .body {
-    font-size: 13.5px; line-height: 1.55; color: var(--fg); white-space: pre-wrap;
+    font-size: 14px; line-height: 1.6; color: var(--fg); white-space: pre-wrap;
     margin: 0 0 12px;
   }
+  /* Rich briefing inside the reference panel: same sections as the situation
+     popup, sized down to sit beside the transcript. */
+  .brief .body.rich { white-space: normal; }
+  .brief .body.rich h4 { font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--muted); margin: 14px 0 5px; }
+  .brief .body.rich ul { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.55; }
+  .brief .body.rich li { margin-bottom: 3px; }
+  .brief .body.rich .sit-lead { margin: 0; font-size: 14px; line-height: 1.6; }
+  .brief .body.rich .sit-note { font-size: 12.5px; color: var(--muted); margin: 6px 0 0; }
   .brief .cast-line {
     font-size: 12px; color: var(--muted);
     border-top: 1px solid var(--line-soft); padding-top: 10px; margin-top: 10px;
@@ -616,30 +625,44 @@
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   // ---------- situation popup (shown before the meeting begins) ----------
-  function showSituation(d) {
-    $('situationTitle').textContent = d.title || 'The situation';
+  // Renders the briefing sections (situation, assets, people, parts) as HTML.
+  // compact=true is the in-conversation reference panel, which drops the
+  // "what to do" coaching list but keeps everything about the situation.
+  function briefingHtml(d, compact) {
     const b = d.briefing;
-    if (b) {
-      // Situation stays short by design (context lands in-scene). What we add
-      // is orientation: who you will speak with, how it runs, and what to do.
-      const people = (b.people || []).map(p =>
-        `<li><b>${esc(p.name)}</b>${p.role ? `, ${esc(p.role)}` : ''}</li>`).join('');
-      const parts = (b.parts || []).map((p, i) =>
-        `<li>${esc(p.label)}${p.with?.length ? `, with ${esc(p.with.join(' and '))}` : ''}</li>`).join('');
-      const how = (b.howto || []).map(h => `<li>${esc(h)}</li>`).join('');
-      const dur = b.duration ? `${b.duration[0]}–${b.duration[1]} minutes` : '';
-      $('situationBody').classList.add('rich');
-      $('situationBody').innerHTML = `
-        <p class="sit-lead">${esc(b.situation || d.intro || '')}</p>
-        ${(b.assets || []).length ? `<div class="sit-assets">
-          <h4>What you have</h4>
-          <ul>${b.assets.map(a => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
+    if (!b) return null;
+    const people = (b.people || []).map(p =>
+      `<li><b>${esc(p.name)}</b>${p.role ? `, ${esc(p.role)}` : ''}</li>`).join('');
+    const parts = (b.parts || []).map((p, i) =>
+      `<li>${esc(p.label)}${p.with?.length ? `, with ${esc(p.with.join(' and '))}` : ''}</li>`).join('');
+    const how = (b.howto || []).map(h => `<li>${esc(h)}</li>`).join('');
+    const dur = b.duration ? `${b.duration[0]}–${b.duration[1]} minutes` : '';
+    return `
+      <p class="sit-lead">${esc(b.situation || d.intro || '')}</p>
+      ${(b.assets || []).length ? `<div class="sit-assets">
+        <h4>What you have</h4>
+        <ul>${b.assets.map(a => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
+      ${compact ? `
+        <h4>Who you'll speak with</h4><ul>${people}</ul>
+        <h4>How it runs</h4><ul>${parts}</ul>
+        ${dur ? `<p class="sit-note">About ${esc(dur)} in total.</p>` : ''}`
+      : `
         <div class="sit-cols">
           <div><h4>Who you'll speak with</h4><ul>${people}</ul></div>
           <div><h4>How it runs</h4><ul>${parts}</ul>
                ${dur ? `<p class="sit-note">About ${esc(dur)} in total.</p>` : ''}</div>
         </div>
-        <h4>What to do</h4><ul class="sit-how">${how}</ul>`;
+        <h4>What to do</h4><ul class="sit-how">${how}</ul>`}`;
+  }
+
+  function showSituation(d) {
+    $('situationTitle').textContent = d.title || 'The situation';
+    const html = briefingHtml(d, false);
+    if (html) {
+      // Situation stays short by design (context lands in-scene). What we add
+      // is orientation: who you will speak with, how it runs, and what to do.
+      $('situationBody').classList.add('rich');
+      $('situationBody').innerHTML = html;
     } else {
       $('situationBody').textContent = flowText(d.intro);
     }
@@ -1340,7 +1363,13 @@
       if (!r.ok) return;
       const d = await r.json();
       $('title').textContent = d.title;
-      $('briefBody').textContent = flowText(d.intro);
+      const refHtml = briefingHtml(d, true);
+      if (refHtml) {
+        $('briefBody').classList.add('rich');
+        $('briefBody').innerHTML = refHtml;
+      } else {
+        $('briefBody').textContent = flowText(d.intro);
+      }
       // The first-person "entering the room" photo lives in the situation popup
       // now (see showSituation), so keep the brief itself text-only.
       $('introPhoto').style.display = 'none';

@@ -33,6 +33,7 @@ agents:
   sasha:
     name: Sasha
     role: manager, not opposed, squeezed from above
+    display_role: your manager
     voice: Aoede
     system_prompt: |
       You are Sasha, the participant's manager. You are not personally opposed

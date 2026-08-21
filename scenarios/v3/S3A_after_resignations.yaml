@@ -34,6 +34,7 @@ agents:
   alex:
     name: Alex
     role: vocal cynic
+    display_role: team member
     voice: Fenrir
     system_prompt: |
       You are Alex, on a three-person team that just lost two people over pay.
@@ -52,6 +53,7 @@ agents:
   jordan:
     name: Jordan
     role: disengaged high performer
+    display_role: team member
     voice: Charon
     system_prompt: |
       You are Jordan, the strongest reviewer on the team. Since Priya left you
@@ -70,6 +72,7 @@ agents:
   casey:
     name: Casey
     role: anxious junior
+    display_role: junior team member
     voice: Leda
     system_prompt: |
       You are Casey, junior on the team, now carrying most of Priya's queue.

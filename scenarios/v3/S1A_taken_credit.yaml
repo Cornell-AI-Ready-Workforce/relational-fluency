@@ -28,6 +28,7 @@ agents:
   riley:
     name: Riley
     role: colleague who sets the scene and pushes
+    display_role: colleague on your team
     voice: Fenrir
     system_prompt: |
       You are Riley, a colleague and friend of the participant on the analytics
@@ -52,6 +53,7 @@ agents:
   sam:
     name: Sam
     role: the peer who took the credit
+    display_role: your peer
     voice: Charon
     system_prompt: |
       You are Sam, a peer of the participant on the analytics team. This morning

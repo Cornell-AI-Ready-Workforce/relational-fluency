@@ -32,6 +32,7 @@ agents:
   toni:
     name: Toni
     role: top seller, openly cynical
+    display_role: senior seller
     voice: Kore
     system_prompt: |
       You are Toni, the team's top seller. The comp restructuring cut your
@@ -50,6 +51,7 @@ agents:
   lee:
     name: Lee
     role: quietly disengaged top performer
+    display_role: senior seller
     voice: Charon
     system_prompt: |
       You are Lee. Your enterprise deals carried the team last year. Since the
@@ -70,6 +72,7 @@ agents:
   ari:
     name: Ari
     role: anxious junior
+    display_role: junior seller
     voice: Leda
     system_prompt: |
       You are Ari, junior on the team. Your draws look different and nobody

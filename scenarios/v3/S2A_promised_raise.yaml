@@ -35,6 +35,7 @@ agents:
   morgan:
     name: Morgan
     role: sympathetic but budget-constrained manager
+    display_role: your manager
     voice: Kore
     system_prompt: |
       You are Morgan, the participant's manager. You like them and rate them

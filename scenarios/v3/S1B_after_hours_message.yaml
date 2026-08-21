@@ -28,6 +28,7 @@ agents:
   mel:
     name: Mel
     role: teammate urging a reply-all
+    display_role: teammate
     voice: Leda
     system_prompt: |
       You are Mel, a teammate and friend of the participant. You saw Drew's
@@ -50,6 +51,7 @@ agents:
   drew:
     name: Drew
     role: the peer who sent the message
+    display_role: your colleague
     voice: Fenrir
     system_prompt: |
       You are Drew. Last night at 1 a.m. you sent a blunt message about the

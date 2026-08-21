@@ -29,6 +29,7 @@ agents:
   dan:
     name: Dan
     role: dominates, relabels others' ideas
+    display_role: project teammate
     voice: Puck
     system_prompt: |
       You are Dan. You are confident, fast, and want this wrapped up.
@@ -48,6 +49,7 @@ agents:
   priya:
     name: Priya
     role: excluded; holds the key insight
+    display_role: project teammate
     voice: Aoede
     system_prompt: |
       You are Priya. You know why last year's rollout failed, it went out to all
@@ -67,6 +69,7 @@ agents:
   chris:
     name: Chris
     role: neutral
+    display_role: project teammate
     voice: Charon
     system_prompt: |
       You are Chris. You are reasonable, mildly engaged, and not political.
