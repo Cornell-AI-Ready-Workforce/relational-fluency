@@ -545,6 +545,7 @@
   let started = false;       // is a session currently running
   let sessionStartedAt = 0;  // wall clock when the current encounter began
   let videoRecorder = null;  // MediaRecorder over the webcam stream
+  let recDest = null;        // recording bus: mic + agent audio, mixed
   let videoChunks = [];      // recorded webm pieces
   let videoUpload = null;    // promise resolving when the upload lands in S3
   let sessionId = null;      // server session id once connected
@@ -915,6 +916,11 @@
   // ---------- audio capture + playback ----------
   async function startCapture() {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // Recording bus. Raters watch these videos, so the file must carry BOTH
+    // sides of the conversation: the mic and the agent playback are mixed here
+    // and recorded alongside the camera. Nothing on this bus reaches the
+    // speakers, so there is no feedback path.
+    recDest = audioCtx.createMediaStreamDestination();
     // iOS/Safari start AudioContexts suspended; resume within the Start-button
     // gesture or both mic capture and TTS playback stay silent.
     if (audioCtx.state === 'suspended') {
@@ -936,6 +942,7 @@
     attachCamera();  // show the live feed in the self tile if we got video
     startVideoRecording();
     micNode = audioCtx.createMediaStreamSource(mediaStream);
+    try { micNode.connect(recDest); } catch (e) {}
     workletNode = new AudioWorkletNode(audioCtx, 'pcm-capture', {
       processorOptions: { targetSampleRate: 16000 },
     });
@@ -973,6 +980,7 @@
     const src = audioCtx.createBufferSource();
     src.buffer = buf;
     src.connect(audioCtx.destination);
+    if (recDest) { try { src.connect(recDest); } catch (e) {} }
     const now = audioCtx.currentTime;
     if (playbackTime < now + 0.02) playbackTime = now + 0.02;
     const chunkStart = playbackTime;
@@ -1002,7 +1010,11 @@
       .find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
     if (!mime) return;
     try {
-      videoRecorder = new MediaRecorder(mediaStream, { mimeType: mime,
+      // Camera video + the mixed conversation audio (participant AND agents).
+      const tracks = [...mediaStream.getVideoTracks()];
+      if (recDest) tracks.push(...recDest.stream.getAudioTracks());
+      else tracks.push(...mediaStream.getAudioTracks());
+      videoRecorder = new MediaRecorder(new MediaStream(tracks), { mimeType: mime,
         videoBitsPerSecond: 600000 });
       videoRecorder.ondataavailable = e => { if (e.data.size) videoChunks.push(e.data); };
       videoRecorder.start(2000);
