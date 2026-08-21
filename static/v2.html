@@ -1292,7 +1292,11 @@
       renderGrid();
       // Show the situation popup (image + scene) unless a participant was
       // already provided (e.g. a researcher-configured launch).
-      if (!participantId) showSituation(d);
+      // Always show the situation card, as the second popup after the
+      // keep-it-fictional acknowledgment. It used to be skipped whenever a
+      // participant record already existed, which is now always, so the
+      // scenario was relegated to the small reference panel at the bottom.
+      showSituation(d);
     } catch (e) {}
   }
 
