@@ -1035,7 +1035,11 @@
         } else if (m.type === 'assistant_started') {
           finalizeUserCaption();
           assistantSpeaking = true;
-          setMicMuted(true);
+          // Group meetings keep the mic open so the participant can interject,
+          // exactly as they could in a real room; the server stops the current
+          // speaker when it hears them. 1:1 keeps the original push-to-listen
+          // rhythm.
+          if (sessionMode !== 'group') setMicMuted(true);
           // Don't draw the bubble yet. The name + caption appear the moment this
           // turn's audio actually starts (see tickSpeech), so the speaker's name
           // shows up in time with their voice instead of jumping in ahead of it.

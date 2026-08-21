@@ -312,9 +312,29 @@ class RealtimeVoiceSessionRunner:
         """
         buf: List[str] = []
         announced = False
+        suppressing = False
         try:
             async for ev in rt.events():
                 etype = ev["type"]
+
+                # The bridge fires its own response after speech-plus-silence,
+                # commit or not, on every session at once. Only the character
+                # holding the floor may be heard; unsolicited responses are
+                # cancelled and their events discarded, or the room becomes
+                # three people talking over each other.
+                has_floor = self.room is None or self.room.speaking == agent.id
+                if etype in ("agent_audio", "agent_transcript_delta") and not has_floor:
+                    if not suppressing:
+                        suppressing = True
+                        self.session.store.event(
+                            "unsolicited_response_suppressed", agent_id=agent.id
+                        )
+                        try:
+                            await rt.cancel_response()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    continue
+
                 if etype == "agent_audio":
                     if not announced:
                         announced = True
@@ -349,6 +369,10 @@ class RealtimeVoiceSessionRunner:
                     await self._record_user_turn(ev["text"])
 
                 elif etype == "response_done":
+                    if suppressing:
+                        suppressing = False
+                        buf.clear()
+                        continue
                     grace = time.time() + 2.5
                     while not buf and announced and time.time() < grace:
                         await asyncio.sleep(0.15)
@@ -539,7 +563,18 @@ class RealtimeVoiceSessionRunner:
                     self._last_activity = time.time()
                 if mark == "speech_started":
                     await self._send({"type": "speech_started"})
-                    if self._speaking:
+                    if self.room is not None and self.room.speaking:
+                        # A real meeting yields to an interjection: stop the
+                        # current speaker's stream so the participant is not
+                        # talked over.
+                        speaker = self.room.session_for(self.room.speaking)
+                        if speaker is not None:
+                            try:
+                                await speaker.cancel_response()
+                            except Exception:  # noqa: BLE001
+                                pass
+                        await self._send({"type": "assistant_interrupted"})
+                    elif self._speaking:
                         # Barge-in: drop the agent's remaining audio.
                         await self.rt.cancel_response()
                         self._speaking = False
@@ -902,12 +937,30 @@ class RealtimeVoiceSessionRunner:
         async with self._floor:
             order = self.agent_order()
 
-            # Committing a session makes it reply, so the first commit both
-            # transcribes the participant and produces the first response. Give
-            # that to whoever the participant addressed by name if their words
-            # are already known; otherwise the interaction's lead speaks first.
+            # The transcript arrives while the participant is still speaking,
+            # so by turn end their words are usually known. Give the floor to
+            # whoever they addressed by name; otherwise let the director pick
+            # from what was actually said, falling back to the interaction's
+            # lead. This is what makes the room feel responsive rather than the
+            # same character answering everything.
+            before = self._last_user_text
+            deadline = time.time() + float(os.getenv("ROUTE_TRANSCRIPT_WAIT", "3"))
+            while not self._last_user_text and time.time() < deadline:
+                await asyncio.sleep(0.15)
+
             named_early = self._named_in(self._last_user_text)
-            first = named_early or order[0]
+            first = named_early
+            if first is None:
+                try:
+                    routed = await self.director.route(
+                        self.session.shared_history, self._last_user_text
+                    )
+                    first = next(
+                        (r.get("agent_id") for r in routed
+                         if r.get("agent_id") in self.room.sessions), None)
+                except Exception as exc:  # noqa: BLE001
+                    self.session.store.event("director_error", message=str(exc))
+            first = first or order[0]
 
             self._response_done.clear()
             granted = await self.room.give_floor(first)
@@ -951,7 +1004,11 @@ class RealtimeVoiceSessionRunner:
                 "director_route", speakers=[first] + followups, addressed=named
             )
             for aid in followups:
-                if self._closed:
+                if self._closed or self.vad.speaking:
+                    if self.vad.speaking:
+                        self.session.store.event(
+                            "followup_yielded", agent_id=aid,
+                        )
                     break
                 self._response_done.clear()
                 await self.room.give_floor(aid)
