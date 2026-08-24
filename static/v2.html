@@ -555,6 +555,8 @@
   let sessionStartedAt = 0;  // wall clock when the current encounter began
   let videoRecorder = null;  // MediaRecorder over the webcam stream
   let recDest = null;        // recording bus: mic + agent audio, mixed
+  let playDest = null;       // playback bus, rendered through an <audio> element
+  let playEl = null;         // so Chrome's echo canceller can subtract it
   let videoChunks = [];      // recorded webm pieces
   let videoUpload = null;    // promise resolving when the upload lands in S3
   let sessionId = null;      // server session id once connected
@@ -944,6 +946,14 @@
     // and recorded alongside the camera. Nothing on this bus reaches the
     // speakers, so there is no feedback path.
     recDest = audioCtx.createMediaStreamDestination();
+    // Playback goes through an <audio> element instead of audioCtx.destination:
+    // Chrome's echo canceller only uses media-element output as its reference
+    // signal, so WebAudio playback leaks back through an open mic and gets
+    // transcribed as participant speech. Routing through <audio> closes that.
+    playDest = audioCtx.createMediaStreamDestination();
+    playEl = new Audio();
+    playEl.srcObject = playDest.stream;
+    playEl.play().catch(() => {});
     // iOS/Safari start AudioContexts suspended; resume within the Start-button
     // gesture or both mic capture and TTS playback stay silent.
     if (audioCtx.state === 'suspended') {
@@ -1002,7 +1012,7 @@
     buf.copyToChannel(float, 0);
     const src = audioCtx.createBufferSource();
     src.buffer = buf;
-    src.connect(audioCtx.destination);
+    src.connect(playDest || audioCtx.destination);
     if (recDest) { try { src.connect(recDest); } catch (e) {} }
     const now = audioCtx.currentTime;
     if (playbackTime < now + 0.02) playbackTime = now + 0.02;

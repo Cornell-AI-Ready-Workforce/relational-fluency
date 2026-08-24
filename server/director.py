@@ -151,6 +151,9 @@ class Director:
 - Empty list = nobody speaks. Use for genuine silence or pure transitions.
 - If the user's turn explicitly names an agent, that agent MUST be the only
   speaker, regardless of personality defaults like "X tends to answer first."
+- Spread the floor. Unless the user names them or the guidance demands it,
+  do NOT route to the agent who spoke most recently; pick someone who has
+  spoken less. A meeting where one voice answers everything is a failure.
 """
         user_msg = f"""## Recent transcript
 {transcript}

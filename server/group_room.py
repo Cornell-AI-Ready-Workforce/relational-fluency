@@ -31,6 +31,12 @@ class GroupRoom:
         self._voice_for = voice_for
         self._tools = tools or []
         self.sessions: Dict[str, RealtimeVoiceSession] = {}
+        # The scribe hears ONLY the participant. Member sessions cannot supply
+        # the participant transcript: their input buffers also carry the other
+        # characters' fanned-out audio, so the bridge's input transcription
+        # mixes agent speech into what it labels the user. A dedicated session
+        # that never hears an agent gives a clean participant channel.
+        self.scribe: Optional[RealtimeVoiceSession] = None
         self.speaking: Optional[str] = None
 
     async def open(self) -> None:
@@ -43,13 +49,34 @@ class GroupRoom:
             await rt.connect(open_conversation=False)
             self.sessions[agent.id] = rt
 
-        await asyncio.gather(*(start(a) for a in self.agents))
+        async def start_scribe():
+            rt = RealtimeVoiceSession(
+                instructions=(
+                    "You are a silent transcription channel. Never speak. "
+                    "If you must respond, reply with a single space."
+                ),
+                voice="Puck",
+                tools=[],
+            )
+            await rt.connect(open_conversation=False)
+            self.scribe = rt
+
+        await asyncio.gather(start_scribe(), *(start(a) for a in self.agents))
 
     async def hear(self, pcm: bytes, *, exclude: Optional[str] = None) -> None:
-        """Everyone in the room hears this audio."""
+        """Everyone in the room hears this audio.
+
+        Participant audio (exclude=None) also reaches the scribe; agent audio
+        (exclude=<speaker>) deliberately does not, keeping the scribe's input
+        transcription a pure participant channel.
+        """
+        targets = [
+            rt for aid, rt in self.sessions.items() if aid != exclude
+        ]
+        if exclude is None and self.scribe is not None:
+            targets.append(self.scribe)
         await asyncio.gather(*(
-            rt.send_audio(pcm)
-            for aid, rt in self.sessions.items() if aid != exclude
+            rt.send_audio(pcm) for rt in targets
         ), return_exceptions=True)
 
     async def give_floor(self, agent_id: str) -> Optional[RealtimeVoiceSession]:
@@ -78,7 +105,11 @@ class GroupRoom:
         return self.sessions.get(agent_id)
 
     async def close(self) -> None:
+        closers = list(self.sessions.values())
+        if self.scribe is not None:
+            closers.append(self.scribe)
         await asyncio.gather(*(
-            rt.close() for rt in self.sessions.values()
+            rt.close() for rt in closers
         ), return_exceptions=True)
         self.sessions.clear()
+        self.scribe = None

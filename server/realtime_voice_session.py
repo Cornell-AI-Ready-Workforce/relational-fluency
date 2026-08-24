@@ -23,6 +23,30 @@ import time
 from typing import TYPE_CHECKING, List, Optional
 
 from .director import Director
+
+
+def _norm_speech(text: str) -> str:
+    """Lowercase, strip punctuation: comparable across transcriber quirks."""
+    return " ".join("".join(c if c.isalnum() or c.isspace() else " "
+                            for c in text.lower()).split())
+
+
+def _is_echo(user_norm: str, agent_norm: str) -> bool:
+    """True when the participant 'turn' is mostly an agent's recent line.
+
+    With the mic open while agents speak, echo of the playback can come back
+    transcribed as participant speech. Overlap is judged on word containment,
+    so partial echoes ('right no not at the moment i think we've covered the
+    main points') are caught even when the transcriber adds a word or two.
+    """
+    if not user_norm or not agent_norm:
+        return False
+    uw, aw = user_norm.split(), agent_norm.split()
+    if len(uw) < 4:
+        return False
+    aset = set(aw)
+    overlap = sum(1 for w in uw if w in aset) / len(uw)
+    return overlap >= 0.8
 from .llm import provenance
 from .group_room import GroupRoom
 from .voice.realtime import RealtimeVoiceSession, SilenceDetector
@@ -88,6 +112,10 @@ class RealtimeVoiceSessionRunner:
         )
         self._response_done = asyncio.Event()
         self._last_user_text = ""
+        self._last_user_norm = ""
+        self._last_user_at = 0.0
+        self._recent_agent_texts: List[tuple] = []   # (agent_id, text), last 6
+        self._last_group_speaker: Optional[str] = None
         self._turn_index = 0
         self._pending_direction: Optional[dict] = None
         # Planted triggers fire in order within the current interaction. They
@@ -112,10 +140,20 @@ class RealtimeVoiceSessionRunner:
         engine = self.session.engines[self.agent_id]
         base = engine._system_prompt(self.session.triggered_branches, director_note or None)
         voice_rules = (
-            "\n\nVOICE: You are in a live spoken conversation. Speak naturally and "
-            "concisely, one to three sentences per turn. Never read out JSON, "
-            "markdown, or stage directions."
+            "\n\nVOICE: You are in a live spoken conversation. Keep every turn "
+            "SHORT: one or two spoken sentences, at most about 25 words, then "
+            "stop and let others respond. Make one point per turn, never a "
+            "list of points. Never monologue. Never read out JSON, markdown, "
+            "or stage directions."
         )
+        if self.is_group():
+            voice_rules += (
+                "\nMEETING: Several people share this room. If the participant "
+                "addresses someone else by name, stay silent and let them "
+                "answer. Do not repeat or rephrase what another person just "
+                "said, and do not answer every turn: leave room for quieter "
+                "colleagues."
+            )
         return base + voice_rules
 
     def is_group(self) -> bool:
@@ -276,6 +314,8 @@ class RealtimeVoiceSessionRunner:
             rt = self.room.session_for(a.id)
             if rt is not None:
                 self._pumps.append(asyncio.ensure_future(self._pump_member(a, rt)))
+        if self.room.scribe is not None:
+            self._pumps.append(asyncio.ensure_future(self._pump_scribe(self.room.scribe)))
         # No character opens unprompted: on this bridge a response can only
         # follow committed audio, and committing an empty buffer kills the
         # session. The participant speaks first; the scene brief sets that up.
@@ -364,9 +404,10 @@ class RealtimeVoiceSessionRunner:
                     })
 
                 elif etype == "user_transcript":
-                    if self.room and agent.id != self.agent_order()[0]:
-                        continue
-                    await self._record_user_turn(ev["text"])
+                    # Member sessions hear the other characters too, so their
+                    # input transcription mixes agent speech into the "user"
+                    # channel. The scribe pump owns the participant transcript.
+                    continue
 
                 elif etype == "response_done":
                     if suppressing:
@@ -396,6 +437,29 @@ class RealtimeVoiceSessionRunner:
         except asyncio.CancelledError:
             return
 
+    async def _pump_scribe(self, rt) -> None:
+        """Relay the scribe's participant transcripts; swallow everything else.
+
+        The scribe only ever hears the participant, so its input transcription
+        is the clean user channel. The bridge auto-fires a response on any
+        session after speech + silence, scribe included; those responses are
+        cancelled unheard.
+        """
+        try:
+            async for ev in rt.events():
+                etype = ev.get("type")
+                if etype == "user_transcript":
+                    await self._record_user_turn(ev["text"])
+                elif etype in ("agent_audio", "agent_transcript_delta"):
+                    try:
+                        await rt.cancel_response()
+                    except Exception:  # noqa: BLE001
+                        pass
+                elif etype == "response_done":
+                    rt.clear_response_state()
+        except asyncio.CancelledError:
+            return
+
     async def _finalize_member(self, agent, text: str) -> None:
         """Close one character's turn in a group room.
 
@@ -408,11 +472,13 @@ class RealtimeVoiceSessionRunner:
 
         if text:
             self.session.append_agent(agent.id, text)
+            self._recent_agent_texts = (self._recent_agent_texts + [(agent.id, text)])[-6:]
             await self.session.broadcast({
                 "type": "transcript", "role": "assistant",
                 "agent_id": agent.id, "text": text,
             })
-        else:
+        self._last_group_speaker = agent.id
+        if not text:
             self.session.store.event(
                 "transcript_missing", agent_id=agent.id, segment=self.segment
             )
@@ -438,6 +504,20 @@ class RealtimeVoiceSessionRunner:
     async def _record_user_turn(self, text: str) -> None:
         if not text:
             return
+        now = time.time()
+        norm = _norm_speech(text)
+        # The bridge can deliver the same utterance twice (append + commit);
+        # record it once.
+        if norm and norm == self._last_user_norm and now - self._last_user_at < 12:
+            return
+        # Echo guard: an agent's line played over speakers can come back
+        # transcribed as participant speech (Chrome's AEC does not cancel
+        # WebAudio playback). It must not enter the record or steer routing.
+        for aid, atext in self._recent_agent_texts:
+            if _is_echo(norm, _norm_speech(atext)):
+                self.session.store.event("echo_dropped", matches=aid, text=text)
+                return
+        self._last_user_norm, self._last_user_at = norm, now
         self._last_user_text = text
         self.session.append_user(text)
         self.session.store.event("user_turn", text=text, channel="voice")
@@ -641,20 +721,9 @@ class RealtimeVoiceSessionRunner:
 
             elif etype == "user_transcript":
                 # Gemini Live transcribes the participant for us, no separate
-                # STT service. Send it to the participant's own socket (the
-                # transcript panel listens for user_transcript) as well as
-                # broadcasting to any researcher view.
-                self._last_user_text = ev["text"]
-                self.session.append_user(ev["text"])
-                self.session.store.event("user_turn", text=ev["text"], channel="voice")
-                await self._send({
-                    "type": "user_transcript",
-                    "text": ev["text"],
-                    "final": True,
-                })
-                await self.session.broadcast(
-                    {"type": "transcript", "role": "user", "text": ev["text"]}
-                )
+                # STT service. _record_user_turn forwards it to the client and
+                # researcher views, and drops duplicates and playback echo.
+                await self._record_user_turn(ev["text"])
 
             elif etype == "response_done":
                 # Do not finalise here. The gateway can deliver transcript
@@ -768,6 +837,7 @@ class RealtimeVoiceSessionRunner:
 
             if text:
                 self.session.append_agent(self.agent_id, text)
+                self._recent_agent_texts = (self._recent_agent_texts + [(self.agent_id, text)])[-6:]
                 await self.session.broadcast({
                     "type": "transcript",
                     "role": "assistant",
@@ -943,24 +1013,44 @@ class RealtimeVoiceSessionRunner:
             # from what was actually said, falling back to the interaction's
             # lead. This is what makes the room feel responsive rather than the
             # same character answering everything.
+            # Route on THIS turn's words, not the previous turn's.
+            # _last_user_text is almost never empty mid-conversation, so
+            # waiting for it to be non-empty returned immediately with stale
+            # text: the participant said "Priya" and the director routed on
+            # whatever they had said the turn before. Wait for it to CHANGE.
             before = self._last_user_text
             deadline = time.time() + float(os.getenv("ROUTE_TRANSCRIPT_WAIT", "3"))
-            while not self._last_user_text and time.time() < deadline:
+            while self._last_user_text == before and time.time() < deadline:
                 await asyncio.sleep(0.15)
+            fresh = self._last_user_text if self._last_user_text != before else ""
 
-            named_early = self._named_in(self._last_user_text)
+            named_early = self._named_in(fresh)
             first = named_early
             if first is None:
                 try:
                     routed = await self.director.route(
-                        self.session.shared_history, self._last_user_text
+                        self.session.shared_history, fresh
                     )
+                    candidates = [
+                        r.get("agent_id") for r in routed
+                        if r.get("agent_id") in self.room.sessions
+                    ]
+                    # Anti-dominance: absent a direct address, prefer a
+                    # candidate who did not just speak.
                     first = next(
-                        (r.get("agent_id") for r in routed
-                         if r.get("agent_id") in self.room.sessions), None)
+                        (c for c in candidates if c != self._last_group_speaker),
+                        candidates[0] if candidates else None,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     self.session.store.event("director_error", message=str(exc))
-            first = first or order[0]
+            if first is None:
+                # No signal at all: rotate the floor instead of always
+                # falling back to the cast's first-listed character.
+                if self._last_group_speaker in order and len(order) > 1:
+                    nxt = (order.index(self._last_group_speaker) + 1) % len(order)
+                    first = order[nxt]
+                else:
+                    first = order[0]
 
             self._response_done.clear()
             granted = await self.room.give_floor(first)
@@ -981,15 +1071,18 @@ class RealtimeVoiceSessionRunner:
                     rt_dbg.clear_response_state()
 
             # The transcript arrived with that first commit; a direct address
-            # we could not honour up front gets the next turn instead.
-            named = self._named_in(self._last_user_text)
+            # we could not honour up front gets the next turn instead. Only a
+            # name from THIS turn counts, a name said last turn is history.
+            if self._last_user_text != before:
+                fresh = self._last_user_text
+            named = self._named_in(fresh)
             followups = []
             if named and named != first:
                 followups.append(named)
             else:
                 try:
                     routed = await self.director.route(
-                        self.session.shared_history, self._last_user_text
+                        self.session.shared_history, fresh
                     )
                 except Exception as exc:  # noqa: BLE001, never break the room
                     self.session.store.event("director_error", message=str(exc))
