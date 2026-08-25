@@ -369,6 +369,7 @@ class RealtimeVoiceSessionRunner:
                         self.session.store.event(
                             "unsolicited_response_suppressed", agent_id=agent.id
                         )
+                        rt.pending_input = 0
                         try:
                             await rt.cancel_response()
                         except Exception:  # noqa: BLE001
@@ -1019,7 +1020,7 @@ class RealtimeVoiceSessionRunner:
             # text: the participant said "Priya" and the director routed on
             # whatever they had said the turn before. Wait for it to CHANGE.
             before = self._last_user_text
-            deadline = time.time() + float(os.getenv("ROUTE_TRANSCRIPT_WAIT", "3"))
+            deadline = time.time() + float(os.getenv("ROUTE_TRANSCRIPT_WAIT", "6"))
             while self._last_user_text == before and time.time() < deadline:
                 await asyncio.sleep(0.15)
             fresh = self._last_user_text if self._last_user_text != before else ""

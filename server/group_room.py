@@ -94,6 +94,14 @@ class GroupRoom:
             return None
         self.speaking = agent_id
         try:
+            # The bridge auto-fires a response on every session after speech +
+            # silence, consuming its input buffer; cancelling that auto-fire
+            # (the pump does) leaves the buffer EMPTY, and committing an empty
+            # buffer kills the session on this bridge. Pad with 300 ms of
+            # silence so the commit is always safe; the real audio is already
+            # in the conversation history from the auto-commit.
+            if rt.pending_input < 3200:
+                await rt.send_audio(b"\x00" * 9600)
             await rt.commit_input()
             await rt.request_response()
         except Exception:  # noqa: BLE001, a dead session must not kill the turn

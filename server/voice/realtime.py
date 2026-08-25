@@ -120,6 +120,10 @@ class RealtimeVoiceSession:
         self.tools = tools or []
         self.api_key = api_key or gateway_api_key()
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
+        # Audio appended since the last commit. The bridge kills a session
+        # that commits an empty buffer, so give_floor checks this first; it
+        # is zeroed when a bridge auto-fired response consumes the buffer.
+        self.pending_input = 0
         self._resample_state = None
         self._agent_buffer = ""
         self._response_active = False
@@ -163,6 +167,7 @@ class RealtimeVoiceSession:
         """Append participant audio (PCM16 at CLIENT_RATE)."""
         if not pcm16:
             return
+        self.pending_input += len(pcm16)
         await self._send({
             "type": "input_audio_buffer.append",
             "audio": base64.b64encode(pcm16).decode("ascii"),
@@ -171,6 +176,7 @@ class RealtimeVoiceSession:
     async def commit_input(self) -> None:
         """Close the participant's turn without asking for a reply. Group rooms
         need this separately: one commit, then a reply per speaker."""
+        self.pending_input = 0
         await self._send({"type": "input_audio_buffer.commit"})
 
     @property
@@ -198,6 +204,10 @@ class RealtimeVoiceSession:
         gateway will not do this on its own."""
         if self._response_active:
             return
+        if self.pending_input < 3200:
+            # Committing an empty buffer kills the session on this bridge;
+            # pad with 300 ms of silence if an auto-fire consumed the audio.
+            await self.send_audio(b"\x00" * 9600)
         await self.commit_input()
         await self.request_response()
 
