@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Conversation v2</title>
+<title>Conversation</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {
@@ -341,6 +341,21 @@
 </style>
 </head>
 <body>
+<div class="consent-overlay" id="consentOverlay" style="display:none">
+  <div class="consent-card">
+    <h2 id="consentTitle">Consent</h2>
+    <div class="body" id="consentBody"></div>
+    <label>
+      <input type="checkbox" id="consentCheck" />
+      <span id="consentConfirmLabel"></span>
+    </label>
+    <div class="err" id="consentErr"></div>
+    <div class="actions">
+      <button id="consentSubmit">Continue</button>
+    </div>
+  </div>
+</div>
+
 <div class="consent-overlay" id="situationOverlay" style="display:none">
   <div class="consent-card situation-card">
     <div class="situation-main">
@@ -404,7 +419,7 @@
   </div>
   <div class="controls" id="controls">
     <span class="timer" id="timer" title="Time in this conversation">00:00</span>
-    <button id="startBtn">Start session</button>
+    <button id="startBtn">Start conversation</button>
     <button id="stopBtn" class="secondary" style="display:none">End conversation</button>
   </div>
 </header>
@@ -454,16 +469,29 @@
   let run = null;
   let scenario = params.get('scenario') || 'missed_deadlines';
 
+  // Returns true if the boot sequence should continue loading an encounter,
+  // false if it must stop (run finished, or a blocking error was shown).
   async function loadRun() {
-    if (!runId) return;
-    const r = await fetch(`/api/run/${encodeURIComponent(runId)}` + keyParamFirst);
-    if (!r.ok) return;
-    run = await r.json();
-    if (run.done) { await showRunComplete(); return; }
+    if (!runId) return true;
+    try {
+      const r = await fetch(`/api/run/${encodeURIComponent(runId)}` + keyParamFirst);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      run = await r.json();
+    } catch (e) {
+      // A run link that cannot be resolved must NOT silently fall through to the
+      // default scenario (which is never attached to the run and yields no
+      // completion code). Block with a retry instead.
+      showBlockingError(
+        'This study link could not be loaded — please reopen the link from the survey.',
+        () => location.reload());
+      return false;
+    }
+    if (run.done) { await showRunComplete(); return false; }
     scenario = run.current.id;
     const chip = $('runChip');
     chip.textContent = `Encounter ${run.position} of ${run.total}`;
     chip.style.display = 'inline-block';
+    return true;
   }
 
   function runStepsHtml(activeIndexOffset = 0) {
@@ -511,14 +539,30 @@
     $('nextOverlay').style.display = 'flex';
   }
 
+  let advancing = false;   // guards the ws-complete / End-button double-advance
   async function onEncounterComplete() {
     if (!runId) return;   // single-scenario link: nothing to advance to
+    if (advancing) return;   // a second call (e.g. End button after ws complete) is a no-op
+    advancing = true;
     const sid = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
     const url = `/api/run/${encodeURIComponent(runId)}/advance${sid}` +
                 (sid ? keyParam : keyParamFirst);
-    const r = await fetch(url, { method: 'POST' });
-    if (!r.ok) return;
-    run = await r.json();
+    try {
+      const r = await fetch(url, { method: 'POST' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      run = await r.json();
+    } catch (e) {
+      // The encounter is recorded to the run ONLY on a successful advance. Never
+      // discard a finished conversation silently: show the overlay with a Retry.
+      $('nextTitle').textContent = 'Could not save this encounter';
+      $('nextBody').innerHTML =
+        '<p>We could not record that conversation. Please retry, and do not close this window.</p>';
+      $('nextBtn').textContent = 'Retry';
+      $('nextBtn').style.display = 'inline-block';
+      $('nextBtn').onclick = () => { advancing = false; onEncounterComplete(); };
+      $('nextOverlay').style.display = 'flex';
+      return;
+    }
     if (videoUpload) {
       $('nextTitle').textContent = 'Saving your recording…';
       $('nextBody').innerHTML = '<p>One moment, your video is being saved.</p>';
@@ -536,9 +580,14 @@
     $('nextBtn').style.display = 'inline-block';
     $('nextBtn').onclick = () => {
       // Reload into the next encounter: a fresh page gives a clean audio
-      // context and session rather than reusing one mid-run.
+      // context and session rather than reusing one mid-run. Carry the run
+      // configuration forward so encounters 2-4 use the same instrument and
+      // participant as encounter 1.
       const qs = new URLSearchParams({ run: runId });
       if (key) qs.set('key', key);
+      if (launchId) qs.set('launch', launchId);
+      const m = params.get('model'); if (m) qs.set('model', m);
+      if (participantId) qs.set('participant_id', participantId);
       location.href = `/v2?${qs}`;
     };
     $('nextOverlay').style.display = 'flex';
@@ -557,7 +606,8 @@
   let recDest = null;        // recording bus: mic + agent audio, mixed
   let playDest = null;       // playback bus, rendered through an <audio> element
   let playEl = null;         // so Chrome's echo canceller can subtract it
-  let videoChunks = [];      // recorded webm pieces
+  let videoChunks = [];      // recorded video pieces
+  let videoMime = 'video/webm'; // container/codec actually used by MediaRecorder
   let videoUpload = null;    // promise resolving when the upload lands in S3
   let sessionId = null;      // server session id once connected
   let sessionMode = 'single';// 'single' | 'group'
@@ -577,8 +627,9 @@
   // Speech sync: each agent turn's caption + red speaking-ring are driven off
   // the audio playback clock so the transcript reveals in time with the voice
   // (text deltas arrive far ahead of the spoken audio, so we pace them here).
-  let speechQueue = [];    // [{agent_id, el, fullText, shown, startCtx, endCtx, done, latency, metaAdded}]
+  let speechQueue = [];    // [{agent_id, el, fullText, shown, startCtx, endCtx, done, latency, metaAdded, sources}]
   let speechRaf = null;
+  let micLevelRaf = null;  // rAF handle for the mic-level meter loop
   let timerInt = null;     // conversation elapsed-time ticker
   let timerStartMs = 0;
   let feedbackSid = null;  // session id for the post-attempt feedback page
@@ -595,20 +646,88 @@
     return `hsl(${hue}, 32%, 42%)`;
   }
 
-  // ---------- participant registration (silent) ----------
-  // The voice path still needs a participant record (audio capture). For the
-  // demo we register one silently instead of showing a consent form, the
-  // popup now carries the situation, not a consent gate.
+  // ---------- participant registration (informed consent gate) ----------
+  // The voice path captures microphone audio AND webcam video, so we must show
+  // the IRB consent text and get an affirmative agreement BEFORE any capture
+  // begins. We never fabricate a consent record: consent_given:true is only
+  // POSTed after the participant checks the box. If a participant_id was already
+  // provided upstream (e.g. /start registered them), we reuse it and skip.
   async function ensureParticipant() {
     if (participantId) return true;
-    try {
-      const r = await fetch('/api/consent' + keyParamFirst, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: 'demo_' + Date.now(), consent_given: true }),
-      });
-      if (r.ok) { participantId = (await r.json()).participant_id; return true; }
-    } catch (e) {}
-    return false;
+    // This Promise resolves ONLY after the participant has actually agreed and a
+    // consent record was saved. It never resolves otherwise, so nothing that
+    // waits on it (the page start, "Start", the situation card) can ever reach
+    // microphone/webcam capture without a real recorded consent. If the consent
+    // text can't be loaded, the overlay stays up with a working Retry button
+    // rather than a dead Continue button.
+    return new Promise((resolve) => {
+      const submit = $('consentSubmit');
+      let formLoaded = false;
+
+      async function loadConsentForm() {
+        $('consentErr').textContent = '';
+        submit.disabled = true;
+        let cfg;
+        try {
+          const res = await fetch('/api/consent' + keyParamFirst);
+          if (!res.ok) throw new Error('server returned ' + res.status);
+          cfg = await res.json();
+        } catch (e) {
+          $('consentErr').textContent =
+            'We couldn’t load the consent form. Please check your internet connection, then press Retry.';
+          submit.textContent = 'Retry';
+          submit.disabled = false;
+          $('consentOverlay').style.display = 'flex';
+          return;
+        }
+        $('consentTitle').textContent = cfg.title || 'Consent';
+        // Escape first, then re-enable the block-scalar's **bold** markers only.
+        $('consentBody').innerHTML = esc(cfg.body || '')
+          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        $('consentConfirmLabel').textContent =
+          cfg.confirm_checkbox || 'I have read the above and consent to participate.';
+        submit.textContent = 'Continue';
+        submit.disabled = false;
+        formLoaded = true;
+        $('consentOverlay').style.display = 'flex';
+      }
+
+      async function onSubmit() {
+        // Until the form has loaded, the button is a Retry control.
+        if (!formLoaded) { await loadConsentForm(); return; }
+        $('consentErr').textContent = '';
+        if (!$('consentCheck').checked) {
+          $('consentErr').textContent = 'Please check the box to agree before continuing.';
+          return;
+        }
+        submit.disabled = true;
+        // Register under the participant's real key when we have one (the run's
+        // participant_id), never a fabricated per-click demo code.
+        const code = (run && run.participant_id) || ('anon_' + Date.now());
+        try {
+          const r = await fetch('/api/consent' + keyParamFirst, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, consent_given: true }),
+          });
+          if (!r.ok) {
+            $('consentErr').textContent =
+              'We couldn’t save your consent. Please press Continue to try again.';
+            submit.disabled = false;
+            return;
+          }
+          participantId = (await r.json()).participant_id;
+          $('consentOverlay').style.display = 'none';
+          resolve(true);  // the only path that lets the study proceed
+        } catch (e) {
+          $('consentErr').textContent =
+            'We could not reach the server. Please check your connection and press Continue again.';
+          submit.disabled = false;
+        }
+      }
+
+      submit.addEventListener('click', onSubmit);
+      loadConsentForm();
+    });
   }
 
   // Reflow a hard-wrapped block-scalar string: join single line breaks within a
@@ -622,9 +741,30 @@
       .join('\n\n');
   }
 
-  // Shared HTML escaper. The two older local esc() helpers stay as they are.
+  // Shared HTML escaper.
   const esc = v => String(v ?? '').replace(/[&<>"]/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  // Blocking full-screen error card. Prevents the participant from falling
+  // through to a wrong/default/unbriefed encounter when a load fails, and
+  // offers a Retry that re-runs the failed step.
+  function showBlockingError(msg, retryFn) {
+    let ov = $('errOverlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.className = 'consent-overlay';
+      ov.id = 'errOverlay';
+      ov.innerHTML = '<div class="consent-card"><h2>Something went wrong</h2>' +
+        '<div class="body" id="errBody"></div>' +
+        '<div class="actions"><button id="errRetry">Retry</button></div></div>';
+      document.body.appendChild(ov);
+    }
+    ov.querySelector('#errBody').textContent = msg;
+    const btn = ov.querySelector('#errRetry');
+    btn.style.display = retryFn ? 'inline-block' : 'none';
+    btn.onclick = async () => { ov.style.display = 'none'; if (retryFn) await retryFn(); };
+    ov.style.display = 'flex';
+  }
 
   // ---------- situation popup (shown before the meeting begins) ----------
   // Renders the briefing sections (situation, assets, people, parts) as HTML.
@@ -767,16 +907,41 @@
       const hasPhoto = a.photo && a.photo !== 'initials';
       t.className = 'tile' + (hasPhoto ? ' has-photo' : '');
       t.id = `tile-${a.id}`;
-      const visual = hasPhoto
-        ? `<img class="photo" src="${photoUrl(a.photo)}" alt="${a.name}"
-                onerror="const t=this.closest('.tile'); if(t)t.classList.remove('has-photo'); this.replaceWith(makeInitials('${a.name}'))" />`
-        : `<div class="avatar" style="background:${colorFor(a.name)}">${initialsOf(a.name)}</div>`;
-      t.innerHTML = `
-        ${visual}
-        <div class="name">${a.name}</div>
-        ${a.role ? `<div class="role">${a.role}</div>` : ''}
-        <div class="speaking-indicator">SPEAKING</div>
-      `;
+      // Build with createElement/textContent so cast names/roles never land in
+      // an HTML or JS-in-attribute context (no XSS, and names with quotes render
+      // correctly).
+      if (hasPhoto) {
+        const img = document.createElement('img');
+        img.className = 'photo';
+        img.src = photoUrl(a.photo);
+        img.alt = a.name;
+        img.onerror = () => {
+          const tile = img.closest('.tile');
+          if (tile) tile.classList.remove('has-photo');
+          img.replaceWith(makeInitials(a.name));
+        };
+        t.appendChild(img);
+      } else {
+        const av = document.createElement('div');
+        av.className = 'avatar';
+        av.style.background = colorFor(a.name);
+        av.textContent = initialsOf(a.name);
+        t.appendChild(av);
+      }
+      const nameEl = document.createElement('div');
+      nameEl.className = 'name';
+      nameEl.textContent = a.name;
+      t.appendChild(nameEl);
+      if (a.role) {
+        const roleEl = document.createElement('div');
+        roleEl.className = 'role';
+        roleEl.textContent = a.role;
+        t.appendChild(roleEl);
+      }
+      const spk = document.createElement('div');
+      spk.className = 'speaking-indicator';
+      spk.textContent = 'SPEAKING';
+      t.appendChild(spk);
       g.appendChild(t);
     });
   }
@@ -906,8 +1071,8 @@
     // Color each agent's name to match their tile avatar so the transcript is
     // easy to follow in a multi-party meeting.
     const style = (role !== 'user' && name) ? ` style="color:${colorFor(name)}"` : '';
-    el.innerHTML = `<span class="speaker ${role === 'user' ? 'self' : ''}"${style}>${name}:</span> <span class="text"></span>` +
-      (latency != null ? `<span class="meta">${latency}s</span>` : '');
+    el.innerHTML = `<span class="speaker ${role === 'user' ? 'self' : ''}"${style}>${esc(name)}:</span> <span class="text"></span>` +
+      (latency != null ? `<span class="meta">${esc(String(latency))}s</span>` : '');
     el.querySelector('.text').textContent = text;
     $('transcript').appendChild(el);
     $('transcript').scrollTop = $('transcript').scrollHeight;
@@ -951,6 +1116,9 @@
     // signal, so WebAudio playback leaks back through an open mic and gets
     // transcribed as participant speech. Routing through <audio> closes that.
     playDest = audioCtx.createMediaStreamDestination();
+    // Release any playback element from a previous session start before making
+    // a new one, so restarts don't abandon a live <audio> holding a stream.
+    if (playEl) { try { playEl.pause(); } catch {} playEl.srcObject = null; playEl = null; }
     playEl = new Audio();
     playEl.srcObject = playDest.stream;
     playEl.play().catch(() => {});
@@ -986,16 +1154,21 @@
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 512;
     micNode.connect(analyser);
-    const lvl = $('micLevel'); const buf = new Uint8Array(analyser.fftSize);
+    const buf = new Uint8Array(analyser.fftSize);
+    if (micLevelRaf) { cancelAnimationFrame(micLevelRaf); micLevelRaf = null; }
     function tick() {
+      if (!audioCtx) { micLevelRaf = null; return; }  // session ended: stop the loop
       analyser.getByteTimeDomainData(buf);
       let sum = 0;
       for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
       const rms = Math.sqrt(sum / buf.length);
+      // Re-query each frame: the 'session' message rebuilds the grid (and this
+      // #micLevel node), so a captured reference would go stale and dead.
+      const lvl = $('micLevel');
       if (lvl) lvl.style.width = `${Math.min(100, rms * 250)}%`;
-      requestAnimationFrame(tick);
+      micLevelRaf = requestAnimationFrame(tick);
     }
-    tick();
+    micLevelRaf = requestAnimationFrame(tick);
   }
 
   function setMicMuted(muted) {
@@ -1021,27 +1194,82 @@
     playbackTime = chunkStart + buf.duration;
     // Tie this chunk to the agent turn currently streaming, so the caption can
     // be paced to the real audio and the red speaking ring follows the voice.
-    if (currentTurn) {
-      if (currentTurn.startCtx == null) currentTurn.startCtx = chunkStart;
-      currentTurn.endCtx = playbackTime;
+    const turnForChunk = currentTurn;
+    if (turnForChunk) {
+      if (turnForChunk.startCtx == null) turnForChunk.startCtx = chunkStart;
+      turnForChunk.endCtx = playbackTime;
+      // Keep a live reference so barge-in (assistant_interrupted) can stop it.
+      (turnForChunk.sources || (turnForChunk.sources = [])).push(src);
     }
     if (speechRaf == null) tickSpeech();
     src.onended = () => {
-      if (audioCtx && audioCtx.currentTime >= playbackTime - 0.01 && assistantSpeaking) {
-        // Last scheduled chunk finished, the whole multi-speaker turn is done.
-        assistantSpeaking = false;
-        setMicMuted(false);
+      if (turnForChunk && turnForChunk.sources) {
+        const i = turnForChunk.sources.indexOf(src);
+        if (i >= 0) turnForChunk.sources.splice(i, 1);
       }
+      // Debounce: a brief streaming stall between chunks can fire onended in the
+      // gap before the next chunk is scheduled. Re-check after a short delay so
+      // we only unmute once the whole turn has truly finished.
+      setTimeout(() => {
+        // Only unmute once THIS turn is truly finished (assistant_done received,
+        // so no more chunks are coming) and no newer turn has started. Without the
+        // done-gate, a mid-turn streaming stall longer than the debounce — or a
+        // chained next turn — would open the mic while the agent is still speaking,
+        // capturing its own voice as participant speech.
+        if (turnForChunk && turnForChunk.done
+            && (!currentTurn || currentTurn === turnForChunk)
+            && audioCtx && audioCtx.currentTime >= playbackTime - 0.01
+            && assistantSpeaking) {
+          assistantSpeaking = false;
+          setMicMuted(false);
+        }
+      }, 250);
     };
+  }
+
+  // Barge-in: stop everything we already scheduled so a character does not keep
+  // talking over the participant after the server hands them the floor.
+  function stopScheduledAudio() {
+    for (const turn of speechQueue) {
+      if (turn.sources) {
+        for (const s of turn.sources.slice()) { try { s.stop(); } catch (e) {} }
+        turn.sources = [];
+      }
+      // Freeze the caption at what was actually shown and mark the turn done so
+      // tickSpeech stops revealing text for audio that will never play.
+      if (turn.startCtx != null) {
+        turn.fullText = turn.shown || '';
+        turn.done = true;
+        if (audioCtx) turn.endCtx = audioCtx.currentTime;
+      }
+    }
+    if (audioCtx) playbackTime = audioCtx.currentTime;
+    assistantSpeaking = false;
+    setActiveSpeaker(null);
   }
 
   // ---------- webcam recording (IRB 6a: browser -> storage, never a model) --
   function startVideoRecording() {
     videoChunks = []; videoRecorder = null;
     if (!mediaStream || mediaStream.getVideoTracks().length === 0) return;
-    const mime = ['video/webm;codecs=vp8,opus', 'video/webm']
+    // Safari (macOS + iOS) implements MediaRecorder but supports ONLY MP4/H.264,
+    // not WebM, so an MP4 fallback is required or the IRB webcam recording is
+    // silently lost on those browsers even though the camera preview works.
+    const mime = ['video/webm;codecs=vp8,opus', 'video/webm',
+                  'video/mp4;codecs=h264,aac', 'video/mp4']
       .find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
-    if (!mime) return;
+    if (!mime) {
+      // No supported recording type: surface it rather than letting the
+      // participant believe (from the live camera tile) that they are recorded.
+      videoMime = null;
+      const el = document.createElement('div');
+      el.className = 'scene';
+      el.textContent = 'Note: this browser cannot record video, so this conversation will not be captured on camera.';
+      $('transcript').appendChild(el);
+      $('transcript').scrollTop = $('transcript').scrollHeight;
+      return;
+    }
+    videoMime = mime;
     try {
       // Camera video + the mixed conversation audio (participant AND agents).
       const tracks = [...mediaStream.getVideoTracks()];
@@ -1062,16 +1290,23 @@
     videoUpload = new Promise((resolve) => {
       rec.onstop = async () => {
         try {
-          const blob = new Blob(videoChunks, { type: 'video/webm' });
+          const baseMime = (videoMime || 'video/webm').split(';')[0];
+          const blob = new Blob(videoChunks, { type: baseMime });
           videoChunks = [];
           if (!blob.size || !sid) { resolve(false); return; }
-          const g = await fetch(`/api/sessions/${encodeURIComponent(sid)}/video-upload-url` + keyParamFirst);
+          // These endpoints now bind the upload to the owning participant, so we
+          // must send participant_id (with '&' or '?' depending on whether a key
+          // is already in the query), or the server returns 403.
+          const pidQ = participantId
+            ? (keyParamFirst ? '&' : '?') + 'participant_id=' + encodeURIComponent(participantId)
+            : '';
+          const g = await fetch(`/api/sessions/${encodeURIComponent(sid)}/video-upload-url` + keyParamFirst + pidQ);
           if (!g.ok) { resolve(false); return; }
           const { url } = await g.json();
           const put = await fetch(url, { method: 'PUT', body: blob,
-            headers: { 'Content-Type': 'video/webm' } });
+            headers: { 'Content-Type': baseMime } });
           if (!put.ok) { resolve(false); return; }
-          const c = await fetch(`/api/sessions/${encodeURIComponent(sid)}/video-uploaded` + keyParamFirst, { method: 'POST' });
+          const c = await fetch(`/api/sessions/${encodeURIComponent(sid)}/video-uploaded` + keyParamFirst + pidQ, { method: 'POST' });
           resolve(c.ok ? (await c.json()).ok : false);
         } catch (e) { resolve(false); }
       };
@@ -1086,7 +1321,16 @@
     if (!participantId) await ensureParticipant();  // voice path needs a participant record
     try { await startCapture(); }
     catch (e) {
-      appendTranscript('user', null, 'Mic error: ' + e.message);
+      // Release everything startCapture may have created before it failed, so
+      // repeated mic denials don't leak AudioContexts (browsers cap concurrent
+      // contexts and new AudioContext() eventually throws).
+      try { audioCtx && audioCtx.close(); } catch {}
+      audioCtx = null;
+      if (playEl) { try { playEl.pause(); } catch {} playEl.srcObject = null; playEl = null; }
+      if (micLevelRaf) { cancelAnimationFrame(micLevelRaf); micLevelRaf = null; }
+      try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
+      mediaStream = null;
+      appendTranscript('user', null, 'We couldn’t turn on your microphone. Please allow microphone access and try again.');
       $('startBtn').disabled = false; return;
     }
     $('startBtn').style.display = 'none';
@@ -1122,14 +1366,26 @@
           sessionMode = m.scenario.mode || 'single';
           cast = m.cast || [];
           renderGrid();
-          try { history.replaceState({}, '', `?scenario=${encodeURIComponent(scenario)}&session=${encodeURIComponent(m.session_id)}${key ? `&key=${encodeURIComponent(key)}` : ''}`); } catch {}
+          try {
+            // Preserve the run (and the rest of the launch config) so a refresh
+            // or accidental navigation mid-run lands back on the run, not in
+            // single-scenario mode where the encounter is never recorded.
+            const qs = new URLSearchParams({ scenario, session: m.session_id });
+            if (runId) qs.set('run', runId);
+            if (key) qs.set('key', key);
+            if (launchId) qs.set('launch', launchId);
+            const mdl = params.get('model'); if (mdl) qs.set('model', mdl);
+            if (participantId) qs.set('participant_id', participantId);
+            history.replaceState({}, '', '?' + qs);
+          } catch {}
         } else if (m.type === 'user_transcript') {
           // Build one consolidated bubble: interim updates live, finals commit.
-          if (m.final) { userFinals.push(m.text); renderUserCaption(''); }
+          // Count a committed participant turn here: user_transcript with
+          // final:true is a message the voice server actually sends, and it gates
+          // the end-of-session debrief. (The voice server never emits a
+          // 'director_routed' message, so we deliberately do not depend on one.)
+          if (m.final) { userFinals.push(m.text); renderUserCaption(''); userTurns++; }
           else { renderUserCaption(m.text); }
-        } else if (m.type === 'director_routed') {
-          finalizeUserCaption();  // user's turn is committed; routing stays internal
-          userTurns++;            // one committed participant turn (gates debrief)
         } else if (m.type === 'assistant_started') {
           finalizeUserCaption();
           assistantSpeaking = true;
@@ -1144,7 +1400,7 @@
           currentTurn = {
             agent_id: m.agent_id, el: null,
             fullText: '', shown: '', startCtx: null, endCtx: null,
-            done: false, latency: null, metaAdded: false,
+            done: false, latency: null, metaAdded: false, sources: [],
           };
           speechQueue.push(currentTurn);
         } else if (m.type === 'assistant_text_delta') {
@@ -1153,8 +1409,14 @@
           if (currentTurn) {
             currentTurn.done = true;
             if (m.latency_total_s != null) currentTurn.latency = m.latency_total_s;
-            // No audio arrived for this turn (e.g. TTS failed), show it now.
-            if (currentTurn.startCtx == null) revealTurn(currentTurn, currentTurn.fullText.length);
+            // No audio arrived for this turn (e.g. TTS failed): show the text
+            // now, and because playPcmChunk.onended will never fire, re-open the
+            // mic here so 1:1 mode does not stay muted forever with a dead stall.
+            if (currentTurn.startCtx == null) {
+              revealTurn(currentTurn, currentTurn.fullText.length);
+              assistantSpeaking = false;
+              setMicMuted(false);
+            }
           }
           currentTurn = null;
           // Mic re-opens when the last audio chunk finishes (playPcmChunk.onended).
@@ -1163,8 +1425,8 @@
           // grey out anyone not in the room for this beat.
           presentIds = (m.present || []).map(p => p.id);
           upNext = m.next || null;
-          const names = (m.present || []).map(p => p.name).join(' · ');
-          const label = m.label || `Part ${m.index + 1}`;
+          const names = (m.present || []).map(p => esc(p.name)).join(' · ');
+          const label = esc(m.label || `Part ${m.index + 1}`);
           const el = document.createElement('div');
           el.className = 'scene';
           el.innerHTML = `${label}<span class="with">, you are now with ${names}</span>`;
@@ -1176,20 +1438,44 @@
           el.className = 'scene';
           el.textContent = 'Encounter complete, thank you.';
           $('transcript').appendChild(el);
+          // Tear the session down FIRST: endSession finalizes and uploads the
+          // webcam recording (sets videoUpload) and stops the mic/camera/ws/timer,
+          // so the participant is no longer captured behind the completion overlay
+          // and the recording is never lost when the page navigates on to the next
+          // encounter. Then advance the run.
+          endSession({ debrief: false });
           onEncounterComplete();
+        } else if (m.type === 'assistant_interrupted') {
+          // Barge-in: the server stopped the current room speaker. Stop the audio
+          // we already buffered so the character does not keep talking over the
+          // participant, and clear the speaking ring.
+          stopScheduledAudio();
         } else if (m.type === 'silence') {
           finalizeUserCaption();
           assistantSpeaking = false;
           setMicMuted(false);
           setActiveSpeaker(null);
         } else if (m.type === 'error') {
-          appendTranscript('user', null, 'error: ' + m.message);
+          appendTranscript('user', null, 'Something went wrong. Please try again.');
         }
       } else {
         playPcmChunk(ev.data);
       }
     });
-    ws.addEventListener('close', () => { setMicVisual(''); });
+    ws.addEventListener('close', () => {
+      setMicVisual('');
+      // An unexpected drop mid-encounter must be visible: otherwise the timer
+      // keeps running, the camera stays on, and the participant keeps talking to
+      // a dead socket with everything after the drop lost from the transcript.
+      if (started) {
+        const el = document.createElement('div');
+        el.className = 'scene';
+        el.textContent = 'Connection lost — your microphone is no longer being heard. Please reopen the study link to continue.';
+        $('transcript').appendChild(el);
+        $('transcript').scrollTop = $('transcript').scrollHeight;
+        endSession({ debrief: false });
+      }
+    });
   }
 
   function endSession(opts = {}) {
@@ -1202,12 +1488,14 @@
     try { ws && ws.close(); } catch {}
     try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
     try { audioCtx && audioCtx.close(); } catch {}
+    if (playEl) { try { playEl.pause(); } catch {} playEl.srcObject = null; playEl = null; }
     ws = null; audioCtx = null; mediaStream = null;
     started = false;
     userFinals = []; userLiveEl = null;
     currentTurn = null;
     speechQueue = [];
     if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
+    if (micLevelRaf) { cancelAnimationFrame(micLevelRaf); micLevelRaf = null; }
     stopTimer();
     $('stopBtn').style.display = 'none';
     $('startBtn').style.display = 'inline-block';
@@ -1228,22 +1516,29 @@
     $('debriefContent').innerHTML = `<div class="debrief-loading">Reading the room back to you, analyzing how each person responded…</div>`;
     $('debriefOverlay').style.display = 'flex';
     try {
-      const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/debrief` + keyParamFirst, {
+      // Send participant_id so the server can confirm this is the participant's
+      // own session (the endpoint refuses a paid debrief on someone else's).
+      const pidQ = participantId
+        ? (keyParamFirst ? '&' : '?') + 'participant_id=' + encodeURIComponent(participantId)
+        : '';
+      const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/debrief` + keyParamFirst + pidQ, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
       });
       if (!r.ok) {
         const msg = (await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`;
-        $('debriefContent').innerHTML = `<div class="debrief-loading">Could not generate the debrief: ${msg}</div>`;
+        $('debriefContent').innerHTML = `<div class="debrief-loading">We couldn’t put together your summary just now. Please try again.</div>`;
         return;
       }
       renderDebrief(await r.json());
     } catch (e) {
-      $('debriefContent').innerHTML = `<div class="debrief-loading">Debrief error: ${e.message}</div>`;
+      $('debriefContent').innerHTML = `<div class="debrief-loading">Something went wrong while preparing your summary. Please try again.</div>`;
     }
   }
 
   function renderDebrief(d) {
-    const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Use the shared top-level esc: it also escapes " (this valKey is
+    // interpolated into a double-quoted class attribute) and coerces non-string
+    // LLM values via String(...) instead of throwing on .replace.
     const metric = (label, valKey, val, ev) => `
       <div class="metric">
         <div class="m-label">${label}</div>
@@ -1309,28 +1604,33 @@
     $('feedbackContent').innerHTML = `<div class="debrief-loading">Scoring how you handled the room… this takes a moment.</div>`;
     $('feedbackOverlay').style.display = 'flex';
     try {
-      const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/score` + keyParamFirst, {
+      // Send participant_id so the server can confirm ownership before running
+      // the paid scorer (see the debrief call above).
+      const pidQ = participantId
+        ? (keyParamFirst ? '&' : '?') + 'participant_id=' + encodeURIComponent(participantId)
+        : '';
+      const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/score` + keyParamFirst + pidQ, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
       });
       if (!r.ok) {
         const msg = (await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`;
-        $('feedbackContent').innerHTML = `<div class="debrief-loading">Could not generate feedback: ${msg}</div>`;
+        $('feedbackContent').innerHTML = `<div class="debrief-loading">We couldn’t put together your feedback just now. Please try again.</div>`;
         return;
       }
       renderFeedback(await r.json());
     } catch (e) {
-      $('feedbackContent').innerHTML = `<div class="debrief-loading">Feedback error: ${e.message}</div>`;
+      $('feedbackContent').innerHTML = `<div class="debrief-loading">Something went wrong while preparing your feedback. Please try again.</div>`;
     }
   }
 
   function renderFeedback(d) {
-    const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Use the shared top-level esc (escapes quotes, coerces non-strings safely).
     const ov = d.overall || {};
     const skill = d.skill || 'this skill';
     let html = `
       <div class="fb-intro">Your relational-fluency feedback for <b>${esc(skill)}</b>, keeping a tense room feeling safe to speak. You're scored 1 to 5 on each part of the skill, based on what you actually said and did.</div>
       <div class="fb-hero">
-        <div class="score-ring ${scoreClass(ov.score)}">${ov.score != null ? ov.score : '–'}<small>/5</small></div>
+        <div class="score-ring ${scoreClass(ov.score)}">${ov.score != null ? esc(String(ov.score)) : '–'}<small>/5</small></div>
         <div class="summary">${esc(ov.summary)}</div>
       </div>`;
     (d.dimensions || []).forEach(dim => {
@@ -1339,7 +1639,7 @@
         <div class="fb-dim">
           <div class="head">
             <span class="dim-name">${esc(dim.label)}</span>
-            <span class="dim-score ${scoreClass(dim.score)}">${dim.score != null ? dim.score : '–'} / 5</span>
+            <span class="dim-score ${scoreClass(dim.score)}">${dim.score != null ? esc(String(dim.score)) : '–'} / 5</span>
           </div>
           <p class="rationale">${esc(dim.rationale)}</p>
           ${ev}
@@ -1347,7 +1647,7 @@
     });
     const list = (arr) => (arr && arr.length)
       ? '<ul>' + arr.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>'
-      : '<p class="rationale" style="color:var(--muted)">, </p>';
+      : '<p class="rationale" style="color:var(--muted)">Nothing noted for this attempt.</p>';
     html += `
       <div class="fb-cols">
         <div class="fb-col well"><h4>What you did well</h4>${list(ov.strengths)}</div>
@@ -1370,7 +1670,7 @@
       const pidQ = participantId
         ? `${keyParamFirst ? '&' : '?'}participant_id=${encodeURIComponent(participantId)}` : '';
       const r = await fetch('/api/scenarios/' + encodeURIComponent(scenario) + keyParamFirst + pidQ);
-      if (!r.ok) return;
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       $('title').textContent = d.title;
       const refHtml = briefingHtml(d, true);
@@ -1384,7 +1684,7 @@
       // now (see showSituation), so keep the brief itself text-only.
       $('introPhoto').style.display = 'none';
       if (d.cast && d.cast.length) {
-        const names = d.cast.map(a => a.name);
+        const names = d.cast.map(a => esc(a.name));
         let label;
         if (names.length === 1) label = `You will be talking with <strong>${names[0]}</strong>.`;
         else if (names.length === 2) label = `You will be talking with <strong>${names[0]}</strong> and <strong>${names[1]}</strong>.`;
@@ -1402,7 +1702,12 @@
       // participant record already existed, which is now always, so the
       // scenario was relegated to the small reference panel at the bottom.
       showSituation(d);
-    } catch (e) {}
+    } catch (e) {
+      // Never leave the participant on an enabled Start button with no briefing
+      // and no situation popup (that yields an invalid, unbriefed encounter).
+      // Block with a Retry that re-runs the brief instead of failing silently.
+      showBlockingError('The scenario could not be loaded — please try again.', loadBrief);
+    }
   }
 
   // The fiction acknowledgment is shown in full before the first encounter and
@@ -1420,7 +1725,9 @@
 
   (async () => {
     // Resolve the run first: it decides which scenario this page is serving.
-    await loadRun();
+    // If it could not be resolved (or the run is already finished), stop here
+    // rather than falling through to the default scenario.
+    if (!(await loadRun())) return;
     // Create the participant before the brief loads. The assigned name is
     // derived from the participant key, so fetching the brief first would show
     // one name on screen while the agents used another.
