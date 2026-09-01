@@ -10,20 +10,23 @@ with the shared log simply containing only user + this agent's turns.
 """
 from __future__ import annotations
 
-import os
 from typing import AsyncIterator, Dict, List, Optional
 
 from anthropic import AsyncAnthropic
 
-from .llm import text_client
+from .llm import setting, text_client
 from anthropic.types import MessageParam
 
 from .persona import Persona
 from .scenarios import Agent, Branch, Scenario
 
 
-DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite")
-DEFAULT_MAX_TOKENS = 130
+# Resolved via the shared .env-first accessor so the model actually used matches
+# the one recorded in provenance() (os.getenv would ignore the .env file).
+DEFAULT_MODEL = setting("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite")
+# Headroom for natural-length single-mode (voice/text-chat) replies. The group
+# one-sentence mode is constrained by the system prompt, not this cap.
+DEFAULT_MAX_TOKENS = 400
 
 
 class AgentEngine:
@@ -66,6 +69,8 @@ class AgentEngine:
         self,
         triggered_branches: List[Branch],
         director_intent: Optional[str] = None,
+        *,
+        group: Optional[bool] = None,
     ) -> str:
         parts: List[str] = []
         if self.scenario.scene:
@@ -98,7 +103,15 @@ class AgentEngine:
             parts.append("## Director note for this turn only")
             parts.append(f"- {director_intent}")
         parts.append("")
-        if self.scenario.mode == "group":
+        # Group vs. single guidance must match the interaction actually in
+        # progress, not the whole-scenario flag: a scenario is stamped
+        # mode="group" if ANY interaction is group, so a one-to-one segment of a
+        # mixed scenario (e.g. S3's 1:1 series) would otherwise wrongly be told
+        # "others may speak after you". The runner passes the current
+        # interaction's mode via `group`; fall back to scenario.mode only when it
+        # is not supplied (e.g. the text-chat path).
+        is_group_mode = (self.scenario.mode == "group") if group is None else group
+        if is_group_mode:
             parts.append(
                 "You are in a multi-party voice conversation. Keep it SHORT, usually "
                 "one sentence, two at most. This is real speech, so be brief and to the "
@@ -185,8 +198,20 @@ class AgentEngine:
             if not text:
                 continue
             if speaker == self.agent.id:
-                flush_buffer()
-                out.append({"role": "assistant", "content": text})
+                # Attention filtering can drop the turns that sat between two of
+                # this agent's own turns, leaving them adjacent. Merging them into
+                # one assistant message preserves the strict user/assistant
+                # alternation Anthropic requires (back-to-back assistant messages
+                # otherwise 400 on backends that enforce it). Only merge when no
+                # other-speaker text is buffered between them.
+                if not buffer and out and out[-1]["role"] == "assistant":
+                    out[-1] = {
+                        "role": "assistant",
+                        "content": out[-1]["content"] + "\n\n" + text,
+                    }
+                else:
+                    flush_buffer()
+                    out.append({"role": "assistant", "content": text})
             else:
                 label = self._agent_name_for(speaker, name_lookup)
                 buffer.append(f"[{label}]: {text}")
