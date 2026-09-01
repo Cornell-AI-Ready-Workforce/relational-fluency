@@ -17,6 +17,7 @@
     --accent:     #b3181b;
     --accent-deep:#951417;
     --accent-soft:#f1dcdc;
+    --warn:       #8a6d1e;   /* amber for disconnect notices */
   }
   * { box-sizing: border-box; }
   body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -284,12 +285,30 @@
   const $ = (id) => document.getElementById(id);
 
   let sessionsCache = [];
+  let sessionsSig = null;
+  // Auto-open the single active session only once, on first load. Without this,
+  // the 3s poll would re-open it every few seconds and yank the researcher off
+  // the "start a new session" launch card whenever they deselect it.
+  let autoOpenedOnce = false;
 
   async function refreshSessions() {
-    const r = await fetch(`/api/sessions${keyParamFirst}`);
-    const list = await r.json();
+    let list;
+    try {
+      const r = await fetch(`/api/sessions${keyParamFirst}`);
+      if (!r.ok) return;
+      list = await r.json();
+    } catch (e) {
+      return;
+    }
+    if (!Array.isArray(list)) return;
     sessionsCache = list;
     const picker = $('sessionPicker');
+    // Skip the rebuild when nothing changed, and never rebuild while the
+    // researcher is interacting with the (possibly open) dropdown.
+    const sig = list.map(s => `${s.id}:${s.status}:${s.turn_count}`).join('|');
+    if (sig === sessionsSig) return;
+    if (document.activeElement === picker) return;
+    sessionsSig = sig;
     const cur = picker.value;
     picker.innerHTML = '<option value="">select session</option>';
     const active = list.filter(s => s.status === 'active');
@@ -317,7 +336,18 @@
       picker.appendChild(grp);
     }
     if (cur && list.find(s => s.id === cur)) picker.value = cur;
-    else if (active.length === 1) picker.value = active[0].id;
+    else if (!autoOpenedOnce && active.length === 1 && currentSessionId !== active[0].id) {
+      // Auto-select the single active session and actually open it — but only
+      // once, on first load. Setting .value alone fires no 'change' event, so
+      // connect() must be called.
+      picker.value = active[0].id;
+      connect(active[0].id);
+    }
+    // Arm the one-time guard after the FIRST completed refresh, regardless of
+    // whether an auto-open happened. Otherwise, loading with two active sessions
+    // (guard never armed) and later dropping to one would auto-open and yank the
+    // researcher off an in-progress launch card.
+    autoOpenedOnce = true;
   }
 
   function setRightPanel(mode) {
@@ -462,20 +492,40 @@
   let launchAuto = true;         // matches the server's on-by-default
   let launchAgentSel = null;
   let launchPoll = null;
+  let loadedScenarioId = null;   // id of the scenario launchDetail currently reflects
 
   async function initLaunchCard() {
     try {
       const r = await fetch(`/api/scenarios${keyParamFirst}`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
       const list = await r.json();
+      if (!Array.isArray(list)) throw new Error('malformed scenario list');
       $('launchScenario').innerHTML = list.map(s =>
         `<option value="${esc(s.id)}">${esc(s.title)} · ${s.mode === 'group' ? 'group' : '1:1'}</option>`).join('');
       if (list.length) await loadLaunchScenario(list[0].id);
-    } catch {}
+    } catch (e) {
+      $('launchStatus').textContent = 'Could not load scenarios. Reload the page or check the session key.';
+      $('launchBtn').disabled = true;
+    }
   }
 
   async function loadLaunchScenario(id) {
-    const r = await fetch(`/api/scenarios/${encodeURIComponent(id)}${keyParamFirst}`);
-    launchDetail = await r.json();
+    let detail;
+    try {
+      const r = await fetch(`/api/scenarios/${encodeURIComponent(id)}${keyParamFirst}`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      detail = await r.json();
+      if (!detail || !Array.isArray(detail.cast)) throw new Error('malformed scenario');
+    } catch (e) {
+      // Keep the previously staged gears and dropdown selection intact; the
+      // launch stays disabled until a scenario actually loads.
+      $('launchStatus').textContent = 'Could not load scenario (' + e.message + '). Staged gears kept — re-select to retry.';
+      $('launchBtn').disabled = true;
+      if (loadedScenarioId != null) $('launchScenario').value = loadedScenarioId;
+      return;
+    }
+    launchDetail = detail;
+    loadedScenarioId = id;
     launchStaged = {};
     launchAgentSel = launchDetail.cast[0]?.id || null;
     const lm = $('launchModel');
@@ -491,6 +541,8 @@
       $('launchAgent').value = launchAgentSel;
     }
     renderLaunchKnobs();
+    $('launchBtn').disabled = false;
+    if ($('launchStatus').textContent.startsWith('Could not load scenario')) $('launchStatus').textContent = '';
   }
 
   function launchVal(aid, knob, fallback) {
@@ -557,12 +609,29 @@
       });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const d = await r.json();
-      tab.location = d.participant_url + (key ? `&key=${encodeURIComponent(key)}` : '');
-      $('launchStatus').textContent = 'Conversation tab opened. Waiting for the participant to press Start…';
+      const purl = d.participant_url + (key ? `&key=${encodeURIComponent(key)}` : '');
+      if (tab) {
+        tab.location = purl;
+        $('launchStatus').textContent = 'Conversation tab opened. Waiting for the participant to press Start…';
+      } else {
+        // Popup blocked: window.open returned null. The launch already
+        // succeeded, so surface the participant link as a manual fallback.
+        $('launchStatus').innerHTML =
+          `Popup blocked — open <a href="${esc(purl)}" target="_blank" rel="noopener">the participant page</a> ` +
+          `manually. Waiting for the participant to press Start…`;
+      }
+      const launchStartedAt = Date.now();
+      const MAX_WAIT_MS = 10 * 60 * 1000;
       clearInterval(launchPoll);
       launchPoll = setInterval(async () => {
         try {
           const pr = await fetch(`/api/launch/${encodeURIComponent(d.launch_id)}${keyParamFirst}`);
+          if (pr.status === 404 || pr.status === 410) {
+            clearInterval(launchPoll); launchPoll = null;
+            $('launchBtn').disabled = false;
+            $('launchStatus').textContent = 'Launch expired — start again.';
+            return;
+          }
           if (!pr.ok) return;
           const pd = await pr.json();
           if (pd.session_id) {
@@ -572,11 +641,17 @@
             await refreshSessions();
             $('sessionPicker').value = pd.session_id;
             connect(pd.session_id);
+            return;
+          }
+          if (Date.now() - launchStartedAt > MAX_WAIT_MS) {
+            clearInterval(launchPoll); launchPoll = null;
+            $('launchBtn').disabled = false;
+            $('launchStatus').textContent = 'Timed out waiting for the participant — start again.';
           }
         } catch {}
       }, 1000);
     } catch (e) {
-      try { tab.close(); } catch {}
+      try { if (tab) tab.close(); } catch {}
       $('launchStatus').textContent = 'Launch failed: ' + e.message;
       $('launchBtn').disabled = false;
     }
@@ -600,6 +675,9 @@
   function connect(sessionId) {
     if (ws) { try { ws.close(); } catch {} ws = null; }
     if (launchPoll) { clearInterval(launchPoll); launchPoll = null; $('launchBtn').disabled = false; $('launchStatus').textContent = ''; }
+    // Reset stale UI from any previously watched session before loading the new one.
+    state = null;
+    $('sessionBar').style.display = 'none';
     $('msgs').innerHTML = '';
     $('steerLog').innerHTML = '';
     currentSessionId = sessionId;
@@ -616,23 +694,32 @@
     }
     setRightPanel('active');
     const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/researcher?session_id=${encodeURIComponent(sessionId)}${keyParam}`;
-    ws = new WebSocket(url);
-    ws.addEventListener('message', (ev) => {
+    const sock = new WebSocket(url);
+    ws = sock;
+    sock.addEventListener('message', (ev) => {
       const m = JSON.parse(ev.data);
       if (m.type === 'state') { state = m; renderState(); }
       else if (m.type === 'transcript') { appendMsg(m); }
       else if (m.type === 'steering') { appendSteer(m); }
     });
-    ws.addEventListener('close', () => {
+    sock.addEventListener('close', () => {
+      // Ignore the close of a socket that has already been superseded by a
+      // newer connect() — otherwise switching sessions clobbers the new panel.
+      if (ws !== sock) return;
       const div = document.createElement('div');
       div.className = 'msg'; div.style.color = 'var(--warn)';
       div.textContent = '(disconnected)';
       $('msgs').appendChild(div);
+      // The live session ended: disable the steering controls so knob clicks
+      // are no longer silently dropped.
+      currentSessionStatus = 'closed';
+      setRightPanel('closed');
     });
   }
 
   function agentName(agent_id) {
-    if (!agent_id || !state) return '';
+    if (!agent_id) return '';
+    if (!state) return agent_id;  // closed session: fall back to the raw id
     const a = (state.cast || []).find(x => x.id === agent_id);
     return a ? a.name : agent_id;
   }
@@ -640,7 +727,12 @@
   function appendMsg(m) {
     const el = document.createElement('div');
     el.className = `msg ${m.role}`;
-    if (m.role === 'assistant' && m.agent_id && state && state.cast && state.cast.length > 1) {
+    // Show the speaker header for multi-agent turns. With live state, require a
+    // group cast; for closed sessions (no state) render it from agent_id so
+    // rater attribution survives, falling back to the raw id in agentName().
+    const showHeader = m.role === 'assistant' && m.agent_id &&
+      (state ? (state.cast && state.cast.length > 1) : true);
+    if (showHeader) {
       const header = document.createElement('div');
       header.style.fontSize = '11px';
       header.style.color = 'var(--muted)';
@@ -768,25 +860,40 @@
   async function showClosedTranscript(sessionId) {
     try {
       const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/download/events.jsonl${keyParamFirst}`);
-      if (!r.ok) return;
+      if (!r.ok) {
+        appendMsg({ role: 'assistant', text: '(transcript unavailable)' });
+        return;
+      }
       const text = await r.text();
       text.trim().split('\n').forEach(line => {
         try {
           const e = JSON.parse(line);
           if (e.type === 'user_turn')       appendMsg({ role: 'user',      text: e.text });
           else if (e.type === 'assistant_turn') appendMsg({
-            role: 'assistant', text: e.text,
+            role: 'assistant', text: e.text, agent_id: e.agent_id,
             latency_to_first_token_s: e.latency_to_first_token_s,
             latency_total_s: e.latency_total_s,
           });
         } catch {}
       });
-    } catch {}
+    } catch {
+      appendMsg({ role: 'assistant', text: '(transcript unavailable)' });
+    }
   }
 
   $('sessionPicker').addEventListener('change', (e) => {
     if (e.target.value) connect(e.target.value);
-    else { currentSessionId = null; currentSessionStatus = null; setRightPanel('empty'); $('fileList').innerHTML = '<div class="files-empty">No session selected.</div>'; $('msgs').innerHTML = ''; }
+    else {
+      // Deselecting must tear down the live socket, otherwise the old
+      // session keeps streaming transcript/steering/state into the cleared UI.
+      if (ws) { try { ws.close(); } catch {} ws = null; }
+      currentSessionId = null; currentSessionStatus = null; state = null;
+      setRightPanel('empty');
+      $('sessionBar').style.display = 'none';
+      $('steerLog').innerHTML = '';
+      $('fileList').innerHTML = '<div class="files-empty">No session selected.</div>';
+      $('msgs').innerHTML = '';
+    }
   });
   $('refreshSessions').addEventListener('click', refreshSessions);
   $('agentPicker').addEventListener('change', (e) => {
