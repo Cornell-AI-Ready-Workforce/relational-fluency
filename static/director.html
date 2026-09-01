@@ -73,14 +73,23 @@ const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;'
 let encounters = [], selected = null;
 
 async function loadList() {
-  const r = await fetch(q('/api/encounters'));
-  encounters = await r.json();
-  document.getElementById('count').textContent = `${encounters.length} encounters`;
   const el = document.getElementById('list');
+  let data;
+  try {
+    const r = await fetch(q('/api/encounters'));
+    if (!r.ok) { el.innerHTML = `<div class="empty">Failed to load (HTTP ${r.status}).</div>`; return; }
+    data = await r.json();
+  } catch (err) {
+    el.innerHTML = '<div class="empty">Could not reach the server. Check your connection and reload.</div>';
+    return;
+  }
+  if (!Array.isArray(data)) { el.innerHTML = '<div class="empty">Unexpected response from server.</div>'; return; }
+  encounters = data;
+  document.getElementById('count').textContent = `${encounters.length} encounters`;
   if (!encounters.length) { el.innerHTML = '<div class="empty">No encounters yet.</div>'; return; }
   el.innerHTML = encounters.map(e => `
     <div class="enc${e.study ? '' : ' legacy'}" data-id="${esc(e.id)}">
-      <div class="scen">${esc(e.scenario || ', ')}${e.title ? ` · ${esc(e.title)}` : ''}</div>
+      <div class="scen">${esc(e.scenario || '—')}${e.title ? ` · ${esc(e.title)}` : ''}</div>
       <div class="sid">${e.construct ? esc(e.construct.replace(/_/g, ' ')) + ' · var ' + esc(e.variant) : esc(e.id)}</div>
     </div>`).join('');
   el.querySelectorAll('.enc').forEach(n =>
@@ -92,8 +101,14 @@ async function select(id) {
   selected = id;
   document.querySelectorAll('.enc').forEach(n =>
     n.classList.toggle('sel', n.dataset.id === id));
-  const r = await fetch(q(`/api/encounters/${encodeURIComponent(id)}/record`));
-  render(await r.json());
+  const detail = document.getElementById('detail');
+  try {
+    const r = await fetch(q(`/api/encounters/${encodeURIComponent(id)}/record`));
+    if (!r.ok) { detail.innerHTML = `<div class="empty">Could not load record (HTTP ${r.status}).</div>`; return; }
+    render(await r.json());
+  } catch (err) {
+    detail.innerHTML = '<div class="empty">Could not reach the server. Check your connection and try again.</div>';
+  }
 }
 
 function render(rec) {
@@ -151,9 +166,9 @@ function render(rec) {
 
   document.getElementById('detail').innerHTML = `
     <div class="meta">
-      <span><b>${esc(rec.scenario || ', ')}</b>${spec ? ` · ${esc(spec.title)}` : ''}</span>
-      ${spec ? `<span>${esc(spec.construct.replace(/_/g, ' '))} · variant <b>${esc(spec.variant)}</b> · pair <b>${esc(spec.parallel_form || ', ')}</b></span>` : ''}
-      <span>participant <b>${esc(rec.participant_id || ', ')}</b></span>
+      <span><b>${esc(rec.scenario || '—')}</b>${spec ? ` · ${esc(spec.title)}` : ''}</span>
+      ${spec ? `<span>${esc(spec.construct.replace(/_/g, ' '))} · variant <b>${esc(spec.variant)}</b> · pair <b>${esc(spec.parallel_form || '—')}</b></span>` : ''}
+      <span>participant <b>${esc(rec.participant_id || '—')}</b></span>
       <span>turns <b>${c.participant_turns || 0}</b> / <b>${c.agent_turns || 0}</b></span>
       <span>directions <b>${c.stage_directions || 0}</b></span>
       <span>${esc(p.realtime_model || '')} · ${esc(p.text_model || '')}</span>
