@@ -17,11 +17,13 @@ import secrets
 import time
 from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
+from anthropic import AsyncAnthropic
+
 from .llm import text_client
 
 from .director import Director
 from .engine import AgentEngine, DEFAULT_MODEL
-from .persona import KNOB_NAMES, Persona
+from .persona import Persona
 from .scenarios import Branch, Scenario, load_scenario
 from .steering import SteeringController, band_label
 from .storage import SessionStore
@@ -93,12 +95,6 @@ class Session:
         self.participant_ws: Optional["WebSocket"] = None
         self.researcher_wss: Set["WebSocket"] = set()
         self.lock = asyncio.Lock()
-        # Set once the session is being torn down; guards store writes from
-        # racing background tasks (auto_steer) after the store is closed.
-        self._closed: bool = False
-        # Outstanding auto_steer tasks, retained so they are not GC-cancelled
-        # and can be cancelled on teardown.
-        self._auto_steer_tasks: Set[asyncio.Task] = set()
 
         self.store.event(
             "session_start",
@@ -195,14 +191,6 @@ class Session:
         auto: bool = False,
         reason: Optional[str] = None,
     ) -> None:
-        if self._closed:
-            return
-        # Validate the knob name before reading it off the persona: an unknown
-        # name (or one that collides with a method) would otherwise raise
-        # AttributeError/TypeError instead of the clean ValueError callers
-        # expect, and crash the researcher websocket.
-        if knob not in KNOB_NAMES:
-            raise ValueError(f"Unknown knob: {knob}")
         aid = self._resolve_agent(agent_id)
         from_label = band_label(knob, getattr(self.personas[aid], knob))
         self.personas[aid].update(**{knob: value})
@@ -237,47 +225,30 @@ class Session:
         self.auto_steering = bool(enabled)
         self.store.event("auto_steering_set", enabled=self.auto_steering)
 
-    def spawn_auto_steer(self) -> None:
-        """Kick off one auto_steer review as a tracked background task.
-
-        Retained in a set (and self-removing on completion) so the task is not
-        garbage-collected mid-run, and so teardown can cancel it."""
-        task = asyncio.create_task(self.auto_steer())
-        self._auto_steer_tasks.add(task)
-        task.add_done_callback(self._auto_steer_tasks.discard)
-
-    def cancel_auto_steer(self) -> None:
-        """Cancel any outstanding auto_steer tasks (called on teardown)."""
-        for task in list(self._auto_steer_tasks):
-            task.cancel()
-        self._auto_steer_tasks.clear()
-
     async def auto_steer(self) -> None:
         """Run one steering review and apply any gear shifts. Called by the
         session runners after each completed turn; a no-op unless the
         researcher has turned auto steering on. Never raises."""
-        if not self.auto_steering or self._closed:
+        if not self.auto_steering:
             return
         try:
             adjustments = await self.steering.review(
                 self.shared_history, self.personas, self.name_lookup
             )
         except Exception as e:
-            if not self._closed:
-                self.store.event("auto_steer_error", message=str(e))
+            self.store.event("auto_steer_error", message=str(e))
             return
         for adj in adjustments:
-            if not self.auto_steering or self._closed:
-                break  # researcher flipped it off, or session torn down
+            if not self.auto_steering:
+                break  # researcher flipped it off mid-review
             try:
                 await self.set_knob(
                     adj["knob"], adj["value"], agent_id=adj["agent_id"],
                     auto=True, reason=adj["reason"],
                 )
             except (KeyError, ValueError) as e:
-                if not self._closed:
-                    self.store.event("auto_steer_error", message=str(e))
-        if adjustments and not self._closed:
+                self.store.event("auto_steer_error", message=str(e))
+        if adjustments:
             await self.broadcast({"type": "state", **self.snapshot()})
 
     async def add_note(self, note: str, agent_id: Optional[str] = None) -> None:
@@ -312,10 +283,7 @@ class Session:
 
     async def broadcast(self, message: dict) -> None:
         dead = []
-        # Snapshot the set: a researcher connecting/disconnecting during an
-        # await would otherwise mutate it mid-iteration and raise RuntimeError,
-        # which propagates into the participant turn and kills the session.
-        for ws in list(self.researcher_wss):
+        for ws in self.researcher_wss:
             try:
                 await ws.send_json(message)
             except Exception:
@@ -357,10 +325,6 @@ class SessionRegistry:
     def drop(self, session_id: str) -> None:
         s = self._sessions.pop(session_id, None)
         if s:
-            # Mark closed first so a racing auto_steer task no-ops its store
-            # writes, then cancel outstanding tasks before closing the store.
-            s._closed = True
-            s.cancel_auto_steer()
             n_turns = sum(1 for h in s.shared_history if h["speaker"] == "user")
             s.store.event("session_end", n_turns=n_turns)
             s.store.close(n_turns=n_turns)

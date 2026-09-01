@@ -11,6 +11,7 @@ validated scenarios and prompts.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import secrets
@@ -18,19 +19,20 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import io
 import zipfile
 
 import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from .engine import DEFAULT_MODEL
 from .scenarios import list_scenarios, load_scenario
-from .session import registry
+from .session import Session, registry
 from .storage import create_participant, get_participant, init_storage
 from .realtime_voice_session import RealtimeVoiceSessionRunner
 
@@ -131,7 +133,7 @@ async def health() -> dict:
 
 
 def _load_consent() -> dict:
-    return yaml.safe_load((CONFIG_DIR / "consent.yaml").read_text(encoding="utf-8"))
+    return yaml.safe_load((CONFIG_DIR / "consent.yaml").read_text())
 
 
 def check_key(key: Optional[str]) -> None:
@@ -165,21 +167,21 @@ async def landing_page(scenario: Optional[str] = None, key: Optional[str] = None
     query (legacy v1 link), still serve the chat UI so old bookmarks work."""
     check_key(key)
     if scenario:
-        return (STATIC_DIR / "participant.html").read_text(encoding="utf-8")
-    return (STATIC_DIR / "landing.html").read_text(encoding="utf-8")
+        return (STATIC_DIR / "participant.html").read_text()
+    return (STATIC_DIR / "landing.html").read_text()
 
 
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_page(scenario: Optional[str] = None, key: Optional[str] = None):
     """Legacy text-mode chat UI. /v2 is the recommended entry point."""
     check_key(key)
-    return (STATIC_DIR / "participant.html").read_text(encoding="utf-8")
+    return (STATIC_DIR / "participant.html").read_text()
 
 
 @app.get("/researcher", response_class=HTMLResponse)
 async def researcher_page(key: Optional[str] = None):
     check_key(key)
-    return (STATIC_DIR / "researcher.html").read_text(encoding="utf-8")
+    return (STATIC_DIR / "researcher.html").read_text()
 
 
 @app.get("/test")
@@ -208,13 +210,14 @@ async def api_runs_export(key: Optional[str] = None, cohort: Optional[str] = Non
     Qualtrics response id, cohort, completion code, and the session ids of the
     encounters it produced."""
     check_key(key)
+    from . import runs as runs_mod
     from .runs import RUNS_DIR, completion_code
 
     out = []
     if RUNS_DIR.exists():
         for f in sorted(RUNS_DIR.glob("*.json")):
             try:
-                run = json.loads(f.read_text(encoding="utf-8"))
+                run = json.loads(f.read_text())
             except ValueError:
                 continue
             if cohort and run.get("cohort", "study") != cohort:
@@ -270,33 +273,9 @@ async def start_run(
         run["qualtrics_id"] = qid
         runs.save(run)
 
-    # Give the run one stable participant record and carry it in the redirect,
-    # so identity.assign() hashes the same key across all four encounters (and
-    # mid-encounter refreshes) instead of a fresh demo_<timestamp> per page
-    # load. Created once per run and reused (the participant already consented
-    # in Qualtrics before reaching this entry point).
-    pid_record = run.get("participant_record_id")
-    if not pid_record:
-        try:
-            version = _load_consent().get("version", "unknown")
-            pid_record = create_participant(
-                code=(pkey or run["run_id"]),
-                consent_given=True,
-                consent_version=version,
-            )
-            run["participant_record_id"] = pid_record
-            runs.save(run)
-        except Exception:  # noqa: BLE001 , fall back to today's behavior
-            pid_record = None
-
     q = f"?run={run['run_id']}"
     if key:
         q += f"&key={key}"
-    # Prefer the run's stable participant record; otherwise never drop a
-    # participant_id that was handed to us.
-    effective_pid = pid_record or participant_id
-    if effective_pid:
-        q += f"&participant_id={effective_pid}"
     return RedirectResponse(url=f"/v2{q}", status_code=307)
 
 
@@ -305,7 +284,7 @@ async def v2_page(scenario: Optional[str] = None, key: Optional[str] = None):
     """Zoom-like multi-agent voice UI. Works for both single-agent and group
     scenarios (single-agent just shows one tile)."""
     check_participant(key)
-    return (STATIC_DIR / "v2.html").read_text(encoding="utf-8")
+    return (STATIC_DIR / "v2.html").read_text()
 
 
 # --- REST helpers ---
@@ -364,7 +343,7 @@ async def _apply_launch_config(session, cfg: dict) -> None:
                 await session.set_knob(
                     knob, float(value), agent_id=aid, reason="preset at launch"
                 )
-            except (KeyError, ValueError, TypeError, AttributeError) as e:
+            except (KeyError, ValueError, TypeError) as e:
                 session.store.event(
                     "launch_preset_error", agent_id=aid, knob=knob, message=str(e)
                 )
@@ -418,65 +397,6 @@ def _session_dir(session_id: str) -> Path:
     return sdir
 
 
-def _load_manifest(sdir: Path) -> dict:
-    """Read a session's manifest, or 404 if it is missing/unreadable."""
-    manifest = sdir / "manifest.json"
-    if not manifest.exists():
-        raise HTTPException(404, "session not found")
-    try:
-        return json.loads(manifest.read_text(encoding="utf-8"))
-    except ValueError:
-        raise HTTPException(404, "session not found")
-
-
-def _require_session_owner(m: dict, participant_id: Optional[str]) -> None:
-    """Bind a participant-open session route to the session's real owner.
-
-    Without this, any known/guessed session id would let an outsider act on
-    another participant's recorded session.
-    """
-    owner = m.get("participant_id")
-    if not participant_id or not owner or participant_id != owner:
-        raise HTTPException(403, "not your session")
-
-
-def _require_owner_or_key(sdir: Path, participant_id: Optional[str], key: Optional[str]) -> None:
-    """Gate a participant-open route that triggers a paid, blocking Claude call.
-
-    A researcher (valid SESSION_KEY) or the participant who owns the session may
-    proceed; anyone else is refused, so the open endpoint can't be used to spend
-    the study's API budget on arbitrary session ids. When no SESSION_KEY is
-    configured (local dev) the route stays open, matching the rest of the app.
-    """
-    if not SESSION_KEY:
-        return
-    if key == SESSION_KEY:
-        return
-    _require_session_owner(_load_manifest(sdir), participant_id)
-
-
-def _count_user_turns(sdir: Path) -> int:
-    """User turns actually recorded for a session, from its event trail."""
-    ev = sdir / "events.jsonl"
-    if not ev.exists():
-        return 0
-    n = 0
-    try:
-        for line in ev.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if e.get("type") == "user_turn":
-                n += 1
-    except Exception:  # noqa: BLE001
-        return n
-    return n
-
-
 @app.get("/api/sessions/{session_id}/files")
 async def api_session_files(session_id: str, key: Optional[str] = Query(None)):
     check_key(key)
@@ -506,31 +426,18 @@ async def api_session_file(
 async def api_session_zip(session_id: str, key: Optional[str] = Query(None)):
     check_key(key)
     sdir = _session_dir(session_id)
-    # Write the archive to a temp file on disk and stream it back with
-    # FileResponse, so memory use is bounded regardless of session size (voice
-    # sessions can hold hundreds of MB of WAV audio). ZIP_STORED, audio does
-    # not compress, so deflate would only burn CPU.
-    import tempfile
-    from starlette.background import BackgroundTask
-
-    fd, tmp_path = tempfile.mkstemp(prefix=f"{session_id}_", suffix=".zip")
-    os.close(fd)
-    try:
-        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_STORED) as zf:
-            for p in sorted(sdir.iterdir()):
-                if p.is_file():
-                    zf.write(p, arcname=p.name)
-    except Exception:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise
-    return FileResponse(
-        tmp_path,
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in sorted(sdir.iterdir()):
+            if p.is_file():
+                zf.write(p, arcname=p.name)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
         media_type="application/zip",
-        filename=f"{session_id}.zip",
-        background=BackgroundTask(os.remove, tmp_path),
+        headers={
+            "Content-Disposition": f'attachment; filename="{session_id}.zip"',
+        },
     )
 
 
@@ -551,16 +458,12 @@ async def api_post_score(
     session_id: str,
     force: bool = Query(False),
     model: Optional[str] = Query(None),
-    participant_id: Optional[str] = Query(None),
     key: Optional[str] = Query(None),
 ):
     """Run (or re-run with force=1) the offline scorer. Blocking Claude call,
     so it runs in a threadpool to keep the event loop free."""
-    # The /v2 feedback overlay lets a participant score their OWN session
-    # (keyless in production), so gate on ownership-or-key: this is a paid Claude
-    # call and must not be triggerable against arbitrary session ids.
-    sdir = _session_dir(session_id)
-    _require_owner_or_key(sdir, participant_id, key)
+    check_key(key)
+    _session_dir(session_id)
     from starlette.concurrency import run_in_threadpool
     from .scoring import TranscriptError, score_session
     try:
@@ -590,16 +493,12 @@ async def api_post_debrief(
     session_id: str,
     force: bool = Query(False),
     model: Optional[str] = Query(None),
-    participant_id: Optional[str] = Query(None),
     key: Optional[str] = Query(None),
 ):
     """Run (or re-run with force=1) the per-persona debrief. Blocking Claude
     call, so it runs in a threadpool to keep the event loop free."""
-    # Participant-invoked from the /v2 debrief overlay (keyless in production);
-    # gate on ownership-or-key like the scorer so this paid call can't be run
-    # against arbitrary sessions.
-    sdir = _session_dir(session_id)
-    _require_owner_or_key(sdir, participant_id, key)
+    check_key(key)
+    _session_dir(session_id)
     from starlette.concurrency import run_in_threadpool
     from .debrief import generate_debrief
     from .scoring import TranscriptError
@@ -649,45 +548,34 @@ async def api_run_create(request: Request, key: Optional[str] = None):
 
 
 @app.get("/api/sessions/{session_id}/video-upload-url")
-async def api_video_upload_url(session_id: str, participant_id: Optional[str] = None,
-                               key: Optional[str] = None):
+async def api_video_upload_url(session_id: str, key: Optional[str] = None):
     """Presigned PUT for the participant's webcam recording. Participant-open:
-    it grants a write to exactly one object, for one hour.
-
-    The session must exist and belong to the presenting participant, and a
-    presign is refused once the object is already there, so nobody can point a
-    write at another participant's session or overwrite a finished recording.
-    """
+    it grants a write to exactly one object, for one hour."""
     check_participant(key)
     from . import video
 
-    sdir = _session_dir(session_id)  # existence + traversal check
-    _require_session_owner(_load_manifest(sdir), participant_id)
-    if video.uploaded_size(session_id) > 0:
-        raise HTTPException(409, "video already uploaded")
     return video.presign_upload(session_id)
 
 
 @app.post("/api/sessions/{session_id}/video-uploaded")
-async def api_video_uploaded(session_id: str, participant_id: Optional[str] = None,
-                             key: Optional[str] = None):
+async def api_video_uploaded(session_id: str, key: Optional[str] = None):
     """Client confirms the upload; verified against S3 and written into the
     session's event trail so verify_record can check for it."""
     check_participant(key)
     from . import video
-
-    sdir = _session_dir(session_id)  # existence + traversal check
-    _require_session_owner(_load_manifest(sdir), participant_id)
+    from .storage import SESSIONS_DIR
 
     size = video.uploaded_size(session_id)
-    import json as _json
-    import time as _time
+    d = SESSIONS_DIR / session_id
+    if d.exists():
+        import json as _json
+        import time as _time
 
-    with open(sdir / "events.jsonl", "a", encoding="utf-8") as fh:
-        fh.write(_json.dumps({
-            "t": None, "wall": _time.time(), "type": "video_uploaded",
-            "key": video.video_key(session_id), "bytes": size,
-        }) + "\n")
+        with open(d / "events.jsonl", "a") as fh:
+            fh.write(_json.dumps({
+                "t": None, "wall": _time.time(), "type": "video_uploaded",
+                "key": video.video_key(session_id), "bytes": size,
+            }) + "\n")
     return {"ok": size > 0, "bytes": size, "key": video.video_key(session_id)}
 
 
@@ -715,49 +603,9 @@ async def api_run_get(run_id: str, key: Optional[str] = None):
 @app.post("/api/run/{run_id}/advance")
 async def api_run_advance(run_id: str, session_id: Optional[str] = None,
                           key: Optional[str] = None):
-    """Mark the current encounter complete and move to the next.
-
-    The completion code is proof of completion, so an encounter is only marked
-    done against a real recorded session that belongs to this run's
-    participant, matches the current encounter's scenario, and actually had the
-    participant speak. Otherwise the open endpoint would mint valid completion
-    codes for runs that never happened.
-    """
+    """Mark the current encounter complete and move to the next."""
     check_participant(key)
     from . import runs
-
-    run = runs.get(run_id)
-    if run is None:
-        raise HTTPException(404, "no such run")
-
-    if not session_id:
-        raise HTTPException(400, "session_id required")
-
-    # Idempotency comes first: if this session was already recorded complete (a
-    # retried or duplicated advance — e.g. the client re-POSTs after a dropped
-    # response, or the End button races the auto-complete), return the run
-    # unchanged. Re-running the checks below would compare against the NOW-current
-    # encounter (the next scenario), so the scenario/owner checks would wrongly
-    # 409/403 and permanently strand the participant.
-    if any(c.get("session_id") == session_id for c in run.get("completed", [])):
-        return runs.view(run)
-
-    sdir = _session_dir(session_id)  # existence + traversal check
-    m = _load_manifest(sdir)
-
-    expected_owner = run.get("participant_record_id")
-    if expected_owner and m.get("participant_id") != expected_owner:
-        raise HTTPException(403, "session does not belong to this run")
-
-    idx = run.get("index", 0)
-    scenarios = run.get("scenarios", [])
-    if idx < len(scenarios):
-        expected_scenario = scenarios[idx].get("id")
-        if m.get("scenario") != expected_scenario:
-            raise HTTPException(409, "session scenario does not match current encounter")
-
-    if _count_user_turns(sdir) < 1 and (m.get("n_turns") or 0) < 1:
-        raise HTTPException(422, "session has no recorded turns")
 
     run = runs.advance(run_id, session_id)
     if run is None:
@@ -769,36 +617,7 @@ async def api_run_advance(run_id: str, session_id: Optional[str] = None,
 async def director_page(key: Optional[str] = None):
     """Steering dashboard, what the director told each actor, and what it said."""
     check_key(key)
-    return (STATIC_DIR / "director.html").read_text(encoding="utf-8")
-
-
-@app.get("/evidence", response_class=HTMLResponse)
-async def evidence_page(key: Optional[str] = None):
-    """Evidence Trace: the aligned research view — participant, the direction
-    that shaped each reply, the actor's line, fidelity against the instrument,
-    and a replay synced to turns."""
-    check_key(key)
-    return (STATIC_DIR / "evidence.html").read_text(encoding="utf-8")
-
-
-def _encounter_status(m: dict) -> str:
-    """A coarse, cheap quality status for the encounter list, derived from the
-    manifest alone: active (still recording), complete, partial (a channel is
-    missing), or failed (nothing recorded). 'flagged' (a validity flag needing
-    a look) is a later, richer check."""
-    if m.get("status") == "active":
-        return "active"
-    n = m.get("n_turns") or 0
-    if n <= 0:
-        return "failed"
-    audio = m.get("audio") or {}
-    ua = audio.get("user_audio_duration_s")
-    aa = audio.get("assistant_audio_duration_s_by_agent") or {}
-    if ua is None:
-        return "complete"  # text-mode session: no audio channel expected
-    if ua and any(v for v in aa.values()):
-        return "complete"
-    return "partial"
+    return (STATIC_DIR / "director.html").read_text()
 
 
 @app.get("/api/encounters")
@@ -818,7 +637,7 @@ async def api_encounters(key: Optional[str] = None, limit: int = 60):
         if not manifest.exists():
             continue
         try:
-            m = json.loads(manifest.read_text(encoding="utf-8"))
+            m = json.loads(manifest.read_text())
         except ValueError:
             continue
         entry = {
@@ -826,7 +645,6 @@ async def api_encounters(key: Optional[str] = None, limit: int = 60):
             "scenario": m.get("scenario"),
             "started_at": m.get("started_at"),
             "participant_id": m.get("participant_id"),
-            "status": _encounter_status(m),
         }
         try:
             from .scenarios_v3 import load_spec
@@ -856,7 +674,7 @@ async def api_encounter_record(session_id: str, key: Optional[str] = None):
     fired = []
     ev = d / "events.jsonl"
     if ev.exists():
-        for line in ev.read_text(encoding="utf-8").splitlines():
+        for line in ev.read_text().splitlines():
             if not line.strip():
                 continue
             try:
@@ -973,39 +791,29 @@ async def ws_participant_text(
         return
     await ws.accept()
 
-    # The model is a study variable: honour only a researcher-authenticated
-    # launch override, never a participant-supplied ?model=. Otherwise a
-    # participant could bill an unapproved (costlier) model and contaminate the
-    # recorded model provenance.
-    launch_cfg = LAUNCHES.get(launch) if launch else None
-    effective_model = launch_cfg.get("model") if launch_cfg else None
-
     try:
-        session = registry.create(scenario, model=effective_model, participant_id=participant_id, capture_audio=False)
+        session = registry.create(scenario, model=model, participant_id=participant_id, capture_audio=False)
     except FileNotFoundError as e:
         await ws.send_json({"type": "error", "message": str(e)})
         await ws.close()
         return
 
-    # From here a Session exists in the registry, so everything runs inside the
-    # try whose finally drops it, an early disconnect during setup would
-    # otherwise leak the session forever.
+    # Researcher-configured launch: apply gear presets before the first turn.
+    if launch and launch in LAUNCHES:
+        await _apply_launch_config(session, LAUNCHES[launch])
+
+    session.participant_ws = ws
+    await ws.send_json({
+        "type": "session",
+        "session_id": session.id,
+        "scenario": {
+            "id": session.scenario.id,
+            "title": session.scenario.title,
+            "intro": session.scenario.intro,
+        },
+    })
+
     try:
-        # Researcher-configured launch: apply gear presets before the first turn.
-        if launch_cfg:
-            await _apply_launch_config(session, launch_cfg)
-
-        session.participant_ws = ws
-        await ws.send_json({
-            "type": "session",
-            "session_id": session.id,
-            "scenario": {
-                "id": session.scenario.id,
-                "title": session.scenario.title,
-                "intro": session.scenario.intro,
-            },
-        })
-
         while True:
             msg = await ws.receive_json()
             if msg.get("type") != "user_text":
@@ -1071,9 +879,8 @@ async def ws_participant_text(
                 })
                 await session.broadcast({"type": "state", **session.snapshot()})
                 # Auto steering: review off the turn lock's hot path; gear
-                # shifts apply on the next turn. Tracked on the session so it is
-                # not GC-cancelled and is cancelled on teardown.
-                session.spawn_auto_steer()
+                # shifts apply on the next turn.
+                asyncio.create_task(session.auto_steer())
 
     except WebSocketDisconnect:
         pass
@@ -1107,46 +914,38 @@ async def ws_participant_voice(
         return
     await ws.accept()
 
-    # The model is a study variable: honour only a researcher-authenticated
-    # launch override, never a participant-supplied ?model=.
-    launch_cfg = LAUNCHES.get(launch) if launch else None
-    effective_model = launch_cfg.get("model") if launch_cfg else None
-
     try:
-        session = registry.create(scenario, model=effective_model, participant_id=participant_id, capture_audio=True)
+        session = registry.create(scenario, model=model, participant_id=participant_id, capture_audio=True)
     except FileNotFoundError as e:
         await ws.send_json({"type": "error", "message": str(e)})
         await ws.close()
         return
 
-    # From here a Session exists in the registry, so everything runs inside the
-    # try whose finally drops it, an early disconnect during setup would
-    # otherwise leak the session forever.
+    # Researcher-configured launch: apply gear presets before the first turn.
+    if launch and launch in LAUNCHES:
+        await _apply_launch_config(session, LAUNCHES[launch])
+
+    session.participant_ws = ws
+    await ws.send_json({
+        "type": "session",
+        "session_id": session.id,
+        "scenario": {
+            "id": session.scenario.id,
+            "title": session.scenario.title,
+            "intro": session.scenario.intro,
+            "mode": session.scenario.mode,
+        },
+        "cast": [
+            {"id": a.id, "name": a.name, "role": a.role, "photo": a.photo}
+            for a in session.scenario.cast
+        ],
+        "audio": {"sample_rate": 16000, "channels": 1, "encoding": "pcm_s16le"},
+    })
+
+    # Every scenario runs as consecutive 1:1 conversations on Gemini Live,
+    # the cast is played one character at a time, in order.
+    runner = RealtimeVoiceSessionRunner(session, ws)
     try:
-        # Researcher-configured launch: apply gear presets before the first turn.
-        if launch_cfg:
-            await _apply_launch_config(session, launch_cfg)
-
-        session.participant_ws = ws
-        await ws.send_json({
-            "type": "session",
-            "session_id": session.id,
-            "scenario": {
-                "id": session.scenario.id,
-                "title": session.scenario.title,
-                "intro": session.scenario.intro,
-                "mode": session.scenario.mode,
-            },
-            "cast": [
-                {"id": a.id, "name": a.name, "role": a.role, "photo": a.photo}
-                for a in session.scenario.cast
-            ],
-            "audio": {"sample_rate": 16000, "channels": 1, "encoding": "pcm_s16le"},
-        })
-
-        # Every scenario runs as consecutive 1:1 conversations on Gemini Live,
-        # the cast is played one character at a time, in order.
-        runner = RealtimeVoiceSessionRunner(session, ws)
         await runner.run()
     except WebSocketDisconnect:
         pass
@@ -1164,11 +963,7 @@ async def ws_participant_voice(
 
 @app.websocket("/ws/researcher")
 async def ws_researcher(ws: WebSocket, session_id: str = Query(...), key: Optional[str] = Query(None)):
-    # The researcher channel exposes the full live transcript and the steering
-    # controls, so it must require the session key whenever one is configured,
-    # exactly like the HTTP researcher routes (check_key). It must NOT depend on
-    # PARTICIPANT_KEY_REQUIRED, which is off in the normal deployment.
-    if SESSION_KEY and key != SESSION_KEY:
+    if PARTICIPANT_KEY_REQUIRED and SESSION_KEY and key != SESSION_KEY:
         await ws.close(code=4401)
         return
 
@@ -1199,32 +994,24 @@ async def ws_researcher(ws: WebSocket, session_id: str = Query(...), key: Option
     try:
         while True:
             msg = await ws.receive_json()
-            # A malformed control frame (missing key, non-numeric value, unknown
-            # knob/agent/branch) must not tear the socket down: report it and
-            # keep the researcher's live monitoring/steering connection open.
-            try:
-                t = msg.get("type")
-                agent_id = msg.get("agent_id")  # optional, applies to that agent only
-                if t == "set_knob":
-                    await session.set_knob(msg["knob"], float(msg["value"]), agent_id=agent_id)
-                elif t == "note":
-                    await session.add_note(msg["text"], agent_id=agent_id)
-                elif t == "clear_notes":
-                    await session.clear_notes(agent_id=agent_id)
-                elif t == "branch":
-                    await session.trigger_branch(msg["id"])
-                elif t == "set_model":
-                    await session.set_model(msg["model"])
-                elif t == "set_auto_steering":
-                    await session.set_auto_steering(bool(msg.get("enabled")))
-                else:
-                    await ws.send_json({"type": "error", "message": f"unknown type: {t}"})
-                    continue
-                await session.broadcast({"type": "state", **session.snapshot()})
-            except (KeyError, ValueError, TypeError) as e:
-                await ws.send_json(
-                    {"type": "error", "message": f"{type(e).__name__}: {e}"}
-                )
+            t = msg.get("type")
+            agent_id = msg.get("agent_id")  # optional, applies to that agent only
+            if t == "set_knob":
+                await session.set_knob(msg["knob"], float(msg["value"]), agent_id=agent_id)
+            elif t == "note":
+                await session.add_note(msg["text"], agent_id=agent_id)
+            elif t == "clear_notes":
+                await session.clear_notes(agent_id=agent_id)
+            elif t == "branch":
+                await session.trigger_branch(msg["id"])
+            elif t == "set_model":
+                await session.set_model(msg["model"])
+            elif t == "set_auto_steering":
+                await session.set_auto_steering(bool(msg.get("enabled")))
+            else:
+                await ws.send_json({"type": "error", "message": f"unknown type: {t}"})
+                continue
+            await session.broadcast({"type": "state", **session.snapshot()})
     except WebSocketDisconnect:
         pass
     finally:
