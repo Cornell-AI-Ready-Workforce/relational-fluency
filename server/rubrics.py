@@ -285,6 +285,207 @@ PSYCHOLOGICAL_SAFETY = Construct(
 )
 
 
+# --------------------------------------------------------------------------
+# v3 study constructs. These are the ESCI (Emotional and Social Competency
+# Inventory) competencies the Phase 1 study scenarios (S1-S4) are built to
+# elicit; scenario.skill for those is set to the construct id in
+# scenarios_v3.compile_scenario. Grounded in each scenario's skill_measured /
+# esci_items and the ESCI literature.
+# --------------------------------------------------------------------------
+
+CONFLICT_MANAGEMENT = Construct(
+    key="conflict_management",
+    name="Conflict management",
+    frame=(
+        "Effective conflict management brings disagreement into the open and "
+        "works it through rather than letting it fester or smoothing it over. "
+        "Reward surfacing the real disagreement, de-escalating the emotion in "
+        "the room, and moving toward a resolution that both sides can live "
+        "with; penalize avoidance, escalation, and imposing a one-sided verdict."
+    ),
+    behaviors=[
+        Behavior("surfaces_disagreement", "Surfaces the disagreement", "+",
+                 "Names the actual disagreement openly instead of talking around it or letting it fester."),
+        Behavior("de_escalates", "De-escalates emotion", "+",
+                 "Lowers the emotional temperature, acknowledging feeling without inflaming it."),
+        Behavior("acknowledges_positions", "Acknowledges both positions", "+",
+                 "Represents the competing positions and interests fairly, including the one they disagree with."),
+        Behavior("seeks_resolution", "Seeks resolution", "+",
+                 "Moves the exchange toward a concrete, workable resolution rather than a stand-off."),
+        Behavior("avoids_conflict", "Avoids the conflict", "-",
+                 "Sidesteps, defers, or papers over the disagreement so it goes unresolved."),
+        Behavior("escalates_emotion", "Escalates emotion", "-",
+                 "Raises the temperature, matching heat with heat or provoking the other."),
+        Behavior("imposes_verdict", "Imposes a one-sided verdict", "-",
+                 "Shuts the disagreement down by decree instead of resolving it with those involved."),
+    ],
+    dimensions=[
+        Dimension("surfacing", "Surfacing",
+                  "Avoids or buries the disagreement; lets it fester.",
+                  "Names the disagreement partly or hesitantly.",
+                  "Brings the real disagreement clearly and openly into the room."),
+        Dimension("de_escalation", "De-escalation",
+                  "Inflames the emotion or is swept up in it.",
+                  "Contains the heat unevenly; some leakage.",
+                  "Actively lowers the emotional temperature for everyone."),
+        Dimension("resolution", "Resolution",
+                  "Leaves the conflict unresolved or decided by force.",
+                  "Reaches a partial or fragile settlement.",
+                  "Drives to a resolution the parties can genuinely accept."),
+    ],
+    references=[
+        "Boyatzis (2009), Journal of Management Development 28(9)",
+        "Goleman, Boyatzis & McKee (2002), Primal Leadership",
+        "Thomas & Kilmann (1974), Conflict Mode Instrument",
+    ],
+)
+
+
+INFLUENCE = Construct(
+    key="influence",
+    name="Influence",
+    frame=(
+        "Influence is persuading by anticipating how others will respond, using "
+        "more than one approach, and appealing to the other person's own "
+        "interests and to key people around them. Reward framing the ask in the "
+        "other's terms, pre-empting objections, and marshalling support; "
+        "penalize one-note pressure, arguing only from one's own position, and "
+        "coercion in place of persuasion."
+    ),
+    behaviors=[
+        Behavior("appeals_to_interest", "Appeals to their interest", "+",
+                 "Frames the ask in terms of what the other person actually cares about or stands to gain."),
+        Behavior("anticipates_objections", "Anticipates objections", "+",
+                 "Foresees how the other will react and addresses the objection before it hardens."),
+        Behavior("multiple_approaches", "Uses multiple approaches", "+",
+                 "Brings more than one line of persuasion rather than repeating a single argument."),
+        Behavior("builds_support", "Builds support", "+",
+                 "Enlists key people or behind-the-scenes backing to strengthen the case."),
+        Behavior("one_note_pressure", "One-note pressure", "-",
+                 "Repeats the same point or simply pushes harder instead of adapting the approach."),
+        Behavior("ignores_interests", "Ignores their interests", "-",
+                 "Argues only from their own position, never engaging what the other wants."),
+        Behavior("coerces", "Coerces", "-",
+                 "Leans on authority, threat, or pressure to compel rather than to persuade."),
+    ],
+    dimensions=[
+        Dimension("framing", "Framing to interests",
+                  "Argues only from their own side; ignores the other's interests.",
+                  "Gestures at the other's interests but mostly argues their own case.",
+                  "Consistently frames the ask around the other person's real interests."),
+        Dimension("anticipation", "Anticipation",
+                  "Blindsided by objections; reacts only after they land.",
+                  "Handles some objections, misses others.",
+                  "Anticipates the key objections and defuses them ahead of time."),
+        Dimension("strategy", "Strategic breadth",
+                  "Relies on a single tactic or on pressure alone.",
+                  "Uses a couple of approaches with mixed effect.",
+                  "Draws on multiple approaches and support to build a persuasive case."),
+    ],
+    references=[
+        "Boyatzis (2009), Journal of Management Development 28(9)",
+        "Goleman, Boyatzis & McKee (2002), Primal Leadership",
+        "Cialdini (2001), Influence: Science and Practice",
+    ],
+)
+
+
+INSPIRATIONAL_LEADERSHIP = Construct(
+    key="inspirational_leadership",
+    name="Inspirational leadership",
+    frame=(
+        "Inspirational leadership articulates a credible vision, builds pride "
+        "in the group, and brings out the best in people. Reward painting a "
+        "compelling and believable direction, strengthening shared identity, "
+        "and energizing others toward it; penalize deflating morale, directing "
+        "without meaning, and making the moment about oneself."
+    ),
+    behaviors=[
+        Behavior("articulates_vision", "Articulates a vision", "+",
+                 "Paints a clear, credible picture of where the group is headed and why it matters."),
+        Behavior("builds_pride", "Builds pride", "+",
+                 "Strengthens pride in and identity with the group and its work."),
+        Behavior("brings_out_best", "Brings out the best", "+",
+                 "Draws on people's strengths and invites their best contribution."),
+        Behavior("inspires_optimism", "Inspires optimism", "+",
+                 "Energizes and instils credible optimism about the path forward."),
+        Behavior("deflates", "Deflates morale", "-",
+                 "Undermines confidence or projects pessimism that saps the group."),
+        Behavior("directs_without_meaning", "Directs without meaning", "-",
+                 "Issues instructions with no connection to a purpose or vision."),
+        Behavior("centers_self", "Centers self", "-",
+                 "Makes the moment about their own standing rather than the group."),
+    ],
+    dimensions=[
+        Dimension("vision", "Vision",
+                  "Offers no direction, or one that is empty or not credible.",
+                  "Sketches a direction that is partly compelling.",
+                  "Articulates a compelling, credible vision people can act on."),
+        Dimension("pride", "Pride and identity",
+                  "Weakens or ignores the group's shared identity.",
+                  "Some appeal to the group, unevenly.",
+                  "Visibly builds pride in and belonging to the group."),
+        Dimension("drawing_out", "Bringing out others",
+                  "Diminishes people or ignores their capability.",
+                  "Invites some contribution without fully drawing it out.",
+                  "Draws out and elevates the best in the people present."),
+    ],
+    references=[
+        "Boyatzis (2009), Journal of Management Development 28(9)",
+        "Goleman, Boyatzis & McKee (2002), Primal Leadership",
+        "Bass & Riggio (2006), Transformational Leadership",
+    ],
+)
+
+
+TEAMWORK = Construct(
+    key="teamwork",
+    name="Teamwork",
+    frame=(
+        "Teamwork means cooperating, soliciting others' input, sharing credit, "
+        "and encouraging everyone present to participate. Reward being "
+        "supportive and respectful, actively drawing in others (especially the "
+        "quieter voices), and cooperating toward the shared goal; penalize "
+        "dominating the room, dismissing input, and working apart from the group."
+    ),
+    behaviors=[
+        Behavior("solicits_input", "Solicits input", "+",
+                 "Actively asks others for their views and information rather than assuming or deciding alone."),
+        Behavior("encourages_participation", "Encourages participation", "+",
+                 "Draws in everyone present, including quieter members, so all can contribute."),
+        Behavior("supportive_respectful", "Supportive and respectful", "+",
+                 "Backs others and treats them with respect, building on their contributions."),
+        Behavior("shares_credit", "Cooperates and shares credit", "+",
+                 "Works cooperatively toward the shared goal and shares credit for it."),
+        Behavior("dominates", "Dominates the room", "-",
+                 "Takes over the conversation, crowding out others' contributions."),
+        Behavior("dismisses_input", "Dismisses input", "-",
+                 "Brushes aside, ignores, or talks over what others offer."),
+        Behavior("uncooperative", "Uncooperative", "-",
+                 "Works against or apart from the group rather than with it."),
+    ],
+    dimensions=[
+        Dimension("cooperation", "Cooperation",
+                  "Works apart from or against the group.",
+                  "Cooperates on the surface but partly goes it alone.",
+                  "Works genuinely cooperatively toward the shared goal."),
+        Dimension("soliciting", "Soliciting input",
+                  "Decides alone; does not seek others' input.",
+                  "Asks for input occasionally or selectively.",
+                  "Actively and consistently solicits others' input."),
+        Dimension("inclusion", "Inclusion",
+                  "Dominates or lets some voices go unheard.",
+                  "Includes most, but not everyone, present.",
+                  "Encourages participation from everyone present."),
+    ],
+    references=[
+        "Boyatzis (2009), Journal of Management Development 28(9)",
+        "Goleman, Boyatzis & McKee (2002), Primal Leadership",
+        "Edmondson (2012), Teaming",
+    ],
+)
+
+
 CONSTRUCTS: Dict[str, Construct] = {
     c.key: c
     for c in (
@@ -292,6 +493,10 @@ CONSTRUCTS: Dict[str, Construct] = {
         EMOTIONAL_REGULATION,
         APOLOGY_REPAIR,
         PSYCHOLOGICAL_SAFETY,
+        CONFLICT_MANAGEMENT,
+        INFLUENCE,
+        INSPIRATIONAL_LEADERSHIP,
+        TEAMWORK,
     )
 }
 
@@ -308,6 +513,14 @@ _SKILL_ALIASES = {
     "apology repair": "apology_repair",
     "psychological safety": "psychological_safety",
     "psych safety": "psychological_safety",
+    "conflict management": "conflict_management",
+    "conflict": "conflict_management",
+    "influence": "influence",
+    "influencing": "influence",
+    "inspirational leadership": "inspirational_leadership",
+    "inspiring leadership": "inspirational_leadership",
+    "teamwork": "teamwork",
+    "team work": "teamwork",
 }
 
 
