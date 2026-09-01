@@ -27,14 +27,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from anthropic import Anthropic
 
-from .llm import sync_text_client
+from .llm import sync_text_client, setting
 from dotenv import load_dotenv
 
 load_dotenv()  # so the CLI picks up ANTHROPIC_API_KEY from .env
@@ -45,7 +44,7 @@ from .storage import SESSIONS_DIR
 
 # Opus 4.8, most capable; the right default for a measurement instrument.
 # Configurable for cost (e.g. claude-sonnet-4-6) via env or --model.
-DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "nto.gemini-2.5-pro")
+DEFAULT_JUDGE_MODEL = setting("JUDGE_MODEL", "nto.gemini-2.5-pro")
 SCORE_FILENAME = "score.json"
 
 
@@ -62,7 +61,7 @@ def _load_events(session_dir: Path) -> List[dict]:
     if not path.exists():
         raise TranscriptError(f"no events.jsonl in {session_dir}")
     out = []
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
@@ -167,6 +166,7 @@ def _build_schema(construct: Construct) -> dict:
                         "index": {"type": "integer"},
                         "tags": {
                             "type": "array",
+                            "uniqueItems": True,
                             "items": {"type": "string", "enum": behavior_ids},
                         },
                         "note": {"type": "string"},
@@ -254,12 +254,51 @@ def _user_prompt(meta: Dict[str, Any], transcript: str) -> str:
 
 
 def _extract_json(response) -> dict:
-    # output_config.format guarantees a text block of valid JSON; thinking
-    # blocks (if any) precede it.
-    text = next((b.text for b in response.content if b.type == "text"), None)
+    # The judge is asked for a single JSON object. When the backend honors the
+    # Anthropic structured-output parameter this arrives as a clean text block;
+    # other LiteLLM-gateway models (the default is a Gemini model) may wrap it
+    # in prose or a ```json fence, so parse defensively rather than trusting a
+    # bare json.loads. A response truncated at max_tokens is never valid JSON.
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        raise TranscriptError(
+            "judge response truncated at max_tokens; raise max_tokens or shorten the transcript"
+        )
+    # Preferred: the forced tool call carries the structured verdict as its input.
+    for block in getattr(response, "content", []):
+        if getattr(block, "type", None) == "tool_use" and isinstance(
+            getattr(block, "input", None), dict
+        ):
+            return block.input
+    # Fallback: a LiteLLM-gateway model that ignored the tool may emit the JSON as
+    # a text block (fenced or bare) — parse it defensively.
+    text = next(
+        (b.text for b in response.content if getattr(b, "type", None) == "text"), None
+    )
     if text is None:
-        raise TranscriptError("judge returned no text block")
-    return json.loads(text)
+        raise TranscriptError("judge returned no structured output")
+    raw = text.strip()
+    candidate = raw
+    if candidate.startswith("```"):
+        lines = candidate.splitlines()
+        if lines and lines[0].startswith("```"):  # drop ``` or ```json opener
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):  # drop closing fence
+            lines = lines[:-1]
+        candidate = "\n".join(lines).strip()
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        # Last resort: grab the outermost brace span if the object is embedded
+        # in surrounding prose.
+        i, j = candidate.find("{"), candidate.rfind("}")
+        if i != -1 and j > i:
+            try:
+                return json.loads(candidate[i:j + 1])
+            except json.JSONDecodeError:
+                pass
+        raise TranscriptError(
+            f"judge did not return valid JSON; got: {raw[:500]!r}"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -271,8 +310,10 @@ def _aggregate(construct: Construct, verdict: dict, meta: Dict[str, Any]) -> Dic
     # Deterministic behavior rates from the per-turn tags.
     counts = {b.id: 0 for b in construct.behaviors}
     by_index = {t["index"]: t for t in verdict.get("turns", []) if isinstance(t.get("index"), int)}
-    for t in by_index.values():
-        for tag in t.get("tags", []):
+    for idx, t in by_index.items():
+        if not (0 <= idx < n):
+            continue  # tags on an out-of-range turn index count toward nothing
+        for tag in set(t.get("tags", [])):  # dedupe within a turn, no double counting
             if tag in counts:
                 counts[tag] += 1
 
@@ -299,11 +340,20 @@ def _aggregate(construct: Construct, verdict: dict, meta: Dict[str, Any]) -> Dic
 
     dimensions = []
     for d in construct.dimensions:
-        entry = next((x for x in verdict.get("dimensions", []) if x.get("key") == d.key), {})
+        entry = next((x for x in verdict.get("dimensions", []) if x.get("key") == d.key), None)
+        if entry is None or entry.get("score") is None:
+            raise TranscriptError(f"judge omitted dimension {d.key!r}; cannot score")
+        try:
+            score = int(entry.get("score"))
+        except (TypeError, ValueError):
+            raise TranscriptError(
+                f"dimension {d.key!r} has a non-integer score; cannot score"
+            )
+        score = min(5, max(1, score))  # clamp to the 1-5 scale
         dimensions.append({
             "key": d.key,
             "label": d.label,
-            "score": entry.get("score"),
+            "score": score,
             "rationale": entry.get("rationale", ""),
             "evidence": entry.get("evidence", []),
         })
@@ -328,7 +378,7 @@ def load_cached_score(session_id: str) -> Optional[dict]:
     path = _session_dir(session_id) / SCORE_FILENAME
     if path.exists():
         try:
-            return json.loads(path.read_text())
+            return json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return None
     return None
@@ -368,18 +418,21 @@ def score_session(
     client = client or sync_text_client()
     transcript = _render_transcript(meta["turns"])
 
+    # Force the verdict through a tool call (tool_use), the same portable pattern
+    # debrief.py uses. This avoids the `thinking` and `output_config` parameters,
+    # which only exist in newer Anthropic SDKs than the one this project pins, and
+    # it works across the LiteLLM gateway models the study runs on.
     response = client.messages.create(
         model=judge_model,
         max_tokens=16000,
-        thinking={"type": "adaptive"},
         system=_system_prompt(construct),
+        tools=[{
+            "name": "score",
+            "description": "Return the relational-fluency scoring verdict.",
+            "input_schema": _build_schema(construct),
+        }],
+        tool_choice={"type": "tool", "name": "score"},
         messages=[{"role": "user", "content": _user_prompt(meta, transcript)}],
-        output_config={
-            "format": {
-                "type": "json_schema",
-                "schema": _build_schema(construct),
-            }
-        },
     )
     verdict = _extract_json(response)
     agg = _aggregate(construct, verdict, meta)
@@ -400,7 +453,9 @@ def score_session(
         **agg,
     }
 
-    (sdir / SCORE_FILENAME).write_text(json.dumps(result, indent=2, ensure_ascii=False))
+    (sdir / SCORE_FILENAME).write_text(
+        json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     return result
 
 
