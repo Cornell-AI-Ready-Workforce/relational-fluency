@@ -76,7 +76,12 @@ def transcribe_file(path: Path, *, model: str = MODEL, timeout: float = 300) -> 
 def retranscribe(session_dir: Path, *, force: bool = False) -> Optional[dict]:
     out_path = session_dir / "transcript_participant_hq.json"
     if out_path.exists() and not force:
-        return json.loads(out_path.read_text())
+        # A corrupt cache (killed / disk-full mid-write) must be treated as absent
+        # and regenerated, not crash every subsequent run, as elsewhere.
+        try:
+            return json.loads(out_path.read_text(encoding="utf-8"))
+        except ValueError:
+            pass
 
     wav = session_dir / "user_audio.wav"
     if not wav.exists() or _duration(wav) < 1.0:
@@ -89,15 +94,15 @@ def retranscribe(session_dir: Path, *, force: bool = False) -> Optional[dict]:
         "duration_s": round(_duration(wav), 1),
         "text": text,
     }
-    out_path.write_text(json.dumps(result, indent=2))
+    out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # Fold it into the aligned record so downstream readers get it for free.
     rec_path = session_dir / "record.json"
     if rec_path.exists():
         try:
-            rec = json.loads(rec_path.read_text())
+            rec = json.loads(rec_path.read_text(encoding="utf-8"))
             rec["participant_transcript_hq"] = result
-            rec_path.write_text(json.dumps(rec, indent=2))
+            rec_path.write_text(json.dumps(rec, indent=2, ensure_ascii=False), encoding="utf-8")
         except ValueError:
             pass
     return result
@@ -108,10 +113,17 @@ def main(argv: List[str]) -> int:
         print(__doc__)
         return 0
     force = "--force" in argv
-    targets = (
-        [d for d in sorted(SESSIONS_DIR.iterdir()) if d.is_dir()]
-        if argv[0] == "--all" else [SESSIONS_DIR / argv[0]]
-    )
+    positional = [a for a in argv if not a.startswith("--")]
+    if "--all" in argv:
+        targets = (
+            [d for d in sorted(SESSIONS_DIR.iterdir()) if d.is_dir()]
+            if SESSIONS_DIR.exists() else []
+        )
+    elif positional:
+        targets = [SESSIONS_DIR / positional[0]]
+    else:
+        print("usage: retranscribe <session_id> | --all [--force]")
+        return 2
     done = 0
     for d in targets:
         if not d.exists():
