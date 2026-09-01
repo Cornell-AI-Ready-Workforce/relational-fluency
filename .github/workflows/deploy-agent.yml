@@ -48,4 +48,4 @@ jobs:
           SHA=${GITHUB_SHA::7}
           docker build -t $REPO:$SHA agents/
           docker push $REPO:$SHA
-          echo "Pushed $REPO:$SHA — deploy with: terraform apply -var container_image=$REPO:$SHA"
+          echo "Pushed $REPO:$SHA (legacy agents image — do NOT set container_image to this; the ECS platform service runs the platform image from relational-fluency/platform)"
