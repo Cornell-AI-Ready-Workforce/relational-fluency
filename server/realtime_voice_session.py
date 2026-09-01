@@ -22,7 +22,7 @@ import os
 import time
 from typing import TYPE_CHECKING, List, Optional
 
-from .director import Director
+from .director import Director, DIRECTOR_MAX_SPEAKERS
 
 
 def _norm_speech(text: str) -> str:
@@ -118,6 +118,11 @@ class RealtimeVoiceSessionRunner:
         self._last_group_speaker: Optional[str] = None
         self._turn_index = 0
         self._pending_direction: Optional[dict] = None
+        # Every in-flight group-turn task. A fast second participant turn can
+        # spawn a new _run_group_turn while a prior one still holds self._floor,
+        # so an interaction switch must cancel ALL of them, not just the most
+        # recent, or the floor-holder is orphaned and dead-airs the next segment.
+        self._group_turn_tasks = set()
         # Planted triggers fire in order within the current interaction. They
         # are the measurement: each maps to ESCI items, and the participant's
         # response to it is what a rater scores.
@@ -128,6 +133,13 @@ class RealtimeVoiceSessionRunner:
         self._interaction_started_at = time.time()
         self._finalizing = False
         self._switching = False
+        # Re-entrancy guard for _advance_segment: three concurrent coroutines
+        # can reach it at once, and without this a second advance that arrives
+        # while one is in flight double-increments and skips a scored beat.
+        self._advancing = False
+        # 1:1 finalize runs as a task; keep references so exceptions are
+        # retrieved (logged) instead of silently swallowed.
+        self._finalize_tasks: List[asyncio.Task] = []
         self.room: Optional[GroupRoom] = None
         self._pumps: List[asyncio.Task] = []
         self._floor = asyncio.Lock()
@@ -138,7 +150,13 @@ class RealtimeVoiceSessionRunner:
         # agent are the same character, persona knobs, branches, and the
         # director's intent all compose exactly as they do in text mode.
         engine = self.session.engines[self.agent_id]
-        base = engine._system_prompt(self.session.triggered_branches, director_note or None)
+        # Pass the CURRENT interaction's mode, not the scenario-level mode: a
+        # group scenario (e.g. S3) continues as 1:1 series segments, and those
+        # segments must not receive the multi-party MEETING framing.
+        base = engine._system_prompt(
+            self.session.triggered_branches, director_note or None,
+            group=self.is_group(),
+        )
         voice_rules = (
             "\n\nVOICE: You are in a live spoken conversation. Keep every turn "
             "SHORT: one or two spoken sentences, at most about 25 words, then "
@@ -187,10 +205,41 @@ class RealtimeVoiceSessionRunner:
     def _triggers(self) -> List[dict]:
         return self._interaction().get("triggers", []) or []
 
+    def _trigger_agent(self, trigger: dict) -> Optional[str]:
+        """The character a planted beat is written for, if it names one.
+
+        Prefer an explicit 'agent' field (id or name); otherwise infer from a
+        cue that opens by naming a character, e.g. "Casey: 'Am I supposed...'".
+        Returns an agent id, or None when the beat is not bound to anyone.
+        """
+        explicit = trigger.get("agent")
+        if explicit:
+            for a in self._resolve_agents():
+                if explicit in (a.id, a.name):
+                    return a.id
+            return explicit
+        head = _norm_speech(trigger.get("cue") or "").split()
+        if not head:
+            return None
+        for a in self._resolve_agents():
+            name_tokens = _norm_speech(a.name).split()
+            if name_tokens and head[:len(name_tokens)] == name_tokens:
+                return a.id
+        return None
+
     def _next_trigger(self) -> Optional[dict]:
         triggers = self._triggers()
         if self._trigger_idx < len(triggers):
-            return triggers[self._trigger_idx]
+            trig = triggers[self._trigger_idx]
+            # In a series the triggers belong to specific members (Jordan's
+            # beat, then Casey's). Hold a beat written for a later member until
+            # the series reaches them, so Jordan does not perform Casey's line
+            # in Casey's absence and spend her trigger before her segment.
+            if self._interaction_mode() == "one_to_one_series":
+                bound = self._trigger_agent(trig)
+                if bound and bound != self.agent_id:
+                    return None
+            return trig
         return None
 
     def _trigger_instruction(self, trigger: dict, *, probing: bool) -> str:
@@ -234,26 +283,39 @@ class RealtimeVoiceSessionRunner:
         """Move to the next beat. Within a one_to_one_series that means the next
         character in the same interaction; otherwise the next interaction.
         Returns False when the encounter is over."""
-        agents = self._resolve_agents()
+        # This is reachable from three concurrent coroutines (a tool_call in a
+        # pump, the participant's advance command, and _maybe_advance). The
+        # check-and-set below has no await between test and set, so it is an
+        # atomic non-blocking mutex: a second advance that arrives while one is
+        # in flight becomes a no-op (return True, i.e. "handled") rather than a
+        # second increment that would skip a scored interaction and orphan a
+        # freshly connected session.
+        if self._advancing:
+            return True
+        self._advancing = True
+        try:
+            agents = self._resolve_agents()
 
-        # Still characters left in this series (e.g. Jordan then Casey).
-        if self._interaction_mode() == "one_to_one_series" and self._series_idx + 1 < len(agents):
-            self._series_idx += 1
+            # Still characters left in this series (e.g. Jordan then Casey).
+            if self._interaction_mode() == "one_to_one_series" and self._series_idx + 1 < len(agents):
+                self._series_idx += 1
+                self._turns_this_interaction = 0
+                self._interaction_started_at = time.time()
+                await self._enter(agents[self._series_idx], new_interaction=False)
+                return True
+
+            if self.segment + 1 >= len(self.interactions):
+                return False
+
+            self.segment += 1
+            self._series_idx = 0
+            self._trigger_idx = 0
             self._turns_this_interaction = 0
             self._interaction_started_at = time.time()
-            await self._enter(agents[self._series_idx], new_interaction=False)
+            await self._enter(self._resolve_agents()[0], new_interaction=True)
             return True
-
-        if self.segment + 1 >= len(self.interactions):
-            return False
-
-        self.segment += 1
-        self._series_idx = 0
-        self._trigger_idx = 0
-        self._turns_this_interaction = 0
-        self._interaction_started_at = time.time()
-        await self._enter(self._resolve_agents()[0], new_interaction=True)
-        return True
+        finally:
+            self._advancing = False
 
     def _next_beat_hint(self) -> Optional[dict]:
         """Who comes next, so the UI can offer a way to move on."""
@@ -322,6 +384,18 @@ class RealtimeVoiceSessionRunner:
         self.session.store.event("group_scene_awaits_participant", agent_id=agents[0].id)
 
     async def _close_room(self) -> None:
+        # Cancel any in-flight group turn first. It holds self._floor while it
+        # awaits _response_done; when the floor-holder's reply ends in
+        # end_conversation (the designed way a group interaction advances), that
+        # response_done is never processed, so without this cancel the task would
+        # keep the floor for the full 45s timeout and dead-air the first turn of
+        # the next interaction. Cancelling unwinds its `async with self._floor`,
+        # releasing the lock immediately.
+        for gt in list(getattr(self, "_group_turn_tasks", ()) or ()):
+            if not gt.done():
+                gt.cancel()
+        if hasattr(self, "_group_turn_tasks"):
+            self._group_turn_tasks.clear()
         for t in self._pumps:
             t.cancel()
         self._pumps = []
@@ -351,8 +425,10 @@ class RealtimeVoiceSessionRunner:
         replies into a single labelled turn. Each pump tracks its own turn.
         """
         buf: List[str] = []
-        announced = False
-        suppressing = False
+        # Per-member state kept mutable so the finalize task (spawned below) and
+        # this loop share it: the async-for keeps consuming late transcript
+        # deltas while the task waits them out.
+        state = {"announced": False, "suppressing": False}
         try:
             async for ev in rt.events():
                 etype = ev["type"]
@@ -363,9 +439,18 @@ class RealtimeVoiceSessionRunner:
                 # cancelled and their events discarded, or the room becomes
                 # three people talking over each other.
                 has_floor = self.room is None or self.room.speaking == agent.id
+
+                # If this agent gained the floor mid-response, stop suppressing:
+                # the rest of the response is legitimately theirs to relay, and
+                # the matching response_done must then finalize rather than be
+                # swallowed. Keeping the latch would behead the reply and stall
+                # the room for the full turn timeout.
+                if state["suppressing"] and has_floor:
+                    state["suppressing"] = False
+
                 if etype in ("agent_audio", "agent_transcript_delta") and not has_floor:
-                    if not suppressing:
-                        suppressing = True
+                    if not state["suppressing"]:
+                        state["suppressing"] = True
                         self.session.store.event(
                             "unsolicited_response_suppressed", agent_id=agent.id
                         )
@@ -377,8 +462,8 @@ class RealtimeVoiceSessionRunner:
                     continue
 
                 if etype == "agent_audio":
-                    if not announced:
-                        announced = True
+                    if not state["announced"]:
+                        state["announced"] = True
                         await self._send({
                             "type": "assistant_started",
                             "agent_id": agent.id,
@@ -390,8 +475,8 @@ class RealtimeVoiceSessionRunner:
                         await self.room.hear(ev["pcm"], exclude=agent.id)
 
                 elif etype == "agent_transcript_delta":
-                    if not announced:
-                        announced = True
+                    if not state["announced"]:
+                        state["announced"] = True
                         await self._send({
                             "type": "assistant_started",
                             "agent_id": agent.id,
@@ -411,25 +496,31 @@ class RealtimeVoiceSessionRunner:
                     continue
 
                 elif etype == "response_done":
-                    if suppressing:
-                        suppressing = False
+                    if state["suppressing"]:
+                        state["suppressing"] = False
                         buf.clear()
                         continue
-                    grace = time.time() + 2.5
-                    while not buf and announced and time.time() < grace:
-                        await asyncio.sleep(0.15)
-                    text = "".join(buf).strip()
-                    buf.clear()
-                    if not announced and not text:
-                        # Nothing at all came back: release the floor quietly
-                        # rather than writing a blank turn.
-                        self.session.store.event(
-                            "empty_response", agent_id=agent.id, segment=self.segment
-                        )
-                        self._response_done.set()
-                        continue
-                    announced = False
-                    await self._finalize_member(agent, text)
+                    # Finalise OFF the pump: the gateway can deliver transcript
+                    # deltas after response.done, and sleeping here would stop
+                    # the async-for that fills buf. The task shares buf/state and
+                    # observes those late deltas while the loop keeps consuming.
+                    announced_now = state["announced"]
+                    state["announced"] = False
+                    asyncio.ensure_future(
+                        self._finalize_member_async(agent, buf, announced_now)
+                    )
+
+                elif etype == "tool_call":
+                    # END_SEGMENT_TOOL is on every room session; an actor ending
+                    # a group conversation must advance the encounter, not be
+                    # dropped. Advance off-pump so _close_room cancelling this
+                    # very pump cannot interrupt the advance mid-flight.
+                    self.session.store.event(
+                        "tool_call", name=ev.get("name"), segment=self.segment,
+                        agent_id=agent.id,
+                    )
+                    asyncio.ensure_future(self._advance_from_tool())
+                    return
 
                 elif etype == "error":
                     self.session.store.event(
@@ -437,6 +528,40 @@ class RealtimeVoiceSessionRunner:
                     )
         except asyncio.CancelledError:
             return
+
+    async def _finalize_member_async(self, agent, buf: List[str], announced: bool) -> None:
+        """Grace-wait for a member's transcript, then close the turn.
+
+        Runs as its own task so the pump's async-for keeps advancing and can
+        deliver the late transcript deltas this loop is waiting for.
+        """
+        grace = time.time() + 2.5
+        while not buf and announced and time.time() < grace:
+            await asyncio.sleep(0.15)
+        text = "".join(buf).strip()
+        buf.clear()
+        if not announced and not text:
+            # Nothing at all came back: release the floor quietly rather than
+            # writing a blank turn — but ONLY if this agent actually holds the
+            # floor, or a non-floor member's empty auto-fired response would
+            # release the routed speaker mid-utterance.
+            self.session.store.event(
+                "empty_response", agent_id=agent.id, segment=self.segment
+            )
+            if self.room is None or self.room.speaking == agent.id:
+                self._response_done.set()
+            return
+        await self._finalize_member(agent, text)
+
+    async def _advance_from_tool(self) -> None:
+        """Advance the encounter from a room member's end_conversation call."""
+        try:
+            if not await self._advance_segment():
+                await self._send({"type": "encounter_complete"})
+        except Exception as exc:  # noqa: BLE001
+            self.session.store.event(
+                "voice_error", where="advance_from_tool", message=str(exc)
+            )
 
     async def _pump_scribe(self, rt) -> None:
         """Relay the scribe's participant transcripts; swallow everything else.
@@ -497,7 +622,15 @@ class RealtimeVoiceSessionRunner:
             segment=self.segment, transcript_missing=not text,
         )
         await self._send({"type": "assistant_done", "agent_id": agent.id})
-        self._response_done.set()
+        # Measure the idle window from the end of this reply, not the
+        # participant's last utterance, so the watchdog does not probe the
+        # instant the agent stops talking.
+        self._last_activity = time.time()
+        # Only the floor holder finishing releases the turn: a non-floor
+        # member completing must not wake _run_group_turn and hand the floor
+        # onward while the routed speaker is still talking.
+        if self.room is None or self.room.speaking == agent.id:
+            self._response_done.set()
 
     def agent_order(self) -> List[str]:
         return [a.id for a in self._resolve_agents()]
@@ -507,9 +640,11 @@ class RealtimeVoiceSessionRunner:
             return
         now = time.time()
         norm = _norm_speech(text)
-        # The bridge can deliver the same utterance twice (append + commit);
-        # record it once.
-        if norm and norm == self._last_user_norm and now - self._last_user_at < 12:
+        # The bridge can deliver the same utterance twice (append + commit)
+        # within moments; record it once. Keep the window tight (the
+        # double-delivery timescale) so a participant who genuinely repeats
+        # themselves seconds later is not silently dropped.
+        if norm and norm == self._last_user_norm and now - self._last_user_at < 2:
             return
         # Echo guard: an agent's line played over speakers can come back
         # transcribed as participant speech (Chrome's AEC does not cancel
@@ -541,12 +676,25 @@ class RealtimeVoiceSessionRunner:
         """
         old = self.rt
         self._switching = True
-        self.rt = RealtimeVoiceSession(
+        new_rt = RealtimeVoiceSession(
             instructions=self._instructions(),
             voice=self._voice(),
             tools=[END_SEGMENT_TOOL],
         )
-        await self.rt.connect()
+        try:
+            await new_rt.connect()
+        except Exception as exc:  # noqa: BLE001
+            # Connect failed: do NOT adopt a dead session whose _send() silently
+            # no-ops (ws is None) — that would wedge the encounter with the agent
+            # never replying again. Keep the old session live instead.
+            self._switching = False
+            await new_rt.close()
+            self.session.store.event(
+                "voice_error", where="switch_character",
+                agent_id=agent.id, message=str(exc),
+            )
+            return
+        self.rt = new_rt
         self.session.store.event(
             "realtime_session_switched", agent_id=agent.id, agent_name=agent.name
         )
@@ -561,7 +709,20 @@ class RealtimeVoiceSessionRunner:
         self._speaking = False
         self._agent_text = []
         if self.is_group():
+            old = self.rt
             await self._open_room()
+            # Close a previous NON-room (1:1) session before adopting a room
+            # member. Otherwise _model_to_client stays blocked forever in the
+            # old session's pump (its async-for never ends), and the orphaned
+            # gateway websocket leaks. Closing old ends that pump; set _switching
+            # first so _model_to_client resumes its loop into the room-sleep
+            # branch (where per-character _pump_member does the pumping) instead
+            # of exiting entirely.
+            if old is not None and (
+                self.room is None or old not in self.room.sessions.values()
+            ):
+                self._switching = True
+                await old.close()
             self.rt = self.room.session_for(self.agent_id) or self.rt
         elif changed:
             await self._close_room()
@@ -589,28 +750,47 @@ class RealtimeVoiceSessionRunner:
         await self._send({"type": "segment_start", **payload})
 
     async def run(self) -> None:
-        if self.is_group():
-            await self._open_room()
-            self.rt = self.room.session_for(self.agent_id) or None
-        else:
-            self.rt = RealtimeVoiceSession(
-                instructions=self._instructions(),
-                voice=self._voice(),
-                tools=[END_SEGMENT_TOOL],
-            )
-            await self.rt.connect()
-        await self._announce_opening()
-        # Record what served this encounter, the audit trail has to say which
-        # gateway and which models produced the data.
-        self.session.store.event(
-            "realtime_session_started", model=self.rt.model, **provenance()
-        )
         try:
-            await asyncio.gather(
-                self._client_to_model(),
-                self._model_to_client(),
-                self._silence_watchdog(),
+            # Open the gateway sessions INSIDE the try, so a partial group-open
+            # failure (one of several connects raises) still reaches the finally
+            # that closes whatever did connect, instead of leaking live sockets.
+            if self.is_group():
+                await self._open_room()
+                self.rt = self.room.session_for(self.agent_id) or None
+            else:
+                self.rt = RealtimeVoiceSession(
+                    instructions=self._instructions(),
+                    voice=self._voice(),
+                    tools=[END_SEGMENT_TOOL],
+                )
+                await self.rt.connect()
+            await self._announce_opening()
+            # Record what served this encounter, the audit trail has to say
+            # which gateway and which models produced the data.
+            self.session.store.event(
+                "realtime_session_started", model=self.rt.model, **provenance()
             )
+            # FIRST_COMPLETED + cancel, not gather: the watchdog loops on
+            # _closed and _client_to_model's return paths do not set it, so a
+            # plain gather blocks forever once the participant disconnects and
+            # this finally would never run. As soon as any coroutine finishes
+            # (encounter complete, or the client hung up), mark closed and
+            # cancel the rest so cleanup actually happens.
+            tasks = [
+                asyncio.ensure_future(self._client_to_model()),
+                asyncio.ensure_future(self._model_to_client()),
+                asyncio.ensure_future(self._silence_watchdog()),
+            ]
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+            self._closed = True
+            for t in pending:
+                t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            for t in done:
+                if not t.cancelled() and t.exception() is not None:
+                    raise t.exception()
         finally:
             self._closed = True
             await self._close_room()
@@ -656,8 +836,15 @@ class RealtimeVoiceSessionRunner:
                                 pass
                         await self._send({"type": "assistant_interrupted"})
                     elif self._speaking:
-                        # Barge-in: drop the agent's remaining audio.
+                        # Barge-in: drop the agent's remaining audio AND the
+                        # interrupted turn's partial transcript. _finalize_turn's
+                        # `_speaking` guard makes it return on the cancelled
+                        # response, so if we left _agent_text populated those
+                        # deltas would prepend to the NEXT turn and produce a
+                        # merged, misattributed transcript.
                         await self.rt.cancel_response()
+                        self._agent_text = []
+                        self._turn_started_at = None
                         self._speaking = False
                         await self._send({"type": "assistant_interrupted"})
 
@@ -669,7 +856,13 @@ class RealtimeVoiceSessionRunner:
                 if mark == "turn_ended":
                     self._turn_started_at = time.time()
                     if self.is_group() and self.room is not None:
-                        asyncio.ensure_future(self._run_group_turn())
+                        # Track EVERY in-flight group turn so an interaction switch
+                        # can cancel whichever one holds self._floor. A single
+                        # reference would be overwritten by a fast second turn,
+                        # orphaning the floor-holder for the full 45s timeout.
+                        _gt = asyncio.ensure_future(self._run_group_turn())
+                        self._group_turn_tasks.add(_gt)
+                        _gt.add_done_callback(self._group_turn_tasks.discard)
                     else:
                         await self._brief_next_beat(probing=False)
                         await self.rt.commit_turn()
@@ -730,7 +923,15 @@ class RealtimeVoiceSessionRunner:
                 # Do not finalise here. The gateway can deliver transcript
                 # events AFTER response.done, so reading the buffer now yields
                 # an empty turn, audio with no text, which is unscoreable.
-                asyncio.ensure_future(self._finalize_turn())
+                # Snapshot the speaker's identity at spawn time: if the
+                # participant advances during the grace wait, self.agent_id/rt
+                # change and the closing turn would be recorded under the NEXT
+                # character. Track the task so its exceptions are retrieved.
+                task = asyncio.ensure_future(
+                    self._finalize_turn(self.agent_id, self.agent, self.rt)
+                )
+                self._finalize_tasks.append(task)
+                task.add_done_callback(self._on_finalize_done)
 
             elif etype == "tool_call":
                 self.session.store.event(
@@ -805,7 +1006,25 @@ class RealtimeVoiceSessionRunner:
         if not await self._advance_segment():
             await self._send({"type": "encounter_complete"})
 
-    async def _finalize_turn(self) -> None:
+    def _on_finalize_done(self, task: asyncio.Task) -> None:
+        """Retrieve a finalize task's result so its exceptions are not lost.
+
+        The finally block chains _steer -> _maybe_advance -> _advance_segment ->
+        _switch_character; a gateway hiccup in there would otherwise raise into
+        an untracked task and vanish. Log it instead."""
+        try:
+            self._finalize_tasks.remove(task)
+        except ValueError:
+            pass
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self.session.store.event(
+                "voice_error", where="finalize_turn", message=str(exc)
+            )
+
+    async def _finalize_turn(self, agent_id: str, agent, rt) -> None:
         """Close out an agent turn once its transcript has settled.
 
         response.done can arrive before the transcript events that belong to the
@@ -814,6 +1033,10 @@ class RealtimeVoiceSessionRunner:
         turns, vanished from the record entirely. So wait briefly for text, and
         if it truly never comes, still record the turn and mark it, so a gap is
         visible to verify_record instead of silently absent.
+
+        agent_id/agent/rt are snapshotted at spawn time: reading self.* at
+        completion would attribute this turn to the NEXT character if the
+        participant advanced during the grace wait.
         """
         # A turn exists only if it was announced (first audio or text). The
         # gateway emits response.done more than once per reply, and without this
@@ -831,32 +1054,36 @@ class RealtimeVoiceSessionRunner:
             text = "".join(self._agent_text).strip()
             self._agent_text = []
             self._speaking = False
+            # Measure the idle window from the end of the agent's reply, not the
+            # participant's last utterance, so the watchdog does not probe the
+            # instant the agent stops talking.
+            self._last_activity = time.time()
             missing = not text
 
             self._turn_index += 1
             self._turns_this_interaction += 1
 
             if text:
-                self.session.append_agent(self.agent_id, text)
-                self._recent_agent_texts = (self._recent_agent_texts + [(self.agent_id, text)])[-6:]
+                self.session.append_agent(agent_id, text)
+                self._recent_agent_texts = (self._recent_agent_texts + [(agent_id, text)])[-6:]
                 await self.session.broadcast({
                     "type": "transcript",
                     "role": "assistant",
-                    "agent_id": self.agent_id,
+                    "agent_id": agent_id,
                     "text": text,
                 })
             else:
                 self.session.store.event(
-                    "transcript_missing", agent_id=self.agent_id, segment=self.segment
+                    "transcript_missing", agent_id=agent_id, segment=self.segment
                 )
 
             self.session.store.event(
                 "steering_pair",
                 direction=self._pending_direction,
                 actor={
-                    "agent_id": self.agent_id,
+                    "agent_id": agent_id,
                     "text": text,
-                    "voice": getattr(self.rt, "voice", None),
+                    "voice": getattr(rt, "voice", None),
                     "transcript_missing": missing,
                 },
                 participant=self._last_user_text,
@@ -868,10 +1095,10 @@ class RealtimeVoiceSessionRunner:
                 if self._turn_started_at else None
             )
             self.session.store.event(
-                "assistant_turn", agent_id=self.agent_id, text=text,
+                "assistant_turn", agent_id=agent_id, text=text,
                 latency_s=latency, segment=self.segment, transcript_missing=missing,
             )
-            await self._send({"type": "assistant_done", "agent_id": self.agent_id})
+            await self._send({"type": "assistant_done", "agent_id": agent_id})
         finally:
             self._finalizing = False
             # Released only now, so a group's next speaker cannot start while
@@ -914,9 +1141,55 @@ class RealtimeVoiceSessionRunner:
             "esci": trigger.get("esci", []),
             "probing": probing,
             "instructions_sha256": hashlib.sha256(instructions.encode()).hexdigest()[:16],
-            "director_model": provenance()["text_model"],
+            "director_model": (self.director.model if getattr(self, "director", None)
+                               else provenance()["text_model"]),
         }
         self.session.store.event("stage_direction", **self._pending_direction)
+
+    async def _brief_member(self, agent_id: str) -> None:
+        """Fold the next planted beat into one room member's brief.
+
+        Called from _run_group_turn while the chosen speaker is between
+        responses (its auto-fired reply already suppressed), so a group
+        interaction actually fires its scored triggers instead of only advancing
+        when the participant clicks 'move on'. The trigger is evaluated in the
+        member's own context, because in a series a beat is bound to a
+        particular character."""
+        if self.room is None:
+            return
+        rt = self.room.session_for(agent_id)
+        agent = next((a for a in self._resolve_agents() if a.id == agent_id), None)
+        if rt is None or agent is None:
+            return
+        prev_agent, prev_id = self.agent, self.agent_id
+        self.agent, self.agent_id = agent, agent_id
+        try:
+            trigger = self._next_trigger()
+            if trigger is None:
+                return
+            direction = self._fire_trigger(trigger, probing=False)
+            instructions = self._instructions() + (
+                f"\n\nDIRECTOR NOTE (follow precisely, never mention): {direction}"
+            )
+            await rt.update_instructions(instructions)
+            self._pending_direction = {
+                "turn": self._turn_index,
+                "segment": self.segment,
+                "interaction": self._interaction_id(),
+                "agent_id": agent_id,
+                "agent_name": agent.name,
+                "voice": getattr(rt, "voice", None),
+                "stage_direction": direction,
+                "trigger_id": trigger["id"],
+                "esci": trigger.get("esci", []),
+                "probing": False,
+                "instructions_sha256": hashlib.sha256(instructions.encode()).hexdigest()[:16],
+                "director_model": (self.director.model if getattr(self, "director", None)
+                               else provenance()["text_model"]),
+            }
+            self.session.store.event("stage_direction", **self._pending_direction)
+        finally:
+            self.agent, self.agent_id = prev_agent, prev_id
 
     async def _silence_watchdog(self) -> None:
         """If the participant says nothing for a while, prompt the actor to
@@ -968,7 +1241,8 @@ class RealtimeVoiceSessionRunner:
             "voice": self.rt.voice,
             "stage_direction": intent,
             "instructions_sha256": hashlib.sha256(instructions.encode()).hexdigest()[:16],
-            "director_model": provenance()["text_model"],
+            "director_model": (self.director.model if getattr(self, "director", None)
+                               else provenance()["text_model"]),
         }
         self.session.store.event("stage_direction", **self._pending_direction)
 
@@ -1006,6 +1280,14 @@ class RealtimeVoiceSessionRunner:
         # asyncio.Lock queues waiters, so a turn spoken while another is being
         # served waits its turn instead of being dropped.
         async with self._floor:
+            # Snapshot the room: this task can await up to 45 s, and if the
+            # participant advances during that wait _close_room sets self.room =
+            # None. Dereferencing self.room afterwards would crash this
+            # background task with AttributeError. Bail whenever the room we
+            # started with is no longer current.
+            room = self.room
+            if room is None or self._closed:
+                return
             order = self.agent_order()
 
             # The transcript arrives while the participant is still speaking,
@@ -1023,10 +1305,17 @@ class RealtimeVoiceSessionRunner:
             deadline = time.time() + float(os.getenv("ROUTE_TRANSCRIPT_WAIT", "6"))
             while self._last_user_text == before and time.time() < deadline:
                 await asyncio.sleep(0.15)
+            if self._closed or self.room is not room:
+                return
             fresh = self._last_user_text if self._last_user_text != before else ""
 
             named_early = self._named_in(fresh)
             first = named_early
+            # The director may return an ORDERED multi-speaker sequence (e.g.
+            # [A, B, A]); capture it so the follow-up beats play it in order
+            # instead of being re-decided by a second route() call. None when the
+            # participant addressed someone directly (no director call was made).
+            routed_seq = None
             if first is None:
                 try:
                     routed = await self.director.route(
@@ -1034,8 +1323,21 @@ class RealtimeVoiceSessionRunner:
                     )
                     candidates = [
                         r.get("agent_id") for r in routed
-                        if r.get("agent_id") in self.room.sessions
+                        if r.get("agent_id") in room.sessions
                     ]
+                    # The director only dedupes CONSECUTIVE speakers against its
+                    # static cast, but room.sessions can shrink mid-encounter (a
+                    # member's gateway session dropped), so filtering to live
+                    # members can make previously non-adjacent duplicates adjacent
+                    # (e.g. [A, dead, A] -> [A, A]). Collapse consecutive repeats
+                    # so one agent is never handed the floor twice in a row, while
+                    # a genuine [A, B, A] rebuttal (separated by B) is preserved.
+                    collapsed = []
+                    for c in candidates:
+                        if not collapsed or collapsed[-1] != c:
+                            collapsed.append(c)
+                    candidates = collapsed
+                    routed_seq = candidates
                     # Anti-dominance: absent a direct address, prefer a
                     # candidate who did not just speak.
                     first = next(
@@ -1044,6 +1346,8 @@ class RealtimeVoiceSessionRunner:
                     )
                 except Exception as exc:  # noqa: BLE001
                     self.session.store.event("director_error", message=str(exc))
+            if self._closed or self.room is not room:
+                return
             if first is None:
                 # No signal at all: rotate the floor instead of always
                 # falling back to the cast's first-listed character.
@@ -1053,12 +1357,21 @@ class RealtimeVoiceSessionRunner:
                 else:
                     first = order[0]
 
+            # Group mode has no per-turn re-brief otherwise, so its planted
+            # (scored) triggers would never fire. Fold the next beat into the
+            # chosen speaker's brief now, while they are between responses.
+            await self._brief_member(first)
+            if self._closed or self.room is not room:
+                return
+
             self._response_done.clear()
-            granted = await self.room.give_floor(first)
+            granted = await room.give_floor(first)
             try:
                 await asyncio.wait_for(self._response_done.wait(), timeout=45)
             except asyncio.TimeoutError:
-                rt_dbg = self.room.session_for(first)
+                if self._closed or self.room is not room:
+                    return
+                rt_dbg = room.session_for(first)
                 log = (rt_dbg.debug_log if rt_dbg else None) or []
                 self.session.store.event(
                     "group_turn_timeout", agent_id=first,
@@ -1070,6 +1383,8 @@ class RealtimeVoiceSessionRunner:
                 )
                 if rt_dbg is not None:
                     rt_dbg.clear_response_state()
+            if self._closed or self.room is not room:
+                return
 
             # The transcript arrived with that first commit; a direct address
             # we could not honour up front gets the next turn instead. Only a
@@ -1079,8 +1394,21 @@ class RealtimeVoiceSessionRunner:
             named = self._named_in(fresh)
             followups = []
             if named and named != first:
+                # A name spoken THIS turn is a direct address and overrides the
+                # director's planned sequence.
                 followups.append(named)
+            elif routed_seq is not None:
+                # Honour the director's ORDERED sequence from the first route()
+                # call (e.g. [A, B, A]) instead of discarding it and re-deciding
+                # with a second LLM call: play the speakers that followed `first`
+                # in the returned order, so an authored back-and-forth (g5's
+                # [claire, arjun, claire]) actually plays. Bounded by the
+                # director's own max sequence length.
+                idx = routed_seq.index(first) if first in routed_seq else -1
+                followups = routed_seq[idx + 1:][: DIRECTOR_MAX_SPEAKERS - 1]
             else:
+                # Direct-address opener: no director sequence was produced, so ask
+                # for a single follow-up to keep the room responsive.
                 try:
                     routed = await self.director.route(
                         self.session.shared_history, fresh
@@ -1090,36 +1418,48 @@ class RealtimeVoiceSessionRunner:
                     routed = []
                 followups = [
                     r.get("agent_id") for r in routed
-                    if r.get("agent_id") in self.room.sessions
+                    if r.get("agent_id") in room.sessions
                     and r.get("agent_id") != first
                 ][:1]
+            if self._closed or self.room is not room:
+                return
 
             self.session.store.event(
                 "director_route", speakers=[first] + followups, addressed=named
             )
             for aid in followups:
-                if self._closed or self.vad.speaking:
+                if self._closed or self.room is not room or self.vad.speaking:
                     if self.vad.speaking:
                         self.session.store.event(
                             "followup_yielded", agent_id=aid,
                         )
                     break
                 self._response_done.clear()
-                await self.room.give_floor(aid)
+                await room.give_floor(aid)
                 try:
                     await asyncio.wait_for(self._response_done.wait(), timeout=45)
                 except asyncio.TimeoutError:
                     self.session.store.event("group_turn_timeout", agent_id=aid)
-            self.room.speaking = None
+                if self._closed or self.room is not room:
+                    return
+            room.speaking = None
             await self._steer()
 
     def _named_in(self, text: str) -> Optional[str]:
-        """The character the participant addressed by name, if any."""
+        """The character the participant addressed by name, if any.
+
+        Match whole tokens, not substrings: a raw `in` test made 'Dan' fire on
+        'abundant' and, because direct address overrides the director, seize the
+        floor from whoever should have spoken."""
         if not text:
             return None
-        lowered = text.lower()
+        tokens = _norm_speech(text).split()
         for a in self._resolve_agents():
-            if a.name.lower() in lowered:
+            name_tokens = _norm_speech(a.name).split()
+            if not name_tokens:
+                continue
+            n = len(name_tokens)
+            if any(tokens[i:i + n] == name_tokens for i in range(len(tokens) - n + 1)):
                 return a.id
         return None
 
