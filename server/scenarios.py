@@ -67,9 +67,6 @@ class Scenario:
     intro_image: str = ""  # filename under static/agents/ shown on the brief screen (pre-start)
     cast: List[Agent] = field(default_factory=list)
     director_prompt: str = ""  # routing guidance for group mode
-    # When False, skip the per-gap route_continuation calls, use when the
-    # director already returns complete multi-speaker sequences (faster).
-    chain_continuations: bool = True
     # Agents to route on the very first reaction, served WITHOUT a director LLM
     # call so the meeting opens snappily.
     opener: List[str] = field(default_factory=list)
@@ -99,7 +96,7 @@ def _find_scenario_file(scenario_id: str) -> Path:
         return direct
     for p in SCENARIOS_DIR.glob("*.yaml"):
         try:
-            data = yaml.safe_load(p.read_text())
+            data = yaml.safe_load(p.read_text(encoding="utf-8"))
         except Exception:
             continue
         if data and data.get("id") == scenario_id:
@@ -116,7 +113,7 @@ def load_scenario(scenario_id: str, participant_key: str = "") -> Scenario:
         return compile_scenario(scenario_id, participant_key)
 
     path = _find_scenario_file(scenario_id)
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     return _scenario_from_dict(data)
 
 
@@ -159,7 +156,6 @@ def _scenario_from_dict(data: dict) -> Scenario:
         intro_image=(data.get("intro_image") or "").strip(),
         cast=cast,
         director_prompt=data.get("director_prompt", "").strip(),
-        chain_continuations=data.get("chain_continuations", True),
         opener=data.get("opener", []) or [],
         branches=branches,
         references=references,
@@ -173,7 +169,11 @@ def list_scenarios() -> List[Dict[str, str]]:
     out = []
     # Study scenarios first, these are what Phase 1 collects.
     for sid in _v3_available():
-        sc = compile_scenario(sid)
+        # One incomplete/work-in-progress spec must not 500 the whole listing.
+        try:
+            sc = compile_scenario(sid)
+        except Exception:
+            continue
         out.append({
             "id": sc.id,
             "title": sc.title,
@@ -185,7 +185,12 @@ def list_scenarios() -> List[Dict[str, str]]:
             "parallel_form": getattr(sc, "parallel_form", None),
         })
     for p in sorted(SCENARIOS_DIR.glob("*.yaml")):
-        data = yaml.safe_load(p.read_text())
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict) or "id" not in data or "title" not in data:
+            continue
         out.append({
             "id": data["id"],
             "title": data["title"],

@@ -2,9 +2,8 @@ id: presentation_pileon
 title: "Holding the room"
 skill: "psychological safety"
 mode: group
-# The director returns complete [arjun, claire, arjun] sequences, so skip the
-# slow per-gap routing calls — agents in a sequence play back to back.
-chain_continuations: false
+# The director returns complete [arjun, claire, arjun] sequences that the group
+# runner plays back to back in order.
 # First reaction is served without a director LLM call so the meeting opens fast.
 # Claire opens warm, Arjun jumps in annoyed/condescending, Claire fires back —
 # so they're already fighting at the start.

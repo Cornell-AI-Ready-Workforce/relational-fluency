@@ -105,7 +105,7 @@ def _events(session_dir: Path) -> List[dict]:
     if not path.exists():
         return []
     out = []
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             try:
                 out.append(json.loads(line))
@@ -139,7 +139,12 @@ def main(argv: List[str]) -> int:
         print(__doc__)
         return 0
     if argv[0] == "--all":
-        dirs = sorted(p for p in SESSIONS_DIR.iterdir() if p.is_dir())
+        dirs = (sorted(p for p in SESSIONS_DIR.iterdir() if p.is_dir())
+                if SESSIONS_DIR.exists() else [])
+        if not dirs:
+            print("no sessions recorded yet")
+            print("\n0/0 encounters complete")
+            return 0
         results = [report(d) for d in dirs]
         good = sum(results)
         print(f"\n{good}/{len(results)} encounters complete")
