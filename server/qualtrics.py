@@ -22,8 +22,7 @@ import json
 import sys
 import time
 import zipfile
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import httpx
 
@@ -111,7 +110,7 @@ def join_with_runs(responses: List[dict]) -> List[dict]:
     if RUNS_DIR.exists():
         for f in RUNS_DIR.glob("*.json"):
             try:
-                runs.append(json.loads(f.read_text()))
+                runs.append(json.loads(f.read_text(encoding="utf-8")))
             except ValueError:
                 pass
 
@@ -163,14 +162,14 @@ def main(argv: List[str]) -> int:
         responses = export_responses()
         EXPORT_DIR.mkdir(parents=True, exist_ok=True)
         out = EXPORT_DIR / f"responses_{int(time.time())}.json"
-        out.write_text(json.dumps(responses, indent=2))
+        out.write_text(json.dumps(responses, indent=2), encoding="utf-8")
         print(f"{len(responses)} responses -> {out}")
         return 0
     if cmd == "join":
         rows = join_with_runs(export_responses())
         EXPORT_DIR.mkdir(parents=True, exist_ok=True)
         out = EXPORT_DIR / f"joined_{int(time.time())}.json"
-        out.write_text(json.dumps(rows, indent=2))
+        out.write_text(json.dumps(rows, indent=2), encoding="utf-8")
         linked = sum(1 for r in rows if r["run"])
         print(f"{len(rows)} responses, {linked} linked to runs -> {out}")
         for r in rows[:10]:
