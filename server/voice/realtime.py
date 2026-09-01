@@ -20,20 +20,69 @@ Gateway notes, verified 2026-08-19 (see docs/migration-plan.md):
 
 from __future__ import annotations
 
-import asyncio
-import audioop
 import base64
 import json
+import math
 import os
+import struct
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
 
 import websockets
 
-# Config comes from server.llm so the .env file wins over ambient environment,
+# Config comes from server.llm so the .env file wins over ambient environment:
 # a stray exported variable must not be able to redirect study traffic.
 from ..llm import gateway_api_key, gateway_base_url, setting
+
+try:  # audioop was removed in Python 3.13 (PEP 594); fall back to pure Python.
+    import audioop  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - exercised only on 3.13+
+    audioop = None
+
+
+def _rms(pcm: bytes) -> int:
+    """Root-mean-square of signed 16-bit mono PCM."""
+    if audioop is not None:
+        return audioop.rms(pcm, 2)
+    n = len(pcm) // 2
+    if n == 0:
+        return 0
+    samples = struct.unpack("<%dh" % n, pcm[: n * 2])
+    return int(math.sqrt(sum(s * s for s in samples) / n))
+
+
+def _ratecv(pcm: bytes, inrate: int, outrate: int, state):
+    """Resample signed 16-bit mono PCM, carrying interpolation state between
+    chunks. Mirrors the audioop.ratecv contract we rely on; the pure-Python
+    path is a streaming linear interpolator with its own opaque state tuple."""
+    if audioop is not None:
+        return audioop.ratecv(pcm, 2, 1, inrate, outrate, state)
+    n = len(pcm) // 2
+    if n == 0:
+        return b"", state
+    samples = struct.unpack("<%dh" % n, pcm[: n * 2])
+    if state is None:
+        prev, pos = samples[0], 0.0
+    else:
+        prev, pos = state
+    combined = (prev,) + samples  # index 0 == previous chunk's last sample
+    step = inrate / outrate
+    out = []
+    while pos < n:
+        i = int(pos)
+        frac = pos - i
+        a = combined[i]
+        b = combined[i + 1]
+        val = int(a + (b - a) * frac)
+        if val > 32767:
+            val = 32767
+        elif val < -32768:
+            val = -32768
+        out.append(val)
+        pos += step
+    new_state = (samples[-1], pos - n)
+    return struct.pack("<%dh" % len(out), *out), new_state
 
 GATEWAY = gateway_base_url()
 MODEL = setting("REALTIME_MODEL", "nto.gemini-live-2.5-flash")
@@ -41,7 +90,7 @@ VOICE = setting("REALTIME_VOICE", "Puck")
 
 # The browser captures and plays 16 kHz; the gateway emits 24 kHz PCM16.
 CLIENT_RATE = 16000
-GATEWAY_OUTPUT_RATE = int(os.getenv("REALTIME_OUTPUT_RATE", "24000"))
+GATEWAY_OUTPUT_RATE = int(setting("REALTIME_OUTPUT_RATE", "24000"))
 
 
 def _ws_url(model: str) -> str:
@@ -58,8 +107,8 @@ class SilenceDetector:
     a turn that immediately closes.
     """
 
-    threshold: int = int(os.getenv("VAD_RMS_THRESHOLD", "500"))
-    silence_ms: int = int(os.getenv("VAD_SILENCE_MS", "900"))
+    threshold: int = field(default_factory=lambda: int(setting("VAD_RMS_THRESHOLD", "500")))
+    silence_ms: int = field(default_factory=lambda: int(setting("VAD_SILENCE_MS", "900")))
     min_speech_ms: int = 250
     rate: int = CLIENT_RATE
 
@@ -72,7 +121,7 @@ class SilenceDetector:
         if not pcm:
             return None
         chunk_ms = len(pcm) / 2 / self.rate * 1000.0
-        rms = audioop.rms(pcm, 2)
+        rms = _rms(pcm)
 
         if rms >= self.threshold:
             self._silence_ms_run = 0.0
@@ -89,6 +138,14 @@ class SilenceDetector:
                 self._speech_ms = 0.0
                 self._silence_ms_run = 0.0
                 return "turn_ended"
+            return None
+
+        # Not speaking and below threshold: decay any partial speech that never
+        # opened a turn, so isolated noise bursts (cough, keyboard, door) can't
+        # accumulate across long silences and eventually cross min_speech_ms.
+        self._silence_ms_run += chunk_ms
+        if self._silence_ms_run >= self.silence_ms:
+            self._speech_ms = 0.0
         return None
 
     def reset(self) -> None:
@@ -133,11 +190,20 @@ class RealtimeVoiceSession:
     async def connect(self, *, open_conversation: bool = True) -> None:
         if not self.api_key:
             raise RuntimeError("No gateway API key (set LITELLM_API_KEY)")
+        # websockets renamed extra_headers -> additional_headers when the new
+        # asyncio client became the top-level default in 14.0; requirements
+        # allow >=12, so pick the kwarg the installed version actually accepts.
+        header_kwarg = "additional_headers"
+        try:
+            if int(websockets.__version__.split(".")[0]) < 14:
+                header_kwarg = "extra_headers"
+        except (ValueError, AttributeError):
+            pass
         self.ws = await websockets.connect(
             _ws_url(self.model),
-            additional_headers={"Authorization": f"Bearer {self.api_key}"},
             max_size=None,
             ping_interval=20,
+            **{header_kwarg: {"Authorization": f"Bearer {self.api_key}"}},
         )
         session: dict = {"instructions": self.instructions}
         if self.voice:
@@ -212,16 +278,17 @@ class RealtimeVoiceSession:
         await self.request_response()
 
     async def cancel_response(self) -> None:
-        """Barge-in: stop the agent mid-utterance."""
-        if self._response_active:
-            await self._send({"type": "response.cancel"})
-            self._response_active = False
+        """Barge-in: stop the agent mid-utterance. Sent unconditionally so that
+        bridge auto-fired responses — which never flip _response_active — can
+        also be cancelled; response.cancel is harmless when nothing is active."""
+        await self._send({"type": "response.cancel"})
+        self._response_active = False
 
     def _to_client_rate(self, pcm: bytes) -> bytes:
         if GATEWAY_OUTPUT_RATE == CLIENT_RATE:
             return pcm
-        converted, self._resample_state = audioop.ratecv(
-            pcm, 2, 1, GATEWAY_OUTPUT_RATE, CLIENT_RATE, self._resample_state
+        converted, self._resample_state = _ratecv(
+            pcm, GATEWAY_OUTPUT_RATE, CLIENT_RATE, self._resample_state
         )
         return converted
 
@@ -237,6 +304,12 @@ class RealtimeVoiceSession:
                 etype = ev.get("type", "")
                 if self.debug_log is not None:
                     self.debug_log.append((time.time(), etype, str(ev)[:160]))
+
+                # The bridge auto-fires responses without going through
+                # request_response(); mark the session active on the first
+                # streamed delta so responding/cancel_response track them too.
+                if etype.startswith("response.") and etype.endswith(".delta"):
+                    self._response_active = True
 
                 if etype in ("response.output_audio.delta", "response.audio.delta"):
                     pcm = base64.b64decode(ev.get("delta") or "")
@@ -287,8 +360,12 @@ class RealtimeVoiceSession:
                 elif etype == "error":
                     self._response_active = False
                     yield {"type": "error", "message": str(ev.get("error"))}
-        except websockets.ConnectionClosed:
+        except websockets.ConnectionClosedOK:
+            self._response_active = False
             return
+        except websockets.ConnectionClosedError as exc:
+            self._response_active = False
+            yield {"type": "error", "message": f"realtime connection lost: {exc}"}
 
     async def close(self) -> None:
         if self.ws:
