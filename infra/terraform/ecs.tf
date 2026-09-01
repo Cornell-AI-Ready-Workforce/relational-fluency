@@ -82,6 +82,67 @@ resource "aws_iam_role_policy" "task_s3" {
   policy = data.aws_iam_policy_document.task_s3.json
 }
 
+# --- Persistent /data volume (EFS) ---
+# The server writes every study record to DATA_DIR=/data: sessions/transcripts,
+# run assignments, the sqlite index, and Qualtrics exports. Fargate's container
+# filesystem does not survive a deploy or task retirement, so /data must be an
+# EFS mount or the release flow destroys all records since the last export.
+resource "aws_security_group" "efs" {
+  name_prefix = "${var.project}-efs-"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    description     = "NFS from the platform task only"
+    from_port       = 2049
+    to_port         = 2049
+    protocol        = "tcp"
+    security_groups = [aws_security_group.agent.id]
+  }
+}
+
+resource "aws_efs_file_system" "study" {
+  creation_token = "${var.project}-study-data"
+  encrypted      = true
+  kms_key_id     = aws_kms_key.study.arn
+
+  tags = {
+    Name = "${var.project}-study-data"
+  }
+}
+
+resource "aws_efs_mount_target" "study" {
+  for_each        = toset(module.vpc.private_subnets)
+  file_system_id  = aws_efs_file_system.study.id
+  subnet_id       = each.value
+  security_groups = [aws_security_group.efs.id]
+}
+
+# The container runs as a non-root user (uid 1000, see Dockerfile). A raw EFS
+# root is owned root:root, so a non-root process would get EACCES writing study
+# records to the mounted /data. This access point owns its root directory as
+# 1000:1000 and forces all access to that uid/gid, so the app can actually write.
+resource "aws_efs_access_point" "study" {
+  file_system_id = aws_efs_file_system.study.id
+
+  posix_user {
+    uid = 1000
+    gid = 1000
+  }
+
+  root_directory {
+    path = "/study-data"
+    creation_info {
+      owner_uid   = 1000
+      owner_gid   = 1000
+      permissions = "0755"
+    }
+  }
+
+  tags = {
+    Name = "${var.project}-study-data-ap"
+  }
+}
+
 # --- Task definition & service ---
 resource "aws_ecs_task_definition" "agent" {
   family                   = "${var.project}-agent"
@@ -98,16 +159,29 @@ resource "aws_ecs_task_definition" "agent" {
     essential    = true
     portMappings = [{ containerPort = 8080, protocol = "tcp" }]
     environment = [
-      { name = "ACTOR_MODEL", value = var.actor_model },
+      # The live realtime path reads REALTIME_MODEL, not ACTOR_MODEL.
+      { name = "REALTIME_MODEL", value = var.actor_model },
       { name = "DIRECTOR_MODEL", value = var.director_model },
       { name = "LLM_BASE_URL", value = var.llm_base_url },
       { name = "APP_HOST", value = local.app_fqdn },
       { name = "API_HOST", value = local.api_fqdn },
       { name = "S3_BUCKET", value = aws_s3_bucket.study_data.bucket },
       { name = "AWS_REGION", value = var.region },
+      { name = "SURVEY_RETURN_URL", value = var.survey_return_url },
       { name = "HOST", value = "0.0.0.0" },
       { name = "PORT", value = "8080" },
     ]
+    mountPoints = [{
+      sourceVolume  = "study-data"
+      containerPath = "/data"
+      readOnly      = false
+    }]
+    # Fargate hard-caps stopTimeout at 120s, so a draining task is SIGKILLed 120s
+    # after SIGTERM regardless of the ALB deregistration_delay — this does NOT let
+    # a multi-minute voice encounter finish. A deploy rolled mid-encounter will
+    # drop that session at the 120s mark. Deploy only between collection sessions,
+    # or add a drain step that waits for active sessions to end first.
+    stopTimeout = 120
     secrets = [
       # Cornell LiteLLM virtual key — serves both the realtime actor and the director.
       { name = "ANTHROPIC_API_KEY", valueFrom = aws_secretsmanager_secret.anthropic_key.arn },
@@ -122,6 +196,22 @@ resource "aws_ecs_task_definition" "agent" {
       }
     }
   }])
+
+  volume {
+    name = "study-data"
+
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.study.id
+      transit_encryption = "ENABLED"
+      # Mount through the access point so the non-root container (uid 1000) owns
+      # /data and can write; without this the EFS root is root-owned and writes
+      # fail with EACCES on Fargate.
+      authorization_config {
+        access_point_id = aws_efs_access_point.study.id
+        iam             = "ENABLED"
+      }
+    }
+  }
 }
 
 resource "aws_ecs_service" "agent" {
@@ -143,7 +233,9 @@ resource "aws_ecs_service" "agent" {
     container_port   = 8080
   }
 
-  # New task must be healthy before old one drains: no dropped mid-encounter turns
+  # New task must be healthy before the old one drains, so NEW connections never
+  # hit a cold task. In-flight sessions on the draining task are still cut at the
+  # 120s Fargate stopTimeout (see stopTimeout above) — deploy between sessions.
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 
