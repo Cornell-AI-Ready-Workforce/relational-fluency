@@ -1,0 +1,427 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Evidence trace</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#eeeeec; --surface:#ffffff; --surface-2:#f6f6f4; --ink:#1b1b1a; --ink-2:#3c3c3a;
+  --muted:#6b6b68; --faint:#9a9a96; --line:#e2e2df; --line-2:#d3d3ce;
+  --red:#b3181b; --dir:#2f4f7d; --dir-bg:#eef3fa; --dir-line:#c9d6e8;
+  --ok:#2f7d4f; --ok-bg:#eef7f0; --ok-line:#bfe0c8;
+  --warn:#946a12; --warn-bg:#faf3e2; --warn-line:#e6d3a3;
+  --flag:#6b4f9e; --flag-bg:#f2eefb; --flag-line:#d7cbee;
+  --fail:#b3181b; --fail-bg:#fbecec; --fail-line:#eecaca;
+  --shadow:0 1px 2px rgba(20,20,20,.05),0 3px 12px rgba(20,20,20,.04);
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#111213; --surface:#191a1b; --surface-2:#202223; --ink:#ececea; --ink-2:#c7c7c3;
+  --muted:#9a9a95; --faint:#6a6a66; --line:#2a2c2d; --line-2:#3a3c3d;
+  --red:#e2696b; --dir:#8fb0dd; --dir-bg:#1a2130; --dir-line:#2c3a4f;
+  --ok:#68c088; --ok-bg:#16241b; --ok-line:#2b4633;
+  --warn:#d8b45a; --warn-bg:#241f12; --warn-line:#463b1c;
+  --flag:#b39bea; --flag-bg:#1f1a2b; --flag-line:#3a3050;
+  --fail:#e2696b; --fail-bg:#241416; --fail-line:#472329;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 4px 16px rgba(0,0,0,.3);
+}}
+:root[data-theme="dark"]{
+  --ground:#111213; --surface:#191a1b; --surface-2:#202223; --ink:#ececea; --ink-2:#c7c7c3;
+  --muted:#9a9a95; --faint:#6a6a66; --line:#2a2c2d; --line-2:#3a3c3d;
+  --red:#e2696b; --dir:#8fb0dd; --dir-bg:#1a2130; --dir-line:#2c3a4f;
+  --ok:#68c088; --ok-bg:#16241b; --ok-line:#2b4633;
+  --warn:#d8b45a; --warn-bg:#241f12; --warn-line:#463b1c;
+  --flag:#b39bea; --flag-bg:#1f1a2b; --flag-line:#3a3050;
+  --fail:#e2696b; --fail-bg:#241416; --fail-line:#472329;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 4px 16px rgba(0,0,0,.3);
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;}
+.mono{font-family:var(--mono);font-variant-ligatures:none;}
+.wrap{max-width:1320px;margin:0 auto;padding:22px 22px 40px;}
+a{color:var(--dir);}
+h1{font-size:26px;font-weight:700;letter-spacing:-.01em;margin:0 0 3px;display:inline-block;padding-bottom:7px;border-bottom:3px solid var(--red);}
+.subtitle{color:var(--muted);font-size:12.5px;margin:8px 0 18px;}
+.app{background:var(--surface);border:1px solid var(--line);border-top:3px solid var(--red);border-radius:10px;box-shadow:var(--shadow);overflow:hidden;}
+.appbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid var(--line);min-height:48px;}
+.appbar .sid{font-family:var(--mono);font-weight:600;font-size:13px;}
+.appbar .crumb{color:var(--ink-2);}
+.appbar .crumb b{font-weight:600;}
+.appbar .spacer{flex:1;}
+.appbar .versions{font-family:var(--mono);font-size:11px;color:var(--muted);}
+.badge{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:4px;border:1px solid transparent;}
+.b-complete{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-line);}
+.b-partial{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-line);}
+.b-flagged{color:var(--flag);background:var(--flag-bg);border-color:var(--flag-line);}
+.b-failed{color:var(--fail);background:var(--fail-bg);border-color:var(--fail-line);}
+.b-active{color:var(--dir);background:var(--dir-bg);border-color:var(--dir-line);}
+.b-study{background:var(--ink);color:var(--surface);letter-spacing:.08em;}
+.body{display:grid;grid-template-columns:214px 1fr 266px;align-items:stretch;}
+.col{min-width:0;}
+.col.sessions{border-right:1px solid var(--line);}
+.col.side{border-left:1px solid var(--line);}
+.sess-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 8px;}
+.sess-head .t{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600;}
+.sess-head select{font:inherit;font-size:11px;color:var(--muted);background:var(--surface);border:1px solid var(--line-2);border-radius:5px;padding:2px 4px;}
+.sesslist{max-height:66vh;overflow:auto;}
+.sess{padding:9px 14px;border-top:1px solid var(--line);cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center;}
+.sess:hover{background:var(--surface-2);}
+.sess.sel{background:var(--surface-2);box-shadow:inset 3px 0 0 var(--red);}
+.sess .id{font-family:var(--mono);font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;}
+.sess .time{font-family:var(--mono);font-size:11px;color:var(--faint);text-align:right;}
+.sess .scen{grid-column:1/-1;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sess .st{grid-column:1/-1;display:flex;align-items:center;gap:6px;margin-top:1px;}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;}
+.dot.complete{background:var(--ok);}.dot.partial{background:var(--warn);}.dot.flagged{background:var(--flag);}.dot.failed{background:var(--fail);}.dot.active{background:var(--dir);}
+.sess .stlbl{font-size:11px;color:var(--muted);text-transform:capitalize;}
+.trace-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:14px 18px 6px;flex-wrap:wrap;}
+.trace-head .scene{font-weight:600;font-size:14px;}
+.trace-head .scene .em{color:var(--muted);font-weight:400;}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;}
+.tab{font-size:11.5px;color:var(--muted);padding:3px 9px;border:1px solid var(--line-2);border-radius:14px;cursor:pointer;background:var(--surface);}
+.tab.on{color:var(--red);border-color:var(--fail-line);background:var(--fail-bg);}
+.tab:hover:not(.on){color:var(--ink-2);}
+.thead,.turn{display:grid;grid-template-columns:44px 1.15fr 1.35fr 1.15fr;gap:14px;}
+.thead{padding:8px 18px 6px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);border-bottom:1px solid var(--line);}
+.turns{padding:2px 0 6px;max-height:60vh;overflow:auto;}
+.turn{padding:11px 18px;border-bottom:1px solid var(--line);cursor:pointer;scroll-margin-top:12px;}
+.turn:hover{background:var(--surface-2);}
+.turn.active{background:var(--dir-bg);}
+.turn.active .ts{color:var(--red);}
+.ts{font-family:var(--mono);font-size:12px;color:var(--muted);padding-top:2px;}
+.p-text{color:var(--ink);}
+.p-none{color:var(--faint);}
+.a-text{color:var(--ink-2);}
+.a-missing{color:var(--faint);font-style:italic;}
+.dcard{background:var(--surface-2);border:1px solid var(--line);border-left:2px solid var(--dir);border-radius:0 7px 7px 0;padding:9px 11px;}
+.dcard .code{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--dir);}
+.dcard .dtext{font-size:12.5px;color:var(--ink-2);margin:4px 0 7px;}
+.dcard .meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+.pill{font-family:var(--mono);font-size:10px;font-weight:600;padding:1px 7px;border-radius:10px;border:1px solid transparent;}
+.pill.steered{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-line);}
+.pill.probe{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-line);}
+.pill.pending{color:var(--faint);background:transparent;border-color:var(--line-2);}
+.unsteered{color:var(--faint);font-size:11.5px;font-style:italic;}
+.override{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 18px 14px;padding:9px 12px;border:1px dashed var(--line-2);border-radius:8px;color:var(--faint);font-size:12px;}
+.panel{padding:14px 16px;}
+.panel + .panel{border-top:1px solid var(--line);}
+.panel h3{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 11px;font-weight:600;display:flex;justify-content:space-between;}
+.panel h3 .cov{color:var(--ink-2);}
+.frow{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;margin:6px 0;}
+.frow .fcode{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);}
+.frow .fnote{font-family:var(--mono);font-size:10px;color:var(--faint);text-align:right;}
+.check{color:var(--ok);font-weight:700;}.miss{color:var(--faint);}
+.iglabel{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:11px 0 4px;}
+.iglabel:first-child{margin-top:0;}
+.hrow{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:7px 0;font-size:12px;}
+.hrow .k{color:var(--muted);}
+.hrow .v{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);text-align:right;}
+.hrow .v .g{color:var(--ok);}.hrow .v .pend{color:var(--faint);}
+.esci-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;}
+.etag{font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:9px;border:1px solid var(--line-2);color:var(--faint);background:var(--surface);}
+.etag.hit{border-color:var(--ok-line);color:var(--ok);background:var(--ok-bg);}
+.replay{border-top:1px solid var(--line);padding:16px 18px 18px;display:grid;grid-template-columns:1fr 210px;gap:20px;align-items:center;}
+.replay h3{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 18px;font-weight:600;}
+.timeline{position:relative;height:34px;margin:0 6px;}
+.axis{position:absolute;top:16px;left:0;right:0;height:1px;background:var(--line-2);}
+.axis .done{position:absolute;left:0;top:0;height:1px;background:var(--warn);width:0;}
+.diamond{position:absolute;top:10px;width:11px;height:11px;background:var(--surface);border:1.5px solid var(--muted);transform:translateX(-50%) rotate(45deg);cursor:pointer;}
+.diamond:hover{border-color:var(--ink);}
+.diamond.active{background:var(--warn);border-color:var(--warn);}
+.playhead{position:absolute;top:2px;width:1.5px;height:28px;background:var(--ink);transform:translateX(-50%);left:0;}
+.tl-hint{font-size:11px;color:var(--faint);margin-top:8px;}
+.video{position:relative;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;aspect-ratio:16/10;display:flex;align-items:center;justify-content:center;color:var(--faint);text-align:center;}
+.video svg{width:34px;height:34px;opacity:.5;}
+.video .tc{position:absolute;right:8px;bottom:6px;font-family:var(--mono);font-size:11px;color:var(--muted);}
+.video .vnote{position:absolute;left:8px;top:6px;font-size:10px;color:var(--faint);}
+.empty{padding:40px;text-align:center;color:var(--muted);}
+.pending-tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);border:1px solid var(--line-2);border-radius:4px;padding:1px 5px;margin-left:6px;}
+@media (max-width:1080px){
+  .body{grid-template-columns:1fr;}
+  .col.sessions,.col.side{border:none;border-top:1px solid var(--line);}
+  .replay{grid-template-columns:1fr;}.video{max-width:320px;}
+  .thead,.turn{grid-template-columns:38px 1fr;}
+  .thead span:nth-child(3),.thead span:nth-child(4){display:none;}
+  .turn>div:nth-child(3),.turn>div:nth-child(4){grid-column:2;}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+</style>
+
+<div class="wrap">
+  <h1>Evidence trace</h1>
+  <div class="subtitle">One aligned record per encounter — the participant, the direction that shaped each reply, the actor's line, fidelity against the instrument, and a replay synced to turns.</div>
+
+  <div class="app">
+    <div class="appbar" id="appbar">
+      <span class="sid" id="ab-sid">—</span>
+      <span class="spacer"></span>
+    </div>
+    <div class="body">
+      <div class="col sessions">
+        <div class="sess-head"><span class="t">Sessions</span>
+          <select id="statusFilter">
+            <option value="">All statuses</option>
+            <option value="complete">Complete</option>
+            <option value="partial">Partial</option>
+            <option value="failed">Failed</option>
+            <option value="active">Active</option>
+          </select>
+        </div>
+        <div class="sesslist" id="sessList"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="col trace">
+        <div class="trace-head"><div class="scene" id="sceneTitle"></div><div class="tabs" id="tabs"></div></div>
+        <div class="thead"><span>t (s)</span><span>Participant</span><span>Director</span><span>Actor</span></div>
+        <div class="turns" id="turns"><div class="empty">Select an encounter.</div></div>
+        <div class="override"><span>🔒 Override next direction</span><span>Disabled in study mode</span></div>
+      </div>
+      <div class="col side">
+        <div class="panel"><h3>Fidelity <span class="cov" id="covTriggers"></span></h3><div id="fidelity"></div></div>
+        <div class="panel"><h3>ESCI coverage <span class="cov" id="covEsci"></span></h3><div id="esci"></div></div>
+        <div class="panel"><h3>Session health</h3><div id="health"></div></div>
+      </div>
+    </div>
+    <div class="replay">
+      <div>
+        <h3>Replay</h3>
+        <div class="timeline" id="timeline"><div class="axis"><div class="done" id="axisDone"></div></div><div class="playhead" id="playhead"></div></div>
+        <div class="tl-hint">Click a turn or a marker to seek. <span class="pending-tag">video sync pending</span> needs clock_offset_ms in the manifest.</div>
+      </div>
+      <div class="video">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6"/></svg>
+        <span class="vnote" id="videoNote"></span>
+        <span class="tc mono" id="videoTc">t —</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const KEY = new URLSearchParams(location.search).get('key') || '';
+const q = p => KEY ? `${p}${p.includes('?') ? '&' : '?'}key=${encodeURIComponent(KEY)}` : p;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const cap = s => s ? s[0].toUpperCase()+s.slice(1) : s;
+// A trigger id like "t3_defensiveness" reads as "defensiveness"; an interaction
+// id "i2" reads as "I2". Together: the beat code shown on the director card.
+const beatCode = (interaction, triggerId) => {
+  const ig = interaction ? interaction.toUpperCase() : '';
+  const beat = triggerId ? triggerId.replace(/^t\d+_/, '').replace(/_/g,' ') : '';
+  return [ig, beat].filter(Boolean).join(' · ');
+};
+
+let encounters = [], selectedId = null, convs = [], convIdx = 0, activeTurn = null, curSpan = 1;
+
+async function loadList() {
+  const el = document.getElementById('sessList');
+  try {
+    const r = await fetch(q('/api/encounters'));
+    if (!r.ok) { el.innerHTML = `<div class="empty">Couldn't load sessions (HTTP ${r.status}).</div>`; return; }
+    const data = await r.json();
+    if (!Array.isArray(data)) { el.innerHTML = '<div class="empty">Unexpected response.</div>'; return; }
+    encounters = data;
+  } catch (e) {
+    el.innerHTML = '<div class="empty">Couldn\'t reach the server. Check your connection and reload.</div>'; return;
+  }
+  renderList();
+  if (encounters.length) select(encounters[0].id);
+}
+
+function renderList() {
+  const el = document.getElementById('sessList');
+  const filt = document.getElementById('statusFilter').value;
+  const rows = encounters.filter(e => !filt || e.status === filt);
+  if (!rows.length) { el.innerHTML = '<div class="empty">No encounters.</div>'; return; }
+  el.innerHTML = rows.map(e => {
+    const st = e.status || 'complete';
+    const time = e.started_at ? new Date(e.started_at*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+    const label = e.title ? esc(e.title) : esc(e.scenario || e.id);
+    return `<div class="sess ${e.id===selectedId?'sel':''}" data-id="${esc(e.id)}">
+      <span class="id">${esc(e.id)}</span><span class="time">${esc(time)}</span>
+      <span class="scen">${label}${e.variant?` · var ${esc(e.variant)}`:''}</span>
+      <span class="st"><span class="dot ${st}"></span><span class="stlbl">${esc(st)}</span></span>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('.sess').forEach(n => n.addEventListener('click', () => select(n.dataset.id)));
+}
+
+async function select(id) {
+  selectedId = id;
+  renderList();
+  const turns = document.getElementById('turns');
+  turns.innerHTML = '<div class="empty">Loading…</div>';
+  let rec;
+  try {
+    const r = await fetch(q(`/api/encounters/${encodeURIComponent(id)}/record`));
+    if (!r.ok) { turns.innerHTML = `<div class="empty">Couldn't load record (HTTP ${r.status}).</div>`; return; }
+    rec = await r.json();
+  } catch (e) { turns.innerHTML = '<div class="empty">Couldn\'t reach the server.</div>'; return; }
+  renderRecord(rec, id);
+}
+
+function renderRecord(rec, id) {
+  const spec = rec.spec, prov = rec.provenance || {}, counts = rec.counts || {};
+  const entry = encounters.find(e => e.id === id) || {};
+  const st = entry.status || 'complete';
+  // app bar
+  const models = [prov.realtime_model, prov.text_model].filter(Boolean).map(m => m.split('/').pop()).join(' · ');
+  document.getElementById('appbar').innerHTML = `
+    <span class="sid">${esc(id)}</span>
+    ${spec ? `<span class="crumb">${esc(cap(spec.construct.replace(/_/g,' ')))} ${esc(spec.variant)} · <b>${esc(spec.title)}</b></span>` : `<span class="crumb"><b>${esc(rec.scenario||'—')}</b></span>`}
+    <span class="badge b-${st}">${esc(cap(st))}</span>
+    <span class="spacer"></span>
+    <span class="versions">${spec?'scenario v3 · ':''}${esc(models||'—')}</span>
+    ${spec ? '<span class="badge b-study">Study</span>' : ''}`;
+
+  // fired-trigger set + interaction meta
+  const fired = new Set((rec.triggers_fired || []).map(f => f.trigger_id));
+  const iMeta = {}; (spec?.interactions || []).forEach(i => iMeta[i.id] = i);
+
+  // Group the transcript into conversations by interaction. Participant turns
+  // don't carry an interaction in the record, so carry the last agent turn's
+  // interaction forward (and back-fill any leading participant turns with the
+  // first interaction) — otherwise every participant turn would start a new
+  // group.
+  const tr = rec.transcript || [];
+  const firstIk = (tr.find(t => t.interaction) || {}).interaction || null;
+  let lastIk = null;
+  convs = []; let cur = null;
+  for (const t of tr) {
+    if (t.interaction) lastIk = t.interaction;
+    const ik = t.interaction || lastIk || firstIk;
+    if (!cur || cur.ik !== ik) { cur = { ik, meta: iMeta[ik], turns: [] }; convs.push(cur); }
+    cur.turns.push(t);
+  }
+  if (!convs.length) { convs = [{ ik:null, meta:null, turns: [] }]; }
+  convIdx = 0;
+  renderTabs();
+
+  // fidelity (planned vs fired, grouped by interaction)
+  let fidHtml = '', planned = 0, hit = 0;
+  (spec?.interactions || []).forEach(i => {
+    fidHtml += `<div class="iglabel">${esc(i.id.toUpperCase())} · ${esc(i.label||'')}</div>`;
+    (i.triggers || []).forEach(tr => {
+      planned++; const isHit = fired.has(tr.id); if (isHit) hit++;
+      fidHtml += `<div class="frow"><span class="${isHit?'check':'miss'}">${isHit?'✓':'○'}</span>
+        <span class="fcode">${esc(beatCode(i.id, tr.id))}</span>
+        <span class="fnote">${tr.probe?'silence probe':''}</span></div>`;
+    });
+  });
+  document.getElementById('fidelity').innerHTML = fidHtml || '<div class="hrow"><span class="k">No instrument spec for this scenario.</span></div>';
+  document.getElementById('covTriggers').textContent = spec ? `${hit}/${planned}` : '';
+
+  // ESCI coverage
+  const allEsci = Object.keys(spec?.esci_items || {});
+  const seenEsci = new Set((rec.triggers_fired || []).flatMap(f => f.esci || []));
+  document.getElementById('esci').innerHTML = allEsci.length
+    ? `<div class="esci-tags">${allEsci.map(k => `<span class="etag ${seenEsci.has(k)?'hit':''}" title="${esc((spec.esci_items||{})[k]||'')}">${esc(k)}</span>`).join('')}</div>`
+    : '<div class="hrow"><span class="k">—</span></div>';
+  document.getElementById('covEsci').textContent = allEsci.length ? `${seenEsci.size}/${allEsci.length}` : '';
+
+  // session health (real bits + clearly-marked pending instrumentation)
+  const audio = rec.audio || {}, video = rec.video || [];
+  const rows = [
+    ['Turns', `participant <b>${counts.participant_turns||0}</b> · agent <b>${counts.agent_turns||0}</b>`],
+    ['Directions', `${counts.stage_directions||0}`],
+    ['Audio', `${audio.participant?'participant <span class="g">✓</span>':'participant —'} · agents ${(audio.agents||[]).length}`],
+    ['Video', video.length ? `<span class="g">✓</span> ${video.length} file${video.length>1?'s':''}` : '—'],
+    ['Models', esc(models||'—')],
+    ['Gateway', esc((prov.gateway||'—').replace(/^https?:\/\//,''))],
+    ['Director latency', '<span class="pend">pending instrumentation</span>'],
+    ['Connection / reconnects', '<span class="pend">pending instrumentation</span>'],
+    ['Gemini resumptions', '<span class="pend">pending instrumentation</span>'],
+  ];
+  document.getElementById('health').innerHTML = rows.map(([k,v]) =>
+    `<div class="hrow"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+
+  document.getElementById('videoNote').textContent = video.length ? 'recording present' : 'no video';
+  renderConversation();
+}
+
+function renderTabs() {
+  const el = document.getElementById('tabs');
+  if (convs.length <= 1) { el.innerHTML = ''; return; }
+  el.innerHTML = convs.map((c,i) => {
+    const label = c.meta ? `Conversation ${i+1}` : `Segment ${i+1}`;
+    return `<span class="tab ${i===convIdx?'on':''}" data-i="${i}">${esc(label)}</span>`;
+  }).join('');
+  el.querySelectorAll('.tab').forEach(n => n.addEventListener('click', () => { convIdx=+n.dataset.i; renderConversation(); }));
+}
+
+function renderConversation() {
+  const c = convs[convIdx] || { turns: [], meta: null };
+  const m = c.meta;
+  document.getElementById('sceneTitle').innerHTML = m
+    ? `${esc(m.id.toUpperCase())} · <span class="em">${esc(m.label||'')}</span>${m.observe?` — <span class="em">${esc(m.observe)}</span>`:''}`
+    : (c.turns.length ? '<span class="em">Conversation</span>' : '');
+  renderTabs();
+
+  const ts = c.turns.map(t => t.t).filter(v => typeof v === 'number');
+  const t0 = ts.length ? ts[0] : 0;
+  curSpan = ts.length ? Math.max(ts[ts.length-1] - t0, 1) : 1;
+
+  const el = document.getElementById('turns');
+  if (!c.turns.length) { el.innerHTML = '<div class="empty">No turns recorded for this segment.</div>'; renderTimeline(); return; }
+  el.innerHTML = c.turns.map((t,i) => {
+    const tsec = (typeof t.t === 'number') ? t.t.toFixed(1) : '—';
+    if (t.role === 'participant') {
+      const body = t.text ? `<div class="p-text">${esc(t.text)}</div>` : '<div class="p-none">—</div>';
+      return `<div class="turn" data-i="${i}"><div class="ts">${tsec}</div><div>${body}</div><div></div><div></div></div>`;
+    }
+    // agent turn
+    let dcell = '<div class="unsteered">unsteered</div>';
+    if (t.stage_direction) {
+      const code = beatCode(t.interaction, t.trigger_id) || (t.interaction ? t.interaction.toUpperCase() : 'directed');
+      dcell = `<div class="dcard">
+        <div class="code">${esc(code)}</div>
+        <div class="dtext">${esc(t.stage_direction)}</div>
+        <div class="meta">
+          <span class="pill steered">steered</span>
+          ${t.probing ? '<span class="pill probe">silence probe</span>' : ''}
+          <span class="pill pending" title="per-turn director latency is pending instrumentation">latency —</span>
+        </div></div>`;
+    }
+    const abody = t.text ? `<div class="a-text">${esc(t.text)}</div>` : '<div class="a-missing">(no transcript recorded for this turn)</div>';
+    return `<div class="turn" data-i="${i}"><div class="ts">${tsec}</div><div></div><div>${dcell}</div>${abody}</div>`;
+  }).join('');
+  el.querySelectorAll('.turn').forEach(n => n.addEventListener('click', () => seek(+n.dataset.i)));
+  renderTimeline();
+  seek(0, false);
+}
+
+function renderTimeline() {
+  const c = convs[convIdx] || { turns: [] };
+  const tl = document.getElementById('timeline');
+  tl.querySelectorAll('.diamond').forEach(d => d.remove());
+  const ts = c.turns.map(t => t.t).filter(v => typeof v === 'number');
+  const t0 = ts.length ? ts[0] : 0;
+  c.turns.forEach((t,i) => {
+    if (typeof t.t !== 'number') return;
+    const d = document.createElement('div');
+    d.className = 'diamond'; d.style.left = ((t.t - t0)/curSpan*100)+'%'; d.dataset.i = i;
+    d.addEventListener('click', () => seek(i));
+    tl.appendChild(d);
+  });
+}
+
+function seek(i, scroll=true) {
+  const c = convs[convIdx] || { turns: [] };
+  if (!c.turns.length) { document.getElementById('videoTc').textContent = 't —'; return; }
+  activeTurn = i; const t = c.turns[i]; if (!t) return;
+  document.querySelectorAll('.turn').forEach((n,j) => n.classList.toggle('active', j===i));
+  const ts = c.turns.map(x => x.t).filter(v => typeof v === 'number');
+  const t0 = ts.length ? ts[0] : 0;
+  const rel = (typeof t.t === 'number') ? (t.t - t0) : 0;
+  const pct = rel/curSpan*100;
+  document.getElementById('playhead').style.left = pct+'%';
+  document.getElementById('axisDone').style.width = pct+'%';
+  document.querySelectorAll('.diamond').forEach(d => d.classList.toggle('active', +d.dataset.i === i));
+  document.getElementById('videoTc').textContent = (typeof t.t === 'number') ? `t ${t.t.toFixed(1)} s` : 't —';
+  if (scroll) { const el = document.querySelectorAll('.turn')[i]; el && el.scrollIntoView({block:'nearest', behavior:'smooth'}); }
+}
+
+document.getElementById('statusFilter').addEventListener('change', renderList);
+loadList();
+</script>
