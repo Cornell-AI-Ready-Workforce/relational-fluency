@@ -100,6 +100,33 @@ resource "aws_security_group" "efs" {
   }
 }
 
+# The volume mounts with IAM authorization enabled, so the task role needs an
+# explicit grant to mount and write through the access point. Without it the
+# task cannot mount /data at all: new tasks never go healthy and, with
+# minimum_healthy_percent = 100, every deploy sticks while the old task keeps
+# serving.
+data "aws_iam_policy_document" "task_efs" {
+  statement {
+    actions = [
+      "elasticfilesystem:ClientMount",
+      "elasticfilesystem:ClientWrite",
+    ]
+    resources = [aws_efs_file_system.study.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "elasticfilesystem:AccessPointArn"
+      values   = [aws_efs_access_point.study.arn]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "task_efs" {
+  name   = "${var.project}-task-efs"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.task_efs.json
+}
+
 resource "aws_efs_file_system" "study" {
   creation_token = "${var.project}-study-data"
   encrypted      = true
