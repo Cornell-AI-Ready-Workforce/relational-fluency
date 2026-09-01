@@ -1,7 +1,7 @@
 """Generate docs/scenario-map.md from the specs, so the table cannot drift."""
 import yaml, glob, pathlib
 
-specs = [yaml.safe_load(open(f, encoding="utf-8")) for f in sorted(glob.glob('scenarios/v3/*.yaml'))]
+specs = [yaml.safe_load(open(f)) for f in sorted(glob.glob('scenarios/v3/*.yaml'))]
 MODE = {'one_to_one': '1:1', 'group': 'group', 'one_to_one_series': '1:1 series'}
 L = ["# Scenario map",
      "",
@@ -46,5 +46,5 @@ for construct, items in seen.items():
     L += [f"- `{k}` — {v}" for k, v in items.items()]
     L.append("")
 
-pathlib.Path("docs/scenario-map.md").write_text("\n".join(L) + "\n", encoding="utf-8")
+pathlib.Path("docs/scenario-map.md").write_text("\n".join(L) + "\n")
 print("wrote docs/scenario-map.md")

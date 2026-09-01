@@ -24,7 +24,7 @@ COUNTERPARTS = {
     "coworker": r"\b(my )?co-?workers?\b|\bcolleagues?\b|\bteammates?\b",
     "hr": r"\bHR\b",
     "owner_exec": r"\b(the owner|my ceo|the ceo|upper management|corporate)\b",
-    "own_team": r"\bmy (employees|staff|direct reports?|crew)\b|\bmy team\b(?!\s?lead)",
+    "own_team": r"\bmy (team|employees|staff|direct reports?|crew)\b",
     "customer": r"\b(a customer|customers|a client)\b",
 }
 
@@ -92,13 +92,12 @@ SITUATIONS = {
 
 
 def main():
-    cp_rx = {k: re.compile(p, 0 if k == "hr" else re.I)
-             for k, p in COUNTERPARTS.items()}
+    cp_rx = {k: re.compile(p, re.I) for k, p in COUNTERPARTS.items()}
     sit_rx = {k: (re.compile(p, re.I), m) for k, (p, m) in SITUATIONS.items()}
     n = interpersonal = 0
     cp_counts, sit_counts, cooccur = (collections.Counter() for _ in range(3))
 
-    with gzip.open(SUBSET, "rt", encoding="utf-8") as f:
+    with gzip.open(SUBSET, "rt") as f:
         for line in f:
             p = json.loads(line)
             n += 1

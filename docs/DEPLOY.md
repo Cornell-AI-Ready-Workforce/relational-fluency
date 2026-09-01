@@ -20,7 +20,7 @@ WebSocket support. Roughly 30 minutes end-to-end.
 ## Cost expectation
 
 - Fly's `shared-cpu-1x@512mb` VM + 1 GB volume: roughly **$3–6/month** at idle, more if traffic ramps.
-- **API costs are separate**: the live voice stack is Gemini Live (`nto.gemini-live-2.5-flash`) served through the Cornell LiteLLM gateway, so every voice turn is billed against your gateway virtual key. Track spend and set a per-key cap in the gateway/LiteLLM console rather than budgeting per external STT/TTS provider — the retired v1 Deepgram/ElevenLabs cascade is no longer used.
+- **API costs are separate**: every voice turn hits Claude (~$0.003–0.015), Deepgram (~$0.0043/min), and ElevenLabs (~$0.30/min on paid tier). Budget accordingly. Your ElevenLabs free tier has ~6,000 chars left — that's a few minutes of TTS. Move to a paid plan before opening to collaborators.
 
 ---
 
@@ -68,29 +68,19 @@ Generate a strong session key first — anyone with this string can use your dep
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Then set the secrets. `ANTHROPIC_API_KEY` here is your **LiteLLM virtual key** for
-the Cornell gateway — the server sends it as the bearer token to the gateway, so a
-raw `sk-ant-…` Anthropic key will fail preflight with a `401` and every encounter
-will error (pages still load, but `/health` reports `gateway.ok=false`):
+Then set all four secrets:
 
 ```bash
 fly secrets set \
-  ANTHROPIC_API_KEY="<your LiteLLM virtual key>" \
+  ANTHROPIC_API_KEY="sk-ant-…" \
+  DEEPGRAM_API_KEY="…" \
+  ELEVENLABS_API_KEY="…" \
   SESSION_KEY="<paste the generated key here>"
 ```
 
-Only override the gateway endpoint if you are **not** targeting the default
-`https://api.ai.it.cornell.edu`; in that case also set the base URL (either name works —
-`LLM_BASE_URL` takes precedence, then `ANTHROPIC_BASE_URL`):
+You can verify with `fly secrets list` (shows names, not values).
 
-```bash
-fly secrets set LLM_BASE_URL="https://your-gateway.example.edu"
-```
-
-You can verify with `fly secrets list` (shows names, not values). No Deepgram or
-ElevenLabs secrets are needed — those providers are retired.
-
-> Use **a different gateway virtual key than your personal one** for deployment — that way you can rotate the deployed key without breaking your local work, and you can see deployed traffic separately.
+> Use **a different Anthropic key than your personal one** for deployment — that way you can rotate the deployed key without breaking your local work, and you can see deployed traffic separately in your Anthropic console.
 
 ### 6. Deploy
 
@@ -157,4 +147,4 @@ Or for bulk pulls, SSH-sftp the whole `/data/sessions/` directory.
 
 - Moving to **real participant data collection** → revisit data residency (likely needs Cornell-controlled infrastructure for IRB).
 - More than **~10 concurrent sessions** → scale up VM memory and possibly run multiple machines (changes assumptions about in-memory session registry; we'd need to add Redis).
-- **Public demo / open signup** → add rate limiting and cost caps (set a per-key spend limit on your LiteLLM gateway virtual key).
+- **Public demo / open signup** → add rate limiting and cost caps (Anthropic per-key spend limit, Deepgram usage cap).

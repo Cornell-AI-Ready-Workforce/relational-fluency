@@ -37,8 +37,7 @@ def pass1_stats_and_subset():
     authors = set()
     tmin = tmax = None
 
-    with gzip.open(SUBSET, "wt", encoding="utf-8") as samp, \
-            open(RAW, encoding="utf-8", errors="replace") as f:
+    with gzip.open(SUBSET, "wt") as samp, open(RAW, errors="replace") as f:
         for line in f:
             try:
                 p = json.loads(line)
@@ -106,7 +105,7 @@ EXTRA_STOP = {
 
 def pass2_topics():
     docs = []
-    with gzip.open(SUBSET, "rt", encoding="utf-8") as f:
+    with gzip.open(SUBSET, "rt") as f:
         for line in f:
             p = json.loads(line)
             txt = (p.get("title") or "") + " " + (p.get("text") or "")
