@@ -30,7 +30,19 @@ def setting(name: str, default: str = "") -> str:
 
 
 def gateway_base_url() -> str:
-    return _cfg("LLM_BASE_URL") or _cfg("ANTHROPIC_BASE_URL", "https://api.ai.it.cornell.edu")
+    # LLM_BASE_URL is this project's own explicit var (fine to read from .env or
+    # ambient env). ANTHROPIC_BASE_URL, however, is resolved from .env / the
+    # hardcoded default ONLY: a stray value in the ambient shell (the desktop
+    # app exports one) must never silently redirect study traffic and leak the
+    # gateway key to an unintended host. preflight() flags such an ambient value
+    # instead of honoring it.
+    explicit = _cfg("LLM_BASE_URL")
+    if explicit:
+        return explicit
+    env_val = _FILE.get("ANTHROPIC_BASE_URL")
+    if env_val and env_val.strip():
+        return env_val.strip()
+    return "https://api.ai.it.cornell.edu"
 
 
 def gateway_api_key() -> str:

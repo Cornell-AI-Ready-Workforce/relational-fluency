@@ -20,20 +20,20 @@ are composed fresh per turn).
 """
 from __future__ import annotations
 
-import os
 from typing import Dict, List, Optional
 
 from anthropic import AsyncAnthropic
 
-from .llm import text_client
+from .llm import setting, text_client
 
 from .persona import INCIVILITY_KNOBS, TONE_KNOBS, Persona
 from .scenarios import Scenario
 
 
 # Same speed-over-deliberation tradeoff as the Director. Override via env to
-# A/B a smarter controller.
-STEERING_MODEL = os.getenv("STEERING_MODEL", "nto.gemini-3.1-flash-lite")
+# A/B a smarter controller. Resolved via the shared .env-first accessor so an
+# override in .env actually takes effect (os.getenv would ignore the .env file).
+STEERING_MODEL = setting("STEERING_MODEL", "nto.gemini-3.1-flash-lite")
 MAX_ADJUSTMENTS_PER_TURN = 2
 STEERABLE_KNOBS = TONE_KNOBS + INCIVILITY_KNOBS  # cognition is not auto-steered
 
