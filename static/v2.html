@@ -109,6 +109,46 @@
                background: var(--surface-2); border-radius: 3px; overflow: hidden; }
   .mic-level > div { height: 100%; width: 0%; background: var(--accent); transition: width 80ms linear; }
   .controls { display: flex; gap: 10px; align-items: center; padding: 8px 0; }
+  /* Live turn-state pill: tells first-time voice users whose turn it is. */
+  .turn-state { display: none; align-items: center; gap: 7px; font-size: 13px; color: var(--muted);
+    padding: 4px 11px; border-radius: 99px; border: 1px solid var(--line-soft); background: var(--surface); white-space: nowrap; }
+  .turn-state.show { display: inline-flex; }
+  .turn-state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .turn-state.you::before { background: var(--accent); animation: pulse 1.2s infinite; }
+  .turn-state.you { color: var(--fg); font-weight: 600; }
+  .turn-state.agent::before { background: #4a7bd0; animation: pulse 1.2s infinite; }
+  .turn-state.listen::before { background: #3a9a5c; }
+  .turn-state.cue { color: var(--fg); font-weight: 600; border-color: var(--accent); }
+  .turn-state.cue::before { background: var(--accent); }
+  /* Minimum-duration progress: the timer's dot becomes a ring that fills at 7:00. */
+  .gate { display: none; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  .gate.show { display: inline-flex; }
+  .gate svg { width: 22px; height: 22px; transform: rotate(-90deg); flex-shrink: 0; }
+  .gate .track { fill: none; stroke: var(--line-soft); stroke-width: 3; }
+  .gate .fill { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+  .gate.open .fill { stroke: #3a9a5c; }
+  .gate.open { color: #2f7d4a; font-weight: 600; }
+  button#stopBtn.locked { opacity: .55; }
+  .gate-note { display: none; position: fixed; top: 104px; right: 20px; max-width: 340px; z-index: 50;
+    background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px;
+    font-size: 14px; line-height: 1.5; box-shadow: 0 8px 24px rgba(47,47,47,0.12); }
+  .gate-note.show { display: block; }
+  /* Audio check card */
+  .check-row { display: flex; gap: 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+  .check-row:first-of-type { border-top: none; }
+  .check-row .what { flex: 1; min-width: 0; }
+  .check-row .what b { display: block; margin-bottom: 2px; }
+  .check-row .what span { font-size: 13.5px; color: var(--muted); }
+  .check-row button { white-space: nowrap; }
+  .check-row .status { width: 120px; text-align: right; font-size: 13.5px; color: var(--muted); }
+  .check-row .status.ok { color: #2f7d4a; font-weight: 600; }
+  .meter { height: 10px; border-radius: 99px; background: var(--line-soft); overflow: hidden; margin-top: 8px; }
+  .meter > i { display: block; height: 100%; width: 0; background: #3a9a5c; transition: width 80ms linear; }
+  .check-help { display: none; font-size: 13.5px; color: var(--fg); background: var(--accent-soft, #fbeeee); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
+  .check-help.show { display: block; }
+  .check-actions { display: flex; gap: 10px; align-items: center; margin-top: 18px; }
+  .check-actions button[disabled] { opacity: .5; cursor: not-allowed; }
+  .check-actions .skip { font-size: 13px; color: var(--muted); background: none; border: none; text-decoration: underline; cursor: pointer; padding: 0; }
   .timer { font-family: ui-monospace, Menlo, monospace; font-size: 13px; font-weight: 600;
            color: var(--fg); background: var(--surface-2); padding: 5px 10px; border-radius: 8px;
            letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 6px; }
@@ -386,6 +426,36 @@
   </div>
 </div>
 
+<div class="gate-note" id="gateNote" role="status"></div>
+
+<div class="consent-overlay" id="audioCheckOverlay" style="display:none">
+  <div class="consent-card situation-card">
+    <h2>Check your audio</h2>
+    <div class="body rich">
+      <p>You will be talking out loud with AI characters for about 10 minutes at a time. Please use <b>headphones</b> if you have them, and find a quiet spot.</p>
+      <div class="check-row">
+        <div class="what"><b>1. Your microphone</b><span>Press the button, then say "testing, one two three".</span>
+          <div class="meter"><i id="micMeter"></i></div>
+          <div class="check-help" id="micHelp">We can't hear anything yet. Check that your browser allowed the microphone (look for a mic icon in the address bar), that the right input device is selected, and that nothing is muted. Then try again.</div>
+        </div>
+        <button id="micTestBtn">Test my microphone</button>
+        <div class="status" id="micStatus">Not tested</div>
+      </div>
+      <div class="check-row">
+        <div class="what"><b>2. Your speakers or headphones</b><span>Play a short sound and confirm you heard it.</span>
+          <div class="check-help" id="spkHelp">Didn't hear it? Check your volume and output device, then play it again.</div>
+        </div>
+        <button id="spkTestBtn">Play a test sound</button>
+        <div class="status" id="spkStatus">Not tested</div>
+      </div>
+    </div>
+    <div class="check-actions">
+      <button id="audioCheckContinue" disabled>Continue</button>
+      <button class="skip" id="audioCheckSkip">Skip the check</button>
+    </div>
+  </div>
+</div>
+
 <div class="consent-overlay" id="nextOverlay" style="display:none">
   <div class="consent-card">
     <h2 id="nextTitle">Encounter complete</h2>
@@ -403,6 +473,11 @@
     <div class="title"><span id="title">Loading…</span><span id="runChip" class="run-chip" style="display:none"></span></div>
   </div>
   <div class="controls" id="controls">
+    <span class="turn-state" id="turnState"></span>
+    <span class="gate" id="gate" title="Each conversation runs at least 7 minutes">
+      <svg viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="fill" id="gateFill" cx="12" cy="12" r="9" stroke-dasharray="56.5" stroke-dashoffset="56.5"/></svg>
+      <span id="gateLabel"></span>
+    </span>
     <span class="timer" id="timer" title="Time in this conversation">00:00</span>
     <button id="startBtn">Start session</button>
     <button id="stopBtn" class="secondary" style="display:none">End conversation</button>
@@ -879,6 +954,56 @@
   function renderTimer() {
     const s = Math.max(0, Math.floor((Date.now() - timerStartMs) / 1000));
     $('timer').textContent = pad2(Math.floor(s / 60)) + ':' + pad2(s % 60);
+    renderGate(s);
+  }
+
+  // ---------- minimum-duration gate ----------
+  // Study encounters must run at least 7 minutes. Rather than refusing the
+  // End button with an alert, the timer's ring fills toward 7:00 and the
+  // label counts down, so the rule is visible from the first second.
+  const MIN_S = 7 * 60;
+  const RING = 56.5;   // circumference of the r=9 ring in the header
+  function gateActive() { return !!(runId && run && run.cohort !== 'internal'); }
+  function renderGate(s) {
+    const g = $('gate');
+    if (!g || !gateActive() || !started) return;
+    g.classList.add('show');
+    const pct = Math.min(1, s / MIN_S);
+    $('gateFill').style.strokeDashoffset = String(RING * (1 - pct));
+    if (pct >= 1) {
+      g.classList.add('open');
+      $('gateLabel').textContent = 'You can end when you are ready';
+      $('stopBtn').classList.remove('locked');
+    } else {
+      const left = Math.ceil((MIN_S - s) / 60);
+      $('gateLabel').textContent = `about ${left} more minute${left === 1 ? '' : 's'}`;
+      $('stopBtn').classList.add('locked');
+    }
+  }
+  let gateNoteTimer = null;
+  function showGateNote(text) {
+    const n = $('gateNote');
+    n.textContent = text;
+    n.classList.add('show');
+    if (gateNoteTimer) clearTimeout(gateNoteTimer);
+    gateNoteTimer = setTimeout(() => n.classList.remove('show'), 6000);
+  }
+
+  // ---------- turn state ----------
+  // First-time voice users mostly stall on one question: is it my turn? The
+  // pill in the header answers it continuously.
+  let turnStateTimer = null;
+  function setTurnState(text, cls) {
+    const el = $('turnState');
+    if (!el) return;
+    if (turnStateTimer) { clearTimeout(turnStateTimer); turnStateTimer = null; }
+    if (!text) { el.className = 'turn-state'; el.textContent = ''; return; }
+    el.className = 'turn-state show ' + (cls || '');
+    el.textContent = text;
+  }
+  function setTurnStateThen(text, cls, nextText, nextCls, ms) {
+    setTurnState(text, cls);
+    turnStateTimer = setTimeout(() => setTurnState(nextText, nextCls), ms);
   }
   function startTimer() {
     timerStartMs = Date.now();
@@ -1100,6 +1225,7 @@
     started = true;
     sessionStartedAt = Date.now();
     userTurns = 0;
+    setTurnState('Connecting…', '');
     speechQueue = [];
     if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
     startTimer();
@@ -1123,9 +1249,22 @@
           cast = m.cast || [];
           renderGrid();
           try { history.replaceState({}, '', `?scenario=${encodeURIComponent(scenario)}&session=${encodeURIComponent(m.session_id)}${key ? `&key=${encodeURIComponent(key)}` : ''}`); } catch {}
+          // The participant opens every scene: nobody speaks until they do.
+          // Say so, in the header and in the transcript, or they wait in
+          // silence for a character to start.
+          setTurnState("You're in the room. Say hello to get started.", 'cue');
+          const cue = document.createElement('div');
+          cue.className = 'scene';
+          cue.id = 'openingCue';
+          cue.textContent = 'You speak first. Say hello to get started, then talk as you would at work.';
+          $('transcript').appendChild(cue);
+        } else if (m.type === 'speech_started') {
+          setTurnState("You're speaking", 'you');
+          const cue = $('openingCue');
+          if (cue) cue.remove();
         } else if (m.type === 'user_transcript') {
           // Build one consolidated bubble: interim updates live, finals commit.
-          if (m.final) { userFinals.push(m.text); renderUserCaption(''); }
+          if (m.final) { userFinals.push(m.text); renderUserCaption(''); setTurnState('Listening…', 'listen'); }
           else { renderUserCaption(m.text); }
         } else if (m.type === 'director_routed') {
           finalizeUserCaption();  // user's turn is committed; routing stays internal
@@ -1133,6 +1272,7 @@
         } else if (m.type === 'assistant_started') {
           finalizeUserCaption();
           assistantSpeaking = true;
+          setTurnState(`${m.agent_name || 'Your partner'} is speaking`, 'agent');
           // Group meetings keep the mic open so the participant can interject,
           // exactly as they could in a real room; the server stops the current
           // speaker when it hears them. 1:1 keeps the original push-to-listen
@@ -1158,6 +1298,7 @@
           }
           currentTurn = null;
           // Mic re-opens when the last audio chunk finishes (playPcmChunk.onended).
+          setTurnStateThen('Your turn', 'you', 'Listening…', 'listen', 4000);
         } else if (m.type === 'segment_start') {
           // A new interaction: say plainly who the participant is now with, and
           // grey out anyone not in the room for this beat.
@@ -1182,6 +1323,9 @@
           assistantSpeaking = false;
           setMicMuted(false);
           setActiveSpeaker(null);
+          setTurnState('Your turn', 'you');
+        } else if (m.type === 'assistant_interrupted') {
+          setTurnState("You're speaking", 'you');
         } else if (m.type === 'error') {
           appendTranscript('user', null, 'error: ' + m.message);
         }
@@ -1189,7 +1333,7 @@
         playPcmChunk(ev.data);
       }
     });
-    ws.addEventListener('close', () => { setMicVisual(''); });
+    ws.addEventListener('close', () => { setMicVisual(''); setTurnState('', ''); $('gate').classList.remove('show'); });
   }
 
   function endSession(opts = {}) {
@@ -1285,11 +1429,10 @@
       // Study encounters must run at least 7 minutes; the encounter is the
       // measurement, and a 3-minute conversation has not exercised it.
       // Internal test runs skip the gate so the team can move fast.
-      const MIN_S = 7 * 60;
       const elapsed = sessionStartedAt ? (Date.now() - sessionStartedAt) / 1000 : 0;
-      if (run && run.cohort !== 'internal' && elapsed < MIN_S) {
+      if (gateActive() && elapsed < MIN_S) {
         const left = Math.ceil((MIN_S - elapsed) / 60);
-        alert(`Please keep the conversation going a little longer, about ${left} more minute${left === 1 ? '' : 's'}. Each conversation needs at least 7 minutes before you can move on.`);
+        showGateNote(`Please keep the conversation going about ${left} more minute${left === 1 ? '' : 's'}. Each conversation needs at least 7 minutes before you can move on. The ring next to the timer fills when you can.`);
         return;
       }
       if (!confirm('Finish this conversation and move on?')) return;
@@ -1418,6 +1561,107 @@
     try { sessionStorage.setItem(ACK_KEY, scope); } catch {}
   }
 
+  // ---------- audio check ----------
+  // Shown once per run, before the first encounter. Until now the first sign
+  // that audio was broken was silence mid-scene; this catches a blocked mic or
+  // a muted output while the participant is still at the keyboard.
+  const CHECK_KEY = 'rf_audio_check';
+  function needsAudioCheck() {
+    const scope = runId || scenario;
+    try { return sessionStorage.getItem(CHECK_KEY) !== scope; } catch { return true; }
+  }
+  function markAudioCheck() {
+    const scope = runId || scenario;
+    try { sessionStorage.setItem(CHECK_KEY, scope); } catch {}
+  }
+  function runAudioCheck() {
+    return new Promise(resolve => {
+      const ov = $('audioCheckOverlay');
+      const micOk = { v: false }, spkOk = { v: false };
+      let testStream = null, testCtx = null, meterInt = null, micTimer = null;
+      const update = () => { $('audioCheckContinue').disabled = !(micOk.v && spkOk.v); };
+      const cleanup = () => {
+        if (meterInt) clearInterval(meterInt);
+        if (micTimer) clearTimeout(micTimer);
+        try { testStream && testStream.getTracks().forEach(t => t.stop()); } catch {}
+        try { testCtx && testCtx.close(); } catch {}
+      };
+      const finish = () => { cleanup(); markAudioCheck(); ov.style.display = 'none'; resolve(); };
+
+      $('micTestBtn').addEventListener('click', async () => {
+        $('micStatus').textContent = 'Listening…'; $('micStatus').className = 'status';
+        $('micHelp').classList.remove('show');
+        try {
+          cleanup();
+          testStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+          testCtx = new (window.AudioContext || window.webkitAudioContext)();
+          if (testCtx.state === 'suspended') { try { await testCtx.resume(); } catch {} }
+          const src = testCtx.createMediaStreamSource(testStream);
+          const an = testCtx.createAnalyser(); an.fftSize = 1024;
+          src.connect(an);
+          const buf = new Uint8Array(an.fftSize);
+          let loud = 0;
+          const loop = () => {
+            an.getByteTimeDomainData(buf);
+            let sum = 0;
+            for (let i = 0; i < buf.length; i++) { const d = (buf[i] - 128) / 128; sum += d * d; }
+            const rms = Math.sqrt(sum / buf.length);
+            $('micMeter').style.width = Math.min(100, Math.round(rms * 400)) + '%';
+            if (rms > 0.03) loud++;
+            if (loud >= 6 && !micOk.v) {
+              micOk.v = true;
+              $('micStatus').textContent = 'We can hear you'; $('micStatus').className = 'status ok';
+              if (micTimer) clearTimeout(micTimer);
+              update();
+            }
+          };
+          // setInterval, not requestAnimationFrame: rAF pauses in a background
+          // tab, and the meter must keep reading if the participant tabs away
+          // to fix a browser mic permission.
+          meterInt = setInterval(loop, 50);
+          micTimer = setTimeout(() => {
+            if (!micOk.v) { $('micStatus').textContent = 'Nothing heard'; $('micHelp').classList.add('show'); }
+          }, 8000);
+        } catch (e) {
+          $('micStatus').textContent = 'Mic blocked';
+          $('micHelp').classList.add('show');
+        }
+      });
+
+      $('spkTestBtn').addEventListener('click', async () => {
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          if (ctx.state === 'suspended') { try { await ctx.resume(); } catch {} }
+          const g = ctx.createGain(); g.gain.value = 0.15; g.connect(ctx.destination);
+          [[523, 0], [659, 0.18], [784, 0.36]].forEach(([f, t]) => {
+            const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+            o.connect(g); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.22);
+          });
+          setTimeout(() => { try { ctx.close(); } catch {} }, 1200);
+          $('spkStatus').innerHTML = '';
+          const yes = document.createElement('button'); yes.textContent = 'I heard it';
+          yes.className = 'secondary'; yes.style.padding = '5px 10px'; yes.style.fontSize = '13px';
+          yes.addEventListener('click', () => {
+            spkOk.v = true;
+            $('spkStatus').textContent = 'Sound works'; $('spkStatus').className = 'status ok';
+            $('spkHelp').classList.remove('show');
+            update();
+          });
+          $('spkStatus').appendChild(yes);
+          $('spkHelp').classList.add('show');
+        } catch (e) {
+          $('spkStatus').textContent = 'Could not play';
+        }
+      });
+
+      $('audioCheckContinue').addEventListener('click', finish, { once: true });
+      // Internal testers can skip; study participants see the link too, since
+      // a blocked check must never strand someone, but it is deliberately quiet.
+      $('audioCheckSkip').addEventListener('click', finish, { once: true });
+      ov.style.display = 'flex';
+    });
+  }
+
   (async () => {
     // Resolve the run first: it decides which scenario this page is serving.
     await loadRun();
@@ -1435,6 +1679,7 @@
         }, { once: true });
       });
     }
+    if (needsAudioCheck()) await runAudioCheck();
     await loadBrief();
   })();
 </script>
