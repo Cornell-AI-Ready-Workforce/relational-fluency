@@ -711,7 +711,18 @@ class RealtimeVoiceSessionRunner:
                         asyncio.ensure_future(self._run_group_turn())
                     else:
                         await self._brief_next_beat(probing=False)
-                        await self.rt.commit_turn()
+                        # The bridge auto-fires a reply after speech + silence,
+                        # usually within a second of our own turn detection.
+                        # Committing on top of it yields two replies, both
+                        # spoken and both transcribed. Give it a moment to
+                        # start; commit only if nothing came.
+                        deadline = time.time() + float(os.getenv("AUTOFIRE_WAIT", "1.5"))
+                        while time.time() < deadline and not self.rt.autofire_active:
+                            await asyncio.sleep(0.05)
+                        if self.rt.autofire_active:
+                            self.session.store.event("autofire_adopted", agent_id=self.agent_id)
+                        else:
+                            await self.rt.commit_turn()
         except WebSocketDisconnect:
             return
         except Exception as exc:  # noqa: BLE001, surfaced in the session log

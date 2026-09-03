@@ -124,6 +124,11 @@ class RealtimeVoiceSession:
         # that commits an empty buffer, so give_floor checks this first; it
         # is zeroed when a bridge auto-fired response consumes the buffer.
         self.pending_input = 0
+        # A response the bridge started on its own (after speech + silence),
+        # as opposed to one we asked for. Tracked separately from
+        # _response_active so group-room suppression behaviour is unchanged.
+        self.autofire_active = False
+        self._last_output_at = 0.0
         self._resample_state = None
         self._agent_buffer = ""
         self._response_active = False
@@ -204,6 +209,10 @@ class RealtimeVoiceSession:
         gateway will not do this on its own."""
         if self._response_active:
             return
+        if self.autofire_active and time.time() - self._last_output_at < 15:
+            # The bridge is already answering this turn; a commit + create
+            # here produces a second, paraphrased reply on top of it.
+            return
         if self.pending_input < 3200:
             # Committing an empty buffer kills the session on this bridge;
             # pad with 300 ms of silence if an auto-fire consumed the audio.
@@ -238,6 +247,11 @@ class RealtimeVoiceSession:
                 if self.debug_log is not None:
                     self.debug_log.append((time.time(), etype, str(ev)[:160]))
 
+                if etype.startswith("response.") and etype.endswith(".delta"):
+                    self._last_output_at = time.time()
+                    if not self._response_active:
+                        self.autofire_active = True
+
                 if etype in ("response.output_audio.delta", "response.audio.delta"):
                     pcm = base64.b64decode(ev.get("delta") or "")
                     if pcm:
@@ -266,6 +280,8 @@ class RealtimeVoiceSession:
                         yield {"type": "user_transcript", "text": text}
 
                 elif etype == "response.done":
+
+                    self.autofire_active = False
                     self._response_active = False
                     # The gateway can repeat response.done for one reply; emit
                     # it once per response id.
