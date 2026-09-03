@@ -427,6 +427,10 @@
 </div>
 
 <div class="gate-note" id="gateNote" role="status"></div>
+<div class="gate-note" id="dropNote" role="alert">
+  <b>Connection lost.</b> Your conversation was interrupted. Nothing is lost on your side: click Reconnect to pick up this encounter again.
+  <div style="margin-top:10px"><button id="dropReconnect">Reconnect</button></div>
+</div>
 
 <div class="consent-overlay" id="audioCheckOverlay" style="display:none">
   <div class="consent-card situation-card">
@@ -627,6 +631,7 @@
 
   let participantId = params.get('participant_id') || null;
   let started = false;       // is a session currently running
+  let intentionalClose = false;  // set by endSession so a close is not mistaken for a drop
   let sessionStartedAt = 0;  // wall clock when the current encounter began
   let videoRecorder = null;  // MediaRecorder over the webcam stream
   let recDest = null;        // recording bus: mic + agent audio, mixed
@@ -1223,9 +1228,11 @@
           : 'End conversation (finish)';
     }
     started = true;
+    intentionalClose = false;
     sessionStartedAt = Date.now();
     userTurns = 0;
     setTurnState('Connecting…', '');
+    $('dropNote').classList.remove('show');
     speechQueue = [];
     if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
     startTimer();
@@ -1333,8 +1340,30 @@
         playPcmChunk(ev.data);
       }
     });
-    ws.addEventListener('close', () => { setMicVisual(''); setTurnState('', ''); $('gate').classList.remove('show'); });
+    ws.addEventListener('close', () => {
+      setMicVisual(''); setTurnState('', ''); $('gate').classList.remove('show');
+      if (started && !intentionalClose) onConnectionDropped();
+    });
   }
+
+  // The server closed the socket without the participant ending the
+  // encounter (a deploy rollout retiring the task, a network drop). Say so
+  // plainly and offer to reconnect: the run is unchanged, so Reconnect lands
+  // them back in the same encounter rather than at the start of the study.
+  function onConnectionDropped() {
+    const line = document.createElement('div');
+    line.className = 'scene';
+    line.textContent = 'The connection dropped. Click Reconnect to continue this conversation.';
+    $('transcript').appendChild(line);
+    $('transcript').scrollTop = $('transcript').scrollHeight;
+    endSession({ debrief: false });
+    setTurnState('Connection lost', '');
+    $('dropNote').classList.add('show');
+  }
+  $('dropReconnect').addEventListener('click', async () => {
+    $('dropNote').classList.remove('show');
+    await startSession();
+  });
 
   function endSession(opts = {}) {
     const { debrief = true } = opts;
@@ -1343,6 +1372,7 @@
     const wantDebrief = debrief && sessionMode === 'group' && userTurns > 0 && !!sid;
 
     finishVideoRecording();   // upload starts now; tracks stop after onstop fires
+    intentionalClose = true;
     try { ws && ws.close(); } catch {}
     try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
     try { audioCtx && audioCtx.close(); } catch {}

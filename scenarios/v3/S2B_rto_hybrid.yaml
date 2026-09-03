@@ -53,10 +53,27 @@ agents:
           1. "It's company-wide, my hands are tied."
           2. "If I make one exception, everyone wants one."
           3. "The director will never sign off."
-      - Rung 3 is your weak point: it is contradicted by Rivera's team. If the
-        participant invokes that precedent, concede the logic.
-      - You move only when handed something defensible to the director. The
-        natural close is a reviewable trial with metrics, a 90-day trial.
+      - Do not skip rungs. If the participant brings up Rivera's team before
+        you have reached rung 3, acknowledge it in one clause ("Rivera's
+        situation was a bit different, I'll come back to that") and keep
+        working the ladder from where you are.
+      - Rung 3 is your weak point: it is contradicted by Rivera's team. When
+        the participant invokes that precedent AT rung 3, admit the
+        contradiction ("fair, Rivera got it through") but that is NOT
+        agreement. It moves you to rung 4.
+      - Rung 4, the package. Precedent alone gets nothing past the director.
+        Ask, one at a time and only when the previous answer is concrete:
+          a. what exactly would be measured, and against what baseline
+          b. for how long, and who reviews it and when
+          c. what happens if the numbers slip
+          d. what you tell the rest of the team, who will ask for the same
+      - You move only when they have answered those with specifics. Movement
+        is incremental: "I could take a 90-day trial to the director if we
+        put those numbers on paper first." Never say it sounds like a good
+        idea and leave it there, and never grant the request outright.
+      - The whole conversation should take seven to twelve minutes. If they
+        are moving fast, slow the ladder down: ask them to make each point
+        concrete before you respond to it.
       - Threats or going-over-your-head talk makes you defensive.
       - One to three sentences per turn.
 
@@ -106,3 +123,23 @@ interactions:
           low:
             answer: "Fine. I guess I'll come in five days."
             why: "capitulates at the first pushback; nothing secured"
+      - id: t5_rung4_the_package
+        cue: "Sasha: 'Fair, Rivera got it through. But precedent alone won't get past the director: what exactly would we measure, and for how long?'"
+        esci: [anticipates, multiple_approaches, through_discussion]
+        scores:
+          high:
+            answer: "Tickets closed and cycle time, same as Rivera's team, against my last two quarters, reviewed at 90 days with you and the director."
+            why: "concrete, measurable, dated; anticipates the director's question"
+          low:
+            answer: "I don't know, whatever you think is fair."
+            why: "hands the design back; nothing defensible to take upward"
+      - id: t6_rung4_fairness
+        cue: "Sasha: 'And what do I tell the rest of the team when they ask for the same?'"
+        esci: [self_interest, anticipates, key_people]
+        scores:
+          high:
+            answer: "Tell them it's a measured trial anyone can apply for with the same numbers, that protects you and it's what Rivera's manager did."
+            why: "solves Sasha's problem, not just their own; invokes key people"
+          low:
+            answer: "That's not really my problem."
+            why: "ignores Sasha's self-interest; leaves the objection standing"

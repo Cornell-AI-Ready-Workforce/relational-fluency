@@ -16,6 +16,7 @@ Turn-taking lives here because the gateway does not expose Gemini's native VAD
 from __future__ import annotations
 
 import asyncio
+import re
 import hashlib
 import json
 import os
@@ -23,6 +24,39 @@ import time
 from typing import TYPE_CHECKING, List, Optional
 
 from .director import Director
+
+
+def _clean_agent_text(text: str) -> str:
+    """Collapse transcript repeats the bridge sometimes delivers.
+
+    The audio plays once, but the output transcript can arrive twice: either
+    the whole turn doubled ("It's a slippery slope.It's a slippery slope.")
+    or an earlier sentence, or the start of one, re-sent at the end. Raters
+    read this text, so drop the copy. Comparison ignores case and
+    punctuation, since the two copies often differ by a comma; a character
+    genuinely repeating themselves in different words is left alone.
+    """
+    t = (text or "").strip()
+    n = len(t)
+    if n < 20:
+        return t
+    # Whole-turn double, with or without a space at the seam.
+    for k in range(min(n - 1, n // 2 + 4), max(0, n // 2 - 5), -1):
+        a, b = t[:k].strip(), t[k:].strip()
+        if a and _norm_speech(a) == _norm_speech(b):
+            return a
+    # Trailing sentence or fragment that already appeared earlier in the turn.
+    parts = [x for x in re.split(r"(?<=[.!?])\s*", t) if x]
+    changed = False
+    while len(parts) > 1 and len(parts[-1]) >= 20:
+        tail = _norm_speech(parts[-1])
+        head = _norm_speech(" ".join(parts[:-1]))
+        if tail and tail in head:
+            parts.pop()
+            changed = True
+        else:
+            break
+    return " ".join(parts) if changed else t
 
 
 def _norm_speech(text: str) -> str:
@@ -462,6 +496,11 @@ class RealtimeVoiceSessionRunner:
             return
 
     async def _finalize_member(self, agent, text: str) -> None:
+        """Close one character's turn in a group room."""
+        text = _clean_agent_text(text)
+        await self._finalize_member_inner(agent, text)
+
+    async def _finalize_member_inner(self, agent, text: str) -> None:
         """Close one character's turn in a group room.
 
         This was lost in a refactor once, and the symptom was total: every pump
@@ -828,7 +867,7 @@ class RealtimeVoiceSessionRunner:
             while not self._agent_text and time.time() < deadline:
                 await asyncio.sleep(0.15)
 
-            text = "".join(self._agent_text).strip()
+            text = _clean_agent_text("".join(self._agent_text))
             self._agent_text = []
             self._speaking = False
             missing = not text

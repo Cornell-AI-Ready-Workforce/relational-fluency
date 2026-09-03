@@ -35,6 +35,32 @@ aws s3 ls s3://relational-fluency-study-data/ --recursive | head            # em
 
 ---
 
+## Before every deploy: is anyone mid-encounter?
+
+A rollout starts a new task and retires the old one about two minutes later,
+which cuts any conversation running on the old task (Fargate caps the stop
+timeout at 120 s, so no drain setting can save it). Twice now a team member's
+test conversation "stopped after a few turns" because it began during a
+rollout. Two rules:
+
+1. Do not apply while anyone is in an encounter. Check first, and wait until
+   it reports zero:
+
+```bash
+curl -s https://rf.ai-ready-workforce.ai.cornell.edu/health | python3 -c "import json,sys; print('active sessions:', json.load(sys.stdin).get('active_sessions'))"
+```
+
+2. After `tofu apply`, wait for the rollout to finish before anyone tests:
+
+```bash
+aws ecs describe-services --cluster relational-fluency --services platform --query 'services[0].deployments[0].rolloutState' --output text
+```
+
+`COMPLETED` means one task is serving and it is safe to start a conversation.
+Until then a page can load on the old task and be cut off minutes later. If a
+participant is hit anyway, the app now shows a Connection lost notice with a
+Reconnect button that resumes the same encounter.
+
 ## Is the server up?
 
 ```bash

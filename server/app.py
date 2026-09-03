@@ -129,7 +129,9 @@ async def health() -> dict:
     model gateway is reachable, so a transient upstream blip cannot cause ECS to
     kill healthy tasks mid-encounter."""
     # Nested so the liveness field cannot be shadowed by preflight keys.
-    return {"status": "ok", "gateway": _PREFLIGHT}
+    # active_sessions: a deploy rollout retires the old task within ~2 minutes,
+    # which cuts any encounter running on it. Check this is 0 before applying.
+    return {"status": "ok", "gateway": _PREFLIGHT, "active_sessions": len(registry.list_ids())}
 
 
 def _load_consent() -> dict:
