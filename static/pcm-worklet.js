@@ -13,16 +13,33 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     this.inputBuf = [];      // accumulated input samples (Float32, source rate)
     this.outBuf = [];        // resampled samples queued for emission (Int16)
     this.flushEvery = Math.round(target * 0.1); // ~100 ms chunks
+    // Muting substitutes silence for the participant's voice; it NEVER stops
+    // the stream. Whatever arrives at the server is appended straight onto
+    // user_audio.wav (server/storage.py append_user_audio), so a mute that
+    // dropped samples excised that stretch of time from the file and turned the
+    // recording into a compacted stream instead of a timeline that the
+    // per-turn timestamps in encounter_record.py can index into.
+    //
+    // Both participant-facing pages load this same module (static/v2.html and
+    // the legacy static/participant.html), and as of this change neither one
+    // asserts mute any more: an agent turn the participant talks over is
+    // precisely the behaviour the study scores, so it has to reach the
+    // recording. The mute path stays because the port message is the contract
+    // with those pages, and because a caller that does use it should still get
+    // a continuous stream rather than a hole.
     this.muted = false;
     this.port.onmessage = (ev) => {
       if (ev.data && typeof ev.data.muted === 'boolean') {
         this.muted = ev.data.muted;
-        if (this.muted) {
-          // Clear any queued pre-mute audio so it is not flushed after unmute.
-          this.outBuf.length = 0;
-          this.inputBuf.length = 0;
-          this._pos = 0;
-        }
+        // Deliberately no buffer flush here. outBuf only ever drains in whole
+        // flushEvery batches, so up to ~100 ms of genuine pre-mute participant
+        // audio can be sitting in it when this message arrives, and it goes out
+        // after the mute, ahead of the zeros. That is the right outcome: it is
+        // real speech, it is emitted in order, and the sample count per unit of
+        // wall-clock time is unchanged — which is the property the recorded
+        // timeline actually rests on. Clearing the buffers would have deleted
+        // that speech and shortened the file by up to a tenth of a second at
+        // every mute.
       }
     };
   }
@@ -33,13 +50,14 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     const ch0 = input[0];
     if (!ch0) return true;
 
+    // Append source samples. While muted we still append one sample per input
+    // sample — a zero one — so the emitted byte count per unit of wall-clock
+    // time is unchanged and the recorded WAV stays a true timeline.
     if (this.muted) {
-      // Drop samples but keep returning true so the node stays alive.
-      return true;
+      for (let i = 0; i < ch0.length; i++) this.inputBuf.push(0);
+    } else {
+      for (let i = 0; i < ch0.length; i++) this.inputBuf.push(ch0[i]);
     }
-
-    // Append source samples.
-    for (let i = 0; i < ch0.length; i++) this.inputBuf.push(ch0[i]);
 
     // Resample by simple linear interp at non-integer ratio.
     // We track a fractional read position across process() calls.

@@ -16,21 +16,48 @@ export KEY=$(aws secretsmanager get-secret-value \
 
 ## ⚠️ Read this before collecting anything
 
-**Encounters recorded on the server are not persistent.** The Fargate task has no
-volume and writes to the container filesystem; the S3 study bucket is still
-empty. Every deploy, crash, or restart destroys whatever was recorded.
+**Pull any encounter you care about, and do it before the next deploy** (see
+[Getting data off the server](#getting-data-off-the-server)). That is the
+standing rule. Everything below is why it is still the rule.
 
-Until storage moves to S3, treat the deployed app as a pilot instrument only,
-and **pull any encounter you care about before the next deploy** (see
-[Getting data off the server](#getting-data-off-the-server)).
+**Ask the running service whether `/data` is persistent — do not assume it.**
+The EFS filesystem and its `/data` mount are written in
+`infra/terraform/ecs.tf` (`aws_efs_file_system.study`, `aws_efs_access_point.study`,
+the `mountPoints` entry on the platform container), but Terraform source is not
+a running service: it protects nothing until someone runs `tofu apply`, and the
+release pinned in `infra/terraform/terraform.tfvars` was cut before those
+resources existed. Between merging the branch and applying it, the deployed task
+is still the ephemeral one. So run the check first and read the paragraph after
+it in light of the answer:
 
 ```bash
-# Confirm the situation for yourself:
 TD=$(aws ecs describe-services --cluster relational-fluency --services platform \
       --query "services[0].taskDefinition" --output text)
 aws ecs describe-task-definition --task-definition "$TD" \
-  --query "taskDefinition.[volumes,containerDefinitions[0].mountPoints]"   # [[],[]] = ephemeral
-aws s3 ls s3://relational-fluency-study-data/ --recursive | head            # empty = nothing archived
+  --query "taskDefinition.[volumes,containerDefinitions[0].mountPoints]"
+# [[],[]]                        → ephemeral task, no volume. Every deploy,
+#                                  crash, or task retirement destroys whatever
+#                                  was recorded since your last pull.
+# an EFS volume + a /data mount  → records survive a deploy, a crash, and task
+#                                  retirement. Nothing else changes.
+```
+
+Once that command shows the volume and the mount, pulling data stops being a
+race against the next rollout and becomes redundancy. It does not become
+optional, because nothing downstream of the write exists yet:
+
+- **Nothing archives to S3.** Only the webcam video goes to the study bucket
+  (uploaded browser-direct by `server/video.py`). Session audio, transcripts,
+  events, and manifests live on one filesystem and nowhere else — no second
+  copy, no backup policy, no snapshot schedule. A deleted access point, a
+  fat-fingered `tofu destroy`, or a corrupted write takes the only copy of an
+  irreplaceable encounter with it.
+- **There is no deletion path.** No retention rule and no per-participant erase,
+  so a withdrawal request under the IRB data-management plan has to be carried
+  out by hand on the volume. Know that before you promise a participant one.
+
+```bash
+aws s3 ls s3://relational-fluency-study-data/ --recursive | head   # video only; no session records
 ```
 
 ---
@@ -58,8 +85,26 @@ aws ecs describe-services --cluster relational-fluency --services platform --que
 
 `COMPLETED` means one task is serving and it is safe to start a conversation.
 Until then a page can load on the old task and be cut off minutes later. If a
-participant is hit anyway, the app now shows a Connection lost notice with a
-Reconnect button that resumes the same encounter.
+participant is hit anyway, the app shows a Connection lost notice with a
+Reconnect button.
+
+**Reconnect does not resume the encounter — it starts a replacement one.** The
+button calls the same `startSession()` as a fresh page load, and the server
+mints a new session id, a new `data/sessions/<id>/` directory, new WAV files,
+and an empty conversation history. Two consequences an operator has to know:
+
+- **The encounter is split across two session records.** The first half —
+  audio, transcript, stage directions, fired triggers — stays in the abandoned
+  session directory; the second half is a separate record. Nothing links them,
+  and `/api/runs` reports only the session the run advanced on, so the first
+  fragment looks orphaned.
+- **The participant replays the scenario from the top.** Trigger index and turn
+  count restart at zero, so they meet the planted beats a second time. Treat
+  that encounter as compromised for scoring, and say so in the wave notes.
+
+Which is the real reason for rule 1 above: do not apply while anyone is in an
+encounter. Reconnect keeps a participant from being stranded; it does not save
+the measurement.
 
 ## Is the server up?
 
@@ -125,7 +170,10 @@ print('study scenarios:', [x['id'] for x in d if x.get('study')])"
 Expect all eight: `S1A S1B S2A S2B S3A S3B S4A S4B`.
 
 ```bash
-# Participant URL for a scenario
+# Direct link to one scenario, for your OWN testing. The key is only needed when
+# the deployment sets PARTICIPANT_KEY_REQUIRED; either way this link carries
+# SESSION_KEY, so never send it to a recruited participant. The link recruits
+# get is in "The participant URL" below, and it has no key in it.
 echo "$RF/v2?scenario=S1A&key=$KEY"
 ```
 
@@ -170,7 +218,12 @@ Each encounter directory holds:
 
 ## Getting data off the server
 
-The deployed app exposes each encounter as a zip. Do this **before** any deploy.
+The deployed app exposes each encounter as a zip. Do this **before** any deploy
+until you have confirmed, with the `describe-task-definition` check at the top
+of this page, that the running task actually mounts the EFS `/data` volume;
+until then a rollout still takes the records with it. Once it does mount,
+pulling is no longer a race — but EFS remains the only copy and nothing archives
+to S3, so still pull each wave and keep it under the IRB data-management plan.
 
 ```bash
 # List encounters on the server
@@ -270,10 +323,53 @@ curl -s "$RF/api/runs?key=$KEY" | python3 -m json.tool
 ```
 
 One row per run: `participant_id` (CloudResearch key), `qualtrics_id`,
-`cohort`, `completion_code`, whether it finished, and the `session_id` of every
-encounter it produced, which is the key into the encounter records, audio, and
-transcripts. Filter test traffic out with `?cohort=study`, or inspect only test
-runs with `?cohort=internal`.
+`cohort`, `participant_key_status`, `completion_code`, whether it finished, and
+the `session_id` of every encounter it produced, which is the key into the
+encounter records, audio, and transcripts.
+
+There are **three** cohorts, not two:
+
+| `cohort` | What it holds |
+|---|---|
+| `study` | A real arrival whose participant key validated. This is the dataset. |
+| `internal` | Your own `/test` runs. Never participant data. |
+| `unattributed` | A **real participant** whose key did not arrive usably — the Qualtrics field was empty, still an unreplaced `${e://Field/…}` placeholder, or otherwise malformed. `/start` refuses to turn them away mid-study, so the run proceeds under a synthetic `unattributed_<hex>` id (`server/app.py`), with the reason in `participant_key_status` and what actually arrived kept on the run document as `raw_participant_key`. |
+
+So `?cohort=study` is the right filter for analysis, but it is the **wrong**
+filter for checking that a wave is going well: an `unattributed` run is a paid
+participant whose recording you have and whose recruitment record you cannot
+join to it. A broken piping expression fails for *every* arrival, so this is
+all-or-nothing — catch it on the first few, not at analysis time.
+
+**Check this after the first arrivals of every wave, before the wave fills up:**
+
+```bash
+# Should be empty. Anything here is a real participant you cannot attribute.
+curl -s "$RF/api/runs?key=$KEY&cohort=unattributed" | python3 -c "
+import json,sys
+rows=json.load(sys.stdin)
+print('unattributed runs:', len(rows))
+for r in rows:
+    print(' ', r['run_id'], r.get('participant_key_status'), r.get('created_at'))"
+```
+
+A non-empty result means fix the Qualtrics `ParticipantKey` piping now (see
+[The participant URL](#the-participant-url-qualtrics--app--qualtrics)). The runs
+already recorded can only be re-joined by hand, and `/api/runs` does not carry
+the raw value — read it off the run document on the volume, where `/start`
+stored it:
+
+```bash
+curl -s "$RF/api/runs?key=$KEY&cohort=unattributed" \
+  | python3 -c "import json,sys; print('\n'.join(r['run_id'] for r in json.load(sys.stdin)))"
+# then, per run id, on the volume ($DATA_DIR/runs — /data/runs on the server):
+python3 -c "import json;d=json.load(open('/data/runs/<run_id>.json'));print(d['participant_key_status'], repr(d['raw_participant_key']))"
+```
+
+That value is only useful if the broken pipe happened to send something
+identifying; often it is an empty string, and then the recruitment record and
+the recording cannot be joined at all. The server also prints a `WARNING` line
+per bad arrival, but a stdout line is not a check; this query is.
 
 ## The participant URL (Qualtrics → app → Qualtrics)
 
@@ -281,15 +377,43 @@ runs with `?cohort=internal`.
 survey to the encounters:
 
 ```
-https://rf.ai-ready-workforce.ai.cornell.edu/start?pid=${e://Field/ParticipantKey}&key=<SESSION_KEY>
+https://rf.ai-ready-workforce.ai.cornell.edu/start?pid=${e://Field/ParticipantKey}
 ```
 
 - `${e://Field/ParticipantKey}` is Qualtrics piped text — replace
   `ParticipantKey` with whatever the embedded field holding the CloudResearch
   Connect key is actually called in your survey.
-- `<SESSION_KEY>` is the app's access gate, from Secrets Manager:
-  `aws secretsmanager get-secret-value --secret-id relational-fluency/agent-api-key --query SecretString --output text`
-  It stops drive-by access; it is not secret from participants.
+
+> **Never put `SESSION_KEY` in the participant link.** An earlier version of this
+> page told you to append `&key=<SESSION_KEY>`. Do not. SESSION_KEY is not a
+> "drive-by" nuisance gate — it is the *only* credential in the system, and it
+> is the one `check_key` demands for `/researcher`, `/director`, `GET
+> /api/runs` (every participant's CloudResearch key, Qualtrics response id and
+> completion code), `GET /api/encounters`, the per-encounter record, and every
+> `download/<file>` and `download.zip` (every participant's microphone WAV,
+> agent WAV, transcript, events and video pointers).
+>
+> The participant link is handed to every recruited person and ends up in their
+> address bar, their browser history, and any screenshot or forum post they
+> make of it. One participant reading `key=…` out of their own URL can list all
+> sessions and download the entire study dataset. `server/app.py` says the same
+> thing in `check_key`'s docstring; this page was the side that was wrong.
+>
+> Participant routes do not need the key: `check_participant` only enforces it
+> when `PARTICIPANT_KEY_REQUIRED` is set, which is off in the normal
+> deployment. `/start` forwards a key into the participant URL only in that
+> configuration — the one case where a participant genuinely needs one, e.g.
+> while the study is not yet open to recruits. If you set
+> `PARTICIPANT_KEY_REQUIRED`, understand that you are choosing to publish the
+> dataset key to your participants, and unset it before recruitment opens.
+
+`SESSION_KEY` itself lives in Secrets Manager and belongs only in a researcher's
+own shell (the `KEY` export at the top of this page):
+
+```bash
+aws secretsmanager get-secret-value --secret-id relational-fluency/agent-api-key \
+  --query SecretString --output text
+```
 
 `/start` assigns a four-encounter run and redirects into the first. A
 participant who closes the tab and reopens the same link **resumes their run**

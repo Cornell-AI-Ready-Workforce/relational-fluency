@@ -35,6 +35,17 @@ Participant browser (via CloudResearch Connect → Qualtrics)
 One **aligned record per encounter** in S3: video, audio, transcript, and
 steering log under a single encounter id, so the modalities stay joined.
 
+> **As deployed today, only the video half of that is true.** Webcam recordings
+> go browser-direct to the study bucket; audio, transcript, events, and steering
+> log are written to `/data` on the task, and nothing copies them to S3.
+> `infra/terraform/ecs.tf` backs `/data` with an EFS filesystem, which makes
+> those records survive a deploy, a crash, and task retirement — but that is
+> Terraform source, not a fact about the running service, and it becomes true
+> only once someone has run `tofu apply` against it. Check the live task
+> definition before relying on it (`OPERATIONS.md`, "Read this before collecting
+> anything"). Applied or not, EFS would be their only copy, and there is no
+> retention or deletion path for them. See [`OPERATIONS.md`](OPERATIONS.md).
+
 ## The flows
 
 1. CloudResearch Connect recruits and pays; Qualtrics issues the participant key

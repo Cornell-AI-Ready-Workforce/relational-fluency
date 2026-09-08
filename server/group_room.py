@@ -127,6 +127,46 @@ class GroupRoom:
             return None
         return rt
 
+    async def rebrief(
+        self, instructions_for: Optional[Callable[[object], str]] = None
+    ) -> None:
+        """Re-issue every member's brief WITHOUT rebuilding the room.
+
+        Two consecutive interactions can share a cast: S4's working session and
+        then its close are one continuous meeting with the same three
+        colleagues. Closing the room between them and reopening it replaces
+        people who heard the working session with fresh sessions that never
+        did, and nothing on this bridge can replay history into a new session
+        (a text conversation item closes the socket), so the close would be
+        played by characters with no memory of what they are closing.
+
+        This is NOT the mid-stream re-brief the module docstring warns about.
+        That warning is about changing WHO a session is playing while a
+        conversation is under way; here every session keeps the character it
+        was opened as, and only the scene framing changes. It also runs between
+        turns with the floor ungranted, and any reply still in flight is
+        cancelled first, so no session.update can land mid-response and mute a
+        member.
+        """
+        build = instructions_for or self._instructions_for
+        # Leave the floor ungranted: with nobody holding it the runner's pumps
+        # suppress unsolicited replies, which is the correct resting state
+        # between turns and the state give_floor expects to start from.
+        self.speaking = None
+
+        async def one(agent) -> None:
+            rt = self.sessions.get(agent.id)
+            if rt is None:
+                return
+            await rt.cancel_response()
+            await rt.update_instructions(build(agent))
+
+        # return_exceptions: one member whose socket has died must not stop the
+        # rest of the room from being re-briefed for the new interaction.
+        await asyncio.gather(
+            *(one(a) for a in self.agents), return_exceptions=True
+        )
+
     def session_for(self, agent_id: str) -> Optional[RealtimeVoiceSession]:
         return self.sessions.get(agent_id)
 

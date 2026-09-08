@@ -91,7 +91,7 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
 
     # --- steering trail ---
     events = _events(session_dir)
-    fired = [e for e in events if e.get("type") == "trigger_fired"]
+    fired = _net_fired(events)
     directions = record.get("steering_log", [])
     paired = [t for t in record.get("transcript", [])
               if t.get("role") == "agent" and t.get("stage_direction")]
@@ -129,6 +129,40 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
 
     ok = all(c[0] for c in checks)
     return ok, checks
+
+
+def _net_fired(events: List[dict]) -> List[dict]:
+    """Planted beats that actually reached the participant.
+
+    The event log is append-only, so a beat that was briefed and then not
+    delivered — the floor grant failed on a member whose session had died —
+    leaves its ``trigger_fired`` line behind and is cancelled by a later
+    ``trigger_undelivered`` carrying the same index. Counting the raw firings
+    would report a beat nobody spoke as one the participant faced, and that
+    count is what decides whether an encounter is scoreable.
+
+    Cancellation is positional, not by key: the runner rolls ``_trigger_idx``
+    back when a grant fails, so the retry fires the same beat at the same index
+    and must still count. Each retraction therefore cancels the most recent
+    surviving firing that matches, and nothing earlier.
+
+    ``trigger_deferred`` is deliberately not a retraction. A deferred beat was
+    never briefed, so there is no firing to cancel; treating it as one would
+    delete the legitimate firing that happens when the beat's own character
+    finally takes the floor.
+    """
+    out: List[dict] = []
+    for e in events:
+        etype = e.get("type")
+        if etype == "trigger_fired":
+            out.append(e)
+        elif etype == "trigger_undelivered":
+            key = (e.get("trigger_id"), e.get("index"))
+            for i in range(len(out) - 1, -1, -1):
+                if (out[i].get("trigger_id"), out[i].get("index")) == key:
+                    del out[i]
+                    break
+    return out
 
 
 def _events(session_dir: Path) -> List[dict]:

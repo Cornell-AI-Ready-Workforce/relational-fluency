@@ -1,21 +1,30 @@
 """Persistent storage for the dataset.
 
 Per-session layout under data/sessions/{session_id}/:
-  manifest.json          , scenario, model, participant, consent, durations
+  manifest.json          , scenario, model, participant, run/cohort, durations
   events.jsonl           , turn-level events (replaces logs/{id}.jsonl)
   user_audio.wav         , 16 kHz mono mic stream
   assistant_audio.wav    , 16 kHz mono TTS stream
 
 A SQLite index at data/index.db lets you query across sessions:
   sessions(id, participant_id, scenario, model, started_at, ended_at, duration_s,
-           status, n_turns, dir)
+           status, n_turns, dir, run_id, cohort)
   participants(id, code, consent_given, consent_text_version, created_at)
+
+run_id/cohort/participant_key are carried on the manifest and the sessions row
+so an encounter is self-describing. Before that, the only link from a recorded
+encounter back to its run (and therefore to its cohort) was an entry the
+browser POSTed to /api/run/{id}/advance, so an encounter whose client never
+reported back was orphaned and no offline tool could tell internal test traffic
+from study data. A null cohort means the encounter did not come through a run
+at all (ad-hoc landing-page or researcher-launch traffic); it is not study data.
 
 The WavAppender writes incrementally so a crash mid-session still leaves a
 valid WAV, we patch the header on every flush.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -79,11 +88,31 @@ def init_storage() -> None:
             status TEXT NOT NULL,
             n_turns INTEGER DEFAULT 0,
             dir TEXT NOT NULL,
+            run_id TEXT,
+            cohort TEXT,
             FOREIGN KEY (participant_id) REFERENCES participants(id)
         );
         CREATE INDEX IF NOT EXISTS sessions_started_at ON sessions(started_at);
         CREATE INDEX IF NOT EXISTS sessions_participant ON sessions(participant_id);
         """)
+        # CREATE TABLE IF NOT EXISTS leaves an already-existing table alone, so
+        # a database written before run_id/cohort existed would keep the old
+        # columns and every INSERT below would fail, killing sessions on a
+        # deployment that already has data. Add the columns in place instead.
+        _add_missing_columns(conn, "sessions", {"run_id": "TEXT", "cohort": "TEXT"})
+
+
+def _add_missing_columns(conn, table: str, columns: Dict[str, str]) -> None:
+    """ALTER TABLE ... ADD COLUMN for any of `columns` not already present."""
+    have = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for name, decl in columns.items():
+        if name not in have:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+            except sqlite3.OperationalError:
+                # Racing worker already added it, or the file is read-only.
+                # Readers below degrade to "column absent" rather than failing.
+                pass
 
 
 @contextmanager
@@ -97,6 +126,46 @@ def _db():
         conn.commit()
     finally:
         conn.close()
+
+
+def spec_fingerprint(scenario_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The planted triggers of a v3 scenario spec, as it stands right now.
+
+    Coverage is reported as fired/planted and the denominator is read from the
+    spec file at verification time, not from the encounter. The spec files do
+    get edited between waves (S2A gained two planted beats to reach parity with
+    S2B), and nothing on a recorded encounter said which version it had actually
+    been run against, so re-verifying an archived encounter scored it against a
+    plan it never saw: an encounter that fired every beat it was given reads as
+    4/6, and two encounters in the same study stop being comparable with nothing
+    in the data to show why. Stamping the trigger ids at session start is the
+    only moment that information exists; after the edit it is unrecoverable.
+
+    Returns None for anything outside the v3 instrument (the legacy demo
+    scenarios plant no triggers, so there is no denominator to pin) and for a
+    spec that will not load, since an encounter must never fail to start over
+    bookkeeping.
+    """
+    if not scenario_id:
+        return None
+    try:
+        from .scenarios_v3 import load_spec
+
+        spec = load_spec(scenario_id)
+        ids = [
+            t["id"]
+            for i in spec.get("interactions", [])
+            for t in i.get("triggers", [])
+        ]
+    except Exception:  # noqa: BLE001, not a v3 scenario, or an unreadable spec
+        return None
+    if not ids:
+        return None
+    # Hash the ordered ids rather than the file bytes: a comment or a wording
+    # tweak in the YAML must not read as a changed instrument, whereas planting,
+    # dropping or reordering a beat must.
+    digest = hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()
+    return {"trigger_ids": ids, "sha256": digest}
 
 
 # ---------- WAV appender ----------
@@ -172,6 +241,11 @@ class SessionStore:
     For single-agent sessions, assistant audio goes to assistant_audio.wav
     (legacy filename). For multi-agent group sessions, each agent gets its own
     assistant_audio_{agent_id}.wav so per-agent analysis is straightforward.
+
+    run_id/cohort/participant_key/encounter_index describe the study context and
+    are optional: sessions started outside a run (landing page, researcher
+    launch) simply record them as null, and callers that predate them keep
+    working unchanged.
     """
 
     def __init__(
@@ -183,6 +257,10 @@ class SessionStore:
         participant_id: Optional[str],
         capture_audio: bool,
         agent_ids: Optional[List[str]] = None,
+        run_id: Optional[str] = None,
+        cohort: Optional[str] = None,
+        participant_key: Optional[str] = None,
+        encounter_index: Optional[int] = None,
     ):
         self.id = session_id
         self.dir = SESSIONS_DIR / session_id
@@ -191,6 +269,16 @@ class SessionStore:
         self.model = model
         self.participant_id = participant_id
         self.agent_ids = list(agent_ids or [])
+        # Study context, written into the manifest and the index so an encounter
+        # can be attributed (or excluded) without a client-maintained join.
+        self.run_id = run_id
+        self.cohort = cohort
+        self.participant_key = participant_key
+        self.encounter_index = encounter_index
+        # Which version of the scenario's planted-trigger plan this encounter
+        # was run against (see spec_fingerprint). Captured once, here, because
+        # this is the last moment it is knowable.
+        self.spec_fingerprint = spec_fingerprint(self.scenario)
         self.started_at = time.time()
         self.events_path = self.dir / "events.jsonl"
         # event() writes json.dumps(..., ensure_ascii=False), so the log must be
@@ -215,10 +303,11 @@ class SessionStore:
         with _db() as conn:
             conn.execute(
                 """INSERT INTO sessions
-                   (id, participant_id, scenario, model, started_at, status, dir)
-                   VALUES (?, ?, ?, ?, ?, 'active', ?)""",
+                   (id, participant_id, scenario, model, started_at, status, dir,
+                    run_id, cohort)
+                   VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)""",
                 (self.id, self.participant_id, self.scenario, self.model,
-                 self.started_at, _record_dir(self.dir)),
+                 self.started_at, _record_dir(self.dir), self.run_id, self.cohort),
             )
         self._write_manifest(status="active")
 
@@ -260,6 +349,18 @@ class SessionStore:
             "scenario": self.scenario,
             "model": self.model,
             "participant_id": self.participant_id,
+            # The study context, so this encounter can be joined to its run and
+            # excluded by cohort on its own, without the run file and without
+            # the browser's advance POST having succeeded. Null on sessions that
+            # did not come through a run, which are never study data.
+            "run_id": self.run_id,
+            "cohort": self.cohort,
+            "participant_key": self.participant_key,
+            "encounter_index": self.encounter_index,
+            # The planted-trigger plan in force when this encounter started, so
+            # a later verification pass can tell "this encounter missed beats"
+            # from "the spec grew beats after this encounter was recorded".
+            "spec_fingerprint": self.spec_fingerprint,
             "agent_ids": self.agent_ids,
             "started_at": self.started_at,
             "ended_at": ended_at,
@@ -355,6 +456,40 @@ def get_participant(pid: str) -> Optional[Dict[str, Any]]:
         return json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
         return None
+
+
+def record_decline(pid: str, consent_version: str,
+                   run_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Record that a participant read the consent form and refused.
+
+    A refusal is data. Without it the only trace of someone deciding not to take
+    part is an abandoned tab, which is indistinguishable from a browser crash,
+    and the study cannot report how many people declined after reading the form
+    — a figure an IRB asks for.
+
+    The record stays consent_given=False, so nothing downstream can mistake it
+    for consent: the voice websocket already refuses any record whose flag is
+    not set.
+    """
+    rec = get_participant(pid)
+    if rec is None:
+        return None
+    rec["consent_given"] = False
+    rec["declined"] = True
+    rec["declined_at"] = time.time()
+    rec["consent_text_version"] = consent_version
+    if run_id:
+        rec["run_id"] = run_id
+    dest = PARTICIPANTS_DIR / f"{pid}.json"
+    tmp = PARTICIPANTS_DIR / f"{pid}.json.tmp"
+    tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+    os.replace(tmp, dest)
+    with _db() as conn:
+        conn.execute(
+            "UPDATE participants SET consent_given = 0, consent_text_version = ? WHERE id = ?",
+            (consent_version, pid),
+        )
+    return rec
 
 
 def record_consent(pid: str, consent_version: str) -> Optional[Dict[str, Any]]:

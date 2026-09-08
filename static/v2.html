@@ -108,7 +108,13 @@
   .mic-level { position: absolute; bottom: 12px; right: 12px; width: 70px; height: 5px;
                background: var(--surface-2); border-radius: 3px; overflow: hidden; }
   .mic-level > div { height: 100%; width: 0%; background: var(--accent); transition: width 80ms linear; }
-  .controls { display: flex; gap: 10px; align-items: center; padding: 8px 0; }
+  .controls { display: flex; gap: 10px; align-items: center; padding: 8px 0; flex-wrap: wrap; }
+  /* Header control that moves the encounter to the next beat. The per-tile
+     "Talk to X" button cannot cover a handover to someone already in the room,
+     so this one appears whenever a next beat exists and the current interaction
+     has run its pacing floor (see renderAdvance).
+     Long scenario labels are clipped rather than allowed to bow the header. */
+  button#advanceBtn { max-width: 38vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Live turn-state pill: tells first-time voice users whose turn it is. */
   .turn-state { display: none; align-items: center; gap: 7px; font-size: 13px; color: var(--muted);
     padding: 4px 11px; border-radius: 99px; border: 1px solid var(--line-soft); background: var(--surface); white-space: nowrap; }
@@ -128,7 +134,10 @@
   .gate .fill { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
   .gate.open .fill { stroke: #3a9a5c; }
   .gate.open { color: #2f7d4a; font-weight: 600; }
-  button#stopBtn.locked { opacity: .55; }
+  /* A pacing cue only, never a disabled state: the End button still works
+     before 7:00 (consent promises the participant can stop at any time), so it
+     must not be dimmed to the point of reading as unavailable. */
+  button#stopBtn.locked { opacity: .8; }
   .gate-note { display: none; position: fixed; top: 104px; right: 20px; max-width: 340px; z-index: 50;
     background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px;
     font-size: 14px; line-height: 1.5; box-shadow: 0 8px 24px rgba(47,47,47,0.12); }
@@ -390,7 +399,13 @@
       <span id="consentConfirmLabel"></span>
     </label>
     <div class="err" id="consentErr"></div>
+    <!-- Participation is voluntary, so the form has to offer both answers. With
+         only a Continue button, someone who read this and did not want to take
+         part could do nothing but close the tab, which leaves a pending record
+         indistinguishable from a crashed browser and records no refusal at
+         all. -->
     <div class="actions">
+      <button class="secondary" id="consentDecline">I do not wish to take part</button>
       <button id="consentSubmit">Continue</button>
     </div>
   </div>
@@ -479,7 +494,14 @@
   <div class="consent-card">
     <h2 id="nextTitle">Encounter complete</h2>
     <div class="body" id="nextBody"></div>
-    <div class="actions"><button id="nextBtn">Continue</button></div>
+    <!-- Two actions, not one. This overlay covers the whole page and has no
+         dismiss control, so whenever the primary action can fail repeatedly
+         (an advance the server will refuse identically every time) the
+         participant needs a second door out of it: see offerExit. -->
+    <div class="actions">
+      <button class="secondary" id="nextAlt" style="display:none"></button>
+      <button id="nextBtn">Continue</button>
+    </div>
   </div>
 </div>
 
@@ -493,13 +515,24 @@
   </div>
   <div class="controls" id="controls">
     <span class="turn-state" id="turnState"></span>
-    <span class="gate" id="gate" title="Each conversation runs at least 7 minutes">
+    <span class="gate" id="gate" title="We ask for at least 7 minutes per conversation, but you can stop at any time">
       <svg viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="fill" id="gateFill" cx="12" cy="12" r="9" stroke-dasharray="56.5" stroke-dashoffset="56.5"/></svg>
       <span id="gateLabel"></span>
     </span>
     <span class="timer" id="timer" title="Time in this conversation">00:00</span>
-    <button id="startBtn">Start conversation</button>
+    <!-- Ships disabled on purpose. This button is painted with the header, but
+         consent is only shown after two awaited round trips (loadRun, then the
+         consent form), and a click inside that window went straight through to
+         startCapture, which turns on the microphone and the webcam. It is armed
+         at the end of loadBrief, i.e. only once consent is on record and there
+         is a briefed scenario to start. startSession re-checks anyway. -->
+    <button id="startBtn" disabled>Start conversation</button>
+    <button id="advanceBtn" style="display:none"></button>
     <button id="stopBtn" class="secondary" style="display:none">End conversation</button>
+    <!-- "End conversation" ends the encounter and enrols them in the next one,
+         so it is not the control the consent form promises ("You may stop at
+         any time by clicking Stop"). This one stops the study itself. -->
+    <button id="leaveBtn" class="secondary" style="display:none">Stop and leave the study</button>
   </div>
 </header>
 
@@ -565,11 +598,31 @@
         () => location.reload());
       return false;
     }
+    // Someone who stopped the study, or declined the consent form, must not be
+    // handed the next encounter when they reopen the link. The server refuses
+    // to advance a withdrawn run, but the page has to refuse to start one too,
+    // or they would sit through a whole conversation that is never counted.
+    // Their code so far is still shown: they gave us that time, and it is what
+    // the survey asks them for.
+    if (run.withdrawn) {
+      await showClosing(
+        'You have stopped the study',
+        '<p>You told us you did not want to continue, so nothing further has ' +
+        'been recorded. There is nothing else you need to do here.</p>' +
+        '<p>If you would like the conversations you already had removed, ' +
+        'contact the researcher named on the consent form.</p>',
+        run.completion_code || '');
+      return false;
+    }
     if (run.done) { await showRunComplete(); return false; }
     scenario = run.current.id;
     const chip = $('runChip');
     chip.textContent = `Encounter ${run.position} of ${run.total}`;
     chip.style.display = 'inline-block';
+    // Offered from the moment we know there is a run to leave, and kept
+    // available for the rest of the page: the promise to stop is not honoured
+    // by a control that only appears once a conversation is already running.
+    $('leaveBtn').style.display = 'inline-block';
     return true;
   }
 
@@ -603,6 +656,7 @@
       (code ? `<p>Your completion code is <b class="code">${esc(code)}</b>` +
               `, you will be asked for it in the survey.</p>` : '');
 
+    $('nextAlt').style.display = 'none';   // no second door needed: they finished
     if (cfg.return_url) {
       const sep = cfg.return_url.includes('?') ? '&' : '?';
       const back = `${cfg.return_url}${sep}` + new URLSearchParams({
@@ -618,30 +672,120 @@
     $('nextOverlay').style.display = 'flex';
   }
 
+  // The last screen a participant sees when the study is over for them without
+  // being finished: they declined, they chose to stop, or a fault we cannot
+  // retry past ended the run. It must never be a dead end, so it carries
+  // whatever proof of participation exists (the run's partial completion code)
+  // and the way back to the survey. It reuses the completion overlay so there
+  // is exactly one "you are done" surface in the page.
+  async function showClosing(title, bodyHtml, code) {
+    // Paint immediately and fetch the return link afterwards: the participant
+    // has just asked to stop, so nothing they are looking at should wait on a
+    // network call that may not answer.
+    $('consentOverlay').style.display = 'none';
+    $('situationOverlay').style.display = 'none';
+    $('nextTitle').textContent = title;
+    $('nextBody').innerHTML = bodyHtml +
+      (code ? `<p>Your code so far is <b class="code">${esc(code)}</b>. Take it back to ` +
+              `the survey if you are asked for one.</p>` : '');
+    $('nextAlt').style.display = 'none';
+    $('nextBtn').style.display = 'none';
+    $('nextOverlay').style.display = 'flex';
+    let cfg = { return_url: '', return_label: 'Return to the survey' };
+    try { cfg = await (await fetch('/api/run/config' + keyParamFirst)).json(); } catch {}
+    if (cfg.return_url) {
+      const sep = cfg.return_url.includes('?') ? '&' : '?';
+      const back = `${cfg.return_url}${sep}` + new URLSearchParams({
+        run: run?.run_id || '', code: code || '', pid: run?.participant_id || '',
+      });
+      $('nextBtn').textContent = cfg.return_label || 'Return to the survey';
+      $('nextBtn').style.display = 'inline-block';
+      $('nextBtn').onclick = () => { location.href = back; };
+    } else {
+      $('nextBody').innerHTML += '<p>You can close this window now.</p>';
+    }
+  }
+
   let advancing = false;   // guards the ws-complete / End-button double-advance
+  // Statuses on which /advance is telling us this POST can never succeed: no
+  // session_id, a session belonging to another participant, or a session for a
+  // scenario the run has already moved past (which is what a second tab on the
+  // same run produces). A Retry against one of these fails identically forever,
+  // and the overlay it sits behind covers the whole page, so they get an exit
+  // instead of a button that loops.
+  const TERMINAL_ADVANCE = new Set([400, 403, 404, 409]);
+
+  // The second door out of the completion overlay: their code so far and the
+  // way back to the survey. A server-side fault should cost a participant a
+  // conversation, not their payment.
+  function offerExit(label) {
+    const alt = $('nextAlt');
+    alt.textContent = label;
+    alt.style.display = 'inline-block';
+    alt.onclick = () => showClosing(
+      'Finishing here',
+      '<p>Thank you for the conversations you did have. What you recorded is ' +
+      'stored on our side, though this last one may not have been counted ' +
+      'towards your run.</p>' +
+      '<p>Take the code below back to the survey, and tell the researcher there ' +
+      'how far you got.</p>',
+      run?.completion_code || '');
+  }
+
   async function onEncounterComplete() {
     if (!runId) return;   // single-scenario link: nothing to advance to
     if (advancing) return;   // a second call (e.g. End button after ws complete) is a no-op
     advancing = true;
-    const sid = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
-    const url = `/api/run/${encodeURIComponent(runId)}/advance${sid}` +
-                (sid ? keyParam : keyParamFirst);
-    try {
-      const r = await fetch(url, { method: 'POST' });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      run = await r.json();
-    } catch (e) {
-      // The encounter is recorded to the run ONLY on a successful advance. Never
-      // discard a finished conversation silently: show the overlay with a Retry.
-      $('nextTitle').textContent = 'Could not save this encounter';
+    if (!sessionId) {
+      // No session ever opened: End was pressed before the server's 'session'
+      // message arrived, or after the socket was refused outright, so that
+      // message never came. There is nothing to advance against and /advance
+      // answers 400 "session_id required" every single time, so offering a
+      // Retry here would be a button that cannot work. Say what actually
+      // happened — no conversation was recorded — and re-offer the encounter.
+      advancing = false;
+      $('nextTitle').textContent = 'That conversation did not start';
       $('nextBody').innerHTML =
-        '<p>We could not record that conversation. Please retry, and do not close this window.</p>';
-      $('nextBtn').textContent = 'Retry';
+        '<p>The conversation never connected, so there is nothing to save and ' +
+        'nothing was recorded. You can try this encounter again.</p>';
+      $('nextBtn').textContent = 'Try this conversation again';
       $('nextBtn').style.display = 'inline-block';
-      $('nextBtn').onclick = () => { advancing = false; onEncounterComplete(); };
+      $('nextBtn').onclick = () => { $('nextOverlay').style.display = 'none'; };
+      offerExit('I can’t continue — finish here');
       $('nextOverlay').style.display = 'flex';
       return;
     }
+    const url = `/api/run/${encodeURIComponent(runId)}/advance` +
+                `?session_id=${encodeURIComponent(sessionId)}` + keyParam;
+    let r = null, advanced = null;
+    try {
+      r = await fetch(url, { method: 'POST' });
+      if (r.ok) advanced = await r.json();
+    } catch (e) { r = null; }   // network failure: worth another press
+    if (!advanced) {
+      // The encounter is recorded to the run ONLY on a successful advance. Never
+      // discard a finished conversation silently: show the overlay, with a Retry
+      // when a retry could plausibly work, and a way out either way.
+      const terminal = !!r && TERMINAL_ADVANCE.has(r.status);
+      $('nextTitle').textContent = 'Could not save this encounter';
+      $('nextBody').innerHTML = terminal
+        ? '<p>We could not record that conversation against your run, and trying ' +
+          'again will not change that. The recording itself is on our side, but ' +
+          'this window cannot take you on to the next conversation.</p>'
+        : '<p>We could not record that conversation. Please retry, and do not close this window.</p>';
+      if (terminal) {
+        $('nextBtn').style.display = 'none';
+      } else {
+        $('nextBtn').textContent = 'Retry';
+        $('nextBtn').style.display = 'inline-block';
+        $('nextBtn').onclick = () => { advancing = false; onEncounterComplete(); };
+      }
+      offerExit(terminal ? 'Get my code and finish' : 'I can’t continue — finish here');
+      $('nextOverlay').style.display = 'flex';
+      return;
+    }
+    run = advanced;
+    $('nextAlt').style.display = 'none';   // the advance landed: no exit to offer
     if (videoUpload) {
       $('nextTitle').textContent = 'Saving your recording…';
       $('nextBody').innerHTML = '<p>One moment, your video is being saved.</p>';
@@ -736,20 +880,31 @@
   // The voice path captures microphone audio AND webcam video, so we must show
   // the IRB consent text and get an affirmative agreement BEFORE any capture
   // begins. We never fabricate a consent record: consent_given:true is only
-  // POSTed after the participant checks the box. If a participant_id was already
-  // provided upstream (e.g. /start registered them), we reuse it and skip.
+  // POSTed after the participant checks the box. A participant_id provided
+  // upstream is reused, but it only lets us skip the form when that record is
+  // already consented — /start mints one before anyone has agreed and flags it
+  // with consent=1, and treating that as consent is how a click could reach
+  // capture ahead of the form.
+  let consentGate = null;   // the in-flight consent Promise, if the gate is open
   async function ensureParticipant() {
     // Only an id that is already consented lets us skip. `consentPending` is
     // set by /start when the record it minted has not been consented yet.
     if (participantId && !consentPending) return true;
+    // One gate, however many callers. The boot sequence opens it, and Start and
+    // the situation card may both arrive while it is still open; without this,
+    // each caller would add another click listener to the same Continue button
+    // and one press would POST the consent several times.
+    if (consentGate) return consentGate;
     // This Promise resolves ONLY after the participant has actually agreed and a
     // consent record was saved. It never resolves otherwise, so nothing that
     // waits on it (the page start, "Start", the situation card) can ever reach
-    // microphone/webcam capture without a real recorded consent. If the consent
-    // text can't be loaded, the overlay stays up with a working Retry button
-    // rather than a dead Continue button.
-    return new Promise((resolve) => {
+    // microphone/webcam capture without a real recorded consent. Declining is
+    // likewise terminal: it resolves nothing and shows a closing card. If the
+    // consent text can't be loaded, the overlay stays up with a working Retry
+    // button rather than a dead Continue button.
+    consentGate = new Promise((resolve) => {
       const submit = $('consentSubmit');
+      const decline = $('consentDecline');
       let formLoaded = false;
 
       async function loadConsentForm() {
@@ -818,9 +973,45 @@
         }
       }
 
+      // Declining is a real answer to the question the form asks, so it gets a
+      // real outcome: the refusal is reported, capture never starts, and the
+      // participant is sent to a closing card instead of being left to abandon
+      // the tab. We only claim the refusal was noted when the server said so.
+      async function onDecline() {
+        if (!confirm('This ends your participation — you will not take part in the study. Is that what you want?')) return;
+        decline.disabled = true;
+        submit.disabled = true;
+        let recorded = false;
+        try {
+          const r = await fetch('/api/consent/decline' + keyParamFirst, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              participant_id: participantId,
+              code: (run && run.participant_id) || '',
+              run_id: runId || '',
+              consent_given: false,
+            }),
+          });
+          recorded = r.ok;
+        } catch (e) { recorded = false; }
+        showClosing(
+          'You have not taken part',
+          '<p>Thank you for reading the consent form. Your microphone and camera ' +
+          'were never switched on, and nothing about you was recorded.</p>' +
+          (recorded
+            ? '<p>We have noted that you chose not to take part.</p>'
+            : '<p>We could not reach the server to note your decision, so please ' +
+              'tell the researcher you declined if you would like that on file.</p>'),
+          '');
+        // Deliberately never resolves: the boot sequence, Start and the
+        // situation card all wait on this Promise, and none of them may proceed.
+      }
+
       submit.addEventListener('click', onSubmit);
+      decline.addEventListener('click', onDecline);
       loadConsentForm();
     });
+    return consentGate;
   }
 
   // Reflow a hard-wrapped block-scalar string: join single line breaks within a
@@ -938,6 +1129,35 @@
   let presentIds = [];
 
   let upNext = null;   // {agent_id, agent_name, label} for the following beat
+  let interactionStartedAt = 0;  // wall clock of the current interaction's banner
+
+  // How long an interaction must have been running before either advance
+  // control is offered. This mirrors the server's own floor: _maybe_advance in
+  // server/realtime_voice_session.py will not move on before
+  // INTERACTION_MIN_SECONDS (default 180) even once every planted beat has
+  // fired, because a scene that ended after three exchanges leaves a rater
+  // nothing to score.
+  //
+  // Without a floor the header control was drawn by the very first segment_start
+  // banner — which _announce_opening sends the moment the gateway connects,
+  // before anyone has spoken — so a participant could click through every
+  // interaction at t=0 and skip every planted trigger. _handle_client_command
+  // takes the request unconditionally and records the abandoned beats as
+  // skipped_triggers, so the encounter is at least honest about it afterwards,
+  // but an empty record is not a measurement.
+  //
+  // This delays the control, it does not lock the participant in: End
+  // conversation is live from the first second and is never refused (consent
+  // promises they can stop at any time), and the floor expires on its own inside
+  // a 7-12 minute encounter. Internal and non-study runs skip it, exactly as
+  // they skip the 7-minute end gate, so the team can still move fast.
+  const ADVANCE_MIN_S = 180;
+  function advanceFloorMet() {
+    if (!gateActive()) return true;
+    const since = interactionStartedAt || sessionStartedAt;
+    if (!since) return true;   // no clock to gate against: never withhold the way on
+    return (Date.now() - since) / 1000 >= ADVANCE_MIN_S;
+  }
 
   function applyPresence() {
     cast.forEach(a => {
@@ -949,7 +1169,10 @@
       t.classList.toggle('upnext', !!next);
 
       const existing = t.querySelector('.talk-btn');
-      if (next && started) {
+      // Same floor as the header control: this tile button routes to the same
+      // advance_interaction, so it skipped the same scored beats. It was only
+      // less visible, never safer.
+      if (next && started && advanceFloorMet()) {
         if (!existing) {
           const b = document.createElement('button');
           b.className = 'talk-btn';
@@ -961,10 +1184,53 @@
         existing.remove();
       }
     });
+    renderAdvance();
+  }
+
+  // The per-tile "Talk to X" button only appears when the next beat's lead is
+  // NOT in the room, which is true for the one-to-one series scenarios and false
+  // for every group handover (S2A/S2B/S3A/S3B/S4A/S4B all hand over to someone
+  // who is already on screen). Those participants had no way at all to move the
+  // encounter on and could only end it early, producing a truncated record. So
+  // whenever there is a next beat, no tile is offering the way in, and the
+  // interaction has run its pacing floor (advanceFloorMet), put the control in
+  // the header where it cannot be missed.
+  function tileOffersAdvance() {
+    if (!upNext) return false;
+    return cast.some(a => a.id === upNext.agent_id
+      && !(presentIds.length === 0 || presentIds.includes(a.id)));
+  }
+
+  // What to call the next beat. The scenario's own label ("The close, who owns
+  // what") is what the participant should recognise; fall back to who is in it.
+  function nextBeatLabel() {
+    if (!upNext) return '';
+    return upNext.label || upNext.agent_name || 'the next part';
+  }
+
+  function renderAdvance() {
+    const b = $('advanceBtn');
+    if (!b) return;
+    const show = !!upNext && started && !tileOffersAdvance() && advanceFloorMet();
+    b.style.display = show ? 'inline-block' : 'none';
+    if (!show) return;
+    if (b.dataset.moving === '1') return;   // mid-advance: leave the pending label alone
+    b.disabled = false;
+    b.textContent = `Move on: ${nextBeatLabel()}`;
   }
 
   function advanceTo(name, btn) {
-    if (!ws || ws.readyState !== 1) return;
+    if (!ws || ws.readyState !== 1) {
+      // The socket is closing or already gone. A close event runs
+      // onConnectionDropped, which tears the session down and hides these
+      // controls, but there is a window before it is delivered where the button
+      // is still on screen and live. Bailing silently there meant the
+      // participant confirmed "you won't be able to come back to this part of
+      // the conversation" and then saw nothing change at all, which reads as a
+      // broken control rather than a lost connection. Say so instead.
+      showGateNote('That did not go through, the connection is not open right now. If it has dropped you will see a Reconnect button in a moment.');
+      return;
+    }
     btn.disabled = true;
     btn.textContent = `Moving to ${name}…`;
     // Mark the move in the transcript so the record of what the participant
@@ -1138,12 +1404,18 @@
     const s = Math.max(0, Math.floor((Date.now() - timerStartMs) / 1000));
     $('timer').textContent = pad2(Math.floor(s / 60)) + ':' + pad2(s % 60);
     renderGate(s);
+    // The advance floor passes on the clock, not on any incoming message, so it
+    // needs the same one-second tick to draw the control the moment it opens.
+    // applyPresence covers both the tile button and the header one.
+    if (started) applyPresence();
   }
 
   // ---------- minimum-duration gate ----------
-  // Study encounters must run at least 7 minutes. Rather than refusing the
+  // Study encounters should run at least 7 minutes. Rather than refusing the
   // End button with an alert, the timer's ring fills toward 7:00 and the
-  // label counts down, so the rule is visible from the first second.
+  // label counts down, so the target is visible from the first second.
+  // It is a target, not a lock: the consent form promises the participant may
+  // stop at any time, so the End button always works (see its click handler).
   const MIN_S = 7 * 60;
   const RING = 56.5;   // circumference of the r=9 ring in the header
   function gateActive() { return !!(runId && run && run.cohort !== 'internal'); }
@@ -1157,10 +1429,16 @@
       g.classList.add('open');
       $('gateLabel').textContent = 'You can end when you are ready';
       $('stopBtn').classList.remove('locked');
+      $('stopBtn').title = '';
     } else {
       const left = Math.ceil((MIN_S - s) / 60);
       $('gateLabel').textContent = `about ${left} more minute${left === 1 ? '' : 's'}`;
+      // 'locked' only dims the button as a pacing cue. It is deliberately not
+      // `disabled`, and the tooltip says so, because a stop control the
+      // participant reads as unavailable is the same broken promise as one that
+      // refuses the click.
       $('stopBtn').classList.add('locked');
+      $('stopBtn').title = 'You can stop at any time.';
     }
   }
   let gateNoteTimer = null;
@@ -1314,6 +1592,10 @@
     micLevelRaf = requestAnimationFrame(tick);
   }
 
+  // "Muted" means the worklet substitutes silence for the participant's voice,
+  // NOT that it stops sending: the capture stream must never pause, because
+  // user_audio.wav is a straight concatenation of what arrives and a pause
+  // deletes that stretch of time from the recording. See static/pcm-worklet.js.
   function setMicMuted(muted) {
     if (workletNode) workletNode.port.postMessage({ muted });
     setMicVisual(muted ? 'muted' : 'live');
@@ -1352,13 +1634,16 @@
       }
       // Debounce: a brief streaming stall between chunks can fire onended in the
       // gap before the next chunk is scheduled. Re-check after a short delay so
-      // we only unmute once the whole turn has truly finished.
+      // the turn is only marked finished once it truly is.
       setTimeout(() => {
-        // Only unmute once THIS turn is truly finished (assistant_done received,
-        // so no more chunks are coming) and no newer turn has started. Without the
-        // done-gate, a mid-turn streaming stall longer than the debounce — or a
-        // chained next turn — would open the mic while the agent is still speaking,
-        // capturing its own voice as participant speech.
+        // Only clear assistantSpeaking once THIS turn is truly finished
+        // (assistant_done received, so no more chunks are coming) and no newer
+        // turn has started. Without the done-gate, a mid-turn streaming stall
+        // longer than the debounce — or a chained next turn — would declare the
+        // agent finished while it is still talking, and the mic indicator would
+        // tell the participant it was their turn mid-sentence. Capture itself is
+        // never gated any more (see assistant_started): the participant channel
+        // has to be a continuous recording.
         if (turnForChunk && turnForChunk.done
             && (!currentTurn || currentTurn === turnForChunk)
             && audioCtx && audioCtx.currentTime >= playbackTime - 0.01
@@ -1461,7 +1746,13 @@
   // ---------- session start ----------
   async function startSession() {
     $('startBtn').disabled = true;
-    if (!participantId) await ensureParticipant();  // voice path needs a participant record
+    // A participant_id is NOT evidence of consent. /start mints the record
+    // before anyone has agreed to anything and puts it in the redirect with
+    // consent=1 to say exactly that, so on a real study arrival this gate saw a
+    // truthy participantId and waved the click straight through to
+    // startCapture, which opens the microphone and the webcam. Honour the flag:
+    // ensureParticipant returns only once a consent record actually exists.
+    if (!participantId || consentPending) await ensureParticipant();
     try { await startCapture(); }
     catch (e) {
       // Release everything startCapture may have created before it failed, so
@@ -1555,11 +1846,27 @@
           finalizeUserCaption();
           assistantSpeaking = true;
           setTurnState(`${m.agent_name || 'Your partner'} is speaking`, 'agent');
-          // Group meetings keep the mic open so the participant can interject,
-          // exactly as they could in a real room; the server stops the current
-          // speaker when it hears them. 1:1 keeps the original push-to-listen
-          // rhythm.
-          if (sessionMode !== 'group') setMicMuted(true);
+          // The mic stays open in EVERY mode, group and 1:1 alike, so the
+          // participant can interject exactly as they could in a real room; the
+          // server stops the current speaker when it hears them.
+          //
+          // 1:1 used to hard-mute here for a push-to-listen rhythm, and muting
+          // made the capture worklet drop samples. Two things broke as a result,
+          // and both matter more than the rhythm did:
+          //   * user_audio.wav is a straight concatenation of whatever arrives
+          //     (server/storage.py append_user_audio), so every agent turn was
+          //     cut out of the file. The recording stopped being a timeline the
+          //     encounter_record timestamps can index into, and it drifted out
+          //     of alignment with the agent WAVs and the webcam capture.
+          //   * A participant who talked over the agent — interrupting,
+          //     conceding, retaliating, which is precisely the S1 conflict
+          //     behaviour we score — was simply not recorded, and the server's
+          //     1:1 barge-in branch could never fire because no audio reached
+          //     its VAD while _speaking.
+          // The agent's own voice is kept out of the participant channel where
+          // it belongs, in the capture constraints (echoCancellation: true, see
+          // startCapture), which is the same protection group mode has always
+          // relied on. The turn-state pill above still says whose turn it is.
           // Don't draw the bubble yet. The name + caption appear the moment this
           // turn's audio actually starts (see tickSpeech), so the speaker's name
           // shows up in time with their voice instead of jumping in ahead of it.
@@ -1576,8 +1883,9 @@
             currentTurn.done = true;
             if (m.latency_total_s != null) currentTurn.latency = m.latency_total_s;
             // No audio arrived for this turn (e.g. TTS failed): show the text
-            // now, and because playPcmChunk.onended will never fire, re-open the
-            // mic here so 1:1 mode does not stay muted forever with a dead stall.
+            // now, and because playPcmChunk.onended will never fire, clear the
+            // speaking state here so the mic indicator does not sit on "the
+            // agent is talking" through a dead stall.
             if (currentTurn.startCtx == null) {
               revealTurn(currentTurn, currentTurn.fullText.length);
               assistantSpeaking = false;
@@ -1585,13 +1893,20 @@
             }
           }
           currentTurn = null;
-          // Mic re-opens when the last audio chunk finishes (playPcmChunk.onended).
+          // The speaking state clears when the last audio chunk finishes
+          // (playPcmChunk.onended); capture itself never stopped.
           setTurnStateThen('Your turn', 'you', 'Listening…', 'listen', 4000);
         } else if (m.type === 'segment_start') {
           // A new interaction: say plainly who the participant is now with, and
           // grey out anyone not in the room for this beat.
           presentIds = (m.present || []).map(p => p.id);
           upNext = m.next || null;
+          // Restart the advance floor: it is per-interaction, matching the
+          // server's _interaction_started_at, not per-encounter.
+          interactionStartedAt = Date.now();
+          // The advance we were waiting on landed: release the header control so
+          // it re-labels itself for the beat after this one.
+          { const ab = $('advanceBtn'); if (ab) delete ab.dataset.moving; }
           const names = (m.present || []).map(p => esc(p.name)).join(' · ');
           const label = esc(m.label || `Part ${m.index + 1}`);
           const el = document.createElement('div');
@@ -1682,6 +1997,11 @@
     if (micLevelRaf) { cancelAnimationFrame(micLevelRaf); micLevelRaf = null; }
     stopTimer();
     $('stopBtn').style.display = 'none';
+    // There is nothing left to advance once the session is torn down; leaving
+    // the control visible would send advance_interaction into a closed socket.
+    upNext = null;
+    interactionStartedAt = 0;
+    { const ab = $('advanceBtn'); if (ab) { ab.style.display = 'none'; delete ab.dataset.moving; } }
     $('startBtn').style.display = 'inline-block';
     $('startBtn').disabled = false;
     setMicVisual('');
@@ -1759,23 +2079,83 @@
   }
 
   $('startBtn').addEventListener('click', startSession);
+  $('advanceBtn').addEventListener('click', () => {
+    if (!upNext) return;
+    const b = $('advanceBtn');
+    if (b.disabled) return;
+    const where = nextBeatLabel();
+    // Moving on cannot be undone and this control sits in the header for the
+    // whole encounter, so confirm first: a stray click would cut the current
+    // interaction short and truncate the record we are measuring.
+    if (!confirm(`Move on to “${where}” now? You won't be able to come back to this part of the conversation.`)) return;
+    advanceTo(upNext.agent_name || where, b);
+    // advanceTo bails without disabling the button if the socket is already
+    // gone (it surfaces the failure itself); only latch the pending state when
+    // the request really went out, so a dropped connection leaves a working
+    // control rather than a dead one.
+    if (b.disabled) b.dataset.moving = '1';
+  });
   $('stopBtn').addEventListener('click', () => {
     if (runId) {
-      // Study encounters must run at least 7 minutes; the encounter is the
+      // Study encounters should run at least 7 minutes; the encounter is the
       // measurement, and a 3-minute conversation has not exercised it.
       // Internal test runs skip the gate so the team can move fast.
+      //
+      // The gate DISCOURAGES an early exit, it must never prevent one: the
+      // consent the participant signed (config/consent.yaml) says they may stop
+      // at any time, and the AI banner and fiction card repeat it. Refusing the
+      // only stop control before 7:00 was a refused withdrawal request. So the
+      // early press now shows the encouragement note AND offers the way out in
+      // the same interaction; only a second, explicit "no" keeps them in.
       const elapsed = sessionStartedAt ? (Date.now() - sessionStartedAt) / 1000 : 0;
       if (gateActive() && elapsed < MIN_S) {
         const left = Math.ceil((MIN_S - elapsed) / 60);
-        showGateNote(`Please keep the conversation going about ${left} more minute${left === 1 ? '' : 's'}. Each conversation needs at least 7 minutes before you can move on. The ring next to the timer fills when you can.`);
-        return;
+        showGateNote(`We'd like the conversation to run about ${left} more minute${left === 1 ? '' : 's'}, the ring next to the timer fills when you get there. You can still stop now if you want to.`);
+        if (!confirm(`We were hoping for about ${left} more minute${left === 1 ? '' : 's'} of conversation, but you can stop whenever you want to. Stop this conversation now?`)) return;
+      } else {
+        if (!confirm('Finish this conversation and move on?')) return;
       }
-      if (!confirm('Finish this conversation and move on?')) return;
       endSession({ debrief: false });
       onEncounterComplete();
     } else {
       endSession();
     }
+  });
+  // The consent form promises "You may stop at any time by clicking Stop", and
+  // until now nothing on the page did that: End conversation finishes the
+  // current encounter and immediately enrols them in the next of four, so a
+  // participant using it as the withdrawal control was told they had stopped
+  // and then handed another conversation. This is the control that stops the
+  // study, and it is the only one that does.
+  $('leaveBtn').addEventListener('click', async () => {
+    if (!confirm('Stop the study and leave? This ends your participation now. You will not be asked to do the remaining conversations.')) return;
+    $('leaveBtn').disabled = true;
+    // Capture goes off first, before any network call: whatever happens to the
+    // withdrawal record, the microphone and camera must stop the moment they
+    // ask to stop.
+    if (started) endSession({ debrief: false });
+    // A 'encounter_complete' or socket event racing in behind this must not
+    // quietly advance the run of someone who has just left it.
+    advancing = true;
+    let recorded = false;
+    try {
+      const r = await fetch(`/api/run/${encodeURIComponent(runId)}/withdraw` + keyParamFirst, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId || '', reason: 'participant_withdrew' }),
+      });
+      recorded = r.ok;
+    } catch (e) { recorded = false; }
+    showClosing(
+      'You have stopped the study',
+      '<p>Your microphone and camera are off and the conversation has ended. ' +
+      'Thank you for the time you did give us.</p>' +
+      (recorded
+        ? '<p>We have noted that you chose to stop.</p>'
+        : '<p>We could not reach the server to note that you stopped, so please ' +
+          'tell the researcher if you would like that on file.</p>') +
+      '<p>If you would like the conversations you already had removed, contact ' +
+      'the researcher named on the consent form.</p>',
+      run?.completion_code || '');
   });
   $('debriefClose').addEventListener('click', () => { $('debriefOverlay').style.display = 'none'; });
 
@@ -1878,6 +2258,13 @@
       // Render preview tiles so the user sees who they'll meet before pressing Start.
       cast = d.cast || [];
       renderGrid();
+      // Arm Start here and nowhere else. It ships disabled because it is on
+      // screen from first paint, well before the consent form has been fetched
+      // and shown; reaching this line means consent is on record (the boot
+      // sequence awaited ensureParticipant) and there is a briefed scenario to
+      // start. A failed brief falls through to the blocking error below and
+      // leaves it disabled, which is what the comment there asks for.
+      $('startBtn').disabled = false;
       // Show the situation popup (image + scene) unless a participant was
       // already provided (e.g. a researcher-configured launch).
       // Always show the situation card, as the second popup after the

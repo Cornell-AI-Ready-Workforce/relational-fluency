@@ -106,15 +106,43 @@ interactions:
     label: "The deflection ladder"
     kind: counterpart
     observe: "New approach per rung · appeal to Sasha's interests · invoke Rivera's precedent · dated close (90-day trial)."
+    # Every rung here ends with the floor back on the participant, and nothing
+    # in this interaction speaks first, so a participant who freezes at ANY rung
+    # stalls the encounter: the silence watchdog only probes when the next
+    # unfired trigger carries an on_silence, and otherwise loops forever. Each
+    # rung therefore gets one. The probe replaces the cue for that beat rather
+    # than adding to it, so each on_silence carries the rung's own deflection
+    # and then hands the floor back, and none of them mentions Rivera: Sasha
+    # never volunteers that precedent (see the brief), so a probe must not
+    # volunteer it either, or the participant's leverage is spent before they
+    # ever get to play it.
     triggers:
       - id: t2_rung1_company_wide
         cue: "'It's company-wide, my hands are tied.'"
+        on_silence: "It's company-wide, my hands are tied here. So what were you hoping I could do?"
         esci: [multiple_approaches, anticipates]
       - id: t3_rung2_one_exception
         cue: "'If I make one exception, everyone wants one.'"
+        on_silence: "If I make one exception, everyone wants one. Is there more you wanted to put on the table?"
         esci: [multiple_approaches, self_interest]
+      # The cue is the rung and nothing else. It used to trail ", contradicted
+      # by Rivera's team", and _trigger_instruction pastes the whole cue into
+      # "Bring about this beat now, in your own words: ...", so that rationale
+      # reached Sasha as part of the beat she was told to play, against her own
+      # brief's "You do not volunteer this". Same hazard t5 below was rewritten
+      # for, one rung earlier and on the ordinary path rather than the silence
+      # path, and it costs more here: rung 3 is the beat that scores whether
+      # the participant found the precedent and played it themselves, so a
+      # Sasha who names Rivera has answered the very question this trigger
+      # asks. The weak-point logic is already written, and already conditional,
+      # in Sasha's brief above: she concedes the contradiction only when the
+      # participant invokes it AT rung 3. Bare, the cue still lands the whole
+      # rung-3 deflection, and it matches the shape this beat's own on_silence
+      # probe was given. S2A t4 carries the identical change, which the pair
+      # requires.
       - id: t4_rung3_director_wont_sign
-        cue: "'The director will never sign off.', contradicted by Rivera's team"
+        cue: "'The director will never sign off.'"
+        on_silence: "The director will never sign off on this. Unless there's something I'm not accounting for?"
         esci: [behind_scenes, key_people, multiple_approaches]
         scores:
           high:
@@ -123,8 +151,21 @@ interactions:
           low:
             answer: "Fine. I guess I'll come in five days."
             why: "capitulates at the first pushback; nothing secured"
+      # Rung 4 is a stage direction, not a scripted line, for the same reason
+      # the probes above avoid Rivera. Triggers fire strictly in order, one per
+      # participant turn, with nothing testing what the participant actually
+      # said, so a cue that quotes "Fair, Rivera got it through" makes Sasha
+      # volunteer the precedent on a fixed beat even when the participant never
+      # found it, against her own brief. That precedent is the participant's
+      # hidden leverage, and whether they deploy it at rung 3 is exactly what
+      # t4 scores; spending it here would leave t4 measuring nothing. So the
+      # concession is conditional on the participant having already played
+      # Rivera, and the package question is asked either way: rung 4 lands on
+      # the same beat, scoring the same three items, whether or not the
+      # precedent was found. Same shape as S2A t5, which the pair requires.
       - id: t5_rung4_the_package
-        cue: "Sasha: 'Fair, Rivera got it through. But precedent alone won't get past the director: what exactly would we measure, and for how long?'"
+        cue: "Sasha moves to rung 4, the package. If the participant has already put Rivera's team on the table, concede it in one clause; if they have not, do not raise Rivera at all. Either way: precedent alone won't get past the director, so what exactly would we measure, and for how long?"
+        on_silence: "Before I take anything upward I'd need something I can defend. What would we measure, and for how long?"
         esci: [anticipates, multiple_approaches, through_discussion]
         scores:
           high:
@@ -135,6 +176,7 @@ interactions:
             why: "hands the design back; nothing defensible to take upward"
       - id: t6_rung4_fairness
         cue: "Sasha: 'And what do I tell the rest of the team when they ask for the same?'"
+        on_silence: "I still have to answer the rest of the team when they ask for the same. What would you have me tell them?"
         esci: [self_interest, anticipates, key_people]
         scores:
           high:

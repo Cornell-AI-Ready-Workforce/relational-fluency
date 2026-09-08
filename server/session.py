@@ -15,7 +15,7 @@ import asyncio
 import os
 import secrets
 import time
-from typing import Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
 from .llm import text_client
 
@@ -50,8 +50,18 @@ class Session:
         model: Optional[str] = None,
         participant_id: Optional[str] = None,
         capture_audio: bool = False,
+        run_context: Optional[dict] = None,
     ):
         self.id = new_session_id()
+        # Which run (and therefore which cohort) this encounter belongs to,
+        # resolved server-side by the caller. Optional: sessions started outside
+        # a run (landing page, researcher launch) have no run context, and the
+        # encounter then records nulls rather than pretending to be study data.
+        rc = run_context or {}
+        self.run_id: Optional[str] = rc.get("run_id")
+        self.cohort: Optional[str] = rc.get("cohort")
+        self.participant_key: Optional[str] = rc.get("participant_key")
+        self.encounter_index: Optional[int] = rc.get("encounter_index")
         # The participant plays an assigned character; passing their key means
         # the same name is used in the brief, by the actors, and across all four
         # of their encounters.
@@ -67,7 +77,16 @@ class Session:
             for a in self.scenario.cast
         }
         self.director: Optional[Director] = (
-            Director(self.scenario, client=client) if self.is_group else None
+            # Hand the director this session's event writer. Routing degrades to
+            # cast[0] whenever the gateway stalls or answers without a decision,
+            # and unwired that degradation was visible only in the server log, so
+            # an encounter whose director was dead throughout read in the record
+            # exactly like a steered one. With the hook in place the fallback
+            # lands in the encounter's own events.jsonl, where a later analysis
+            # pass can find it. _store_event defers the lookup because the store
+            # is built a few lines below this.
+            Director(self.scenario, client=client, on_event=self._store_event)
+            if self.is_group else None
         )
         # Auto steering: on by default (see AUTO_STEERING_DEFAULT); researcher
         # can toggle it live. When on, the controller reviews each completed
@@ -88,6 +107,10 @@ class Session:
             participant_id=participant_id,
             capture_audio=capture_audio,
             agent_ids=[a.id for a in self.scenario.cast],
+            run_id=self.run_id,
+            cohort=self.cohort,
+            participant_key=self.participant_key,
+            encounter_index=self.encounter_index,
         )
 
         self.participant_ws: Optional["WebSocket"] = None
@@ -107,10 +130,36 @@ class Session:
             model=self.model,
             participant_id=participant_id,
             capture_audio=capture_audio,
+            # Study context on the first event too, so record.json (built from
+            # events.jsonl alone) can inherit it without reading the manifest.
+            # encounter_record.build() reads exactly these four keys off this
+            # event; if you rename one, rename it there.
+            run_id=self.run_id,
+            cohort=self.cohort,
+            participant_key=self.participant_key,
+            encounter_index=self.encounter_index,
+            # And the planted-trigger plan this encounter ran against, for the
+            # same reason: the record has to carry its own denominator, because
+            # the spec file it came from can be edited afterwards.
+            spec_fingerprint=self.store.spec_fingerprint,
             cast=[{"id": a.id, "name": a.name} for a in self.scenario.cast],
             personas={aid: p.snapshot() for aid, p in self.personas.items()},
             auto_steering=self.auto_steering,
         )
+
+    def _store_event(self, type_: str, **fields: Any) -> None:
+        """Write an event on behalf of a collaborator built before the store.
+
+        The director is constructed above the SessionStore (it needs the same
+        text client), so it cannot be handed `self.store.event` directly. This
+        forwards at call time instead. Silent when the store does not exist yet
+        or the session is closing: recording a routing fallback must never be
+        the thing that takes down a live encounter.
+        """
+        store = getattr(self, "store", None)
+        if store is None or getattr(self, "_closed", False):
+            return
+        store.event(type_, **fields)
 
     # --- shorthand ---
 
@@ -335,12 +384,14 @@ class SessionRegistry:
         model: Optional[str] = None,
         participant_id: Optional[str] = None,
         capture_audio: bool = False,
+        run_context: Optional[dict] = None,
     ) -> Session:
         s = Session(
             scenario_id,
             model=model,
             participant_id=participant_id,
             capture_audio=capture_audio,
+            run_context=run_context,
         )
         self._sessions[s.id] = s
         return s

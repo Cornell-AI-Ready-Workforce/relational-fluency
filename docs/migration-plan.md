@@ -161,12 +161,35 @@ Today: 13 ad-hoc scenarios (`scenarios/*.yaml`) from earlier exploration —
 Target: exactly four constructs, 2–3 variations each, from
 `reddit-analysis/scenarios/S{1..4}-*.yaml`:
 
-| | Competency | Variation A |
-|---|---|---|
-| S1 | Conflict Management | Taken credit |
-| S2 | Influence | Promised raise + competing offer |
-| S3 | Inspirational Leadership | After resignations over pay |
-| S4 | Teamwork | Planning an internal rollout |
+| | Competency | Runnable default | Parallel form |
+|---|---|---|---|
+| S1 | Conflict Management | **B** — Hostile after-hours message | (A — Taken credit: excluded, see below) |
+| S2 | Influence | A — Promised raise + competing offer | B — Hybrid under an RTO mandate |
+| S3 | Inspirational Leadership | A — After resignations over pay | B — After a commission cut |
+| S4 | Teamwork | A — Planning an internal rollout | B — Preparing a client presentation |
+
+**S1-A is not the S1 the study runs.** Every participant does all four
+constructs and S4 always involves misattributed credit, which is also S1-A's
+situation; running both in one session bleeds the Conflict Management and
+Teamwork constructs together. The canonical spec's assignment rule
+(`reddit-analysis/scenarios/scenario-specifications.md`, "Variation assignment")
+therefore requires S1 B or C in any session containing S4 — and since every
+session contains S4, S1-A is never legally assignable to a study participant.
+The grounding data agrees: `reddit-analysis/situation-taxonomy.md` §3 calls
+blame/public humiliation (1,631 posts) "the best-attested S1 trigger — supporting
+the assignment rule that prefers S1-C (with S1-B) over S1-A", against 77 for
+credit misattribution. C is not compiled into `scenarios/v3/` yet, so B is the
+S1 form to run.
+
+Done: the rule is machine-readable and enforced. `server/runs.py` still draws
+each construct's form independently — the draw cannot see the run as a whole —
+but `FORM_EXCLUSIONS`, a construct → forbidden-form → co-occurring-construct
+table, is applied to the completed draw inside `runs.create`, and any run that
+came up S1-A alongside an S4 form has its S1 swapped to B before it is written.
+The swap is recorded on the run document as `form_exclusions`, so an analyst can
+see which assignments were corrected rather than drawn; without that record the
+B forms would simply look over-sampled. Adding the next exclusion is a row in
+the table, not a second special case.
 
 The canonical specs are richer than the engine's schema — they carry
 `ai_partners[]` (named roles + behavior policies), `fixed_opening_prompt`,

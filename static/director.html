@@ -113,7 +113,18 @@ async function select(id) {
 
 function render(rec) {
   const p = rec.provenance || {}, c = rec.counts || {}, spec = rec.spec;
-  const firedIds = new Set((rec.triggers_fired || []).map(f => f.trigger_id));
+  // A trigger the runner had to prompt for is not the same evidence as one the
+  // participant walked into. The watchdog re-arms every PROBE_AFTER_SECONDS and
+  // resets the activity clock each time it probes, so a participant who says
+  // nothing at all still marches through every planted beat. Counting those the
+  // same way turned a silent encounter into a full green badge — the one record
+  // a researcher most needs to see flagged. So split the two here: `probing` is
+  // already on every entry (server/app.py builds triggers_fired), it was just
+  // being ignored. Legacy records predate the flag and read as volunteered,
+  // which is the safer direction to be wrong in for an old file.
+  const probedIds = new Set((rec.triggers_fired || []).filter(f => f.probing).map(f => f.trigger_id));
+  const volunteeredIds = new Set(
+    (rec.triggers_fired || []).filter(f => !f.probing).map(f => f.trigger_id));
   // Name each interaction from the spec, so scene headings read as the research
   // note describes them instead of "i1".
   const iMeta = {};
@@ -129,7 +140,8 @@ function render(rec) {
       const m = iMeta[scene];
       const label = m ? `${esc(m.label)}, ${esc(m.mode.replace(/_/g, ' '))}` : esc(scene);
       const plan = (m?.triggers || []).map(tr =>
-        `<span class="tag trig ${firedIds.has(tr.id) ? 'hit' : 'miss'}">${esc(tr.id)}</span>`).join('');
+        `<span class="tag trig ${volunteeredIds.has(tr.id) ? 'hit'
+          : probedIds.has(tr.id) ? 'probe' : 'miss'}">${esc(tr.id)}</span>`).join('');
       rows.push(`<div class="scene">${label}${m?.observe ? `<div class="observe">${esc(m.observe)}</div>` : ''}
         <div class="tags">${plan}</div></div>`);
     }
@@ -153,15 +165,27 @@ function render(rec) {
   }
 
   const planned = (spec?.interactions || []).flatMap(i => i.triggers.map(t => t.id));
-  const hit = planned.filter(id => firedIds.has(id));
+  // The headline number is what the participant volunteered; probe-fired beats
+  // are shown beside it rather than folded into it, so the badge only goes green
+  // when the instrument actually got what it planted for. An ESCI item reached
+  // only because the runner prompted for it is likewise not evidence the
+  // participant demonstrated the competency, so seenItems is the volunteered set
+  // and probedItems is styled separately.
+  const hit = planned.filter(id => volunteeredIds.has(id));
+  const probed = planned.filter(id => probedIds.has(id) && !volunteeredIds.has(id));
   const allItems = Object.keys(spec?.esci_items || {});
-  const seenItems = new Set((rec.triggers_fired || []).flatMap(f => f.esci || []));
+  const seenItems = new Set(
+    (rec.triggers_fired || []).filter(f => !f.probing).flatMap(f => f.esci || []));
+  const probedItems = new Set(
+    (rec.triggers_fired || []).filter(f => f.probing).flatMap(f => f.esci || []));
   const coverage = spec ? `
     <div class="meta">
-      <span>triggers <b class="${hit.length === planned.length ? 'ok' : 'warn'}">${hit.length}/${planned.length}</b></span>
-      <span>ESCI items reached <b class="${seenItems.size === allItems.length ? 'ok' : 'warn'}">${seenItems.size}/${allItems.length}</b></span>
+      <span>triggers <b class="${hit.length === planned.length ? 'ok' : 'warn'}">${hit.length}/${planned.length}</b>${
+        probed.length ? ` <span class="warn">(+${probed.length} probed)</span>` : ''}</span>
+      <span>ESCI items reached <b class="${seenItems.size === allItems.length ? 'ok' : 'warn'}">${seenItems.size}/${allItems.length}</b>${
+        probedItems.size ? ` <span class="warn">(+${[...probedItems].filter(k => !seenItems.has(k)).length} probed)</span>` : ''}</span>
       <span class="tags">${allItems.map(k =>
-        `<span class="tag ${seenItems.has(k) ? 'hit' : 'miss'}">${esc(k)}</span>`).join('')}</span>
+        `<span class="tag ${seenItems.has(k) ? 'hit' : probedItems.has(k) ? 'probe' : 'miss'}">${esc(k)}</span>`).join('')}</span>
     </div>` : '';
 
   document.getElementById('detail').innerHTML = `

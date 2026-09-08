@@ -33,14 +33,18 @@ high/low sample answers from the research note, used as judge anchors.
 | `S1B` | `i2` | `t2_the_opening` | talk_openly, bring_into_open, fester_r | probe scored |
 | `S1B` | `i2` | `t3_defensiveness` | de_escalate, talk_openly |  |
 | `S1B` | `i2` | `t4_half_concession` | de_escalate, resolve_not_fester |  |
-| `S2A` | `i1` | `t1_the_opening` | through_discussion, anticipates | probe scored |
-| `S2A` | `i2` | `t2_rung1_no_budget` | multiple_approaches, anticipates |  |
-| `S2A` | `i2` | `t3_rung2_everyone_stretched` | multiple_approaches, self_interest |  |
-| `S2A` | `i2` | `t4_rung3_no_precedent` | behind_scenes, key_people, multiple_approaches | scored |
+| `S2A` | `i1` | `t1_the_opening` | through_discussion, anticipates, self_interest | probe scored |
+| `S2A` | `i2` | `t2_rung1_no_budget` | multiple_approaches, anticipates | probe |
+| `S2A` | `i2` | `t3_rung2_everyone_stretched` | multiple_approaches, self_interest | probe |
+| `S2A` | `i2` | `t4_rung3_no_precedent` | behind_scenes, key_people, multiple_approaches | probe scored |
+| `S2A` | `i2` | `t5_rung4_the_package` | anticipates, multiple_approaches, through_discussion | probe scored |
+| `S2A` | `i2` | `t6_rung4_fairness` | self_interest, anticipates, key_people | probe scored |
 | `S2B` | `i1` | `t1_the_opening` | through_discussion, anticipates, self_interest | probe scored |
-| `S2B` | `i2` | `t2_rung1_company_wide` | multiple_approaches, anticipates |  |
-| `S2B` | `i2` | `t3_rung2_one_exception` | multiple_approaches, self_interest |  |
-| `S2B` | `i2` | `t4_rung3_director_wont_sign` | behind_scenes, key_people, multiple_approaches | scored |
+| `S2B` | `i2` | `t2_rung1_company_wide` | multiple_approaches, anticipates | probe |
+| `S2B` | `i2` | `t3_rung2_one_exception` | multiple_approaches, self_interest | probe |
+| `S2B` | `i2` | `t4_rung3_director_wont_sign` | behind_scenes, key_people, multiple_approaches | probe scored |
+| `S2B` | `i2` | `t5_rung4_the_package` | anticipates, multiple_approaches, through_discussion | probe scored |
+| `S2B` | `i2` | `t6_rung4_fairness` | self_interest, anticipates, key_people | probe scored |
 | `S3A` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe scored |
 | `S3A` | `i2` | `t2_jordans_flat_fine` | brings_out_best, inspires | probe scored |
 | `S3A` | `i2` | `t3_caseys_overload` | brings_out_best, builds_pride |  |

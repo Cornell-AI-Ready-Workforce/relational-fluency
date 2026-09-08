@@ -114,6 +114,24 @@ def build(session_dir: Path) -> Dict[str, Any]:
         "encounter_id": session_dir.name,
         "scenario": start.get("scenario"),
         "participant_id": start.get("participant_id"),
+        # The study context, inherited from the session_start event, which
+        # session.py writes precisely so this build (events.jsonl and nothing
+        # else) does not have to open the manifest. Without it the
+        # analysis-facing artifact could not say which run an encounter belonged
+        # to or which cohort it was in, so a scorer or rater reading record.json
+        # alone had no way to keep internal test traffic out of the study set.
+        # Null on sessions that did not come through a run, and on records
+        # rebuilt from events written before the context existed.
+        "run_id": start.get("run_id"),
+        "cohort": start.get("cohort"),
+        "participant_key": start.get("participant_key"),
+        "encounter_index": start.get("encounter_index"),
+        # The planted triggers this encounter was actually run against, as the
+        # spec stood at session start. Coverage is reported as fired/planted and
+        # the spec files are edited between waves, so verifying an archived
+        # encounter against today's YAML silently moves its denominator. Null
+        # for encounters recorded before the stamp existed.
+        "spec_fingerprint": start.get("spec_fingerprint"),
         "provenance": {
             "gateway": realtime.get("gateway"),
             "realtime_model": realtime.get("model") or realtime.get("realtime_model"),

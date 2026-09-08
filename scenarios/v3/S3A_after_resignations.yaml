@@ -1,11 +1,14 @@
 # Inspirational Leadership, Variant A. Research Note v3, slide 12.
 # NOTE: interaction 1 is a GROUP room, the planted trigger is Alex challenging
 # the participant publicly, in front of the others. That is the instrument.
-# Variant B is still to be authored.
+# Variant B is S3B, "After a commission cut": authored, loading, and in the
+# rotation. It mirrors this form beat for beat (public challenge, then the
+# disengaged strong performer, then the anxious junior) on the same ESCI map,
+# so the two are interchangeable across attempts.
 id: S3A
 construct: inspirational_leadership
 variant: A
-parallel_form: S3B   # not yet authored
+parallel_form: S3B
 title: "After resignations over a pay dispute"
 duration_minutes: [7, 12]
 

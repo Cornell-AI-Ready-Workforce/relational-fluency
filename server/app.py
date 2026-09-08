@@ -31,7 +31,9 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from .engine import DEFAULT_MODEL
 from .scenarios import list_scenarios, load_scenario
 from .session import registry
-from .storage import create_participant, get_participant, init_storage, record_consent
+from .storage import (
+    create_participant, get_participant, init_storage, record_consent, record_decline,
+)
 from .realtime_voice_session import RealtimeVoiceSessionRunner
 
 load_dotenv()
@@ -201,14 +203,43 @@ async def start_test_run(
         f"test_{tester}_{int(time.time())}",
         variant=variant, cohort="internal",
     )
-    return RedirectResponse(url=f"/v2?run={run['run_id']}", status_code=307)
+    # Mint the participant record here, exactly as /start does, and carry it in
+    # the redirect. The cohort tag only reaches an encounter's manifest through
+    # _run_context, which resolves the run from the participant *record* id on
+    # the voice socket. Without a record minted against this run, the tester
+    # consented with a bare code, POST /api/consent minted a second record that
+    # no run pointed at, and the internal encounter recorded cohort=null — so it
+    # was excluded from ?cohort=study but invisible to ?cohort=internal too, and
+    # the tag was true only at the run level. Minting it here also means the
+    # internal path exercises the same identity and consent code the study path
+    # does, which is the point of a test entrance.
+    #
+    # consent_given=False for the same reason as /start: consent is the
+    # participant's affirmative act, not something an entry point may assert.
+    q = f"?run={run['run_id']}"
+    try:
+        pid_record = create_participant(
+            code=run["participant_id"], consent_given=False, consent_version="",
+        )
+        run["participant_record_id"] = pid_record
+        runs.save(run)
+        q += f"&participant_id={pid_record}&consent=1"
+    except Exception:  # noqa: BLE001, a test entrance must still open
+        pass
+    return RedirectResponse(url=f"/v2{q}", status_code=307)
 
 
 @app.get("/api/runs")
 async def api_runs_export(key: Optional[str] = None, cohort: Optional[str] = None):
     """The join table for analysis: every run with its participant key,
     Qualtrics response id, cohort, completion code, and the session ids of the
-    encounters it produced."""
+    encounters it produced.
+
+    `cohort` is one of "study", "internal" (the /test entrance) or
+    "unattributed" (a participant whose survey key did not pipe). Filtering to
+    "study" is the supported way to get the analysis set; the unattributed runs
+    are not discarded, because each one is a real consented encounter that a
+    hand-join can still rescue."""
     check_key(key)
     from .runs import RUNS_DIR, completion_code
 
@@ -226,6 +257,18 @@ async def api_runs_export(key: Optional[str] = None, cohort: Optional[str] = Non
                 "participant_id": run.get("participant_id"),
                 "qualtrics_id": run.get("qualtrics_id"),
                 "cohort": run.get("cohort", "study"),
+                # Surfaced so a Qualtrics piping failure (a run carrying a
+                # synthetic unattributed_* key) or a key presented with two
+                # different survey responses is visible in the export itself,
+                # not only in a server log line.
+                "participant_key_status": run.get("participant_key_status"),
+                # What actually arrived when the key was unusable. This is the
+                # only thing an unattributed run can be hand-joined on, and the
+                # export is where that join gets done, so withholding it here
+                # would leave the run permanently unattributable. Null whenever
+                # the key was fine.
+                "raw_participant_key": run.get("raw_participant_key"),
+                "qualtrics_id_conflict": bool(run.get("qualtrics_id_conflict")),
                 "created_at": run.get("created_at"),
                 "finished": run.get("index", 0) >= len(run.get("scenarios", [])),
                 "completion_code": completion_code(run),
@@ -252,24 +295,68 @@ async def start_run(
 
     Qualtrics passes the participant key through as a query parameter; the exact
     name varies by how the survey is piped, so the common spellings are all
-    accepted. A returning participant resumes their run rather than starting a
-    second one under the same key.
+    accepted. The value itself is validated before use (see
+    runs.normalize_participant_key): a broken pipe sends either nothing or the
+    literal ${e://Field/...} placeholder, and taking either at face value
+    silently corrupts the dataset. A returning participant with a usable key
+    resumes their run rather than starting a second one under the same key.
     """
     check_participant(key)
     from fastapi.responses import RedirectResponse
 
     from . import runs
 
-    pkey = pid or participant_id or PROLIFIC_PID
-    run = runs.find_for_participant(pkey) if pkey else None
+    raw_key = pid or participant_id or PROLIFIC_PID
+    pkey, key_status = runs.normalize_participant_key(raw_key)
+    if pkey is None:
+        # Never turn a real participant away over the survey's broken link: they
+        # are mid-study, and a 400 page costs the encounter data outright. They
+        # proceed, but under a unique, clearly-marked identifier so the run
+        # cannot masquerade as attributable study data and, crucially, so two
+        # bad arrivals cannot collide into one shared run (which is exactly what
+        # an unreplaced placeholder used to do: participant 2 landed inside
+        # participant 1's half-finished run). The raw value is kept on the run
+        # for a later hand-join, and the reject is logged so a piping failure
+        # surfaces on the first arrival rather than at analysis time.
+        pkey = f"unattributed_{secrets.token_hex(6)}"
+        print(
+            f"  WARNING: /start got an unusable participant key ({key_status}): "
+            f"{raw_key!r}. Continuing as {pkey} in cohort 'unattributed'. "
+            f"Check the Qualtrics ParticipantKey piping."
+        )
+    # A synthetic key is unique per arrival, so there is nothing to resume and
+    # the directory scan would only ever miss.
+    run = runs.find_for_participant(pkey) if key_status == "ok" else None
     if run is None:
         run = runs.create(
             pkey, variant=variant, qualtrics_id=qid,
-            cohort=(cohort or "study"),
+            # An explicit ?cohort= is an operator's deliberate choice and is
+            # honoured; otherwise a run only counts as study data when its key
+            # is one we can actually attribute.
+            cohort=(cohort or ("study" if key_status == "ok" else "unattributed")),
+            key_status=key_status,
+            raw_participant_key=(raw_key if key_status != "ok" else None),
         )
-    elif qid and not run.get("qualtrics_id"):
-        # A returning participant may arrive with the qid we did not have yet.
-        run["qualtrics_id"] = qid
+    elif qid and run.get("qualtrics_id") != qid:
+        if not run.get("qualtrics_id"):
+            # A returning participant may arrive with the qid we did not have yet.
+            run["qualtrics_id"] = qid
+        else:
+            # A second, different survey response id under the same key means
+            # the run<->survey join is no longer one-to-one (they retook the
+            # survey, or two people are sharing a key). Keep the first id, the
+            # one their encounters started under, but record every id seen and
+            # flag the conflict so analysis notices instead of quietly joining
+            # this run to the wrong response.
+            seen = run.setdefault("qualtrics_ids_seen", [run["qualtrics_id"]])
+            if qid not in seen:
+                seen.append(qid)
+            run["qualtrics_id_conflict"] = True
+            print(
+                f"  WARNING: run {run['run_id']} was presented a second "
+                f"qualtrics_id ({qid!r}, first {run['qualtrics_id']!r}); "
+                f"keeping the first and flagging the run."
+            )
         runs.save(run)
 
     # Give the run one stable participant record and carry it in the redirect,
@@ -296,7 +383,15 @@ async def start_run(
             pid_record = None
 
     q = f"?run={run['run_id']}"
-    if key:
+    # Forward the key only when participant routes actually demand one.
+    # SESSION_KEY is the researcher credential (see check_key): it opens
+    # /api/runs, /api/encounters, the per-session download zips and the
+    # researcher/director views. This redirect lands in the address bar of every
+    # recruited person, so forwarding it unconditionally handed the whole
+    # dataset's credential to ~100 participants. When PARTICIPANT_KEY_REQUIRED
+    # is set the participant page cannot load without it, so it is forwarded
+    # then and only then, and never in the normal open-collection deployment.
+    if key and PARTICIPANT_KEY_REQUIRED:
         q += f"&key={key}"
     # Prefer the run's stable participant record; otherwise never drop a
     # participant_id that was handed to us.
@@ -656,9 +751,47 @@ async def api_post_consent(payload: dict, key: Optional[str] = Query(None)):
     return {"participant_id": pid, "consent_text_version": version}
 
 
+@app.post("/api/consent/decline")
+async def api_post_consent_decline(payload: dict, key: Optional[str] = Query(None)):
+    """The participant read the consent form and chose not to take part.
+
+    Recorded rather than ignored: how many people decline after reading the form
+    is a number an IRB asks for, and without a record a refusal looks exactly
+    like a browser crash. Nothing here can grant consent, so this is safe on the
+    participant's side of the gate.
+
+    Answers 200 even when there is no record to mark. The page has already told
+    the participant they are finished, and re-prompting someone who has just
+    refused would be a worse failure than a thinner record.
+    """
+    check_participant(key)
+    from . import runs
+
+    version = _load_consent().get("version", "unknown")
+    pid = (payload.get("participant_id") or "").strip()
+    run_id = (payload.get("run_id") or "").strip()
+    recorded = False
+    if pid:
+        recorded = record_decline(pid, version, run_id=run_id or None) is not None
+    # Stop the run as well, so reopening the study link cannot enrol someone who
+    # declined into the encounters they just refused.
+    if run_id and runs.get(run_id):
+        runs.withdraw(run_id, reason="declined_consent")
+    return {"recorded": recorded, "consent_text_version": version}
+
+
 @app.post("/api/run")
 async def api_run_create(request: Request, key: Optional[str] = None):
-    """Start a run: four encounters, one per construct, counterbalanced."""
+    """Start a run: four encounters, one per construct, counterbalanced.
+
+    The other entrance to run creation, next to /start. It validates the
+    participant key the same way and for the same reason: an unvalidated or
+    absent key minted a cohort='study' run that no survey response could ever be
+    joined to, and — worse — every arrival carrying the same unreplaced
+    ${e://Field/...} placeholder collided into one shared run. Closing that on
+    /start alone would have left the failure reachable through this endpoint,
+    which is open in the normal deployment.
+    """
     check_participant(key)
     from . import runs
 
@@ -667,7 +800,27 @@ async def api_run_create(request: Request, key: Optional[str] = None):
         body = await request.json()
     except Exception:  # noqa: BLE001, empty body is fine
         pass
-    run = runs.create(body.get("participant_id"))
+    # The body is caller-supplied JSON, so participant_id need not be a string.
+    # Anything else is treated as absent rather than handed to the validator.
+    raw = body.get("participant_id")
+    raw_key = raw if isinstance(raw, str) else None
+    pkey, key_status = runs.normalize_participant_key(raw_key)
+    if pkey is None:
+        # Same trade as /start: the caller is not turned away, but the run is
+        # given a unique synthetic identifier and marked unattributed so it
+        # cannot pass as study data, with the raw value kept for a hand-join.
+        pkey = f"unattributed_{secrets.token_hex(6)}"
+        print(
+            f"  WARNING: POST /api/run got an unusable participant key "
+            f"({key_status}): {raw!r}. Continuing as {pkey} in cohort "
+            f"'unattributed'."
+        )
+    run = runs.create(
+        pkey,
+        cohort=("study" if key_status == "ok" else "unattributed"),
+        key_status=key_status,
+        raw_participant_key=(raw_key if key_status != "ok" else None),
+    )
     return runs.view(run)
 
 
@@ -730,6 +883,34 @@ async def api_run_get(run_id: str, key: Optional[str] = None):
     from . import runs
 
     run = runs.get(run_id)
+    if run is None:
+        raise HTTPException(404, "no such run")
+    return runs.view(run)
+
+
+@app.post("/api/run/{run_id}/withdraw")
+async def api_run_withdraw(run_id: str, payload: Optional[dict] = None,
+                           key: Optional[str] = None):
+    """The participant stopped the study.
+
+    The consent text promises they may stop at any time, and honouring that
+    needs more than ending the current conversation: the run has to stop handing
+    out encounters, or reopening the study link enrols them in the rest. It also
+    has to leave a trace, so an analyst can tell a withdrawal from a dropout.
+
+    Returns the run view, which carries the completion code. Someone who stops
+    part-way has still given us their time, and the partial code is what they
+    take back to the survey to be paid.
+    """
+    check_participant(key)
+    from . import runs
+
+    body = payload or {}
+    run = runs.withdraw(
+        run_id,
+        session_id=(body.get("session_id") or "").strip() or None,
+        reason=(body.get("reason") or "").strip() or None,
+    )
     if run is None:
         raise HTTPException(404, "no such run")
     return runs.view(run)
@@ -836,9 +1017,26 @@ def _encounter_status(m: dict) -> str:
     return "partial"
 
 
+# How many session directories one /api/encounters call may open. A wave is
+# ~100 participants x 4 encounters, so this is several waves' worth of sessions
+# plus test traffic: a filtered dashboard poll cannot turn into a full scan of
+# the volume, and no realistic study loses an encounter to the bound.
+ENCOUNTER_SCAN_LIMIT = 2000
+
+
 @app.get("/api/encounters")
-async def api_encounters(key: Optional[str] = None, limit: int = 60):
-    """Recorded encounters, newest first, for the steering dashboard."""
+async def api_encounters(key: Optional[str] = None, limit: int = 60,
+                         cohort: Optional[str] = None):
+    """Recorded encounters, newest first, for the steering dashboard.
+
+    `cohort` filters on the manifest's own cohort tag, so internal test traffic
+    can be excluded here rather than only through the /api/runs join. Three
+    values are minted: "study", "internal" (the /test entrance) and
+    "unattributed" (a participant whose survey key did not pipe, kept out of the
+    study set until someone hand-joins them). Sessions recorded before the tag
+    existed, and sessions started outside a run, have no cohort and are
+    therefore excluded by any filter.
+    """
     check_key(key)
     from .storage import SESSIONS_DIR
 
@@ -847,8 +1045,21 @@ async def api_encounters(key: Optional[str] = None, limit: int = 60):
         (d for d in SESSIONS_DIR.iterdir() if d.is_dir()),
         key=lambda d: d.stat().st_mtime,
         reverse=True,
-    )[:limit]
-    for d in dirs:
+    )
+    for scanned, d in enumerate(dirs):
+        # Collect `limit` entries rather than slicing the directory list first:
+        # with a cohort filter a leading slice would return fewer than `limit`
+        # matches (often none) even when older matching encounters exist. The
+        # cost is that a filtered call no longer stops early — it keeps opening
+        # manifests until it has `limit` matches or runs out of directories —
+        # and the researcher dashboard polls this endpoint, so the scan is
+        # bounded: newest-first, at most ENCOUNTER_SCAN_LIMIT directories
+        # examined. (The listdir and the stat-based sort above are O(all
+        # sessions) either way; what this bounds is the JSON parse.) A filter
+        # that reaches the bound stops at the oldest encounter it saw; older
+        # ones are still reachable through the /api/runs join.
+        if len(out) >= limit or scanned >= ENCOUNTER_SCAN_LIMIT:
+            break
         manifest = d / "manifest.json"
         if not manifest.exists():
             continue
@@ -856,11 +1067,17 @@ async def api_encounters(key: Optional[str] = None, limit: int = 60):
             m = json.loads(manifest.read_text(encoding="utf-8"))
         except ValueError:
             continue
+        if cohort and (m.get("cohort") or "") != cohort:
+            continue
         entry = {
             "id": d.name,
             "scenario": m.get("scenario"),
             "started_at": m.get("started_at"),
             "participant_id": m.get("participant_id"),
+            # Self-describing study context, straight off the manifest.
+            "run_id": m.get("run_id"),
+            "cohort": m.get("cohort"),
+            "encounter_index": m.get("encounter_index"),
             "status": _encounter_status(m),
         }
         try:
@@ -888,22 +1105,35 @@ async def api_encounter_record(session_id: str, key: Optional[str] = None):
         raise HTTPException(status_code=404, detail="No such encounter")
     record = build(d)
     # Trigger firings are not in the aligned record; the dashboard wants them.
+    #
+    # The event log is append-only, so a beat that was briefed and then not
+    # delivered leaves its trigger_fired line behind, cancelled by a later
+    # trigger_undelivered. Counting the raw firings would report a beat nobody
+    # spoke as reached, and that count is what a researcher uses to decide
+    # whether an encounter is scoreable. verify_record owns the netting rule
+    # (it is positional, because a retry re-fires at the same index); reuse it
+    # rather than keeping a second copy that can drift.
+    from .verify_record import _net_fired
+
     fired = []
     ev = d / "events.jsonl"
     if ev.exists():
+        events = []
         for line in ev.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             try:
-                e = json.loads(line)
+                events.append(json.loads(line))
             except ValueError:
                 continue
-            if e.get("type") == "trigger_fired":
-                fired.append({
-                    "t": e.get("t"), "trigger_id": e.get("trigger_id"),
-                    "interaction": e.get("interaction"), "esci": e.get("esci", []),
-                    "probing": e.get("probing"),
-                })
+        fired = [
+            {
+                "t": e.get("t"), "trigger_id": e.get("trigger_id"),
+                "interaction": e.get("interaction"), "esci": e.get("esci", []),
+                "probing": e.get("probing"),
+            }
+            for e in _net_fired(events)
+        ]
     record["triggers_fired"] = fired
 
     # Attach the scenario's own plan so the dashboard can show coverage, which
@@ -934,16 +1164,51 @@ async def api_encounter_record(session_id: str, key: Optional[str] = None):
         }
     except Exception:
         record["spec"] = None  # legacy scenario, not part of the study bank
+
+    # The plan attached above is today's file, but this encounter ran against
+    # the plan as it stood when it started, and the two diverge: S2 A gained two
+    # planted beats between waves, which silently moved the denominator of every
+    # S2 A encounter recorded before the edit from 4/4 to 4/6. Compare the
+    # fingerprint stamped at session start (storage.spec_fingerprint) with the
+    # current file and say so, so a coverage figure that dropped because the
+    # instrument moved is not read as an encounter that went worse. Null when
+    # they agree, and when the encounter predates the stamp — in that case
+    # nothing can be said either way, which is why the stamp exists.
+    record["spec_drift"] = None
+    try:
+        from .storage import spec_fingerprint
+
+        stamped = record.get("spec_fingerprint") or None
+        current = spec_fingerprint(record.get("scenario"))
+        if stamped and current and stamped.get("sha256") != current.get("sha256"):
+            was = list(stamped.get("trigger_ids") or [])
+            now = list(current.get("trigger_ids") or [])
+            record["spec_drift"] = {
+                "recorded_sha256": stamped.get("sha256"),
+                "current_sha256": current.get("sha256"),
+                "recorded_trigger_ids": was,
+                "current_trigger_ids": now,
+                "added_since": [t for t in now if t not in was],
+                "removed_since": [t for t in was if t not in now],
+            }
+    except Exception:  # noqa: BLE001, a drift check must not 500 the record view
+        pass
     return record
 
 
 @app.get("/api/sessions")
-async def api_sessions(key: Optional[str] = None):
+async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None):
+    """Live and recent sessions. `cohort` filters to exactly one of the three
+    tags a run can carry — "study", "internal", "unattributed" — so internal
+    test traffic and unpiped-key arrivals can both be kept out of a listing.
+    Sessions started outside a run have no tag and match no filter."""
     check_key(key)
     out = []
     active_ids = set(registry.list_ids())
     for sid in active_ids:
         s = registry.get(sid)
+        if cohort and (s.cohort or "") != cohort:
+            continue
         out.append({
             "id": s.id,
             "scenario": s.scenario.id,
@@ -954,39 +1219,113 @@ async def api_sessions(key: Optional[str] = None):
             "turn_count": sum(1 for h in s.shared_history if h["speaker"] == "user"),
             "status": "active",
             "started_at": s.store.started_at,
+            "run_id": s.run_id,
+            "cohort": s.cohort,
         })
     # Append recent closed sessions from SQLite so the researcher can browse +
     # download past data even after a session ends.
-    import sqlite3
-    from .storage import DB_PATH
-    try:
+    #
+    # sqlite3 is synchronous and this coroutine shares its event loop with every
+    # live encounter: while it blocks, participant PCM is not relayed and the
+    # silence detector that fires the planted probes is not fed. The researcher
+    # dashboard polls this route every few seconds throughout a wave, so the
+    # disk-bound half — the query, and the scenario-title map on its cold call —
+    # runs in a worker thread and the loop stays free for the audio.
+    from starlette.concurrency import run_in_threadpool
+
+    def _read_closed() -> tuple:
+        import sqlite3
+        from .storage import DB_PATH
+
         conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            """SELECT id, scenario, model, started_at, n_turns, status, duration_s
-               FROM sessions
-               WHERE status != 'active'
-               ORDER BY started_at DESC LIMIT 30"""
-        ).fetchall()
-        conn.close()
+        try:
+            conn.row_factory = sqlite3.Row
+            # run_id/cohort were added to the sessions table later. A database
+            # written before that migration must still list its closed sessions
+            # (the caller swallows any failure here, so naming a missing column
+            # would silently empty the researcher's list), so select them only
+            # when they are actually there.
+            have = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+            extra = [c for c in ("run_id", "cohort") if c in have]
+            rows = conn.execute(
+                "SELECT id, scenario, model, started_at, n_turns, status, duration_s"
+                + "".join(f", {c}" for c in extra)
+                + " FROM sessions WHERE status != 'active'"
+                  " ORDER BY started_at DESC LIMIT 30"
+            ).fetchall()
+        finally:
+            # Closed in the thread that opened it, and closed even on failure:
+            # a leaked connection here would hold the WAL open against the
+            # writers that every live session's storage layer uses.
+            conn.close()
+        # Plain dicts, so nothing sqlite-owned outlives the worker thread.
+        # Missing columns read back as None rather than raising, which is what
+        # the pre-migration database needs.
         # Map scenario id → title without re-reading every YAML each call.
         titles = {s["id"]: s["title"] for s in list_scenarios()}
-        for r in rows:
-            if r["id"] in active_ids:
-                continue
-            out.append({
-                "id": r["id"],
-                "scenario": r["scenario"],
-                "title": titles.get(r["scenario"], r["scenario"]),
-                "model": r["model"],
-                "turn_count": r["n_turns"] or 0,
-                "status": r["status"] or "closed",
-                "started_at": r["started_at"],
-                "duration_s": r["duration_s"],
-            })
-    except Exception:
-        pass
+        return [dict(r) for r in rows], titles
+
+    try:
+        rows, titles = await run_in_threadpool(_read_closed)
+    except Exception:  # noqa: BLE001, a missing index must not empty the listing
+        rows, titles = [], {}
+    for r in rows:
+        if r["id"] in active_ids:
+            continue
+        row_cohort = r.get("cohort")
+        if cohort and (row_cohort or "") != cohort:
+            continue
+        out.append({
+            "id": r["id"],
+            "scenario": r["scenario"],
+            "title": titles.get(r["scenario"], r["scenario"]),
+            "model": r["model"],
+            "turn_count": r["n_turns"] or 0,
+            "status": r["status"] or "closed",
+            "started_at": r["started_at"],
+            "duration_s": r["duration_s"],
+            "run_id": r.get("run_id"),
+            "cohort": row_cohort,
+        })
     return out
+
+
+def _run_context(participant_id: Optional[str], run_id: Optional[str] = None) -> Optional[dict]:
+    """Resolve the run this encounter belongs to, server-side.
+
+    A recorded encounter has to be self-describing. Without run id, cohort and
+    participant key on its own manifest, the only link from a session back to
+    its run was the entry the browser POSTs to /api/run/{id}/advance, so an
+    encounter whose client never reported back was orphaned, and no offline tool
+    (verify_record, scoring, retranscribe) could tell internal test traffic from
+    study data.
+
+    The socket carries the participant *record* id, so the run is looked up from
+    that; a ?run= hint is honoured only when it names this same participant's
+    run, so nobody can attach their encounter to a stranger's run. Any failure
+    resolves to None: an encounter must never fail to start over bookkeeping.
+    """
+    if not participant_id:
+        return None
+    try:
+        from . import runs
+
+        run = runs.get(run_id) if run_id else None
+        if run is None or run.get("participant_record_id") != participant_id:
+            run = runs.find_by_participant_record(participant_id)
+        if run is None:
+            return None
+        return {
+            "run_id": run.get("run_id"),
+            "cohort": run.get("cohort", "study"),
+            "participant_key": run.get("participant_id"),
+            # 1-based position in the four-encounter sequence as this encounter
+            # starts, so the record keeps its place in the run's order even if
+            # the run file is later lost.
+            "encounter_index": (run.get("index") or 0) + 1,
+        }
+    except Exception:  # noqa: BLE001, never block an encounter on this
+        return None
 
 
 # --- Participant: text path ---
@@ -999,6 +1338,7 @@ async def ws_participant_text(
     model: Optional[str] = Query(None),
     launch: Optional[str] = Query(None),
     key: Optional[str] = Query(None),
+    run: Optional[str] = Query(None),
 ):
     if PARTICIPANT_KEY_REQUIRED and SESSION_KEY and key != SESSION_KEY:
         await ws.close(code=4401)
@@ -1016,7 +1356,10 @@ async def ws_participant_text(
     effective_model = launch_cfg.get("model") if launch_cfg else None
 
     try:
-        session = registry.create(scenario, model=effective_model, participant_id=participant_id, capture_audio=False)
+        session = registry.create(
+            scenario, model=effective_model, participant_id=participant_id,
+            capture_audio=False, run_context=_run_context(participant_id, run),
+        )
     except FileNotFoundError as e:
         await ws.send_json({"type": "error", "message": str(e)})
         await ws.close()
@@ -1132,6 +1475,7 @@ async def ws_participant_voice(
     model: Optional[str] = Query(None),
     launch: Optional[str] = Query(None),
     key: Optional[str] = Query(None),
+    run: Optional[str] = Query(None),
 ):
     if PARTICIPANT_KEY_REQUIRED and SESSION_KEY and key != SESSION_KEY:
         await ws.close(code=4401)
@@ -1152,7 +1496,10 @@ async def ws_participant_voice(
     effective_model = launch_cfg.get("model") if launch_cfg else None
 
     try:
-        session = registry.create(scenario, model=effective_model, participant_id=participant_id, capture_audio=True)
+        session = registry.create(
+            scenario, model=effective_model, participant_id=participant_id,
+            capture_audio=True, run_context=_run_context(participant_id, run),
+        )
     except FileNotFoundError as e:
         await ws.send_json({"type": "error", "message": str(e)})
         await ws.close()

@@ -13,17 +13,41 @@ Four competencies from the ESCI **Relationship Management** cluster. Canonical
 scenario specs live in [`reddit-analysis/scenarios/`](reddit-analysis/scenarios/),
 grounded in an analysis of 39,301 r/antiwork posts.
 
-| | Competency | Variation A |
-|---|---|---|
-| S1 | Conflict Management | Taken credit |
-| S2 | Influence | Promised raise + competing offer |
-| S3 | Inspirational Leadership | After resignations over pay |
-| S4 | Teamwork | Planning an internal rollout |
+| | Competency | Runnable default | Parallel form |
+|---|---|---|---|
+| S1 | Conflict Management | **B** — Hostile after-hours message | (A — Taken credit: see the rule below) |
+| S2 | Influence | A — Promised raise + competing offer | B — Hybrid under an RTO mandate |
+| S3 | Inspirational Leadership | A — After resignations over pay | B — After a commission cut |
+| S4 | Teamwork | A — Planning an internal rollout | B — Preparing a client presentation |
 
-Each construct has **two variations**; variation B is being authored. An
-encounter is a sequence of **consecutive 1:1 conversations** — S1, for example,
-is the instigating colleague first, then the peer. Characters never share a
-turn.
+Both variations of each construct are authored and run: the compiled bank is
+`S1A S1B S2A S2B S3A S3B S4A S4B` in [`scenarios/v3/`](scenarios/v3/).
+
+**S1 variation A is not assignable in a normal session.** Every participant
+does all four constructs, and S4 always turns on misattributed credit — which
+is also what S1-A is about. Serving both in one session lets the Conflict
+Management and Teamwork measures bleed into each other, so the canonical spec
+([`reddit-analysis/scenarios/scenario-specifications.md`](reddit-analysis/scenarios/scenario-specifications.md),
+"Variation assignment") requires S1 **B** or **C** whenever S4 is present. C is
+not yet compiled into `scenarios/v3/`, so B is the S1 form the study runs.
+S1-A stays in the bank for the single-scenario researcher links, where no S4 is
+in play.
+
+> **Enforced in the sampler.** `runs.create` still draws each construct's form
+> independently, which on its own would pair S1-A with an S4 form in about half
+> of all runs. The draw is therefore corrected once the whole run is known:
+> `FORM_EXCLUSIONS` in [`server/runs.py`](server/runs.py) declares the rule as
+> data — `("conflict_management", "A", "teamwork")` — and any run that drew both
+> has its S1 form swapped to B before the run is written. The correction is
+> recorded on the run document as `form_exclusions` rather than applied
+> invisibly, because an analyst comparing forms across participants will
+> otherwise see the B forms over-sampled for no stated reason. So there is
+> nothing for an operator to filter or discard; if you want to check it anyway,
+> `form_exclusions` on a run says what was swapped and why.
+
+An encounter is a sequence of **consecutive 1:1 conversations** — S1, for
+example, is the instigating colleague first, then the peer. Characters never
+share a turn.
 
 **Phase 1 target:** 100 participants × 4 encounters (7–12 min, counterbalanced)
 = 400 encounters with audio, transcript, and video.

@@ -14,12 +14,20 @@ Design constraints (research-grade transparency):
     stimulus history is fully reconstructable.
   - "No change" is the expected outcome on most turns.
 
-Runs off the critical voice path: the review fires after the agents finish
-speaking, and any gear change takes effect on the next turn (system prompts
-are composed fresh per turn).
+The review fires after the agents finish speaking and any gear change takes
+effect on the next turn (system prompts are composed fresh per turn), so it
+never interrupts a reply in flight. It is NOT, however, off the critical path,
+which an earlier version of this note claimed: the voice runner awaits it both
+ways - inside the floor lock at the end of _run_group_turn for a room, and in
+the _finalize_turn chain ahead of _maybe_advance for a 1:1. (The text runner in
+app.py does now spawn it as a background task, so that path alone is genuinely
+off the hot path; the voice paths, which are what the study records, are not.)
+A slow review is silence the participant sits through before their next turn
+can be served, which is why the gateway call below is bounded.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Dict, List, Optional
 
 from anthropic import AsyncAnthropic
@@ -36,6 +44,60 @@ from .scenarios import Scenario
 STEERING_MODEL = setting("STEERING_MODEL", "nto.gemini-3.1-flash-lite")
 MAX_ADJUSTMENTS_PER_TURN = 2
 STEERABLE_KNOBS = TONE_KNOBS + INCIVILITY_KNOBS  # cognition is not auto-steered
+
+
+def _timeout_setting() -> float:
+    """Total seconds one steering review gets. Env-tunable."""
+    raw = setting("STEERING_TIMEOUT_S", "10")
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    return value if value > 0 else 10.0
+
+
+# Same reasoning as the director's budget, and the same finding: the SDK's
+# defaults (read timeout 600 s, two automatic retries) are sized for batch work,
+# so one wedged gateway call here could hold the floor lock - and therefore the
+# whole room - silent for the better part of half an hour, with nothing in the
+# record to say why. Ten seconds rather than the director's eight because this
+# call carries a longer prompt and a 500-token answer, and it is still small
+# next to the runner's 45 s per-speaker watchdog. Split the same way: two
+# attempts plus the SDK's ~0.5 s first back-off fit inside the total, so a
+# routine 429 or 502 from the shared gateway costs a retry instead of costing
+# the turn's steering. Losing a review is cheap - "no change" is the expected
+# outcome anyway - but losing it silently on every blip would thin out the
+# stimulus record in a way nobody could see afterwards.
+STEERING_TIMEOUT_S = _timeout_setting()
+STEERING_ATTEMPT_TIMEOUT_S = STEERING_TIMEOUT_S / 2
+STEERING_MAX_RETRIES = 1
+
+
+def _bounded(client: AsyncAnthropic) -> AsyncAnthropic:
+    """Copy `client` with the steering controller's request budget applied.
+
+    with_options() returns a copy sharing the SAME underlying httpx connection
+    pool, so this is cheap and leaves the original alone: session.py hands one
+    text client to the actor engines, the director and this controller, and the
+    others must keep their own budgets. The timeout is a plain float because
+    this SDK vendors its transport as `httpx2` and rejects an `httpx.Timeout`
+    built from the top-level `httpx` package.
+
+    Only a genuine AsyncAnthropic copy is accepted; anything else is a caller's
+    test double and is handed back untouched. MagicMock and friends
+    auto-generate `with_options` and return a child mock rather than raising, so
+    trusting the return value would swap out the object the caller injected.
+    review()'s asyncio.wait_for still bounds whatever comes back here.
+    """
+    try:
+        copy = client.with_options(
+            timeout=STEERING_ATTEMPT_TIMEOUT_S, max_retries=STEERING_MAX_RETRIES
+        )
+    except (AttributeError, TypeError):
+        # An SDK that will not copy at all: carry on with the client as given.
+        return client
+    return copy if isinstance(copy, AsyncAnthropic) else client
+
 
 LEVEL_ORDER = ("low", "mid", "high")
 
@@ -143,7 +205,7 @@ class SteeringController:
         model: Optional[str] = None,
     ):
         self.scenario = scenario
-        self.client = client or text_client()
+        self.client = _bounded(client or text_client())
         self.model = model or STEERING_MODEL
         self._valid_ids = {a.id for a in scenario.cast}
 
@@ -155,7 +217,11 @@ class SteeringController:
     ) -> List[dict]:
         """Return cleaned adjustments: [{agent_id, knob, level, value,
         from_level, reason}]. Empty list means leave all gears alone.
-        Raises on API failure; the caller decides how to log it.
+        Raises on API failure, including a timeout; the caller decides how to
+        log it. Session.auto_steer() catches it and writes auto_steer_error,
+        which is the right degradation here - unlike the director there is no
+        fallback to invent, "no change" is the honest answer, and the record
+        says a review was attempted and did not land.
         """
         if not shared_history:
             return []
@@ -198,14 +264,37 @@ Harden an agent (lower warmth, raise dismissiveness, passive_aggression, sarcasm
 
 Review the participant's most recent turn(s). Should any agent's gears shift in response? Return adjustments, or an empty list if the gears should stay where they are."""
 
-        response = await self.client.messages.create(
-            model=self.model,
-            max_tokens=500,
-            system=system,
-            tools=[_STEERING_TOOL],
-            tool_choice={"type": "tool", "name": "adjust_persona"},
-            messages=[{"role": "user", "content": user_msg}],
-        )
+        # Belt and braces on top of the client's own budget: wait_for bounds the
+        # await itself, so a stall anywhere in the SDK (not just the socket)
+        # still releases the floor lock this runs under. The ceiling covers both
+        # attempts and the back-off between them, plus a second of slack so the
+        # transport timeout normally wins and the caller gets the specific error
+        # rather than a bare TimeoutError. It is also the only thing bounding a
+        # Retry-After header, which the SDK will honor up to 60 s.
+        ceiling = STEERING_TIMEOUT_S + 1.0
+        try:
+            response = await asyncio.wait_for(
+                self.client.messages.create(
+                    model=self.model,
+                    max_tokens=500,
+                    system=system,
+                    tools=[_STEERING_TOOL],
+                    tool_choice={"type": "tool", "name": "adjust_persona"},
+                    messages=[{"role": "user", "content": user_msg}],
+                ),
+                timeout=ceiling,
+            )
+        except asyncio.TimeoutError:
+            # Same type, but with something to say. The caller records this as
+            # `auto_steer_error message=str(exc)`, and wait_for's own
+            # TimeoutError stringifies to "", which would land in the encounter
+            # record as an error with no content - unreadable a month later,
+            # when the question is whether a thin steering log means the
+            # participant earned no gear shifts or the gateway was down.
+            raise TimeoutError(
+                f"steering review exceeded its {ceiling:.1f}s budget "
+                f"(model={self.model})"
+            ) from None
 
         for block in response.content:
             if getattr(block, "type", None) == "tool_use" and block.name == "adjust_persona":

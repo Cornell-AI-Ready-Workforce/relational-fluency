@@ -1,5 +1,15 @@
 # Influence, Variant A. Parallel form of S2B: same ladder, same ESCI map,
 # same difficulty. Research Note v3, slide 10.
+#
+# Parity with S2B is load-bearing, not decoration: attempt 1 runs one form and
+# attempt 2 the other, and the difference between them is reported as skill
+# change. Coverage is fired/planted, so the two forms must plant the same number
+# of triggers, in the same order of pressure, with the same ESCI items at each
+# position, or an identical performance scores differently on the two attempts.
+# S2A used to stop at rung 3, with rung 4 described in Morgan's brief but never
+# planted, so the rung-4 beats were never directed and never counted: 4 planted
+# against S2B's 6. t5/t6 below plant them, mirroring S2B's package and fairness
+# beats in S2A's own situation, the promised raise and the competing offer.
 id: S2A
 construct: influence
 variant: A
@@ -63,16 +73,23 @@ agents:
         When the participant invokes that precedent AT rung 3, admit the
         contradiction ("fair, Alex did get one"), but that is NOT agreement:
         it moves you to rung 4, the package.
-      - Rung 4: precedent alone gets nothing past the director. Ask, one at a
-        time: what scope grew and by how much, what number they are asking
-        for, by what date, and what they would put in writing. You move only
-        when handed something you can defend upward, a scope-increase case,
-        a dated trial, a documented ask. Movement is incremental, never a
-        grant.
+      - Rung 4, the package. Precedent alone gets nothing past the director.
+        Ask, one at a time and only when the previous answer is concrete:
+          a. what scope grew, and by how much
+          b. what number they are asking for, and by what date
+          c. what they would put in writing for the director
+          d. what you tell everyone else who is stretched and will ask for
+             the same
+      - You move only when handed something you can defend upward, a
+        scope-increase case, a dated trial, a documented ask. Movement is
+        incremental, never a grant.
       - A demand or ultimatum makes you defensive and slows you down. Leverage
         framed as a threat costs them ground; framed as information does not.
       - The natural close is a concrete, dated commitment. Do not offer it
         unsolicited.
+      - The whole conversation should take seven to twelve minutes. If they
+        are moving fast, slow the ladder down: ask them to make each point
+        concrete before you respond to it.
       - One to three sentences per turn. Never lecture.
 
 interactions:
@@ -89,11 +106,15 @@ interactions:
       - id: t1_the_opening
         cue: "Morgan pre-empts, then hands over the floor"
         on_silence: "You asked for the time, so, what's on your mind?"
-        esci: [through_discussion, anticipates]
+        # self_interest is scored here because the opening is where the
+        # participant either frames the ask around Morgan's constraints or
+        # ignores them; S2B t1 scores the same three items, and the pair must
+        # map identically position by position.
+        esci: [through_discussion, anticipates, self_interest]
         scores:
           high:
             answer: "I'd like to walk through what's changed since the raise was promised, scope, the June launch, and find something that works within your constraints."
-            why: "convinces through discussion; anticipates response"
+            why: "discussion; anticipates the objections; works within Morgan's constraints"
           low:
             answer: "I have an offer at 20% more. Match it or I'm gone."
             why: "ultimatum; leverage as threat; low on discussion"
@@ -104,15 +125,42 @@ interactions:
     label: "The deflection ladder"
     kind: counterpart
     observe: "New approach per rung · appeal to Morgan's interests · invoke the precedent · offer as leverage vs threat · dated close."
+    # Every rung here ends with the floor back on the participant, and nothing
+    # in this interaction speaks first, so a participant who freezes at ANY rung
+    # stalls the encounter: the silence watchdog only probes when the next
+    # unfired trigger carries an on_silence, and otherwise loops forever. Each
+    # rung therefore gets one. The probe replaces the cue for that beat rather
+    # than adding to it, so each on_silence carries the rung's own deflection
+    # and then hands the floor back, and none of them mentions Alex: Morgan
+    # never volunteers that precedent (see the brief), so a probe must not
+    # volunteer it either, or the participant's leverage is spent before they
+    # ever get to play it.
     triggers:
       - id: t2_rung1_no_budget
         cue: "'There's no budget this cycle.'"
+        on_silence: "There's no budget this cycle, that's the reality I'm working with. So what were you hoping I could do?"
         esci: [multiple_approaches, anticipates]
       - id: t3_rung2_everyone_stretched
         cue: "'Everyone's stretched right now.'"
+        on_silence: "Everyone's stretched right now, you know that. Is there more you wanted to put on the table?"
         esci: [multiple_approaches, self_interest]
+      # The cue is the rung and nothing else. It used to trail ", contradicted
+      # by Alex's off-cycle adjustment", and _trigger_instruction pastes the
+      # whole cue into "Bring about this beat now, in your own words: ...", so
+      # that rationale reached Morgan as part of the beat he was told to play,
+      # against his own brief's "You do not volunteer this". Same hazard t5
+      # below was rewritten for, one rung earlier and on the ordinary path
+      # rather than the silence path, and it costs more here: rung 3 is the
+      # beat that scores whether the participant found the precedent and played
+      # it themselves, so a Morgan who names Alex has answered the very
+      # question this trigger asks. The weak-point logic is already written,
+      # and already conditional, in Morgan's brief above: he concedes the
+      # contradiction only when the participant invokes it AT rung 3. Bare, the
+      # cue still lands the whole rung-3 deflection, and it matches the shape
+      # this beat's own on_silence probe was given.
       - id: t4_rung3_no_precedent
-        cue: "'I can't set a precedent.', contradicted by Alex's off-cycle adjustment"
+        cue: "'I can't set a precedent.'"
+        on_silence: "I can't set a precedent here. Unless there's something I'm not accounting for?"
         esci: [behind_scenes, key_people, multiple_approaches]
         scores:
           high:
@@ -121,3 +169,45 @@ interactions:
           low:
             answer: "(repeats the same pay argument louder) So that's a no?"
             why: "single approach; no adaptation; no commitment secured"
+      # Rung 4 is a stage direction, not a scripted line, for the same reason
+      # the probes above avoid Alex. Triggers fire strictly in order, one per
+      # participant turn, with nothing testing what the participant actually
+      # said, so a cue that quotes "Fair, Alex did get one" makes Morgan
+      # volunteer the precedent on a fixed beat even when the participant
+      # never found it, against his own brief. That precedent is the
+      # participant's hidden leverage, and whether they deploy it at rung 3 is
+      # exactly what t4 scores; spending it here would leave t4 measuring
+      # nothing. So the concession is conditional on the participant having
+      # already played Alex, and the package question is asked either way:
+      # rung 4 lands on the same beat, scoring the same three items, whether
+      # or not the precedent was found. Same shape as S2B t5.
+      - id: t5_rung4_the_package
+        cue: "Morgan moves to rung 4, the package. If the participant has already put Alex's adjustment on the table, concede it in one clause; if they have not, do not raise Alex at all. Either way: precedent alone won't get past the director, so what scope has actually grown, and what number are you asking for?"
+        on_silence: "Before I take anything upward I'd need something I can defend. What scope has grown, and what number are you asking for?"
+        esci: [anticipates, multiple_approaches, through_discussion]
+        scores:
+          high:
+            answer: "I've owned the June launch and the vendor reporting since April. I'm asking for the band in the written offer, effective at the next cycle close, and I'll put the scope case in writing this week."
+            why: "concrete, dated, documented; anticipates the director's question"
+          low:
+            answer: "I don't know, whatever you think you can get me."
+            why: "hands the case back; nothing Morgan can defend upward"
+      # The fairness beat asks Morgan's rung-4 question (d) verbatim from the
+      # brief, and stops there. The competing offer is the participant's other
+      # asset, and Morgan's brief never lists it among what he knows; an earlier
+      # draft of this cue ended "and hasn't got an offer in hand", which fires on
+      # a fixed beat and so has Morgan assume the offer was disclosed even in the
+      # runs where the participant chose to hold it back. Same reason t5 does not
+      # volunteer Alex, and it is what keeps this beat parallel to S2B t6, which
+      # names no asset either.
+      - id: t6_rung4_fairness
+        cue: "Morgan: 'And what do I tell everyone else who's stretched and will ask for the same?'"
+        on_silence: "I still have to answer everyone else who's stretched. What would you have me tell them?"
+        esci: [self_interest, anticipates, key_people]
+        scores:
+          high:
+            answer: "Tell them it's tied to documented scope change, the same case that went to the director for Alex, so it's a standard you can point at rather than a favour."
+            why: "solves Morgan's problem, not just their own; invokes key people"
+          low:
+            answer: "That's between you and them."
+            why: "ignores Morgan's self-interest; leaves the objection standing"

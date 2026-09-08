@@ -33,20 +33,97 @@ jobs:
       # errors, bad imports, and anything that reaches for a key at import time.
       - name: Import check
         run: python -c "import server.app; print('server.app imports OK')"
+      # "Does it parse to a mapping" is much weaker than what the loaders need,
+      # and the gap is silent by design: scenarios_v3._spec_files() drops any
+      # spec missing a required key, list_scenarios() swallows a compile
+      # failure, and _spec_files() is a dict keyed on `id`, so two specs sharing
+      # an id collapse into one with no error anywhere. A broken study spec
+      # therefore does not crash — it disappears from the participant-facing
+      # list and from run assignment while CI stays green. So run the real
+      # loaders and assert the exact set of ids that must come out of them.
       - name: Validate scenario definitions
         run: |
           python - <<'PY'
-          import glob, sys, yaml
+          import sys, yaml
+          from pathlib import Path
+          from server import scenarios, scenarios_v3
+
+          # The eight study forms. This literal is the contract: if a spec stops
+          # loading, or a new one is added, CI fails until someone updates this
+          # line deliberately. A study scenario must never vanish quietly.
+          EXPECTED_V3 = {"S1A", "S1B", "S2A", "S2B", "S3A", "S3B", "S4A", "S4B"}
+
           bad = []
-          files = sorted(glob.glob("scenarios/*.yaml") + glob.glob("scenarios/v3/*.yaml"))
+
+          # Pass 1: read every spec the way the loaders do — with an explicit
+          # encoding (a UTF-8 spec decodes wrongly under a non-UTF-8 default
+          # locale) and a closed handle — and catch every failure, not only
+          # YAMLError: an OSError or UnicodeDecodeError should be reported, not
+          # crash the step with a traceback.
+          seen = {}
+          files = sorted(Path("scenarios").glob("*.yaml")) + sorted(Path("scenarios/v3").glob("*.yaml"))
           for path in files:
               try:
-                  if not isinstance(yaml.safe_load(open(path)), dict):
-                      bad.append(f"{path}: not a mapping")
-              except yaml.YAMLError as exc:
-                  bad.append(f"{path}: {exc}")
-          print(f"checked {len(files)} scenarios")
+                  with path.open(encoding="utf-8") as fh:
+                      data = yaml.safe_load(fh)
+              except Exception as exc:
+                  bad.append(f"{path}: unreadable: {exc}")
+                  continue
+              if not isinstance(data, dict):
+                  bad.append(f"{path}: not a mapping")
+                  continue
+              # Neither loader raises on a file missing one of these: it skips
+              # the file (list_scenarios() at its `continue`, _spec_files() via
+              # _REQUIRED_KEYS), so the scenario just stops being offered. That
+              # silent drop is what this step exists to catch, so assert them.
+              for key in ("id", "title"):
+                  if not data.get(key):
+                      bad.append(f"{path}: missing required key {key!r}")
+              sid = data.get("id")
+              if sid in seen:
+                  bad.append(f"{path}: duplicate id {sid!r}, already used by {seen[sid]}")
+              elif sid:
+                  seen[sid] = path.name
+
+          # Pass 2: the v3 bank must load AND compile — compile_scenario is what
+          # a run assignment and the voice runner actually call.
+          got = set(scenarios_v3.available())
+          if got != EXPECTED_V3:
+              bad.append(f"v3 bank loaded {sorted(got)}, expected {sorted(EXPECTED_V3)}")
+          for sid in sorted(got):
+              try:
+                  scenarios_v3.compile_scenario(sid)
+              except Exception as exc:
+                  bad.append(f"{sid}: loads but does not compile: {exc}")
+
+          # Pass 3: everything the listing offers must still load, since that
+          # listing is what the participant page and /api/scenarios serve.
+          listed = scenarios.list_scenarios()
+          for row in listed:
+              if row["id"] in EXPECTED_V3:
+                  continue
+              try:
+                  scenarios.load_scenario(row["id"])
+              except Exception as exc:
+                  bad.append(f"{row['id']}: listed but does not load: {exc}")
+          absent = EXPECTED_V3 - {row["id"] for row in listed}
+          if absent:
+              bad.append(f"study scenarios missing from list_scenarios(): {sorted(absent)}")
+
+          print(f"checked {len(files)} scenario files; {len(listed)} offered by list_scenarios()")
           if bad:
               print("\n".join(bad), file=sys.stderr)
               sys.exit(1)
           PY
+      # docs/scenario-map.md is the table researchers read to see which triggers
+      # fire and which ESCI items each one scores. It is generated, and until
+      # now nothing noticed when a spec changed and it was not regenerated: it
+      # spent this branch describing an S2 with four triggers while the specs
+      # planted six. A wrong map is worse than no map, because it is read as the
+      # instrument. The generator is a pure function of scenarios/v3/*.yaml, so
+      # re-running it and diffing is the whole check.
+      - name: Scenario map is up to date
+        run: |
+          python tools/gen_scenario_map.py
+          git diff --exit-code -- docs/scenario-map.md \
+            || { echo "docs/scenario-map.md is stale — run python tools/gen_scenario_map.py and commit the result." >&2; exit 1; }

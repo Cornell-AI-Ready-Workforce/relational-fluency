@@ -54,7 +54,10 @@
   .voice-bar { display: flex; align-items: center; gap: 14px; }
   .mic-status { width: 12px; height: 12px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
   .mic-status.live { background: var(--accent); box-shadow: 0 0 0 0 rgba(179,24,27,0.55); animation: pulse 1.6s infinite; }
-  .mic-status.muted { background: var(--muted); }
+  /* The dot goes grey and stops pulsing while a character has the floor. It no
+     longer means the microphone is off — capture never stops (see
+     setMicVisualState) — only that it is someone else's turn. */
+  .mic-status.agent { background: var(--muted); }
   @keyframes pulse {
     0%   { box-shadow: 0 0 0 0 rgba(179,24,27,0.5);}
     70%  { box-shadow: 0 0 0 10px rgba(179,24,27,0);}
@@ -133,7 +136,14 @@
   let participantId = params.get('participant_id') || null;
 
   async function runConsentGate() {
-    if (participantId) return true; // already have one
+    // A participant_id in the URL is NOT proof of consent. /start mints the
+    // record before the participant has agreed to anything, so that one person
+    // keeps one identity across their four encounters, and marks it consented
+    // only once they tick the box. Treating the id as sufficient here opened
+    // the microphone for someone who had never seen the form. `consent=1` says
+    // the record is still unconsented; the voice socket refuses such a record
+    // too, but the gate has to run before capture starts, not after.
+    if (participantId && params.get('consent') !== '1') return true;
     if (mode !== 'voice') return true; // text mode: consent not required
     let cfg;
     try {
@@ -300,34 +310,42 @@
     rafId = requestAnimationFrame(tick);
   }
 
+  // Purely an indicator. This page used to hard-mute the capture worklet while
+  // a character spoke, which meant the participant's own voice was absent from
+  // user_audio.wav for the whole of every agent turn: first as dropped samples,
+  // which compacted the recording and broke its alignment with the agent audio,
+  // and then (once the worklet started substituting zeros instead) as silence
+  // in the right place but still not what was said. Either way a participant
+  // who interrupted, conceded or talked over a character — the very behaviour
+  // the encounter is scored on — was not recorded, and the server's barge-in
+  // detection never heard them. So capture now runs continuously here, exactly
+  // as it does on static/v2.html, and 'agent' says whose turn it is rather than
+  // that the microphone is off. The agent's own voice is kept out of the
+  // participant channel by echoCancellation in startVoiceCapture.
   function setMicVisualState(state) {
     const el = $('micStatus'); const lbl = $('micLabel');
     el.className = 'mic-status ' + state;
     if (state === 'live') lbl.textContent = 'Listening, speak any time';
-    else if (state === 'muted') lbl.textContent = 'Muted while the other person is speaking';
+    else if (state === 'agent') lbl.textContent = 'The other person is speaking, you can still cut in';
     else lbl.textContent = 'Ready';
   }
 
-  function setMicMuted(muted) {
-    if (workletNode) workletNode.port.postMessage({ muted });
-    setMicVisualState(muted ? 'muted' : 'live');
-  }
-
-  // Unmute only when the turn is truly over: assistant_done received AND the
-  // playback queue has drained. Guards against mid-turn underruns unmuting early.
-  function maybeUnmuteAfterTurn() {
+  // Hand the floor back only when the turn is truly over: assistant_done
+  // received AND the playback queue has drained. Guards against a mid-turn
+  // underrun telling the participant it is their turn mid-sentence.
+  function maybeEndAgentTurn() {
     if (!assistantSpeaking) return;
     if (!turnDone) return;
     if (audioCtx && audioCtx.currentTime < playbackTime - 0.01) return;
     assistantSpeaking = false;
-    setMicMuted(false);
+    setMicVisualState('live');
   }
 
   function playPcmChunk(bytes) {
     if (!audioCtx) return;
-    // A chunk for the current turn is still arriving — keep the mic muted even
-    // if a prior underrun tried to unmute it.
-    if (assistantSpeaking) setMicMuted(true);
+    // A chunk for the current turn is still arriving — keep saying the
+    // character has the floor even if a prior underrun tried to hand it back.
+    if (assistantSpeaking) setMicVisualState('agent');
     const int16 = new Int16Array(bytes);
     const float = new Float32Array(int16.length);
     for (let i = 0; i < int16.length; i++) float[i] = int16[i] / 32768;
@@ -342,8 +360,8 @@
     src.start(playbackTime);
     playbackTime += buf.duration;
     src.onended = () => {
-      // Last chunk finished. Re-open the mic only if the turn is actually over.
-      maybeUnmuteAfterTurn();
+      // Last chunk finished. Hand the floor back only if the turn is over.
+      maybeEndAgentTurn();
     };
   }
 
@@ -362,7 +380,7 @@
       const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/participant/voice?scenario=${encodeURIComponent(scenario)}${pidParam}${keyParam}`;
       ws = new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';
-      ws.addEventListener('open', () => setMicMuted(false));
+      ws.addEventListener('open', () => setMicVisualState('live'));
       ws.addEventListener('message', (ev) => {
         if (typeof ev.data === 'string') {
           const m = JSON.parse(ev.data);
@@ -376,7 +394,7 @@
               userPartialEl.textContent = m.text;
             }
           } else if (m.type === 'assistant_started') {
-            assistantSpeaking = true; turnDone = false; setMicMuted(true);
+            assistantSpeaking = true; turnDone = false; setMicVisualState('agent');
             assistantTextEl = appendMsg('assistant', '');
             currentLatency = document.createElement('div'); currentLatency.className = 'latency';
             assistantTextEl.appendChild(currentLatency);
@@ -397,9 +415,19 @@
               currentLatency.textContent = parts.join(' · ');
             }
             assistantTextEl = null; currentLatency = null;
-            // Turn is over: allow the mic to reopen once playback drains.
+            // Turn is over: hand the floor back once playback drains.
             turnDone = true;
-            maybeUnmuteAfterTurn();
+            maybeEndAgentTurn();
+          } else if (m.type === 'assistant_interrupted') {
+            // The participant talked over the character and the server stopped
+            // it, so no assistant_done is coming for this turn. Without this the
+            // indicator would sit on "the other person is speaking" until the
+            // next turn began. Audio already buffered here still plays out; this
+            // page schedules chunks without keeping handles on them, so it
+            // cannot cut them short the way v2.html does.
+            assistantSpeaking = false;
+            turnDone = true;
+            setMicVisualState('live');
           } else if (m.type === 'segment_start') {
             const who = m.character || m.character_name || m.name || m.title;
             appendMsg('meta', who ? `Now speaking with ${who}` : 'A new part of the conversation is starting.');

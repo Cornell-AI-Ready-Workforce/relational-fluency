@@ -12,9 +12,11 @@ edit the YAML the researchers reason about, and the runnable form follows.
 
 from __future__ import annotations
 
+import copy
 import logging
+import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -39,15 +41,57 @@ def _join(names: list) -> str:
 _VOICES = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
 
 
+# --- Spec cache -------------------------------------------------------------
+# Every v3 entry point below used to re-parse the whole spec directory: one
+# list_scenarios() call cost ~0.5 s and ~90 yaml.safe_load calls, and it runs
+# inline on the single uvicorn event loop that also relays participant PCM to
+# Gemini Live and drives SilenceDetector's end-of-turn accounting. The
+# researcher dashboard polls the endpoint that calls it, so an open dashboard
+# stalled a live encounter's audio for half a second at a time. So parse each
+# file once and keep it.
+#
+# The cache key is (st_mtime_ns, st_size), not just mtime: a researcher editing
+# a spec in place while the server is running must see the edit on the very next
+# call, and two writes inside the filesystem's timestamp granularity would
+# otherwise be missed. Nothing survives a restart, so a stale entry is at worst
+# one process' lifetime and only for a file whose mtime AND size both matched.
+#
+# No lock: dict get/set are atomic under the GIL, so the worst a concurrent
+# threadpool caller can do is parse the same file twice, which is idempotent.
+_spec_cache: Dict[str, Tuple[Tuple[int, int], Optional[dict]]] = {}
+
+
+def _parse_spec(p: Path) -> Optional[dict]:
+    """The parsed spec for one file, re-reading it only when it changed on disk.
+
+    Returns None for a file that is unreadable or is not a YAML mapping, and
+    caches that verdict too so a broken file is not re-parsed (and re-logged) on
+    every poll.
+    """
+    try:
+        st = p.stat()
+    except OSError:
+        return None
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _spec_cache.get(str(p))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    except Exception:
+        log.warning("skipping unparseable v3 spec %s", p.name)
+        data = None
+    if not isinstance(data, dict):
+        data = None
+    _spec_cache[str(p)] = (key, data)
+    return data
+
+
 def _spec_files() -> Dict[str, Path]:
     out: Dict[str, Path] = {}
     for p in sorted(V3_DIR.glob("*.yaml")):
-        try:
-            data = yaml.safe_load(p.read_text(encoding="utf-8"))
-        except Exception:
-            log.warning("skipping unparseable v3 spec %s", p.name)
-            continue
-        if not isinstance(data, dict):
+        data = _parse_spec(p)
+        if data is None:
             continue
         missing = [k for k in _REQUIRED_KEYS if not data.get(k)]
         if missing:
@@ -66,7 +110,15 @@ def load_spec(scenario_id: str) -> Dict[str, Any]:
     files = _spec_files()
     if scenario_id not in files:
         raise FileNotFoundError(f"No v3 scenario {scenario_id!r} in {V3_DIR}")
-    return yaml.safe_load(files[scenario_id].read_text(encoding="utf-8"))
+    data = _parse_spec(files[scenario_id])
+    if data is None:  # raced with an edit that broke the file
+        raise FileNotFoundError(f"No v3 scenario {scenario_id!r} in {V3_DIR}")
+    # Callers have always owned the dict they get back and several of them keep
+    # pieces of it: app.py splices esci_items/interactions straight into a JSON
+    # response record, triggers_for returns a slice of it, runs.py stores fields
+    # from it. Hand out a private deep copy (~0.1 ms, against ~75 ms to re-parse)
+    # so nothing a caller does can reach into the cache the next call reads.
+    return copy.deepcopy(data)
 
 
 def _copresent_names(spec: dict, key: str) -> List[str]:
@@ -93,16 +145,253 @@ def _copresent_names(spec: dict, key: str) -> List[str]:
     return [agents[k]["name"] for k in agents if k in present]
 
 
+# --- The actors' view of the scene ------------------------------------------
+# A spec's `setup` is written TO the participant, in the second person ("You are
+# a senior analyst... You now hold a written competing offer"). It is the right
+# text for the participant's brief and the wrong text for an actor: pasted into
+# a character's system prompt it briefs Sam as the analyst whose work Sam stole,
+# and briefs S2's Morgan as the employee asking Morgan for the raise. Worse, in
+# S2 it hands the counterpart the participant's private leverage before the
+# participant has played it, which is the thing the influence construct measures.
+#
+# So actors get a third-person retelling with the participant's private holdings
+# removed. A spec may carry an `actor_setup` written for the actors directly,
+# which is preferred and used verbatim; otherwise it is derived from `setup` by
+# dropping the sentences the spec names in `private_setup` or, for a spec that
+# has not been annotated, the ones a word-overlap guess reads as restating an
+# `assets` entry.
+#
+# The redaction is for the actors. The debrief judge and the steering controller
+# reason ABOUT the encounter rather than perform in it, and the leverage the
+# encounter is built around is exactly what they have to see, so they read
+# `analysis_scene` instead: the same retelling with nothing removed.
+
+# "you" after one of these is an object ("Leadership above you" -> "above
+# them"); everywhere else it is the subject ("you must" -> "they must").
+_OBJECT_PREPS = frozenset("""
+    about above across after against among around as at before behind below
+    beneath beside between beyond by for from in inside into like near of off
+    on onto outside over past since than through throughout to toward towards
+    under until unto up upon with within without
+""".split())
+
+_YOU_RE = re.compile(r"\b(you|your|yours|yourself|yourselves)\b", re.IGNORECASE)
+_PREV_WORD_RE = re.compile(r"([A-Za-z][A-Za-z'\-]*)[^A-Za-z]*$")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_WORD_RE = re.compile(r"[a-z0-9][a-z0-9'\-]*")
+
+# Punctuation that genuinely ends the clause a "you" sits in, leaving it no verb
+# to be the subject of. Neither the apostrophe of a contraction nor the comma of
+# an aside belongs here: both keep the verb, and both used to be read as clause
+# ends because the test was "the next character is not a letter".
+_CLAUSE_END_CHARS = ".!?;:—–)]”\""
+
+# Shapes that mean the rewrite produced broken text rather than an arguable
+# reading: "them'" can only be a contraction whose pronoun was resolved
+# backwards, and a surviving second person means a pronoun was missed outright.
+_MANGLED_RE = re.compile(r"\bthem['’]|\b(?:you|your|yours|yourself|yourselves)\b",
+                         re.IGNORECASE)
+
+# Function words carry no evidence that two sentences are about the same fact.
+_STOPWORDS = frozenset("""
+    about after also been before could does from have here into just more most
+    much only over said same some such than that their them then there these
+    they this those very were what when which while will with would your yours
+""".split())
+
+
+def _third_person(text: str) -> str:
+    """Rewrite participant-facing second person as narration about them.
+
+    A plain pronoun swap is safe here because English "you" and "they" take the
+    same verb agreement ("you are"/"they are", "you hold"/"they hold"), so no
+    verb has to be rewritten. The one exception is the opening "You are", which
+    becomes "The participant is" and does need the singular verb, so it is
+    handled separately, before the pronoun pass.
+    """
+    out = re.sub(r"^\s*You are\b", "The participant is", text, count=1)
+
+    def swap(m: "re.Match") -> str:
+        word = m.group(0)
+        low = word.lower()
+        if low == "your":
+            repl = "their"
+        elif low == "yours":
+            repl = "theirs"
+        elif low in ("yourself", "yourselves"):
+            repl = "themselves"
+        else:
+            # Object "you" -> "them", subject "you" -> "they". Two markers cover
+            # every phrasing the eight v3 setups use: "you" after a preposition
+            # ("Leadership above you"), and "you" at the end of a clause ("asked
+            # him to credit you;"), which cannot be a subject because no verb
+            # follows it. Anything else is read as the subject. A setup that
+            # defeats this (a bare "Sam told you last week") should carry an
+            # `actor_setup` written for the actors rather than be guessed at.
+            #
+            # "End of clause" is tested against the punctuation that ends one,
+            # not against "the next character is not a letter". That looser test
+            # counted the apostrophe of a contraction and the comma of an aside,
+            # so "You're"/"You've" came out as "Them're"/"Them've" and "You, as
+            # the lead, must decide" as "Them, as the lead, ...". Once the
+            # pronoun is right the contraction needs no further work: "they"
+            # takes the same contracted forms as "you" ("they're", "they've",
+            # "they'd", "they'll").
+            prev = _PREV_WORD_RE.search(m.string[:m.start()])
+            rest = m.string[m.end():].lstrip()
+            clause_end = not rest or rest[0] in _CLAUSE_END_CHARS
+            object_case = clause_end or (prev and prev.group(1).lower() in _OBJECT_PREPS)
+            repl = "them" if object_case else "they"
+        return repl.capitalize() if word[0].isupper() else repl
+
+    out = _YOU_RE.sub(swap, out)
+    if "The participant" not in out and "the participant" not in out:
+        # A future setup that does not open with "You are" still has to name who
+        # "they" is, or the actor has no anchor for the pronoun.
+        out = "The participant's situation: " + out.lstrip()
+    return out
+
+
+def _content_words(text: str) -> set:
+    return {w for w in _WORD_RE.findall(text.lower())
+            if len(w) > 3 and w not in _STOPWORDS}
+
+
+def _matching_asset(sentence: str, assets: List[str]) -> Optional[str]:
+    """The participant asset this setup sentence restates, or None.
+
+    `assets` are by definition the facts the participant holds and chooses when
+    to play: S2A's written competing offer, S2B's Rivera precedent. Both S2
+    counterpart briefs say in as many words "You do not volunteer this", so the
+    scene must not put it in front of them.
+
+    This is a guess, and it is deliberately reluctant, because deleting a
+    sentence the actors needed corrupts the encounter just as surely as leaking
+    one they did not. A sentence must share at least three content words with
+    the asset AND at least half of the asset's own, which is the difference
+    between restating the asset and merely touching its topic. Three rather than
+    the two this started at: two sat one word away from misfiring on S2B, whose
+    "they want to keep their two remote days, on which their output is the
+    team's strongest" already shares {remote, days} with the asset "Your
+    performance record across the remote days" and is the premise of the whole
+    encounter. Even three is a threshold, not an argument; `private_setup` in
+    the spec is the way to say this without guessing.
+    """
+    words = _content_words(sentence)
+    for asset in assets:
+        asset_words = _content_words(asset)
+        shared = words & asset_words
+        if len(shared) >= 3 and len(shared) * 2 >= len(asset_words):
+            return asset
+    return None
+
+
+def _redacted_sentences(spec: dict) -> List[str]:
+    """The setup, sentence by sentence, minus the participant's private holdings.
+
+    Every removal is logged, because the removed text is shared context that
+    every actor in the encounter would otherwise have had. An authored
+    `private_setup` is the researcher's own decision and logs at INFO; a removal
+    the word-overlap guess inferred logs at WARNING, since that is the one a
+    human should check. Until this, a wrong guess left no trace at all unless it
+    happened to delete the entire setup.
+    """
+    sid = spec.get("id")
+    assets = [a for a in (spec.get("assets") or []) if isinstance(a, str)]
+    # `private_setup` entries are matched as plain substrings of a setup
+    # sentence, so an author may quote the whole sentence or just the clause
+    # that gives the asset away. When the spec carries one, the guess below is
+    # not consulted at all: an explicit list is the only way to be certain, and
+    # a spec that has bothered to be explicit should not also be second-guessed.
+    private = [p.strip() for p in (spec.get("private_setup") or [])
+               if isinstance(p, str) and p.strip()]
+
+    kept: List[str] = []
+    for raw in _SENTENCE_SPLIT_RE.split(spec.get("setup", "")):
+        s = raw.strip()
+        if not s:
+            continue
+        if private:
+            hit = next((p for p in private if p.lower() in s.lower()), None)
+            if hit is not None:
+                log.info("v3 spec %s: actor scene omits %r, marked private by "
+                         "the spec (%r)", sid, s, hit)
+                continue
+        else:
+            asset = _matching_asset(s, assets)
+            if asset is not None:
+                log.warning("v3 spec %s: actor scene omits %r, read as a "
+                            "restatement of participant asset %r. If that is "
+                            "wrong, name the private sentences in the spec's "
+                            "`private_setup:`.", sid, s, asset)
+                continue
+        kept.append(s)
+    return kept
+
+
+def _actor_scene(spec: dict) -> str:
+    """Shared scene context safe to hand an actor. See the block comment above."""
+    authored = (spec.get("actor_setup") or "").strip()
+    if authored:
+        return authored
+    if not (spec.get("setup") or "").strip():
+        return ""
+    kept = _redacted_sentences(spec)
+    if not kept:
+        # Everything in the setup was the participant's to reveal. Silence is
+        # the safe failure here: each character's own system_prompt already
+        # carries what that character knows, so the encounter still runs, it
+        # just runs without a scene banner.
+        log.warning("v3 spec %s: no actor-safe scene left after removing "
+                    "participant assets", spec.get("id"))
+        return ""
+    scene = _third_person(" ".join(kept))
+    if _MANGLED_RE.search(scene):
+        # A tripwire, not a repair. This string is pasted verbatim into the
+        # "## Scene" block of every actor's system prompt on both the text and
+        # the Gemini Live paths, so broken grammar here is broken grammar in the
+        # instrument, in every encounter, unnoticed. None of the eight shipped
+        # specs reaches this; a setup that does is one the heuristic cannot
+        # read, and the researcher should hear about it now rather than find it
+        # in a transcript later.
+        log.warning("v3 spec %s: third-person rewrite left doubtful text in the "
+                    "actor scene (%r); write an `actor_setup:` in the spec.",
+                    spec.get("id"), scene)
+    return scene
+
+
+def _analysis_scene(spec: dict) -> str:
+    """The scene as the analysers need it: third person, nothing redacted.
+
+    `_actor_scene` hides the participant's leverage because an actor who knows
+    it cannot play the encounter honestly. The debrief judge rating felt_heard
+    and stance_shift, and the steering controller deciding which persona gear to
+    shift, are in the opposite position: for S2A and S2B the competing offer and
+    the Rivera precedent are the whole point of the encounter, and a judge that
+    cannot see them is scoring recorded study data half-blind. So they get the
+    same retelling with the private sentences left in.
+    """
+    setup = (spec.get("setup") or "").strip()
+    if not setup:
+        # Nothing to retell; whatever the actors were given is the best there is.
+        return _actor_scene(spec)
+    return _third_person(setup)
+
+
 def _render_prompt(spec: dict, key: str, agent: dict) -> str:
-    """The character's brief: who they are, then the shared situation, then the
-    behaviour policy from the spec. The triggers themselves are injected by the
-    runner as they fire, not dumped up front, an agent that can see every
-    planted beat tends to rush through them."""
+    """The character's brief: who they are, then the behaviour policy from the
+    spec. The triggers themselves are injected by the runner as they fire, not
+    dumped up front, an agent that can see every planted beat tends to rush
+    through them.
+
+    The scene itself is NOT repeated here: engine.AgentEngine._system_prompt
+    prepends Scenario.scene as a "## Scene" block ahead of this text, on both
+    the text and the Gemini Live paths, so a "## Situation" section here made
+    every actor read the same paragraph twice.
+    """
     name = agent["name"]
     others = _copresent_names(spec, key)
     parts = [f"# You are {name}", "", agent["system_prompt"].strip()]
-    if spec.get("setup"):
-        parts += ["", "## Situation", spec["setup"].strip()]
     parts += [
         "",
         "## Identity, this matters",
@@ -217,10 +506,16 @@ def compile_scenario(scenario_id: str, participant_key: str = "") -> Scenario:
     scenario = Scenario(
         id=spec["id"],
         title=f"{spec['title']} ({spec['construct'].replace('_', ' ')}, var. {spec['variant']})",
+        # intro is the participant's own brief, so it keeps the spec's
+        # second-person setup. scene is what AgentEngine prepends to every
+        # actor's system prompt, so it gets the third-person, asset-free
+        # retelling. analysis_scene is the same retelling unredacted, for the
+        # prompts that reason about the encounter instead of performing in it.
         intro=spec.get("setup", "").strip(),
         mode="group" if is_group else "single",
         skill=spec["construct"],
-        scene=spec.get("setup", "").strip(),
+        scene=_actor_scene(spec),
+        analysis_scene=_analysis_scene(spec),
         cast=cast,
         director_prompt=_director_prompt(spec),
     )

@@ -1,0 +1,112 @@
+# Builds the live platform image (the root Dockerfile — web app + session
+# broker) and pushes it to ECR tagged with the commit SHA.
+#
+# This is the image that actually serves participants: infra/terraform/ecs.tf
+# runs it as the `platform` container on port 8080, and terraform.tfvars pins
+# the running service to one tag of relational-fluency/platform. Before this
+# workflow existed the only build procedure was a hand-typed `docker build` on
+# someone's laptop, so nothing tied the tag serving a study wave back to a
+# commit — the "auditable version" in infra/README.md had no audit trail.
+#
+# Manual-only, for the same reason as build-agent-image: deploy stays a
+# deliberate `tofu apply -var container_image=...` so the version participants
+# are talking to cannot change silently in the middle of a study wave. Building
+# an image is safe at any time; it is the apply that must be scheduled between
+# collection sessions (see docs/OPERATIONS.md).
+#
+# Requires repo secret AWS_ROLE_ARN (OIDC deploy role). Region comes from the
+# AWS_REGION repo variable, defaulting to us-east-1.
+
+name: build-platform-image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deploy credentials are configured
+        run: |
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+            echo "AWS_ROLE_ARN is not set in this repository's secrets." >&2
+            echo "Add the OIDC deploy role ARN before running this workflow." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push (release SHA tag)
+        env:
+          REPO: ${{ steps.ecr.outputs.registry }}/relational-fluency/platform
+          REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+        run: |
+          set -euo pipefail
+          SHA=${GITHUB_SHA::7}
+
+          # The ECR repository is image_tag_mutability = IMMUTABLE
+          # (infra/terraform/storage_secrets.tf) precisely so a tag cannot be
+          # repointed under a running wave. That means re-running this workflow
+          # on a SHA already built fails at push with an opaque error, so say
+          # plainly what happened instead: the image is already there and is the
+          # one to deploy.
+          #
+          # The check has three answers, not two, and the third one matters:
+          # "present", "absent", and "could not tell". Throwing stderr away and
+          # reading any non-zero exit as "absent" collapses the third into the
+          # second, so a deploy role without ecr:DescribeImages (the role needs
+          # only GetAuthorizationToken and the Put* calls to build and push)
+          # would report the image missing, build it, and die at the push on the
+          # immutable tag — the exact confusion this guard replaces, now with a
+          # log line asserting the image was not there. So keep the error and
+          # branch on it: only a genuine ImageNotFoundException means go build.
+          if probe=$(aws ecr describe-images --region "$REGION" \
+                       --repository-name relational-fluency/platform \
+                       --image-ids imageTag="$SHA" 2>&1); then
+            echo "relational-fluency/platform:$SHA already exists in ECR (tags are immutable)."
+            echo "Nothing to build. Deploy it with:"
+            echo "  tofu apply -var container_image=$REPO:$SHA"
+            exit 0
+          fi
+          case "$probe" in
+            *ImageNotFoundException*)
+              : ;;   # Confirmed absent. Build it.
+            *)
+              echo "Could not determine whether $REPO:$SHA already exists in ECR:" >&2
+              echo "$probe" >&2
+              echo "Refusing to build on an unknown answer — a push to an immutable" >&2
+              echo "tag that already exists fails anyway, and a permissions problem" >&2
+              echo "here (ecr:DescribeImages on the deploy role) or a missing" >&2
+              echo "repository needs fixing rather than reporting as 'not built yet'." >&2
+              exit 1 ;;
+          esac
+
+          # Built from the repo root: the root Dockerfile is the platform, the
+          # agents/ Dockerfile is the retired ElevenLabs packaging.
+          docker build -t "$REPO:$SHA" .
+          docker push "$REPO:$SHA"
+
+          echo "Pushed $REPO:$SHA"
+          echo "Deploy it deliberately, between collection sessions:"
+          echo "  cd infra/terraform && tofu apply -var container_image=$REPO:$SHA"
+          {
+            echo "### Platform image built"
+            echo ""
+            echo "Commit \`$GITHUB_SHA\` → \`$REPO:$SHA\`"
+            echo ""
+            echo '```bash'
+            echo "cd infra/terraform && tofu apply -var container_image=$REPO:$SHA"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

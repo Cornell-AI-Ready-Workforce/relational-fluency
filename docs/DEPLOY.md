@@ -106,15 +106,42 @@ Watch logs: `fly logs`
 
 ## Using it
 
-Your URL is `https://<app-name>.fly.dev`. Every URL must include `?key=<SESSION_KEY>`:
+Your URL is `https://<app-name>.fly.dev`.
+
+> **`SESSION_KEY` never goes in a link you hand to someone being studied.** An
+> earlier version of this page said "every URL must include `?key=<SESSION_KEY>`"
+> and listed the links below as *participant* URLs. They are not. `SESSION_KEY`
+> is the only credential in the system, and it is the one `check_key` demands
+> for `/researcher`, `/director`, `GET /api/runs` (every participant key,
+> Qualtrics response id and completion code), `GET /api/encounters`, and every
+> `download/<file>` and `download.zip` (every microphone WAV, agent WAV,
+> transcript and event log). Anyone who reads it out of their own address bar
+> can download the whole dataset. See the same warning, and the reasoning behind
+> it, in [`OPERATIONS.md`](OPERATIONS.md#the-participant-url-qualtrics--app--qualtrics).
+
+**Operator links.** These reach key-gated routes, so they carry the key and are
+for your own browser only — a bookmark, not something to send:
 
 ```
-Participant (voice):   https://rf-jennie.fly.dev/?mode=voice&scenario=missed_deadlines&key=YOUR_KEY
-Participant (text):    https://rf-jennie.fly.dev/?scenario=missed_deadlines&key=YOUR_KEY
 Researcher:            https://rf-jennie.fly.dev/researcher?key=YOUR_KEY
+Director view:         https://rf-jennie.fly.dev/director?key=YOUR_KEY
+Legacy v1 chat UI:     https://rf-jennie.fly.dev/?scenario=missed_deadlines&key=YOUR_KEY
 ```
 
-Bookmark the researcher URL; for collaborators, share the participant URL (you can pre-fill the scenario).
+**The link a person actually being studied opens.** `/v2` and `/start` go
+through `check_participant`, which demands the key only when the deployment sets
+`PARTICIPANT_KEY_REQUIRED`; leave that unset and the link needs no key at all:
+
+```
+One scenario:          https://rf-jennie.fly.dev/v2?scenario=S1B
+Assigned four-encounter run: https://rf-jennie.fly.dev/start?pid=<their-key>
+```
+
+If you do set `PARTICIPANT_KEY_REQUIRED` — reasonable while the demo is not
+meant to be open — understand that you are choosing to publish the dataset key
+to whoever opens the link, and that this deployment is demo-only for exactly
+that kind of reason (see the note at the top of this page). Unset it, or move to
+the AWS path, before anyone whose data matters uses it.
 
 ## Day-to-day operations
 

@@ -5,9 +5,11 @@ Terraform for the AWS side of `docs/architecture.md`, priced in
 (HTTPS), ECS Fargate service, ECR, KMS-encrypted S3 study-data bucket, Secrets
 Manager, CloudWatch logs.
 
-**Scope:** currently provisions the agent endpoint only. Serving the simulation
-platform itself (web app + session broker) and adding CloudFront for rater
-review land in a later pass, as part of the migration.
+**Scope:** provisions the live platform — the ECS service named `platform` runs
+the root Dockerfile's image (web app + session broker) on port 8080 behind the
+ALB, with an EFS volume mounted at `/data` for study records. The retired
+`agents/` ElevenLabs packaging still has its own ECR repository but is not on
+the serving path. Adding CloudFront for rater review lands in a later pass.
 
 ## Prerequisites
 
@@ -26,7 +28,9 @@ cd infra/terraform
 # 1) Provision everything
 terraform init
 terraform apply -var domain_name=yourlab.org
-# note the outputs: agent_url, ecr_repository
+# note the outputs: app_url (rf.<domain>, the participant entrance) and
+# ecr_repository (the PLATFORM repo — ecr_repository_legacy_agent is the
+# retired agents/ image and is not what the service runs)
 
 # 2) Set the two secrets (values never touch git or Terraform state)
 # The LLM key is the Cornell LiteLLM virtual key (sk-...), used for both the
@@ -36,21 +40,29 @@ aws secretsmanager put-secret-value \
 aws secretsmanager put-secret-value \
   --secret-id relational-fluency/agent-api-key --secret-string "$(openssl rand -hex 32)"
 
-# 3) Build and push the agent image (from repo root)
+# 3) Build and push the PLATFORM image — the one the service runs.
+# Prefer the build-platform-image workflow (Actions → Run workflow): it builds
+# from a known commit on a clean runner, so the tag serving a study wave is
+# traceable to source. Build by hand only when Actions is unavailable, and note
+# that a hand build ties the deployed tag to nothing but the state of your
+# working tree.
+#
+# NOTE: `agents/` is the retired ElevenLabs packaging and pushes to
+# relational-fluency/agent. Do not set container_image to that image.
 AWS_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 REGION=us-east-1
-REPO=$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/relational-fluency/agent
-SHA=$(git rev-parse --short HEAD)
+REPO=$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/relational-fluency/platform
+SHA=$(git rev-parse --short HEAD)   # commit the tag on a clean tree, or the tag lies
 
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REPO
-docker build -t $REPO:$SHA agents/
+docker build -t $REPO:$SHA .        # repo root: the platform Dockerfile
 docker push $REPO:$SHA
 
 # 4) Point the service at the image
 terraform apply -var domain_name=yourlab.org -var container_image=$REPO:$SHA
 
 # 5) Verify
-curl https://agent.yourlab.org/health
+curl https://rf.yourlab.org/health
 ```
 
 ## Wire into ElevenLabs (superseded)
@@ -72,11 +84,14 @@ In the agent's settings → LLM → **Custom LLM**:
 - **Steering trail:** every turn logs a `STEERING {...}` line → CloudWatch group
   `/ecs/relational-fluency/agent` (90-day retention). Export per-wave to
   `s3://relational-fluency-study-data/steering-logs/` before ratings begin.
-- **Deploys are release-SHA images** (ECR tags immutable). The image tag serving
-  each study wave is the auditable agent version. **Freeze during collection.**
+- **Deploys are release-SHA images** (ECR tags immutable). The tag serving each
+  study wave is the auditable platform version — but it is only auditable if the
+  image was built by the `build-platform-image` workflow, which is what ties the
+  tag to a commit. A tag built by hand records nothing about what went into it.
+  **Freeze during collection.**
 - **Scale for collection bursts:** `aws ecs update-service --cluster
-  relational-fluency --service agent --desired-count 2` (Terraform ignores manual
-  count changes by design).
+  relational-fluency --service platform --desired-count 2` (Terraform ignores
+  manual count changes by design).
 - **Model pinning:** `actor_model` / `director_model` are Terraform variables →
   environment variables. Set snapshots explicitly; record them in the wave notes.
 - **Costs:** tracked against `docs/RelationalFluency_AWS_Cost_Estimation.pdf`
@@ -84,8 +99,11 @@ In the agent's settings → LLM → **Custom LLM**:
 
 ## What's deliberately NOT here yet
 
-- Serve the simulation platform (web app + session broker) on Fargate behind the
-  ALB, with WSS for the participant audio stream — next build item
+- Archival of study records from the EFS `/data` volume to the S3 study bucket,
+  and any retention/deletion path for them. Records now survive a deploy (they
+  are on EFS, not the container filesystem), but nothing copies them off it and
+  nothing deletes them, so EFS is currently the only copy — see
+  [`../docs/OPERATIONS.md`](../docs/OPERATIONS.md).
 - `rf.` / `api.rf.` records in the delegated Route 53 zone + ACM certificate
 - CloudFront + rater access (needs recordings to exist)
 - RDS for participant keys and scenario assignment
