@@ -85,6 +85,18 @@ def build(session_dir: Path) -> Dict[str, Any]:
                 "instructions_sha256": d.get("instructions_sha256"),
                 "segment": d.get("segment"),
                 "interaction": d.get("interaction"),
+                # The runner records these on the steering pair specifically so a
+                # rater can tell a truncated or lost delivery from a bad one, and
+                # they were being dropped here, at the one place a rater reads.
+                # `interrupted` means the participant spoke over this line, so the
+                # text is what the actor was saying rather than what was heard;
+                # `transcript_missing` means the audio played but its text never
+                # arrived, so an empty line is a gateway failure, not silence from
+                # the character. Scoring either as a weak reply is a rating error
+                # the record can prevent for the cost of three fields.
+                "interrupted": bool(actor.get("interrupted")),
+                "transcript_missing": bool(actor.get("transcript_missing")),
+                "latency_s": actor.get("latency_total_s"),
             })
 
     turns.sort(key=lambda t: t.get("t") or 0)

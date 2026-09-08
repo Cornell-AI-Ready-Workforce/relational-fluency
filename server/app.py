@@ -272,9 +272,30 @@ async def api_runs_export(key: Optional[str] = None, cohort: Optional[str] = Non
                 "created_at": run.get("created_at"),
                 "finished": run.get("index", 0) >= len(run.get("scenarios", [])),
                 "completion_code": completion_code(run),
+                # Present only on a run the participant stopped, or one that
+                # ended because they declined the consent form. Without it the
+                # export cannot distinguish a withdrawal from a dropout, and
+                # "finished: false" reads the same for both — which is the
+                # difference between a participant who left and one whose
+                # browser died, and an IRB report needs the first number.
+                "withdrawn": run.get("withdrawn"),
+                # Which forms were steered by the cross-construct exclusion
+                # rather than drawn, so an analyst who sees one variant
+                # over-represented can tell design from chance.
+                "form_exclusions": run.get("form_exclusions", []),
                 "encounters": [
-                    {"scenario": c.get("id"), "session_id": c.get("session_id")}
-                    for c in run.get("completed", [])
+                    {
+                        "scenario": c.get("id"),
+                        "session_id": c.get("session_id"),
+                        # The counterbalancing cell, which is otherwise only
+                        # recoverable by re-deriving the order from `assigned`.
+                        "position": i + 1,
+                        "construct": c.get("construct"),
+                        "variant": c.get("variant"),
+                        "parallel_form": c.get("parallel_form"),
+                        "no_participant_turns": bool(c.get("no_participant_turns")),
+                    }
+                    for i, c in enumerate(run.get("completed", []))
                 ],
                 "assigned": [sc.get("id") for sc in run.get("scenarios", [])],
             })
@@ -627,7 +648,12 @@ async def api_session_zip(session_id: str, key: Optional[str] = Query(None)):
         with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_STORED) as zf:
             for p in sorted(sdir.iterdir()):
                 if p.is_file():
-                    zf.write(p, arcname=p.name)
+                    # Under the encounter id, not bare. Every encounter's files
+                    # are named identically (record.json, events.jsonl,
+                    # user_audio.wav), so flat entries meant that unpacking a
+                    # wave into one directory silently overwrote all but the
+                    # last — and the documented bulk pull does exactly that.
+                    zf.write(p, arcname=f"{session_id}/{p.name}")
     except Exception:
         try:
             os.remove(tmp_path)
@@ -864,6 +890,23 @@ async def api_video_uploaded(session_id: str, participant_id: Optional[str] = No
             "t": None, "wall": _time.time(), "type": "video_uploaded",
             "key": video.video_key(session_id), "bytes": size,
         }) + "\n")
+
+    # Rebuild the aligned record now that the video is known.
+    #
+    # record.json is written by SessionStore.close, and the browser only
+    # confirms the upload afterwards — it finishes the recording and closes the
+    # socket in the same breath — so the record built at close always said the
+    # encounter had no video. Measured over a synthetic wave: 25 of 27
+    # encounters had a video and record.json reported none on every one. That
+    # matters because record.json is the artefact the study ships to raters and
+    # analysts, and the video is the thing Phase 2 rates. The API rebuilds the
+    # record on read, so this only ever affected the stored copy — which is
+    # exactly the copy that leaves the machine, in the download zip.
+    try:
+        from .encounter_record import write as _write_record
+        _write_record(sdir)
+    except Exception:  # noqa: BLE001, never fail the upload confirmation on this
+        pass
     return {"ok": size > 0, "bytes": size, "key": video.video_key(session_id)}
 
 
@@ -1197,11 +1240,18 @@ async def api_encounter_record(session_id: str, key: Optional[str] = None):
 
 
 @app.get("/api/sessions")
-async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None):
+async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None,
+                       limit: int = 30, offset: int = 0):
     """Live and recent sessions. `cohort` filters to exactly one of the three
     tags a run can carry — "study", "internal", "unattributed" — so internal
     test traffic and unpiped-key arrivals can both be kept out of a listing.
-    Sessions started outside a run have no tag and match no filter."""
+    Sessions started outside a run have no tag and match no filter.
+
+    `limit`/`offset` page the closed sessions. The default of 30 is the
+    dashboard's page size, but this is also the only bulk source of per-encounter
+    duration, so a fixed cap of 30 made 370 of a 400-encounter wave invisible to
+    every analysis that needed it. Capped at 1000 per call so a stray request
+    cannot pull a whole wave through one synchronous query."""
     check_key(key)
     out = []
     active_ids = set(registry.list_ids())
@@ -1251,7 +1301,8 @@ async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None):
                 "SELECT id, scenario, model, started_at, n_turns, status, duration_s"
                 + "".join(f", {c}" for c in extra)
                 + " FROM sessions WHERE status != 'active'"
-                  " ORDER BY started_at DESC LIMIT 30"
+                  " ORDER BY started_at DESC LIMIT ? OFFSET ?",
+                (max(1, min(int(limit), 1000)), max(0, int(offset))),
             ).fetchall()
         finally:
             # Closed in the thread that opened it, and closed even on failure:

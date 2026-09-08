@@ -112,10 +112,22 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
     expected = _expected_triggers(record.get("scenario"))
     if expected:
         ids = [e.get("trigger_id") for e in fired]
+        # Distinct beats reached, against the beats the scenario plans. The old
+        # condition was `len(ids) > 0`, which no encounter that fired a single
+        # beat could ever fail — so the check that exists to say "this encounter
+        # did not reach its scored moments" passed every encounter in a wave.
+        # The README's own description of this tool is that an encounter which
+        # fired 2 of 4 triggers "never reached half its scored moments", so
+        # partial coverage is exactly what it is meant to catch. Full coverage
+        # passes; anything short of it fails and names what was missed, which is
+        # a judgement a human still has to make but can now see.
+        reached = {i for i in ids if i}
+        missed = [t for t in expected if t not in reached]
         checks.append((
-            len(ids) > 0,
+            not missed,
             "planted triggers fired",
-            f"{len(ids)}/{len(expected)}, {', '.join(ids) or 'none'}",
+            f"{len(reached)}/{len(expected)}"
+            + (f", missed: {', '.join(missed)}" if missed else ", all"),
         ))
         esci_seen = {i for e in fired for i in (e.get("esci") or [])}
         checks.append((bool(esci_seen), "ESCI items exercised", f"{len(esci_seen)} distinct"))
