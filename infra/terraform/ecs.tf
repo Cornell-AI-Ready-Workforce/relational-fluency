@@ -98,7 +98,9 @@ resource "aws_ecs_task_definition" "agent" {
     essential    = true
     portMappings = [{ containerPort = 8080, protocol = "tcp" }]
     environment = [
-      { name = "ACTOR_MODEL", value = var.actor_model },
+      # The server reads REALTIME_MODEL. Switching the live model (e.g. to the
+      # gpt-realtime-2.1 fallback) is: set actor_model in terraform.tfvars, apply.
+      { name = "REALTIME_MODEL", value = var.actor_model },
       { name = "DIRECTOR_MODEL", value = var.director_model },
       { name = "LLM_BASE_URL", value = var.llm_base_url },
       { name = "APP_HOST", value = local.app_fqdn },

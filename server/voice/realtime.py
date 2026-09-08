@@ -37,6 +37,31 @@ from ..llm import gateway_api_key, gateway_base_url, setting
 
 GATEWAY = gateway_base_url()
 MODEL = setting("REALTIME_MODEL", "nto.gemini-live-2.5-flash")
+
+# The scenario bank names Gemini voices. When the realtime model is an
+# OpenAI one (gateway fallback for the deprecation of the Gemini live route),
+# the bridge rejects those names, so map each character's voice to the
+# nearest OpenAI voice. Stable per character, like the Gemini assignment.
+_OPENAI_VOICE_FOR = {
+    "puck": "alloy", "charon": "echo", "kore": "shimmer", "fenrir": "ash",
+    "aoede": "coral", "leda": "sage", "orus": "verse", "zephyr": "marin",
+}
+_OPENAI_VOICES = {"alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"}
+
+
+def is_openai_realtime(model: str) -> bool:
+    return (model or "").lower().startswith("gpt-")
+
+
+def voice_for_model(voice: str, model: str) -> str:
+    """The voice name this model family accepts."""
+    if not voice:
+        return voice
+    if is_openai_realtime(model):
+        if voice.lower() in _OPENAI_VOICES:
+            return voice.lower()
+        return _OPENAI_VOICE_FOR.get(voice.lower(), "alloy")
+    return voice
 VOICE = setting("REALTIME_VOICE", "Puck")
 
 # The browser captures and plays 16 kHz; the gateway emits 24 kHz PCM16.
@@ -116,7 +141,7 @@ class RealtimeVoiceSession:
     ) -> None:
         self.instructions = instructions
         self.model = model
-        self.voice = voice
+        self.voice = voice_for_model(voice, model)
         self.tools = tools or []
         self.api_key = api_key or gateway_api_key()
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
@@ -149,7 +174,16 @@ class RealtimeVoiceSession:
             session["voice"] = self.voice
         if self.tools:
             session["tools"] = self.tools
-        # Deliberately nothing else, see module docstring.
+        # Deliberately nothing else for the Gemini route, see module docstring.
+        # The OpenAI route is the opposite: input transcription is OFF unless
+        # asked for, and asking is harmless there (verified 2026-09-08).
+        if is_openai_realtime(self.model):
+            session["input_audio_transcription"] = {"model": "whisper-1"}
+            # Our broker owns turn taking. OpenAI's server VAD would otherwise
+            # fire a reply on every member session whenever ANOTHER character's
+            # fanned-in audio ends, and reject it as an active-response
+            # conflict (34 such errors in one five-turn room test).
+            session["turn_detection"] = None
         await self._send({"type": "session.update", "session": session})
 
     async def _send(self, payload: dict) -> None:
@@ -166,6 +200,9 @@ class RealtimeVoiceSession:
             session["voice"] = self.voice
         if self.tools:
             session["tools"] = self.tools
+        if is_openai_realtime(self.model):
+            session["input_audio_transcription"] = {"model": "whisper-1"}
+            session["turn_detection"] = None
         await self._send({"type": "session.update", "session": session})
 
     async def send_audio(self, pcm16: bytes) -> None:
@@ -218,13 +255,20 @@ class RealtimeVoiceSession:
             # pad with 300 ms of silence if an auto-fire consumed the audio.
             await self.send_audio(b"\x00" * 9600)
         await self.commit_input()
+        if is_openai_realtime(self.model):
+            # Through the bridge, the commit itself starts the reply on the
+            # OpenAI route; an explicit response.create on top is rejected
+            # (active-response conflict) and can yield a second reply.
+            self._response_active = True
+            return
         await self.request_response()
 
     async def cancel_response(self) -> None:
-        """Barge-in: stop the agent mid-utterance."""
-        if self._response_active:
+        """Barge-in: stop the agent mid-utterance (ours or bridge-initiated)."""
+        if self._response_active or self.autofire_active:
             await self._send({"type": "response.cancel"})
             self._response_active = False
+            self.autofire_active = False
 
     def _to_client_rate(self, pcm: bytes) -> bytes:
         if GATEWAY_OUTPUT_RATE == CLIENT_RATE:
@@ -247,6 +291,13 @@ class RealtimeVoiceSession:
                 if self.debug_log is not None:
                     self.debug_log.append((time.time(), etype, str(ev)[:160]))
 
+                if etype == "response.created" and not self._response_active:
+                    # The bridge (or OpenAI's server VAD) started a reply on its
+                    # own. Mark it now: on the OpenAI route the first audio can
+                    # trail this by several seconds, and a commit + create sent
+                    # in that gap is rejected as an active-response conflict.
+                    self.autofire_active = True
+                    self._last_output_at = time.time()
                 if etype.startswith("response.") and etype.endswith(".delta"):
                     self._last_output_at = time.time()
                     if not self._response_active:

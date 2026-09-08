@@ -119,6 +119,34 @@ native-audio route is fixed, the only working fallbacks on this gateway are
 Switching is one environment variable, `REALTIME_MODEL`, followed by a full
 re-verification with the simulated participant.
 
+**Fallback for the announced deprecation of `nto.gemini-live-2.5-flash`
+(verified 2026-09-08): `gpt-realtime-2.1` runs the whole platform.** The
+client is model-family aware, so the switch is one setting:
+`REALTIME_MODEL=gpt-realtime-2.1` (in Terraform: `actor_model` in
+`terraform.tfvars`, then apply). What differs on that route, all handled in
+`server/voice/realtime.py`:
+
+- Voices: the bridge rejects Gemini voice names; each scenario voice maps to
+  the nearest of `alloy, ash, ballad, coral, echo, sage, shimmer, verse,
+  marin, cedar` (stable per character).
+- Participant transcription is off unless asked for:
+  `input_audio_transcription: {model: whisper-1}` is sent (accurate, e.g.
+  "Rivera's team"). On this route the scribe only transcribes a committed
+  buffer, so the broker commits it at its own turn end.
+- Server VAD is switched off (`turn_detection: null`). Left on, every room
+  member auto-replies whenever another character's fanned-in audio ends and
+  is rejected with `conversation_already_has_active_response` (34 errors in
+  one five-turn room). The broker's own silence detector drives turns, as it
+  does for Gemini.
+- The commit itself starts the reply; an explicit `response.create` on top is
+  rejected and can double the reply, so it is not sent on this route.
+- Cost of the fallback: group replies take 5 to 7 s (a fresh generation per
+  turn; the Gemini route plays held replies in about 1 s), the model is more
+  literal about its brief (occasional meta remarks like "let me close things
+  out"), and per-character voices sound different. Verified with the
+  simulated participant: 1:1 (S2B) 4/4 replies with the ladder intact, group
+  (S4A) routed correctly with zero errors, interjection stops playback.
+
 **Alternatives.** `gpt-realtime-2.1` also works on the same gateway and *does*
 provide server VAD natively — useful as a comparison or fallback.
 `nto.gemini-live-2.5-flash-native-audio` exists but was not re-tested after the

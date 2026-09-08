@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 from typing import Callable, Dict, List, Optional
 
-from .voice.realtime import RealtimeVoiceSession
+from .voice.realtime import RealtimeVoiceSession, is_openai_realtime
 
 
 class GroupRoom:
@@ -103,7 +103,12 @@ class GroupRoom:
             if rt.pending_input < 3200:
                 await rt.send_audio(b"\x00" * 9600)
             await rt.commit_input()
-            await rt.request_response()
+            if is_openai_realtime(rt.model):
+                # The commit starts the reply on the OpenAI route; a second
+                # response.create is rejected and can double the reply.
+                rt.clear_response_state()
+            else:
+                await rt.request_response()
         except Exception:  # noqa: BLE001, a dead session must not kill the turn
             self.sessions.pop(agent_id, None)
             return None

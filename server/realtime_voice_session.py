@@ -135,7 +135,7 @@ def _is_echo(user_norm: str, agent_norm: str) -> bool:
     return overlap >= 0.8
 from .llm import provenance
 from .group_room import GroupRoom
-from .voice.realtime import RealtimeVoiceSession, SilenceDetector
+from .voice.realtime import RealtimeVoiceSession, SilenceDetector, is_openai_realtime
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -914,6 +914,15 @@ class RealtimeVoiceSessionRunner:
                 if mark == "turn_ended":
                     self._turn_started_at = time.time()
                     if self.is_group() and self.room is not None:
+                        # On the OpenAI route (server VAD off) the scribe only
+                        # transcribes a committed buffer; commit it at our turn
+                        # end. The Gemini route transcribes on append.
+                        scribe = self.room.scribe
+                        if scribe is not None and is_openai_realtime(scribe.model):
+                            try:
+                                await scribe.commit_input()
+                            except Exception:  # noqa: BLE001
+                                pass
                         asyncio.ensure_future(self._run_group_turn())
                     else:
                         await self._brief_next_beat(probing=False)
