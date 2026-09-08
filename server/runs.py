@@ -70,8 +70,12 @@ def _by_construct() -> Dict[str, List[str]]:
     return out
 
 
-def _apply_form_exclusions(chosen: Dict[str, str]) -> List[dict]:
+def _apply_form_exclusions(chosen: Dict[str, str],
+                           pinned: Optional[set] = None) -> List[dict]:
     """Apply FORM_EXCLUSIONS to a completed draw, in place.
+
+    `pinned` names constructs whose form the caller chose explicitly. Those are
+    reported but never changed: see the call site in create().
 
     Mutates ``chosen`` and returns one entry per exclusion that was triggered,
     so the run document can record that its assignment was corrected rather
@@ -105,6 +109,13 @@ def _apply_form_exclusions(chosen: Dict[str, str]) -> List[dict]:
             "because_run_contains": requires,
             "was": sid,
         }
+        if pinned and construct in pinned:
+            # Somebody asked for this form deliberately. Honour it and say so.
+            entry["resolved"] = False
+            entry["now"] = sid
+            entry["reason"] = "form was pinned by the caller; exclusion not applied"
+            applied.append(entry)
+            continue
         if not alternatives:
             entry["resolved"] = False
             entry["now"] = sid
@@ -231,11 +242,19 @@ def create(
     rng.shuffle(order)  # counterbalance construct order across participants
 
     chosen: Dict[str, str] = {}
+    # Constructs whose form the caller pinned rather than leaving to the draw.
+    # sibling_run pins every construct to build attempt 2 on the other parallel
+    # form; applying the cross-construct exclusion to a pin silently reverted
+    # that flip and made attempt 2 repeat attempt 1's encounter, which destroys
+    # the pre/post comparison the two forms exist for.
+    pinned: set = set()
     for construct in order:
         options = pool[construct]
         if variants and construct in variants:
             sid = variants[construct]
+            pinned.add(construct)
         elif variant:
+            pinned.add(construct)
             # Pin every construct to one form. Useful for piloting a single set
             # rather than a random mix across participants.
             wanted = [o for o in options if load_spec(o)["variant"].upper() == variant.upper()]
@@ -248,7 +267,15 @@ def create(
     # cross-construct exclusions are applied once the full set is known. Done
     # after the draws (and using no randomness of its own) so a given seed still
     # produces the same assignment it did before, only corrected.
-    exclusions = _apply_form_exclusions(chosen)
+    #
+    # A pinned form is left alone. An explicit pin is somebody's decision — the
+    # operator piloting one form, or sibling_run building attempt 2 on the other
+    # form — and silently overriding it is worse than the pairing it avoids,
+    # because the override is invisible while the consequence (a repeated
+    # encounter, or a pilot that did not pilot what was asked for) is not
+    # attributable to anything. The conflict is recorded instead, so it shows up
+    # in the run document rather than as a puzzling result.
+    exclusions = _apply_form_exclusions(chosen, pinned=pinned)
 
     scenarios = []
     for construct in order:

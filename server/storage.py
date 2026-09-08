@@ -505,6 +505,14 @@ def record_consent(pid: str, consent_version: str) -> Optional[Dict[str, Any]]:
     rec = get_participant(pid)
     if rec is None:
         return None
+    if rec.get("declined"):
+        # A refusal is terminal. Without this a stray or replayed POST could
+        # flip a record whose owner had explicitly declined back to consented,
+        # and the record would then carry both declined=True and
+        # consent_given=True — the worst possible state for the one field an
+        # IRB would ask about. Someone who declines and changes their mind
+        # starts a new run rather than overwriting the refusal.
+        return None
     rec["consent_given"] = True
     rec["consent_text_version"] = consent_version
     rec["consent_recorded_at"] = time.time()

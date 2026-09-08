@@ -1381,26 +1381,41 @@ class RealtimeVoiceSessionRunner:
                         # switch can cancel whichever turn holds self._floor.
                         self._spawn_group_turn(self._run_group_turn())
                     else:
-                        # The bridge auto-fires a reply after speech + silence,
-                        # usually within a second of our own turn detection.
-                        # Committing on top of it yields two replies, both
-                        # spoken and both transcribed. Give it a moment to
-                        # start; commit only if nothing came.
+                        # Brief first, then decide whether to commit. The bridge
+                        # auto-fires a reply after speech + silence, usually
+                        # within a second of our own turn detection, and
+                        # committing on top of that yields two replies, both
+                        # spoken and both transcribed — so the commit is what
+                        # the wait below guards, and only the commit.
                         #
-                        # Wait BEFORE briefing. _brief_next_beat spends a planted
-                        # trigger: it advances _trigger_idx and writes the
-                        # stage_direction event. When a reply is already in
-                        # flight the instructions update lands too late for the
-                        # actor to act on, so briefing first would record a
-                        # scored beat the character never received. Leaving the
-                        # trigger unspent re-briefs it on the next turn instead.
+                        # An earlier revision waited BEFORE briefing, so that a
+                        # beat could not be recorded as fired when the reply was
+                        # already in flight. That was wrong, and measurably so:
+                        # over five turns of S1A interaction 2 with the bridge
+                        # auto-firing, it fired 0 of 3 planted beats where the
+                        # previous behaviour fired 3, and because _maybe_advance
+                        # returns early while a beat remains it also disarmed
+                        # the auto-advance for every 1:1 form. update_instructions
+                        # is a persistent session.update, not a per-response
+                        # one, so a brief issued during an auto-fired reply is
+                        # not lost — it governs the NEXT reply. The honest
+                        # record of that is a beat marked as applying late,
+                        # which _brief_next_beat writes, rather than no beat at
+                        # all.
+                        await self._brief_next_beat(probing=False)
                         deadline = time.time() + float(os.getenv("AUTOFIRE_WAIT", "1.5"))
                         while time.time() < deadline and not self.rt.autofire_active:
                             await asyncio.sleep(0.05)
                         if self.rt.autofire_active:
-                            self.session.store.event("autofire_adopted", agent_id=self.agent_id)
+                            self.session.store.event(
+                                "autofire_adopted", agent_id=self.agent_id,
+                                # The direction just issued reaches the actor one
+                                # reply late. Recorded so a rater comparing a
+                                # direction to the line it produced can see that
+                                # this one governed the following turn.
+                                direction_applies_next_turn=bool(self._pending_direction),
+                            )
                         else:
-                            await self._brief_next_beat(probing=False)
                             await self.rt.commit_turn()
         except WebSocketDisconnect:
             return
@@ -2108,6 +2123,13 @@ class RealtimeVoiceSessionRunner:
             # beat that names nobody is unowned and belongs to whoever speaks.
             pending = self._next_trigger()
             owner = self._trigger_agent(pending) if pending else None
+            # Bound on both branches. The retraction below reads these, and it
+            # runs whenever the floor grant fails — including on the deferral
+            # branch, where no beat was spent. Binding them only inside the
+            # else raised UnboundLocalError there, which killed the group turn
+            # task and left the room's floor held, so nobody could answer the
+            # participant for the rest of the interaction.
+            spent_idx, spent_fired = self._trigger_idx, len(self._fired)
             if pending is not None and owner is not None and owner != first:
                 self.session.store.event(
                     "trigger_deferred",
@@ -2120,13 +2142,11 @@ class RealtimeVoiceSessionRunner:
                     reason="beat_belongs_to_another_character",
                 )
             else:
-                # Snapshot before briefing, for the same reason _probe_room
-                # does: _brief_member SPENDS the beat (it writes trigger_fired,
-                # appends to _fired and advances _trigger_idx), and the grant
-                # below can still fail on a member whose session has died. A
-                # beat nobody spoke must not be counted as one the participant
-                # faced.
-                spent_idx, spent_fired = self._trigger_idx, len(self._fired)
+                # _brief_member SPENDS the beat: it writes trigger_fired,
+                # appends to _fired and advances _trigger_idx. The grant below
+                # can still fail on a member whose session has died, and a beat
+                # nobody spoke must not be counted as one the participant
+                # faced, so the snapshot above is what puts it back.
                 await self._brief_member(first)
             if self._closed or self.room is not room:
                 return
