@@ -335,12 +335,46 @@
   const keyParamFirst = key ? `?key=${encodeURIComponent(key)}` : '';
   const keyParam = key ? `&key=${encodeURIComponent(key)}` : '';
   const $ = (id) => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  // Thread the session key through the researcher links, which are otherwise
+  // hardcoded to /researcher and 403 when SESSION_KEY is set.
+  if (keyParamFirst) {
+    document.querySelectorAll('a[href="/researcher"]').forEach(a => {
+      a.href = '/researcher' + keyParamFirst;
+    });
+  }
 
   let scenarios = [];
 
+  function showScenarioLoadError() {
+    ['count-single', 'count-group'].forEach(id => { $(id).textContent = 'unavailable'; });
+    const list = $('scenarioList');
+    list.innerHTML = '';
+    const msg = document.createElement('div');
+    msg.className = 'step-lede';
+    msg.textContent = 'We couldn’t load the scenarios. ';
+    const retry = document.createElement('button');
+    retry.className = 'back-link';
+    retry.style.margin = '0';
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', loadScenarios);
+    msg.appendChild(retry);
+    list.appendChild(msg);
+  }
+
   async function loadScenarios() {
-    const r = await fetch('/api/scenarios' + keyParamFirst);
-    scenarios = await r.json();
+    try {
+      const r = await fetch('/api/scenarios' + keyParamFirst);
+      if (!r.ok) { showScenarioLoadError(); return; }
+      const data = await r.json();
+      if (!Array.isArray(data)) { showScenarioLoadError(); return; }
+      scenarios = data;
+    } catch (err) {
+      showScenarioLoadError();
+      return;
+    }
     const singleCount = scenarios.filter(s => s.mode === 'single').length;
     const groupCount = scenarios.filter(s => s.mode === 'group').length;
     $('count-single').textContent = `${singleCount} scenarios`;
@@ -386,9 +420,9 @@
       card.className = 'scenario-card';
       card.innerHTML = `
         <div class="info">
-          <h4>${s.title}</h4>
+          <h4>${esc(s.title)}</h4>
           <div class="meta">
-            <span class="chip">${s.skill}</span>
+            <span class="chip">${esc(s.skill)}</span>
             ${s.mode === 'group' ? `<span>· ${s.cast_size} characters</span>` : ''}
           </div>
           <p class="desc">${SCENARIO_DESC[s.id] || ''}</p>
