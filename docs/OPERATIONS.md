@@ -35,6 +35,22 @@ aws s3 ls s3://relational-fluency-study-data/ --recursive | head            # em
 
 ---
 
+## The link to put in Qualtrics
+
+The base URL forwards participants to the study entry when their id is in
+the query, so this is the whole link (Qualtrics piped text fills the values):
+
+```
+https://rf.ai-ready-workforce.ai.cornell.edu/?participantId=${e://Field/participantId}&qid=${e://Field/ResponseID}
+```
+
+`participantId` is the Survey Flow embedded field set from the CloudResearch
+Connect URL; `ResponseID` is Qualtrics' own id for that response. The app
+stores both on the run, so `python -m server.qualtrics join` can match each
+survey response to its four encounters. A participant who reopens the link
+lands back in the same run at the encounter they were on. The bare base URL
+without parameters stays researcher-only.
+
 ## Before every deploy: is anyone mid-encounter?
 
 A rollout starts a new task and retires the old one about two minutes later,

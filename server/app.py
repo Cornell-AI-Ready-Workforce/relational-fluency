@@ -25,7 +25,7 @@ import zipfile
 import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -164,9 +164,18 @@ def check_participant(key: Optional[str]) -> None:
 # --- HTML routes ---
 
 @app.get("/", response_class=HTMLResponse)
-async def landing_page(scenario: Optional[str] = None, key: Optional[str] = None):
+async def landing_page(request: Request, scenario: Optional[str] = None,
+                       key: Optional[str] = None):
     """Landing page with scenario picker popup. If a scenario is passed via
-    query (legacy v1 link), still serve the chat UI so old bookmarks work."""
+    query (legacy v1 link), still serve the chat UI so old bookmarks work.
+
+    A participant arriving from Qualtrics carries their id in the query. The
+    base URL is what gets pasted into the survey, so forward those visitors
+    to the study entry point before the researcher-key check.
+    """
+    q = request.query_params
+    if any(k in q for k in ("pid", "participant_id", "participantId", "PROLIFIC_PID")):
+        return RedirectResponse(url=f"/start?{request.url.query}", status_code=307)
     check_key(key)
     if scenario:
         return (STATIC_DIR / "participant.html").read_text()
@@ -246,6 +255,7 @@ async def start_run(
     key: Optional[str] = None,
     pid: Optional[str] = None,
     participant_id: Optional[str] = None,
+    participantId: Optional[str] = None,
     PROLIFIC_PID: Optional[str] = None,
     variant: Optional[str] = None,
     qid: Optional[str] = None,
@@ -263,7 +273,7 @@ async def start_run(
 
     from . import runs
 
-    pkey = pid or participant_id or PROLIFIC_PID
+    pkey = pid or participant_id or participantId or PROLIFIC_PID
     run = runs.find_for_participant(pkey) if pkey else None
     if run is None:
         run = runs.create(
