@@ -17,6 +17,12 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (ev) => {
       if (ev.data && typeof ev.data.muted === 'boolean') {
         this.muted = ev.data.muted;
+        if (this.muted) {
+          // Clear any queued pre-mute audio so it is not flushed after unmute.
+          this.outBuf.length = 0;
+          this.inputBuf.length = 0;
+          this._pos = 0;
+        }
       }
     };
   }
@@ -50,7 +56,9 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     }
 
     // Discard consumed input samples to keep buffer small.
-    const consumed = Math.floor(this._pos);
+    // Clamp to what can actually be spliced so _pos does not slip when the
+    // read position ran past the end of the buffer.
+    const consumed = Math.min(Math.floor(this._pos), this.inputBuf.length);
     if (consumed > 0) {
       this.inputBuf.splice(0, consumed);
       this._pos -= consumed;

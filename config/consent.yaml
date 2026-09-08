@@ -14,6 +14,9 @@ body: |
 
   **What we record:**
   - Your microphone audio for the duration of the session
+  - Webcam video of you during the session, so that human raters can score
+    non-verbal conduct (this video is never transmitted to any AI model
+    provider)
   - The AI's spoken responses
   - A transcript of the conversation
   - Session metadata (scenario, timing, settings)
@@ -21,7 +24,8 @@ body: |
   **How it's used:**
   - To analyze conversational dynamics for research purposes
   - To improve the AI partner's behavior
-  - Audio and transcripts are stored locally on a research machine
+  - Your audio, webcam video, and transcripts are stored securely in Cornell
+    AWS cloud storage, accessible only to the research team
 
   **Your rights:**
   - You may stop at any time by clicking Stop
