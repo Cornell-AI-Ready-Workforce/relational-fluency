@@ -39,10 +39,14 @@ class _MemberState:
         self.done_at = 0.0
         self.play_start: Optional[float] = None
         self.play_end: Optional[float] = None
+        self.hold_id = None
+        self.hold_started_at = 0.0
 
-    def begin_hold(self) -> None:
+    def begin_hold(self, response_id=None) -> None:
         self.mode = "holding"
         self.held = []
+        self.hold_id = response_id
+        self.hold_started_at = time.time()
 
     def hold(self, ev: dict) -> None:
         if ev["type"] == "agent_audio":
@@ -135,7 +139,7 @@ def _is_echo(user_norm: str, agent_norm: str) -> bool:
     return overlap >= 0.8
 from .llm import provenance
 from .group_room import GroupRoom
-from .voice.realtime import RealtimeVoiceSession, SilenceDetector, is_openai_realtime
+from .voice.realtime import RealtimeVoiceSession, SilenceDetector, is_openai_realtime, autofire_wait_for_model
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -485,8 +489,13 @@ class RealtimeVoiceSessionRunner:
                             await self._finish_interrupted(agent, st)
                             st.mode = "discarding"
                             continue
+                        rid = ev.get("response_id")
+                        if st.mode == "holding" and rid and st.hold_id and rid != st.hold_id:
+                            # A second response began while the first was held:
+                            # keep the newer one whole rather than interleaving.
+                            st.begin_hold(rid)
                         if st.mode == "idle":
-                            st.begin_hold()
+                            st.begin_hold(rid)
                         if st.mode == "holding":
                             st.hold(ev)
                             if st.held_seconds() > 40:
@@ -585,6 +594,14 @@ class RealtimeVoiceSessionRunner:
         st = self._member_states.get(agent_id)
         agent = next((a for a in self._resolve_agents() if a.id == agent_id), None)
         if st is None or agent is None:
+            return False
+        if st.mode in ("holding", "held_done") and st.hold_started_at < self._speech_started_at:
+            # Began before the participant's current utterance: it is a
+            # reaction to a colleague's audio, not an answer to the question.
+            st.drop("stale")
+            if st.mode == "holding":
+                st.mode = "discarding"
+            self.session.store.event("stale_held_reply_dropped", agent_id=agent_id)
             return False
         if st.mode == "holding":
             await self._flush_held(agent, st)
@@ -704,6 +721,8 @@ class RealtimeVoiceSessionRunner:
             "assistant_turn", agent_id=agent.id, text=text,
             segment=self.segment, transcript_missing=not text, interrupted=interrupted,
         )
+        if self.room is not None and text:
+            await self.room.tell(agent.name, text, exclude=agent.id)
         await self._send({"type": "assistant_done", "agent_id": agent.id})
         self._response_done.set()
 
@@ -862,6 +881,8 @@ class RealtimeVoiceSessionRunner:
                     await self._send({"type": "speech_started"})
                     self._speech_started_at = time.time()
                     self._barged = False
+                    if self.room is not None:
+                        await self._cancel_stale_holds()
                 sustained = (self.room is not None and self.vad.speaking and not self._barged
                              and time.time() - self._speech_started_at
                              >= float(os.getenv("BARGE_IN_MS", "600")) / 1000.0)
@@ -1261,6 +1282,32 @@ class RealtimeVoiceSessionRunner:
             self.session.store.event("group_turn_timeout", agent_id=agent.id)
             self.rt.clear_response_state()
 
+    async def _cancel_stale_holds(self) -> None:
+        """The participant started a new utterance: every reply a non-floor
+        member is still generating is a reaction to a colleague, now stale.
+
+        Cancel it at the bridge rather than just dropping it. On the
+        native-audio route a member whose response is still active when the
+        participant speaks never fires a reply to the new turn: the speech is
+        absorbed into the running response and the fallback request comes
+        back empty. Cancelling frees the model for the participant's turn.
+        """
+        for aid, st in self._member_states.items():
+            if self.room is None or self.room.speaking == aid:
+                continue
+            if st.mode == "holding":
+                st.drop("participant_speaking")
+                st.mode = "discarding"
+                rt = self.room.session_for(aid)
+                if rt is not None:
+                    try:
+                        await rt.cancel_response()
+                    except Exception:  # noqa: BLE001
+                        pass
+                self.session.store.event("hold_cancelled_participant_speaking", agent_id=aid)
+            elif st.mode == "held_done":
+                st.drop("participant_speaking")
+
     async def _grant(self, agent_id: str):
         """Give a character the floor, preferring the reply it already made.
 
@@ -1273,14 +1320,19 @@ class RealtimeVoiceSessionRunner:
         self.room.speaking = agent_id
         if await self.adopt_member(agent_id):
             return self.room.session_for(agent_id)
-        deadline = time.time() + float(os.getenv("AUTOFIRE_WAIT", "1.5"))
+        rt = self.room.session_for(agent_id)
+        wait = autofire_wait_for_model(rt.model if rt else "")
+        deadline = time.time() + wait
         while time.time() < deadline:
             st = self._member_states.get(agent_id)
             if st is not None and st.mode in ("holding", "live"):
-                # It has begun; the pump relays it live since the floor is set.
-                if st.mode == "holding":
-                    await self.adopt_member(agent_id)
-                return self.room.session_for(agent_id)
+                if st.hold_started_at >= self._speech_started_at or st.mode == "live":
+                    if st.mode == "holding":
+                        await self.adopt_member(agent_id)
+                    return self.room.session_for(agent_id)
+            if rt is not None and rt.autofire_active and time.time() - rt._last_output_at < 10:
+                # response.created arrived; its first audio is on the way.
+                deadline = max(deadline, time.time() + 1.0)
             await asyncio.sleep(0.05)
         self.session.store.event("fresh_reply_requested", agent_id=agent_id)
         return await self.room.give_floor(agent_id)

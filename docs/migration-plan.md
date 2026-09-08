@@ -103,21 +103,30 @@ stream) and drive commits. Barge-in likewise has to be handled locally by
 dropping queued agent audio when the participant starts speaking. Budget for
 this; it is the main piece the gateway does not give us for free.
 
-**`nto.gemini-live-2.5-flash-native-audio` is not usable through the gateway
-(checked 2026-09-08).** The socket connects and `session.created` /
-`session.updated` arrive, then nothing, ever: no input transcription, no
-auto-fired reply, no reply to an explicit `input_audio_buffer.commit` +
-`response.create`, and no error. Tried nine configurations: the working
-flat config, no `voice`, no `tools`, a different voice, no `session.update`
-at all, `modalities`, `output_modalities`, the GA nested `audio` block, and
-`input/output_audio_format`. A control run of `nto.gemini-live-2.5-flash`
-through the identical harness returned 34 audio chunks, transcript, and
-text. So the native-audio route is broken on the gateway side, not a
-client-config problem. If `nto.gemini-live-2.5-flash` is retired before the
-native-audio route is fixed, the only working fallbacks on this gateway are
-`gpt-realtime-2.1` (native VAD, different quirks) or going direct to Google.
-Switching is one environment variable, `REALTIME_MODEL`, followed by a full
-re-verification with the simulated participant.
+**`nto.gemini-live-2.5-flash-native-audio` works, with three route-specific
+adaptations (found 2026-09-08 after it looked dead for a day).** The route
+accepts a session and then stays silent forever if it is fed 16 kHz audio:
+no transcription, no reply, no error. It wants **24 kHz PCM16 input**; the
+client resamples per model (`input_rate_for_model`). Output is 24 kHz like
+the other route (confirmed by pitch: 179 Hz vs 180 Hz for the same voice).
+Also different on this route:
+
+- It fires its own reply about 3.3 s after silence (the other route: ~1 s),
+  so the broker waits longer before requesting one (`autofire_wait_for_model`).
+- It accepts text conversation items (the other route closes the socket on
+  them). Rooms use that: members hear only the participant's audio, and
+  each colleague's finished line is injected as text (`GroupRoom.tell`).
+  Fanning colleague audio into a native-audio member confused its turn
+  detection: it reacted to colleagues with long replies and then never
+  fired for the participant's next turn.
+- A member still generating a reaction when the participant starts speaking
+  is cancelled (`_cancel_stale_holds`), or it never answers the new turn.
+- It emits many empty responses (logged as `empty_response`); harmless.
+
+Verified with the simulated participant: S2B 1:1 4/4 replies, ladder intact,
+~2 s; S4A room 4 of 5 turns answered with correct name routing; S3A room with
+interjection. Switch: `actor_model = "nto.gemini-live-2.5-flash-native-audio"`
+in `terraform.tfvars`, apply, then a manual walkthrough before participants.
 
 **Fallback for the announced deprecation of `nto.gemini-live-2.5-flash`
 (verified 2026-09-08): `gpt-realtime-2.1` runs the whole platform.** The

@@ -49,6 +49,37 @@ _OPENAI_VOICE_FOR = {
 _OPENAI_VOICES = {"alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"}
 
 
+def input_rate_for_model(model: str) -> int:
+    """Sample rate the bridge expects for input audio on this model.
+
+    The native-audio Gemini route silently ignores 16 kHz input: the session
+    stays open and never transcribes or replies (found 2026-09-08 after nine
+    config variants failed; 24 kHz input fixed it immediately). The other
+    Gemini route and the OpenAI route accept 16 kHz.
+    """
+    if "native-audio" in (model or "").lower():
+        return 24000
+    return CLIENT_RATE
+
+
+def autofire_wait_for_model(model: str) -> float:
+    """How long to give the bridge to start its own reply before asking.
+
+    Measured: the Gemini route fires about 1 s after silence, the native-audio
+    route about 3.3 s. Asking too early yields a second, colliding reply.
+    """
+    env = os.getenv("AUTOFIRE_WAIT")
+    if env:
+        return float(env)
+    return 4.5 if "native-audio" in (model or "").lower() else 1.5
+
+
+def accepts_text_items(model: str) -> bool:
+    """Whether conversation.item.create with text is safe on this route."""
+    m = (model or "").lower()
+    return "native-audio" in m or m.startswith("gpt-")
+
+
 def is_openai_realtime(model: str) -> bool:
     return (model or "").lower().startswith("gpt-")
 
@@ -149,6 +180,8 @@ class RealtimeVoiceSession:
         # that commits an empty buffer, so give_floor checks this first; it
         # is zeroed when a bridge auto-fired response consumes the buffer.
         self.pending_input = 0
+        self.input_rate = input_rate_for_model(model)
+        self._in_resample_state = None
         # A response the bridge started on its own (after speech + silence),
         # as opposed to one we asked for. Tracked separately from
         # _response_active so group-room suppression behaviour is unchanged.
@@ -209,10 +242,28 @@ class RealtimeVoiceSession:
         """Append participant audio (PCM16 at CLIENT_RATE)."""
         if not pcm16:
             return
+        if self.input_rate != CLIENT_RATE:
+            pcm16, self._in_resample_state = audioop.ratecv(
+                pcm16, 2, 1, CLIENT_RATE, self.input_rate, self._in_resample_state
+            )
         self.pending_input += len(pcm16)
         await self._send({
             "type": "input_audio_buffer.append",
             "audio": base64.b64encode(pcm16).decode("ascii"),
+        })
+
+    async def inject_text(self, text: str, role: str = "user") -> None:
+        """Add a text item to the conversation (no reply requested).
+
+        Only the native-audio Gemini route and the OpenAI route accept text
+        items; the original Gemini route closes the socket (1006) on them.
+        Used to tell a room member what a colleague just said, in place of
+        fanning that colleague's audio into its input.
+        """
+        await self._send({
+            "type": "conversation.item.create",
+            "item": {"type": "message", "role": role,
+                     "content": [{"type": "input_text", "text": text}]},
         })
 
     async def commit_input(self) -> None:
@@ -306,7 +357,8 @@ class RealtimeVoiceSession:
                 if etype in ("response.output_audio.delta", "response.audio.delta"):
                     pcm = base64.b64decode(ev.get("delta") or "")
                     if pcm:
-                        yield {"type": "agent_audio", "pcm": self._to_client_rate(pcm)}
+                        yield {"type": "agent_audio", "pcm": self._to_client_rate(pcm),
+                               "response_id": ev.get("response_id")}
 
                 elif etype in (
                     "response.output_audio_transcript.delta",
@@ -314,7 +366,8 @@ class RealtimeVoiceSession:
                 ):
                     delta = ev.get("delta") or ""
                     self._agent_buffer += delta
-                    yield {"type": "agent_transcript_delta", "text": delta}
+                    yield {"type": "agent_transcript_delta", "text": delta,
+                           "response_id": ev.get("response_id")}
 
                 elif etype in (
                     "response.output_audio_transcript.done",

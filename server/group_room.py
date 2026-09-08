@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 from typing import Callable, Dict, List, Optional
 
-from .voice.realtime import RealtimeVoiceSession, is_openai_realtime
+from .voice.realtime import RealtimeVoiceSession, is_openai_realtime, accepts_text_items
 
 
 class GroupRoom:
@@ -70,13 +70,27 @@ class GroupRoom:
         (exclude=<speaker>) deliberately does not, keeping the scribe's input
         transcription a pure participant channel.
         """
+        # Colleague audio (exclude set) is fanned only to members that cannot
+        # take text; the others get the line as text via tell() instead,
+        # which keeps their turn detection on the participant alone.
         targets = [
-            rt for aid, rt in self.sessions.items() if aid != exclude
+            rt for aid, rt in self.sessions.items()
+            if aid != exclude and not (exclude is not None and accepts_text_items(rt.model))
         ]
         if exclude is None and self.scribe is not None:
             targets.append(self.scribe)
         await asyncio.gather(*(
             rt.send_audio(pcm) for rt in targets
+        ), return_exceptions=True)
+
+    async def tell(self, speaker_name: str, text: str, *, exclude: Optional[str] = None) -> None:
+        """Give text-capable members a colleague's finished line as text."""
+        if not text:
+            return
+        await asyncio.gather(*(
+            rt.inject_text(f"[{speaker_name} says]: {text}")
+            for aid, rt in self.sessions.items()
+            if aid != exclude and accepts_text_items(rt.model)
         ), return_exceptions=True)
 
     async def give_floor(self, agent_id: str) -> Optional[RealtimeVoiceSession]:
