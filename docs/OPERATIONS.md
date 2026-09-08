@@ -35,6 +35,18 @@ aws s3 ls s3://relational-fluency-study-data/ --recursive | head            # em
 
 ---
 
+## Which scenarios a participant gets
+
+Phase 1 uses variant A only: every study run is S1A, S2A, S3A, S4A in a
+counterbalanced order (shuffled per participant). This is the code default
+(`DEFAULT_RUN_VARIANT=A`); set it to `B` to pin the other form or `random`
+for a per-construct coin flip. An explicit `variant=` on an internal test
+link still overrides it, and the RCT's second attempt always flips forms.
+
+Transcription is hinted to English on every route (`TRANSCRIPTION_LANG=en`;
+blank to disable) and the actors are told to speak English regardless of
+what they think they heard.
+
 ## The link to put in Qualtrics
 
 The base URL forwards participants to the study entry when their id is in

@@ -52,8 +52,9 @@ class GroupRoom:
         async def start_scribe():
             rt = RealtimeVoiceSession(
                 instructions=(
-                    "You are a silent transcription channel. Never speak. "
-                    "If you must respond, reply with a single space."
+                    "You are a silent transcription channel for an English "
+                    "conversation. Never speak. If you must respond, reply "
+                    "with a single space."
                 ),
                 voice="Puck",
                 tools=[],
@@ -74,8 +75,9 @@ class GroupRoom:
                 pass
         rt = RealtimeVoiceSession(
             instructions=(
-                "You are a silent transcription channel. Never speak. "
-                "If you must respond, reply with a single space."
+                "You are a silent transcription channel for an English "
+                "conversation. Never speak. If you must respond, reply "
+                "with a single space."
             ),
             voice="Puck",
             tools=[],

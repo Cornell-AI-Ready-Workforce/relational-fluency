@@ -249,7 +249,8 @@ class RealtimeVoiceSessionRunner:
         base = engine._system_prompt(self.session.triggered_branches, director_note or None)
         voice_rules = (
             "\n\nVOICE: You are in a live spoken conversation. Keep every turn "
-            "The participant speaks English. "
+            "The participant speaks English. Always speak English, whatever "
+            "language you think you heard. "
             "SHORT: one or two spoken sentences, at most about 25 words, then "
             "stop and let others respond. Make one point per turn, never a "
             "list of points. Never monologue. Never read out JSON, markdown, "

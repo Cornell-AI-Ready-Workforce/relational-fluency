@@ -14,6 +14,7 @@ matching second-attempt sequence.
 from __future__ import annotations
 
 import json
+import os
 import random
 import time
 import uuid
@@ -64,6 +65,14 @@ def create(
     """
     pool = _by_construct()
     rng = random.Random(seed)
+    # Phase 1 runs one form only: variant A for every construct, with the
+    # order counterbalanced. DEFAULT_RUN_VARIANT=B pins the other form;
+    # DEFAULT_RUN_VARIANT=random restores the per-construct coin flip. A
+    # variant passed explicitly (URL, second attempt) still wins.
+    if not variant and not variants:
+        default = os.getenv("DEFAULT_RUN_VARIANT", "A").strip()
+        if default and default.lower() != "random":
+            variant = default
 
     order = [c for c in CONSTRUCT_ORDER if c in pool]
     rng.shuffle(order)  # counterbalance construct order across participants

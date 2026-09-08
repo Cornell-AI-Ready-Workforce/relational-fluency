@@ -207,11 +207,18 @@ class RealtimeVoiceSession:
             session["voice"] = self.voice
         if self.tools:
             session["tools"] = self.tools
-        # Deliberately nothing else for the Gemini route, see module docstring.
+        # Deliberately nothing else for the Gemini route, see module docstring,
+        # except a language-only transcription hint: verified not to mute
+        # either Gemini route (2026-09-08); it steers the transcriber away
+        # from mis-detecting English as another language. TRANSCRIPTION_LANG=
+        # (blank) disables it.
+        lang = os.getenv("TRANSCRIPTION_LANG", "en")
+        if lang and not is_openai_realtime(self.model):
+            session["input_audio_transcription"] = {"language": lang}
         # The OpenAI route is the opposite: input transcription is OFF unless
         # asked for, and asking is harmless there (verified 2026-09-08).
         if is_openai_realtime(self.model):
-            session["input_audio_transcription"] = {"model": "whisper-1"}
+            session["input_audio_transcription"] = {"model": "whisper-1", **({"language": lang} if lang else {})}
             # Our broker owns turn taking. OpenAI's server VAD would otherwise
             # fire a reply on every member session whenever ANOTHER character's
             # fanned-in audio ends, and reject it as an active-response
@@ -233,8 +240,11 @@ class RealtimeVoiceSession:
             session["voice"] = self.voice
         if self.tools:
             session["tools"] = self.tools
+        lang = os.getenv("TRANSCRIPTION_LANG", "en")
+        if lang and not is_openai_realtime(self.model):
+            session["input_audio_transcription"] = {"language": lang}
         if is_openai_realtime(self.model):
-            session["input_audio_transcription"] = {"model": "whisper-1"}
+            session["input_audio_transcription"] = {"model": "whisper-1", **({"language": lang} if lang else {})}
             session["turn_detection"] = None
         await self._send({"type": "session.update", "session": session})
 
