@@ -355,3 +355,31 @@ def get_participant(pid: str) -> Optional[Dict[str, Any]]:
         return json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
         return None
+
+
+def record_consent(pid: str, consent_version: str) -> Optional[Dict[str, Any]]:
+    """Flip an existing pending participant record to consented.
+
+    /start mints the participant record early so one person keeps one identity
+    across all four encounters, but it must not assert consent on their behalf.
+    The record is therefore created with consent_given=False and only this
+    function, called from POST /api/consent after the participant ticks the box,
+    may set it true. Returns the updated record, or None if there is no such
+    record.
+    """
+    rec = get_participant(pid)
+    if rec is None:
+        return None
+    rec["consent_given"] = True
+    rec["consent_text_version"] = consent_version
+    rec["consent_recorded_at"] = time.time()
+    dest = PARTICIPANTS_DIR / f"{pid}.json"
+    tmp = PARTICIPANTS_DIR / f"{pid}.json.tmp"
+    tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+    os.replace(tmp, dest)
+    with _db() as conn:
+        conn.execute(
+            "UPDATE participants SET consent_given = 1, consent_text_version = ? WHERE id = ?",
+            (consent_version, pid),
+        )
+    return rec

@@ -62,10 +62,22 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
                 continue
             if e.get("type") == "user_turn" and e.get("script_mismatch"):
                 mismatched += 1
+    # A flagged encounter is repaired by the offline retranscription, which
+    # writes transcript_participant_hq.json. Consult that, or the check keeps
+    # failing forever after the operator has done exactly what its own message
+    # told them to do — and a permanently latched FAIL is one people learn to
+    # ignore, which costs more than the check is worth.
+    repaired = (session_dir / "transcript_participant_hq.json").exists()
+    if not mismatched:
+        script_detail = "all turns"
+    elif repaired:
+        script_detail = f"{mismatched} turn(s) flagged, repaired by retranscribe"
+    else:
+        script_detail = f"{mismatched} turn(s) in another script, run retranscribe"
     checks.append((
-        mismatched == 0,
-        "participant transcript in expected script",
-        "all turns" if not mismatched else f"{mismatched} turn(s) in another script, run retranscribe",
+        mismatched == 0 or repaired,
+        "participant transcript script",
+        script_detail,
     ))
     checks.append((a_turns > 0, "agent transcript", f"{a_turns} turns"))
 

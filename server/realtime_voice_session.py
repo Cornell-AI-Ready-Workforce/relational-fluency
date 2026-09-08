@@ -209,11 +209,11 @@ class RealtimeVoiceSessionRunner:
         )
         voice_rules = (
             "\n\nVOICE: You are in a live spoken conversation. Keep every turn "
-            "The participant speaks English. "
             "SHORT: one or two spoken sentences, at most about 25 words, then "
             "stop and let others respond. Make one point per turn, never a "
             "list of points. Never monologue. Never read out JSON, markdown, "
-            "or stage directions."
+            "or stage directions. The participant speaks English; reply in "
+            "English."
         )
         if self.is_group():
             voice_rules += (
@@ -787,7 +787,17 @@ class RealtimeVoiceSessionRunner:
             ):
                 self._switching = True
                 await old.close()
-            self.rt = self.room.session_for(self.agent_id) or self.rt
+            # Never fall back to `old` here: it may be the session just closed
+            # above, and adopting a dead socket would silence the character for
+            # the rest of the interaction. A room with no session for this
+            # character is a real failure, so record it rather than hide it.
+            member = self.room.session_for(self.agent_id) if self.room else None
+            if member is None:
+                self.session.store.event(
+                    "voice_error", where="enter:group",
+                    message=f"no room session for {self.agent_id}",
+                )
+            self.rt = member
         elif changed:
             await self._close_room()
             await self._switch_character(agent)
@@ -928,18 +938,26 @@ class RealtimeVoiceSessionRunner:
                         self._group_turn_tasks.add(_gt)
                         _gt.add_done_callback(self._group_turn_tasks.discard)
                     else:
-                        await self._brief_next_beat(probing=False)
                         # The bridge auto-fires a reply after speech + silence,
                         # usually within a second of our own turn detection.
                         # Committing on top of it yields two replies, both
                         # spoken and both transcribed. Give it a moment to
                         # start; commit only if nothing came.
+                        #
+                        # Wait BEFORE briefing. _brief_next_beat spends a planted
+                        # trigger: it advances _trigger_idx and writes the
+                        # stage_direction event. When a reply is already in
+                        # flight the instructions update lands too late for the
+                        # actor to act on, so briefing first would record a
+                        # scored beat the character never received. Leaving the
+                        # trigger unspent re-briefs it on the next turn instead.
                         deadline = time.time() + float(os.getenv("AUTOFIRE_WAIT", "1.5"))
                         while time.time() < deadline and not self.rt.autofire_active:
                             await asyncio.sleep(0.05)
                         if self.rt.autofire_active:
                             self.session.store.event("autofire_adopted", agent_id=self.agent_id)
                         else:
+                            await self._brief_next_beat(probing=False)
                             await self.rt.commit_turn()
         except WebSocketDisconnect:
             return

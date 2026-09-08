@@ -31,7 +31,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from .engine import DEFAULT_MODEL
 from .scenarios import list_scenarios, load_scenario
 from .session import registry
-from .storage import create_participant, get_participant, init_storage
+from .storage import create_participant, get_participant, init_storage, record_consent
 from .realtime_voice_session import RealtimeVoiceSessionRunner
 
 load_dotenv()
@@ -274,17 +274,21 @@ async def start_run(
 
     # Give the run one stable participant record and carry it in the redirect,
     # so identity.assign() hashes the same key across all four encounters (and
-    # mid-encounter refreshes) instead of a fresh demo_<timestamp> per page
-    # load. Created once per run and reused (the participant already consented
-    # in Qualtrics before reaching this entry point).
+    # mid-encounter refreshes) instead of a fresh code per page load.
+    #
+    # The record is minted with consent_given=False. Minting it here is about
+    # identity, not consent: this endpoint has no affirmative act from the
+    # participant to record, and a record asserting consent that nobody gave is
+    # exactly the defect the in-app gate exists to prevent. POST /api/consent
+    # flips it once they have read the text and ticked the box. Until then the
+    # voice endpoint refuses to open, so no capture can precede consent.
     pid_record = run.get("participant_record_id")
     if not pid_record:
         try:
-            version = _load_consent().get("version", "unknown")
             pid_record = create_participant(
                 code=(pkey or run["run_id"]),
-                consent_given=True,
-                consent_version=version,
+                consent_given=False,
+                consent_version="",
             )
             run["participant_record_id"] = pid_record
             runs.save(run)
@@ -299,6 +303,13 @@ async def start_run(
     effective_pid = pid_record or participant_id
     if effective_pid:
         q += f"&participant_id={effective_pid}"
+        # Tell the page whether this record still needs consent, so it shows the
+        # gate on the first encounter of a run and skips it on the rest. Without
+        # this the page would treat any participant_id as proof of consent and
+        # never render the form.
+        rec = get_participant(effective_pid)
+        if not (rec or {}).get("consent_given"):
+            q += "&consent=1"
     return RedirectResponse(url=f"/v2{q}", status_code=307)
 
 
@@ -626,11 +637,21 @@ async def api_post_consent(payload: dict, key: Optional[str] = Query(None)):
     check_participant(key)
     code = (payload.get("code") or "").strip()
     consent_given = bool(payload.get("consent_given"))
-    if not code:
-        raise HTTPException(400, "code required")
+    existing = (payload.get("participant_id") or "").strip()
     if not consent_given:
         raise HTTPException(400, "consent_given must be true to proceed")
     version = _load_consent().get("version", "unknown")
+    # A run that came through /start already has a participant record, minted
+    # there with consent_given=False so identity is stable across the four
+    # encounters. Flip that record rather than minting a second one, or the
+    # participant would end up with one identity per encounter again.
+    if existing:
+        rec = record_consent(existing, version)
+        if rec is None:
+            raise HTTPException(404, "no such participant record")
+        return {"participant_id": existing, "consent_text_version": version}
+    if not code:
+        raise HTTPException(400, "code required")
     pid = create_participant(code=code, consent_given=True, consent_version=version)
     return {"participant_id": pid, "consent_text_version": version}
 
@@ -758,8 +779,20 @@ async def api_run_advance(run_id: str, session_id: Optional[str] = None,
         if m.get("scenario") != expected_scenario:
             raise HTTPException(409, "session scenario does not match current encounter")
 
-    if _count_user_turns(sdir) < 1 and (m.get("n_turns") or 0) < 1:
-        raise HTTPException(422, "session has no recorded turns")
+    # An encounter that recorded nothing is a real problem, but refusing to
+    # advance is the wrong response to it: the participant would be stuck on
+    # encounter 1 for the rest of the study with no completion code and no way
+    # out, and a broken microphone would cost us the whole session rather than
+    # one encounter. Let the run move on and record that this one was empty, so
+    # the run is visibly incomplete in the data instead of silently missing from
+    # it. `runs.advance` copies the entry through, so the flag lands on the
+    # completed encounter.
+    empty = _count_user_turns(sdir) < 1 and (m.get("n_turns") or 0) < 1
+    if empty:
+        idx = run.get("index", 0)
+        if idx < len(run.get("scenarios", [])):
+            run["scenarios"][idx]["no_participant_turns"] = True
+            runs.save(run)
 
     run = runs.advance(run_id, session_id)
     if run is None:
@@ -1103,8 +1136,12 @@ async def ws_participant_voice(
     if PARTICIPANT_KEY_REQUIRED and SESSION_KEY and key != SESSION_KEY:
         await ws.close(code=4401)
         return
-    if not participant_id or not get_participant(participant_id):
-        # Voice path requires consent, no anonymous voice capture.
+    # Voice capture needs recorded consent, and the record existing is not the
+    # same as consent having been given: /start mints one with consent_given
+    # False so identity is stable before the participant has agreed to anything.
+    # Check the flag, not just the record, or the gate is decorative.
+    _p = get_participant(participant_id) if participant_id else None
+    if not _p or not _p.get("consent_given"):
         await ws.close(code=4403)
         return
     await ws.accept()

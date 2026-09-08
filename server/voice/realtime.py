@@ -287,11 +287,20 @@ class RealtimeVoiceSession:
         await self.request_response()
 
     async def cancel_response(self) -> None:
-        """Barge-in: stop the agent mid-utterance. Sent unconditionally so that
-        bridge auto-fired responses — which never flip _response_active — can
-        also be cancelled; response.cancel is harmless when nothing is active."""
+        """Barge-in: stop the agent mid-utterance. Sent unconditionally, because
+        response.cancel is harmless when nothing is active and a bridge
+        auto-fired reply has to be cancellable too.
+
+        Both flags are cleared here. A cancelled response may never produce the
+        response.done that would otherwise clear autofire_active, and a latched
+        autofire_active deadlocks the encounter: the runner's turn loop reads
+        the flag, believes the bridge is already answering, and skips
+        commit_turn() — so no new response is ever created, so no response.done
+        ever arrives, and the agent goes permanently silent after one barge-in.
+        """
         await self._send({"type": "response.cancel"})
         self._response_active = False
+        self.autofire_active = False
 
     def _to_client_rate(self, pcm: bytes) -> bytes:
         if GATEWAY_OUTPUT_RATE == CLIENT_RATE:
@@ -355,7 +364,6 @@ class RealtimeVoiceSession:
                         yield {"type": "user_transcript", "text": text}
 
                 elif etype == "response.done":
-
                     self.autofire_active = False
                     self._response_active = False
                     # The gateway can repeat response.done for one reply; emit
@@ -376,6 +384,9 @@ class RealtimeVoiceSession:
                     }
 
                 elif etype == "error":
+                    # An errored response never reaches response.done either, so
+                    # clear the auto-fire latch here too (see cancel_response).
+                    self.autofire_active = False
                     self._response_active = False
                     yield {"type": "error", "message": str(ev.get("error"))}
         except websockets.ConnectionClosedOK:

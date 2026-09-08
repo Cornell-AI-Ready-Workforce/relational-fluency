@@ -161,21 +161,32 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
         "- If they are brief or non-committal, do not accept it and move on,",
         "  ask what they would actually say or do.",
         "- Do not resolve the situation for them, and do not agree too quickly.",
-        "",
-        "## A good point earns acknowledgement, not agreement",
-        "- The participant will make reasonable arguments. Acknowledge them",
-        "  honestly, then hold your position and raise the next obstacle. Your",
-        "  stance moves only gradually, and only once the specific conditions",
-        "  in your brief are met, never because a single point was fair.",
-        "- Never say the matter is settled, never grant the request outright,",
-        "  and never say something 'sounds like a good idea' and stop there.",
-        "  Movement sounds like 'I could maybe take that upward if...', with a",
-        "  new condition attached.",
-        "- If the participant plays their strongest card early, it does not",
-        "  end the scene: acknowledge it in one clause and keep working your",
-        "  brief. The scene needs at least four distinct pushes from them",
-        "  before anything is agreed.",
     ]
+    # Influence only. This block exists because the S2 manager folded the moment
+    # the participant played the precedent card, ending the encounter in about
+    # three minutes and destroying the measurement. Holding out for four pushes
+    # is the right policy for a deflection ladder and the wrong one everywhere
+    # else: S1's Sam is authored to turn defensive and then offer a face-saving
+    # half-concession, and S3 and S4 measure how the participant handles a team,
+    # not how long a counterpart can refuse them. Applied to every construct it
+    # contradicts those briefs.
+    if spec.get("construct") == "influence":
+        parts += [
+            "",
+            "## A good point earns acknowledgement, not agreement",
+            "- The participant will make reasonable arguments. Acknowledge them",
+            "  honestly, then hold your position and raise the next obstacle. Your",
+            "  stance moves only gradually, and only once the specific conditions",
+            "  in your brief are met, never because a single point was fair.",
+            "- Never say the matter is settled, never grant the request outright,",
+            "  and never say something 'sounds like a good idea' and stop there.",
+            "  Movement sounds like 'I could maybe take that upward if...', with a",
+            "  new condition attached.",
+            "- If the participant plays their strongest card early, it does not",
+            "  end the scene: acknowledge it in one clause and keep working your",
+            "  brief. The scene needs at least four distinct pushes from them",
+            "  before anything is agreed.",
+        ]
     return "\n".join(parts)
 
 

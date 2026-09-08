@@ -679,6 +679,12 @@
   const $ = (id) => document.getElementById(id);
 
   let participantId = params.get('participant_id') || null;
+  // /start mints the participant record before the participant has agreed to
+  // anything, so that one person keeps one identity across their four
+  // encounters. It sets consent=1 while that record is still unconsented. A
+  // participant_id on its own is therefore NOT evidence of consent, and the
+  // gate below must run whenever this flag is set.
+  let consentPending = params.get('consent') === '1';
   let started = false;       // is a session currently running
   let intentionalClose = false;  // set by endSession so a close is not mistaken for a drop
   let sessionStartedAt = 0;  // wall clock when the current encounter began
@@ -733,7 +739,9 @@
   // POSTed after the participant checks the box. If a participant_id was already
   // provided upstream (e.g. /start registered them), we reuse it and skip.
   async function ensureParticipant() {
-    if (participantId) return true;
+    // Only an id that is already consented lets us skip. `consentPending` is
+    // set by /start when the record it minted has not been consented yet.
+    if (participantId && !consentPending) return true;
     // This Promise resolves ONLY after the participant has actually agreed and a
     // consent record was saved. It never resolves otherwise, so nothing that
     // waits on it (the page start, "Start", the situation card) can ever reach
@@ -787,7 +795,11 @@
         try {
           const r = await fetch('/api/consent' + keyParamFirst, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code, consent_given: true }),
+            // Send the id /start minted, so the server flips that record
+            // instead of creating a second one. Without it the participant
+            // would get a fresh identity here and a different assigned name in
+            // every encounter.
+            body: JSON.stringify({ code, consent_given: true, participant_id: participantId }),
           });
           if (!r.ok) {
             $('consentErr').textContent =
@@ -796,6 +808,7 @@
             return;
           }
           participantId = (await r.json()).participant_id;
+          consentPending = false;   // consent is now on record for this run
           $('consentOverlay').style.display = 'none';
           resolve(true);  // the only path that lets the study proceed
         } catch (e) {
@@ -1602,16 +1615,15 @@
         } else if (m.type === 'assistant_interrupted') {
           // Barge-in: the server stopped the current room speaker. Stop the audio
           // we already buffered so the character does not keep talking over the
-          // participant, and clear the speaking ring.
+          // participant, clear the speaking ring, and say whose turn it is.
           stopScheduledAudio();
+          setTurnState("You're speaking", 'you');
         } else if (m.type === 'silence') {
           finalizeUserCaption();
           assistantSpeaking = false;
           setMicMuted(false);
           setActiveSpeaker(null);
           setTurnState('Your turn', 'you');
-        } else if (m.type === 'assistant_interrupted') {
-          setTurnState("You're speaking", 'you');
         } else if (m.type === 'error') {
           appendTranscript('user', null, 'Something went wrong. Please try again.');
         }
