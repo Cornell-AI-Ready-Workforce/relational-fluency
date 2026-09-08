@@ -63,6 +63,27 @@ class GroupRoom:
 
         await asyncio.gather(start_scribe(), *(start(a) for a in self.agents))
 
+    async def reopen_scribe(self) -> Optional[RealtimeVoiceSession]:
+        """Replace a scribe that stopped transcribing with a fresh session."""
+        old = self.scribe
+        self.scribe = None
+        if old is not None:
+            try:
+                await old.close()
+            except Exception:  # noqa: BLE001
+                pass
+        rt = RealtimeVoiceSession(
+            instructions=(
+                "You are a silent transcription channel. Never speak. "
+                "If you must respond, reply with a single space."
+            ),
+            voice="Puck",
+            tools=[],
+        )
+        await rt.connect(open_conversation=False)
+        self.scribe = rt
+        return rt
+
     async def hear(self, pcm: bytes, *, exclude: Optional[str] = None) -> None:
         """Everyone in the room hears this audio.
 
@@ -114,6 +135,17 @@ class GroupRoom:
             # buffer kills the session on this bridge. Pad with 300 ms of
             # silence so the commit is always safe; the real audio is already
             # in the conversation history from the auto-commit.
+            if "native-audio" in (rt.model or "").lower():
+                # The native route already consumed the participant's audio
+                # with its own (dropped or absent) reply; committing padding
+                # silence yields an empty response. It does answer a text
+                # item, so nudge it with one instead.
+                await rt.inject_text(
+                    "(The participant is waiting for you to answer what they just said. "
+                    "Reply now, in character, one or two sentences.)"
+                )
+                await rt.request_response()
+                return rt
             if rt.pending_input < 3200:
                 await rt.send_audio(b"\x00" * 9600)
             await rt.commit_input()

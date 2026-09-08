@@ -146,7 +146,7 @@ def _is_echo(user_norm: str, agent_norm: str) -> bool:
     return overlap >= 0.8
 from .llm import provenance
 from .group_room import GroupRoom
-from .voice.realtime import RealtimeVoiceSession, SilenceDetector, is_openai_realtime, autofire_wait_for_model
+from .voice.realtime import RealtimeVoiceSession, SilenceDetector, is_openai_realtime, autofire_wait_for_model, accepts_text_items
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -236,6 +236,8 @@ class RealtimeVoiceSessionRunner:
         # which is what "heard" has to mean for interruptions.
         self._play_cursor = 0.0
         self._last_played: Optional[dict] = None   # {agent_id, start, end, text}
+        self._turns_without_transcript = 0
+        self._scribe_pump: Optional[asyncio.Task] = None
         self._floor = asyncio.Lock()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -428,7 +430,8 @@ class RealtimeVoiceSessionRunner:
             if rt is not None:
                 self._pumps.append(asyncio.ensure_future(self._pump_member(a, rt)))
         if self.room.scribe is not None:
-            self._pumps.append(asyncio.ensure_future(self._pump_scribe(self.room.scribe)))
+            self._scribe_pump = asyncio.ensure_future(self._pump_scribe(self.room.scribe))
+            self._pumps.append(self._scribe_pump)
         # No character opens unprompted: on this bridge a response can only
         # follow committed audio, and committing an empty buffer kills the
         # session. The participant speaks first; the scene brief sets that up.
@@ -531,8 +534,13 @@ class RealtimeVoiceSessionRunner:
                     continue
 
                 if etype == "user_transcript":
-                    # The scribe pump owns the participant transcript; member
-                    # sessions also hear the other characters.
+                    # On routes where colleagues arrive as text, a member hears
+                    # only the participant, so its transcription is a clean
+                    # second source (deduped in _record_user_turn). On the
+                    # original route members also hear the other characters,
+                    # so only the scribe counts there.
+                    if accepts_text_items(rt.model):
+                        await self._record_user_turn(ev["text"])
                     continue
 
                 if etype == "response_done":
@@ -1408,6 +1416,25 @@ class RealtimeVoiceSessionRunner:
             while self._last_user_text == before and time.time() < deadline:
                 await asyncio.sleep(0.15)
             fresh = self._last_user_text if self._last_user_text != before else ""
+            # Scribe watchdog: the participant spoke (the VAD ended a turn) but
+            # no transcript came from anywhere. Twice in a row means the scribe
+            # session has gone dead (seen on the native-audio route after ~6
+            # turns in production); replace it.
+            if fresh:
+                self._turns_without_transcript = 0
+            else:
+                self._turns_without_transcript += 1
+                if self._turns_without_transcript >= 2 and self.room is not None and self.room.scribe is not None:
+                    self._turns_without_transcript = 0
+                    try:
+                        new_scribe = await self.room.reopen_scribe()
+                        if self._scribe_pump is not None:
+                            self._scribe_pump.cancel()
+                        self._scribe_pump = asyncio.ensure_future(self._pump_scribe(new_scribe))
+                        self._pumps.append(self._scribe_pump)
+                        self.session.store.event("scribe_reconnected")
+                    except Exception as exc:  # noqa: BLE001
+                        self.session.store.event("scribe_reconnect_failed", message=str(exc))
 
             named_early = self._named_in(fresh)
             first = named_early
