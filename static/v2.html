@@ -1271,7 +1271,12 @@
           if (cue) cue.remove();
         } else if (m.type === 'user_transcript') {
           // Build one consolidated bubble: interim updates live, finals commit.
-          if (m.final) { userFinals.push(m.text); renderUserCaption(''); setTurnState('Listening…', 'listen'); }
+          if (m.final) {
+            // A transcript in the wrong script is the transcriber's error, not
+            // the participant's; show a neutral caption rather than the script.
+            userFinals.push(m.unclear ? '(we heard you, but could not transcribe that clearly)' : m.text);
+            renderUserCaption(''); setTurnState('Listening…', 'listen');
+          }
           else { renderUserCaption(m.text); }
         } else if (m.type === 'director_routed') {
           finalizeUserCaption();  // user's turn is committed; routing stays internal

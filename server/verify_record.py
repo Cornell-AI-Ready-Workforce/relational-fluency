@@ -48,6 +48,25 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
     counts = record.get("counts", {})
     p_turns, a_turns = counts.get("participant_turns", 0), counts.get("agent_turns", 0)
     checks.append((p_turns > 0, "participant transcript", f"{p_turns} turns"))
+    # The live transcriber sometimes returns a participant turn in the wrong
+    # script (English speech transliterated into Devanagari has been seen).
+    # Those turns are flagged in the event trail; the offline retranscription
+    # is the corrected text, so a flagged encounter needs that pass run.
+    mismatched = 0
+    ev_path = session_dir / "events.jsonl"
+    if ev_path.exists():
+        for line in ev_path.read_text(encoding="utf-8").splitlines():
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("type") == "user_turn" and e.get("script_mismatch"):
+                mismatched += 1
+    checks.append((
+        mismatched == 0,
+        "participant transcript in expected script",
+        "all turns" if not mismatched else f"{mismatched} turn(s) in another script, run retranscribe",
+    ))
     checks.append((a_turns > 0, "agent transcript", f"{a_turns} turns"))
 
     # --- audio: both channels, non-trivial ---

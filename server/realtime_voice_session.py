@@ -59,6 +59,22 @@ def _clean_agent_text(text: str) -> str:
     return " ".join(parts) if changed else t
 
 
+def _script_mismatch(text: str) -> bool:
+    """True when the transcript is mostly non-Latin script.
+
+    The gateway transcriber occasionally mis-detects the language and
+    transliterates English speech into another script (Devanagari has been
+    seen: "रिवर्स टीम" for "Rivera's team"). The model still understood the
+    audio; only the caption is wrong. Language hints in session.update are
+    accepted and ignored, so this is detected after the fact.
+    """
+    letters = [c for c in text if c.isalpha()]
+    if len(letters) < 6:
+        return False
+    latin = sum(1 for c in letters if c.isascii())
+    return latin / len(letters) < 0.5
+
+
 def _norm_speech(text: str) -> str:
     """Lowercase, strip punctuation: comparable across transcriber quirks."""
     return " ".join("".join(c if c.isalnum() or c.isspace() else " "
@@ -175,6 +191,7 @@ class RealtimeVoiceSessionRunner:
         base = engine._system_prompt(self.session.triggered_branches, director_note or None)
         voice_rules = (
             "\n\nVOICE: You are in a live spoken conversation. Keep every turn "
+            "The participant speaks English. "
             "SHORT: one or two spoken sentences, at most about 25 words, then "
             "stop and let others respond. Make one point per turn, never a "
             "list of points. Never monologue. Never read out JSON, markdown, "
@@ -560,8 +577,16 @@ class RealtimeVoiceSessionRunner:
         self._last_user_norm, self._last_user_at = norm, now
         self._last_user_text = text
         self.session.append_user(text)
-        self.session.store.event("user_turn", text=text, channel="voice")
-        await self._send({"type": "user_transcript", "text": text, "final": True})
+        unclear = _script_mismatch(text)
+        self.session.store.event(
+            "user_turn", text=text, channel="voice", script_mismatch=unclear
+        )
+        # The research record keeps the raw text (retranscribe repairs it
+        # offline); the participant only sees a neutral caption, since a line
+        # of foreign script reads as "the app is broken".
+        await self._send({
+            "type": "user_transcript", "text": text, "final": True, "unclear": unclear,
+        })
         await self.session.broadcast(
             {"type": "transcript", "role": "user", "text": text}
         )
