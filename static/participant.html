@@ -121,7 +121,7 @@
 
 <script>
   const params = new URLSearchParams(location.search);
-  const scenario = params.get('scenario') || 'difficult_disclosure';
+  const scenario = params.get('scenario') || 'missed_deadlines';
   const mode = params.get('mode') === 'voice' ? 'voice' : 'text';
   const key = params.get('key') || '';
   const keyParam = key ? `&key=${encodeURIComponent(key)}` : '';
@@ -135,13 +135,20 @@
   async function runConsentGate() {
     if (participantId) return true; // already have one
     if (mode !== 'voice') return true; // text mode: consent not required
-    const res = await fetch('/api/consent' + keyParamFirst);
-    const cfg = await res.json();
-    $('consentTitle').textContent = cfg.title;
-    $('consentBody').innerHTML = cfg.body
+    let cfg;
+    try {
+      const res = await fetch('/api/consent' + keyParamFirst);
+      if (!res.ok) throw new Error('server returned ' + res.status);
+      cfg = await res.json();
+    } catch (e) {
+      appendMsg('meta', 'Could not load the consent form — please reload to try again.');
+      return false;
+    }
+    $('consentTitle').textContent = cfg.title || 'Consent';
+    $('consentBody').innerHTML = String(cfg.body || '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    $('consentConfirmLabel').textContent = cfg.confirm_checkbox;
+    $('consentConfirmLabel').textContent = cfg.confirm_checkbox || 'I consent to participate.';
     $('consentOverlay').style.display = 'flex';
     return new Promise((resolve) => {
       $('consentSubmit').addEventListener('click', async () => {
@@ -150,19 +157,21 @@
         $('consentErr').textContent = '';
         if (!code) { $('consentErr').textContent = 'Please enter a participant code.'; return; }
         if (!checked) { $('consentErr').textContent = 'Please confirm to continue.'; return; }
+        $('consentSubmit').disabled = true;
         try {
           const r = await fetch('/api/consent' + keyParamFirst, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code, consent_given: true }),
           });
-          if (!r.ok) { $('consentErr').textContent = 'Could not register consent.'; return; }
+          if (!r.ok) { $('consentErr').textContent = 'We couldn’t save your consent. Please try again.'; $('consentSubmit').disabled = false; return; }
           const data = await r.json();
           participantId = data.participant_id;
           $('consentOverlay').style.display = 'none';
           resolve(true);
         } catch (e) {
-          $('consentErr').textContent = 'Network error: ' + e.message;
+          $('consentErr').textContent = 'Something went wrong. Please check your connection and try again.';
+          $('consentSubmit').disabled = false;
         }
       });
     });
@@ -197,7 +206,7 @@
     $('intro').textContent = m.scenario.intro;
     $('sid').textContent = `session: ${m.session_id}`;
     try {
-      history.replaceState({}, '', `?scenario=${encodeURIComponent(scenario)}&session=${encodeURIComponent(m.session_id)}&mode=${mode}${key ? `&key=${encodeURIComponent(key)}` : ''}`);
+      history.replaceState({}, '', `?scenario=${encodeURIComponent(scenario)}&session=${encodeURIComponent(m.session_id)}&mode=${mode}${key ? `&key=${encodeURIComponent(key)}` : ''}${participantId ? `&participant_id=${encodeURIComponent(participantId)}` : ''}`);
     } catch {}
   }
 
@@ -224,10 +233,10 @@
         currentAssistant = null; currentLatency = null;
         setBusy(false); $('input').focus();
       } else if (m.type === 'error') {
-        appendMsg('meta', `error: ${m.message}`); setBusy(false);
+        appendMsg('meta', 'Something went wrong. Please try again.'); setBusy(false);
       }
     });
-    ws.addEventListener('close', () => { appendMsg('meta', 'disconnected'); setBusy(true); });
+    ws.addEventListener('close', () => { appendMsg('meta', 'The connection was lost. Please reload to reconnect.'); setBusy(true); });
     function send() {
       const text = $('input').value.trim();
       if (!text || busy || ws.readyState !== 1) return;
@@ -237,7 +246,7 @@
     }
     $('send').addEventListener('click', send);
     $('input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
     });
   }
 
@@ -249,8 +258,15 @@
   let playbackTime = 0;     // when the next chunk should start
   let assistantSpeaking = false;
   let assistantTextEl = null;
+  let rafId = null;         // level-meter animation handle
+  let levelRunning = false; // guards the level-meter loop
+  let turnDone = false;     // assistant_done received for the current turn
 
   async function startVoiceCapture() {
+    // Fresh AudioContext clock starts near 0; reset the accumulator to match.
+    playbackTime = 0;
+    assistantSpeaking = false;
+    turnDone = false;
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     await audioCtx.audioWorklet.addModule('/static/pcm-worklet.js');
     mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -271,23 +287,25 @@
     analyser.fftSize = 512;
     micNode.connect(analyser);
     const lvl = $('micLevel'); const buf = new Uint8Array(analyser.fftSize);
+    levelRunning = true;
     function tick() {
+      if (!levelRunning) { rafId = null; return; }
       analyser.getByteTimeDomainData(buf);
       let sum = 0;
       for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
       const rms = Math.sqrt(sum / buf.length);
       lvl.style.width = `${Math.min(100, rms * 250)}%`;
-      requestAnimationFrame(tick);
+      rafId = requestAnimationFrame(tick);
     }
-    tick();
+    rafId = requestAnimationFrame(tick);
   }
 
   function setMicVisualState(state) {
     const el = $('micStatus'); const lbl = $('micLabel');
     el.className = 'mic-status ' + state;
     if (state === 'live') lbl.textContent = 'Listening, speak any time';
-    else if (state === 'muted') lbl.textContent = 'Muted (assistant is speaking)';
-    else lbl.textContent = 'Idle';
+    else if (state === 'muted') lbl.textContent = 'Muted while the other person is speaking';
+    else lbl.textContent = 'Ready';
   }
 
   function setMicMuted(muted) {
@@ -295,8 +313,21 @@
     setMicVisualState(muted ? 'muted' : 'live');
   }
 
+  // Unmute only when the turn is truly over: assistant_done received AND the
+  // playback queue has drained. Guards against mid-turn underruns unmuting early.
+  function maybeUnmuteAfterTurn() {
+    if (!assistantSpeaking) return;
+    if (!turnDone) return;
+    if (audioCtx && audioCtx.currentTime < playbackTime - 0.01) return;
+    assistantSpeaking = false;
+    setMicMuted(false);
+  }
+
   function playPcmChunk(bytes) {
     if (!audioCtx) return;
+    // A chunk for the current turn is still arriving — keep the mic muted even
+    // if a prior underrun tried to unmute it.
+    if (assistantSpeaking) setMicMuted(true);
     const int16 = new Int16Array(bytes);
     const float = new Float32Array(int16.length);
     for (let i = 0; i < int16.length; i++) float[i] = int16[i] / 32768;
@@ -311,13 +342,8 @@
     src.start(playbackTime);
     playbackTime += buf.duration;
     src.onended = () => {
-      if (audioCtx && audioCtx.currentTime >= playbackTime - 0.01) {
-        // Last chunk finished. Re-open the mic.
-        if (assistantSpeaking) {
-          assistantSpeaking = false;
-          setMicMuted(false);
-        }
-      }
+      // Last chunk finished. Re-open the mic only if the turn is actually over.
+      maybeUnmuteAfterTurn();
     };
   }
 
@@ -327,7 +353,7 @@
     $('startVoice').onclick = async () => {
       $('startVoice').disabled = true;
       try { await startVoiceCapture(); } catch (e) {
-        appendMsg('meta', 'mic error: ' + e.message); $('startVoice').disabled = false; return;
+        appendMsg('meta', 'We couldn’t turn on your microphone. Please allow microphone access and try again.'); $('startVoice').disabled = false; return;
       }
       $('startVoice').style.display = 'none';
       $('stopVoice').style.display = 'inline-block';
@@ -350,7 +376,7 @@
               userPartialEl.textContent = m.text;
             }
           } else if (m.type === 'assistant_started') {
-            assistantSpeaking = true; setMicMuted(true);
+            assistantSpeaking = true; turnDone = false; setMicMuted(true);
             assistantTextEl = appendMsg('assistant', '');
             currentLatency = document.createElement('div'); currentLatency.className = 'latency';
             assistantTextEl.appendChild(currentLatency);
@@ -363,22 +389,55 @@
             assistantTextEl.insertBefore(document.createTextNode(m.text), currentLatency);
             window.scrollTo(0, document.body.scrollHeight);
           } else if (m.type === 'assistant_done') {
-            if (currentLatency) currentLatency.textContent = `first-token ${m.latency_to_first_token_s}s · first-audio ${m.latency_to_first_audio_s}s · total ${m.latency_total_s}s`;
+            if (currentLatency) {
+              const parts = [];
+              if (m.latency_to_first_token_s != null) parts.push(`first-token ${m.latency_to_first_token_s}s`);
+              if (m.latency_to_first_audio_s != null) parts.push(`first-audio ${m.latency_to_first_audio_s}s`);
+              if (m.latency_total_s != null) parts.push(`total ${m.latency_total_s}s`);
+              currentLatency.textContent = parts.join(' · ');
+            }
             assistantTextEl = null; currentLatency = null;
+            // Turn is over: allow the mic to reopen once playback drains.
+            turnDone = true;
+            maybeUnmuteAfterTurn();
+          } else if (m.type === 'segment_start') {
+            const who = m.character || m.character_name || m.name || m.title;
+            appendMsg('meta', who ? `Now speaking with ${who}` : 'A new part of the conversation is starting.');
+          } else if (m.type === 'encounter_complete') {
+            appendMsg('meta', 'The encounter is complete. Thank you.');
+            turnDone = true;
+            assistantSpeaking = false;
+            levelRunning = false;
+            if (rafId != null) { cancelAnimationFrame(rafId); rafId = null; }
+            try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
+            try { audioCtx && audioCtx.close(); } catch {}
+            setMicVisualState('idle');
+            $('stopVoice').style.display = 'none';
+            $('startVoice').style.display = 'inline-block';
+            $('startVoice').disabled = true;
           } else if (m.type === 'error') {
-            appendMsg('meta', 'error: ' + m.message);
+            appendMsg('meta', 'Something went wrong. Please try again.');
+            // A failed turn may produce no audio; don't leave the mic stuck muted.
+            turnDone = true;
+            maybeUnmuteAfterTurn();
           }
         } else {
           // Binary audio chunk from TTS.
           playPcmChunk(ev.data);
         }
       });
-      ws.addEventListener('close', () => { appendMsg('meta', 'disconnected'); setMicVisualState('idle'); });
+      ws.addEventListener('close', () => { appendMsg('meta', 'The connection was lost. Please reload to reconnect.'); setMicVisualState('idle'); });
     };
     $('stopVoice').onclick = () => {
+      levelRunning = false;
+      if (rafId != null) { cancelAnimationFrame(rafId); rafId = null; }
       try { ws && ws.close(); } catch {}
       try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
       try { audioCtx && audioCtx.close(); } catch {}
+      // Reset playback state so a later Start doesn't schedule audio far in the future.
+      playbackTime = 0;
+      assistantSpeaking = false;
+      turnDone = false;
       $('stopVoice').style.display = 'none';
       $('startVoice').style.display = 'inline-block';
       $('startVoice').disabled = false;
@@ -390,7 +449,9 @@
     const ok = await runConsentGate();
     if (!ok) return;
     if (mode === 'voice') startVoice(); else startText();
-  })();
+  })().catch((e) => {
+    appendMsg('meta', 'Something went wrong while starting. Please reload the page.');
+  });
 </script>
 </body>
 </html>
