@@ -36,6 +36,9 @@ def main() -> None:
 
     messages: list[dict] = []
     print(f"{BOLD}Morgan:{RESET} {scenario['first_message']}")
+    # History must start with a user turn and alternate for the Anthropic API,
+    # so prepend a synthetic user turn before the assistant greeting.
+    messages.append({"role": "user", "content": "(joins the call)"})
     messages.append({"role": "assistant", "content": scenario["first_message"]})
 
     while True:

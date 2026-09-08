@@ -2,10 +2,20 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install dependencies first (layer caching)
+# Install dependencies first (layer caching): resolve deps from pyproject alone
+# so a source-only change doesn't invalidate the dependency install layer.
+# KEEP THIS LIST IN SYNC with [project.dependencies] in agents/pyproject.toml —
+# the `--no-deps` install below will NOT pull anything added there but missing here.
 COPY pyproject.toml ./
+RUN pip install --no-cache-dir \
+    "fastapi>=0.115" \
+    "uvicorn[standard]>=0.30" \
+    "pydantic>=2.7" \
+    "anthropic>=0.40" \
+    "python-dotenv>=1.0"
+# Then copy the source and install the package without re-resolving deps.
 COPY src ./src
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 
 # Non-root user
 RUN useradd -m appuser && mkdir -p /app/logs && chown -R appuser /app
