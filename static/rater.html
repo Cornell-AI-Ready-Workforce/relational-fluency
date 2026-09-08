@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Rating console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  /* Same palette and idiom as static/researcher.html — this is the same
+     platform seen by a different role, and a rater who has been shown the
+     researcher view during training should recognise the furniture. */
+  :root {
+    --bg:         #ededec;
+    --bg-right:   #e3e4e2;
+    --surface:    #ffffff;
+    --surface-2:  #d7d8d7;
+    --line:       #b8b9b6;
+    --line-soft:  #d0d1ce;
+    --fg:         #2f2f2f;
+    --muted:      #6a6a68;
+    --accent:     #b3181b;
+    --accent-deep:#951417;
+    --accent-soft:#f1dcdc;
+    --warn:       #8a6d1e;
+    --warn-soft:  #faf3e2;
+    --warn-line:  #e6d3a3;
+    --ok:         #2f6b39;
+    --ok-soft:    #eef7f0;
+    --ok-line:    #bfe0c8;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+         background: var(--bg); color: var(--fg); font-size: 14px; -webkit-font-smoothing: antialiased; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
+       margin: 20px 0 10px; font-weight: 600; }
+  h2:first-child { margin-top: 0; }
+  button { padding: 7px 14px; border: 0; border-radius: 8px; background: var(--accent); color: #ffffff;
+           font-weight: 600; cursor: pointer; font-size: 13px; transition: background 0.15s, transform 0.05s;
+           font-family: inherit; }
+  button:hover:not(:disabled) { background: var(--accent-deep); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button.secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--line); }
+  button.secondary:hover:not(:disabled) { background: var(--surface-2); }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+  button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible,
+  .turn:focus-visible, .qcard:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+             background: var(--surface); font: inherit; color: var(--fg); resize: vertical; min-height: 74px; }
+  textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+  .app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+
+  /* ---- top bar ------------------------------------------------------- */
+  .bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+         padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
+  .bar .brand { font-weight: 700; font-size: 15px; border-bottom: 3px solid var(--accent);
+                padding-bottom: 2px; }
+  .bar .who { font-size: 12px; color: var(--muted); }
+  .bar .who b { color: var(--fg); font-weight: 600; }
+  .bar .spacer { flex: 1; }
+  .bar .queueprog { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar .rc { font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 600; }
+
+  .pane { display: none; min-height: 0; }
+  .pane.on { display: block; }
+  .pane.grid.on { display: grid; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 26px 22px 40px; }
+
+  /* ---- notices ------------------------------------------------------- */
+  .notice { font-size: 12px; line-height: 1.5; padding: 9px 12px; border-radius: 8px;
+            background: var(--warn-soft); border: 1px solid var(--warn-line);
+            border-left: 3px solid var(--warn); color: #5c4a14; }
+  .notice b { color: #4a3c10; }
+  .banner { font-size: 13px; line-height: 1.5; padding: 10px 13px; border-radius: 8px;
+            background: var(--accent-soft); border: 1px solid var(--accent);
+            color: var(--accent-deep); margin-bottom: 12px; }
+  .banner.ok { background: var(--ok-soft); border-color: var(--ok-line); color: var(--ok); }
+  .banner.plain { background: var(--surface); border-color: var(--line-soft); color: var(--muted); }
+  .empty-hint { font-size: 13px; color: var(--muted); line-height: 1.6;
+                background: var(--surface); border: 1px dashed var(--line-soft);
+                border-radius: 8px; padding: 16px 18px; }
+  .empty-hint code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+  /* ---- queue --------------------------------------------------------- */
+  .qlist { display: flex; flex-direction: column; gap: 8px; }
+  .qcard { display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; align-items: center;
+           background: var(--surface); border: 1px solid var(--line-soft); border-left: 3px solid var(--line);
+           border-radius: 8px; padding: 11px 14px; cursor: pointer; text-align: left; width: 100%;
+           font: inherit; color: var(--fg); }
+  .qcard:hover { background: var(--surface-2); }
+  .qcard.pending { border-left-color: var(--accent); }
+  .qcard.submitted { border-left-color: var(--ok); cursor: default; }
+  .qcard .code { font-family: ui-monospace, Menlo, monospace; font-weight: 600; font-size: 13px; }
+  .qcard .when { font-size: 11px; color: var(--muted); grid-column: 1; }
+  .qcard .state { grid-row: 1 / span 2; font-size: 11px; font-weight: 600; text-transform: uppercase;
+                  letter-spacing: 0.06em; }
+  .qcard.pending .state { color: var(--accent); }
+  .qcard.submitted .state { color: var(--ok); }
+
+  /* ---- rating view --------------------------------------------------- */
+  .rate { grid-template-columns: 1fr 440px; min-height: 0; }
+  .media { padding: 16px 20px 30px; overflow-y: auto; min-width: 0; }
+  .form  { padding: 16px 20px 40px; overflow-y: auto; background: var(--bg-right);
+           border-left: 1px solid var(--line-soft); }
+  @media (max-width: 1100px) {
+    /* Below a laptop width the two columns stop being readable side by side;
+       stack them and let the whole page scroll instead. */
+    .rate { grid-template-columns: 1fr; grid-template-rows: auto auto; overflow-y: auto; }
+    .media, .form { overflow: visible; }
+    .form { border-left: 0; border-top: 1px solid var(--line-soft); }
+  }
+
+  .backrow { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .situation { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 8px;
+               padding: 12px 14px; margin-bottom: 14px; }
+  .situation .title { font-weight: 600; font-size: 14px; margin-bottom: 5px; }
+  .situation .text { font-size: 13px; line-height: 1.6; }
+  .situation .cast { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .situation .assets { margin: 4px 0 0; padding-left: 18px; }
+  .situation .assets li { margin: 2px 0; }
+
+  video { width: 100%; max-height: 46vh; background: #1b1b1a; border-radius: 8px;
+          border: 1px solid var(--line-soft); display: block; }
+  .novideo { background: var(--surface); border: 1px dashed var(--line-soft); border-radius: 8px;
+             padding: 14px 16px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .seekhint { font-size: 11px; color: var(--muted); margin: 6px 0 0; }
+
+  .turns { margin-top: 6px; }
+  .turn { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 7px 8px; border-radius: 6px;
+          cursor: pointer; background: none; border: 0; font: inherit; color: var(--fg);
+          text-align: left; width: 100%; }
+  .turn:hover { background: var(--surface); }
+  .turn.here { background: var(--accent-soft); }
+  .turn .ts { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted);
+              padding-top: 2px; font-variant-numeric: tabular-nums; }
+  .turn .who { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+               color: var(--muted); }
+  .turn.participant .who { color: var(--accent); }
+  .turn .text { line-height: 1.55; white-space: pre-wrap; word-wrap: break-word; }
+  .turn .text.gap { color: var(--muted); font-style: italic; }
+  .scenebreak { display: flex; align-items: center; gap: 10px; margin: 14px 0 8px;
+                font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .scenebreak::before, .scenebreak::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
+
+  /* ---- the item block ------------------------------------------------ */
+  .task { font-size: 13px; line-height: 1.6; background: var(--surface); border: 1px solid var(--line-soft);
+          border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
+  .legend { position: sticky; top: 0; z-index: 3; background: var(--bg-right);
+            padding: 8px 0 8px; border-bottom: 1px solid var(--line-soft); margin-bottom: 6px; }
+  .legend .keys { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; font-size: 10px;
+                  color: var(--muted); text-align: center; line-height: 1.25; }
+  .legend .keys b { display: block; font-size: 12px; color: var(--fg); }
+  .progbar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  .progbar > span { display: block; height: 100%; background: var(--accent); width: 0; transition: width .15s; }
+  .progtext { font-size: 11px; color: var(--muted); margin-top: 5px; font-variant-numeric: tabular-nums;
+              display: flex; justify-content: space-between; }
+
+  .item { background: var(--surface); border: 1px solid var(--line-soft); border-left: 3px solid transparent;
+          border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .item.answered { border-left-color: var(--ok-line); }
+  .item.missing { border-left-color: var(--accent); background: #fff7f7; }
+  .item .q { display: flex; gap: 8px; font-size: 13px; line-height: 1.5; margin-bottom: 8px; }
+  .item .q .n { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 20px; }
+  .opts { display: grid; grid-template-columns: repeat(5, 1fr) 1.6fr; gap: 4px; }
+  .opt { position: relative; }
+  .opt input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .opt span { display: block; text-align: center; padding: 6px 2px; border: 1px solid var(--line);
+              border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--muted);
+              background: var(--surface); user-select: none; }
+  .opt:hover span { background: var(--surface-2); color: var(--fg); }
+  .opt input:checked + span { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* N/A is a deliberate answer, never a default and never a resting state that
+     looks like the scale. It is styled apart so that choosing it reads as a
+     judgement ("the encounter gave me nothing to go on") rather than a skip. */
+  .opt.na span { font-size: 11px; letter-spacing: 0.02em; border-style: dashed; }
+  .opt.na input:checked + span { background: var(--muted); border-color: var(--muted); border-style: solid; color: #fff; }
+  .opt input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .submitbar { position: sticky; bottom: 0; background: var(--bg-right); padding: 12px 0 4px;
+               border-top: 1px solid var(--line-soft); margin-top: 14px; z-index: 3; }
+  .submitbar button { width: 100%; padding: 10px 0; font-size: 14px; }
+  .submitmsg { font-size: 12px; line-height: 1.5; margin-bottom: 8px; }
+  .submitmsg.err { color: var(--accent-deep); }
+  .submitmsg.warn { color: var(--warn); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="bar">
+    <div class="brand">Rating console</div>
+    <div class="who" id="who">…</div>
+    <div class="spacer"></div>
+    <div class="rc" id="barCode"></div>
+    <div class="queueprog" id="queueProgress"></div>
+  </header>
+
+  <!-- Gate: no token, bad token, or the API is unreachable. -->
+  <section class="pane" id="gatePane">
+    <div class="wrap">
+      <h2>Rating console</h2>
+      <div class="empty-hint" id="gateText">Checking your link…</div>
+    </div>
+  </section>
+
+  <!-- Queue -->
+  <section class="pane" id="queuePane">
+    <div class="wrap">
+      <h2>Your assignments</h2>
+      <div class="banner plain" id="queueNote" style="display:none"></div>
+      <div class="qlist" id="qlist"></div>
+      <h2>About this link</h2>
+      <div class="empty-hint">
+        This link carries your personal rater token. It reaches your own
+        assignments and nothing else — no other rater's queue, and no participant
+        identities. Do not forward it. If it stops working, ask the study team
+        for a new one rather than reusing an old link.
+      </div>
+    </div>
+  </section>
+
+  <!-- One assignment -->
+  <section class="pane grid rate" id="ratePane">
+    <div class="media">
+      <div class="backrow">
+        <button class="secondary" id="backBtn">&larr; Queue</button>
+        <span class="rc" id="mediaCode"></span>
+      </div>
+
+      <div class="situation" id="situation"></div>
+
+      <h2>Recording</h2>
+      <div id="videoSlot"></div>
+
+      <h2>Transcript</h2>
+      <div class="banner plain" id="turnFlags" style="display:none"></div>
+      <div class="turns" id="turns"></div>
+    </div>
+
+    <div class="form">
+      <div class="notice" id="licenceNotice">
+        <b>Proprietary instrument.</b> The statements below are ESCI items
+        (Boyatzis, Goleman &amp; Korn Ferry), reproduced for research reference
+        only. Licensing / permission for this use must be confirmed before
+        fielding. Do not copy, redistribute or reuse them outside this study.
+        <div id="packetNotice"></div>
+      </div>
+
+      <div class="task" id="taskText">
+        You are watching a conversation between a study participant and one or
+        more workplace counterparts. Rate <b>the participant</b> — not the people
+        they are talking to. For each statement, rate how consistently the
+        participant demonstrated that behaviour <b>within this conversation</b>.
+        If the conversation gave you no basis to judge a statement, choose
+        <b>N/A</b>; that is an answer, and a useful one. Every statement needs an
+        answer before you can submit.
+        <div id="scaleNote"></div>
+      </div>
+
+      <div class="legend">
+        <div class="keys" aria-hidden="true">
+          <div><b>1</b>Never</div>
+          <div><b>2</b>Rarely</div>
+          <div><b>3</b>Sometimes</div>
+          <div><b>4</b>Often</div>
+          <div><b>5</b>Consistently</div>
+          <div><b>N/A</b>Not enough information to judge</div>
+        </div>
+        <div class="progbar"><span id="progFill"></span></div>
+        <div class="progtext">
+          <span id="progText">0 of 0 answered</span>
+          <span id="timeText"></span>
+        </div>
+      </div>
+
+      <div id="items"></div>
+
+      <h2>What could the participant have done better?</h2>
+      <textarea id="obBetter" placeholder="One or two sentences. Point at something they actually said or did."></textarea>
+
+      <h2>Anything else notable?</h2>
+      <textarea id="obNotable" placeholder="Anything that struck you and the scale above did not capture. Leave blank if nothing."></textarea>
+
+      <div class="submitbar">
+        <div class="submitmsg" id="submitMsg"></div>
+        <button id="submitBtn">Submit rating</button>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div class="sr" aria-live="polite" id="live"></div>
+
+<script>
+/* ---------------------------------------------------------------------------
+   Rater console.
+
+   A rater arrives with a scoped token in the URL and never sees the session
+   key. Everything this page fetches is behind ?token=rt_..., and the server is
+   expected to answer 404 (not 403) for an assignment that is not theirs, so a
+   rater cannot map out which encounters exist. This page therefore never treats
+   a 404 as "you are not allowed" — it says the assignment is not on their list,
+   which is all either side should know.
+
+   The page is deliberately unhelpful to a careless rater: nothing is
+   pre-selected, submit is refused until all 22 statements carry an answer, the
+   two obvious careless patterns (identical answers all the way down, and a
+   submit that arrives before anyone could have watched the encounter) each cost
+   a second, explicit click, and work in progress survives a reload.
+--------------------------------------------------------------------------- */
+
+const params = new URLSearchParams(location.search);
+const token  = params.get('token') || '';
+const T      = encodeURIComponent(token);
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/* Friction constants, gathered here so the study team can change the thresholds
+   without reading the rest of the file. Neither of these blocks a submission —
+   a genuinely quick, genuinely uniform rating is possible — they only make it
+   deliberate. */
+const MIN_SECONDS_BEFORE_SUBMIT = 120;  // under two minutes on an encounter is a skim
+const NA = 'na';                        // stored and sent as null; 'na' is only the radio value
+
+let me = null;            // {rater_id, name, kind, assignments_pending}
+let queue = [];           // [{assignment_id, rating_code, status, assigned_at}]
+let packet = null;        // the open assignment's blinded packet
+let answers = {};         // item_id -> 1..5 | NA
+let submitted = false;    // this assignment has been accepted by the server
+let inFlight = false;     // a POST is on the wire; guards double-submit
+let confirmPending = null;// the warning the rater has been shown but not yet accepted
+let activeMs = 0;         // accumulated foreground time on this packet
+let lastTick = 0;
+let videoPlayed = false;
+let dirty = false;
+let blockedReason = null;  // set when the packet itself says not to rate this one
+
+/* ---- shell --------------------------------------------------------------- */
+
+function show(pane) {
+  ['gatePane', 'queuePane', 'ratePane'].forEach(id => $(id).classList.toggle('on', id === pane));
+}
+
+function say(msg) { $('live').textContent = msg; }
+
+function gate(html) {
+  $('gateText').innerHTML = html;
+  show('gatePane');
+}
+
+async function api(path, opts) {
+  const sep = path.includes('?') ? '&' : '?';
+  const r = await fetch(`${path}${sep}token=${T}`, opts);
+  let body = null;
+  try { body = await r.json(); } catch (e) { /* non-JSON error pages are fine to lose */ }
+  return { ok: r.ok, status: r.status, body };
+}
+
+/* ---- queue --------------------------------------------------------------- */
+
+function fmtDate(s) {
+  if (!s) return '';
+  // assigned_at is a Python epoch, i.e. SECONDS, and Date() reads a bare number
+  // as MILLISECONDS — so passing it straight through dated every card in every
+  // rater's queue to January 1970. A string (an ISO timestamp) still goes
+  // through untouched, so this keeps working if the wire format ever changes.
+  const d = typeof s === 'number' ? new Date(s * 1000) : new Date(s);
+  if (isNaN(d)) return String(s);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
+         d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+function renderQueue() {
+  const done = queue.filter(a => a.status === 'submitted').length;
+  $('queueProgress').textContent = queue.length
+    ? `${done} of ${queue.length} rated`
+    : '';
+  const list = $('qlist');
+  if (!queue.length) {
+    list.innerHTML = '<div class="empty-hint">Nothing is assigned to you yet. ' +
+      'The study team assigns encounters in batches; check back, or ask them.</div>';
+    return;
+  }
+  list.innerHTML = queue.map((a, i) => {
+    const st = a.status === 'submitted' ? 'submitted' : 'pending';
+    return `<button class="qcard ${st}" data-id="${esc(a.assignment_id)}" ${st === 'submitted' ? 'disabled' : ''}>
+      <span class="code">${esc(a.rating_code || a.assignment_id)}</span>
+      <span class="state">${st === 'submitted' ? 'Rated' : 'To rate'}</span>
+      <span class="when">Encounter ${i + 1} of ${queue.length}${a.assigned_at ? ' · assigned ' + esc(fmtDate(a.assigned_at)) : ''}</span>
+    </button>`;
+  }).join('');
+  list.querySelectorAll('.qcard[data-id]').forEach(el => {
+    el.addEventListener('click', () => openAssignment(el.dataset.id));
+  });
+  const note = $('queueNote');
+  const pending = queue.length - done;
+  if (pending > 0) {
+    note.style.display = 'block';
+    note.textContent = `${pending} encounter${pending === 1 ? '' : 's'} still to rate. ` +
+      `Rate them one at a time; there is no time limit, and a rating you have started is kept in this browser until you submit it.`;
+  } else {
+    note.style.display = 'block';
+    note.textContent = 'All of your assigned encounters have been rated. Thank you.';
+  }
+}
+
+/* ---- the packet ---------------------------------------------------------- */
+
+function speakerName(turn) {
+  // server/rater_packet.py labels every turn itself ("Participant", or the cast
+  // name, or a generic "The other speaker" for an id it does not recognise) so
+  // that no internal agent id reaches this page. The fallbacks below are for a
+  // packet built before that, and never reach for the id first.
+  if (turn.speaker) return turn.speaker;
+  if (turn.role === 'participant') return 'Participant';
+  const cast = (packet && packet.cast) || [];
+  const hit = cast.find(c => c.id === turn.agent_id);
+  return (hit && (hit.name || hit.id)) || 'The other speaker';
+}
+
+function mmss(t) {
+  if (t == null || isNaN(t)) return '';
+  const s = Math.max(0, Math.floor(t));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function renderSituation() {
+  // The packet's `situation` is the briefing the participant page rendered —
+  // the prose, the facts they were holding, the people they were told about,
+  // and the scene labels. `packet.construct` is deliberately NOT rendered: it
+  // names the scenario's primary-competency designation, and the instrument
+  // requires raters to be blind to that. It is in the packet for the server's
+  // and the researcher's benefit, and this page ignores it on purpose.
+  const sit = packet.situation || {};
+  const people = (sit.people || packet.cast || [])
+    .map(p => `${esc(p.name || p.id)}${p.role ? ' (' + esc(p.role) + ')' : ''}`)
+    .join(' · ');
+  const assets = (sit.assets || [])
+    .map(a => `<li>${esc(typeof a === 'string' ? a : (a.label || a.text || JSON.stringify(a)))}</li>`)
+    .join('');
+  const len = packet.duration_display || (packet.duration_s ? mmss(packet.duration_s) : '');
+  $('situation').innerHTML =
+    `<div class="title">What the participant was told before they started</div>` +
+    `<div class="text">${esc(sit.text || packet.situation_text || '')}</div>` +
+    (assets ? `<div class="cast">They also had:<ul class="assets">${assets}</ul></div>` : '') +
+    (people ? `<div class="cast">In the conversation: ${people}</div>` : '') +
+    (len ? `<div class="cast">Encounter length: ${esc(len)}</div>` : '');
+}
+
+function renderVideo() {
+  const slot = $('videoSlot');
+  // Three states, kept apart because collapsing them misleads a rater: a video
+  // that plays; an encounter that never had one (two of the twenty-seven in the
+  // reference wave); and a video that exists but whose link could not be
+  // minted, which is a fault to report rather than a transcript-only rating.
+  const media = packet.media || { video_url: packet.video_url, video_available: !!packet.video_url };
+  if (!media.video_url) {
+    const stuck = media.video_available === true;
+    slot.innerHTML = `<div class="novideo"><b>${stuck
+      ? 'The video for this encounter could not be loaded.'
+      : 'No video for this encounter.'}</b> ` +
+      esc(media.note || (stuck
+        ? 'Do not rate it yet — tell the study team.'
+        : 'The webcam recording is missing, so rate from the transcript alone. ' +
+          'Expect to answer N/A more often than usual — say so in the notes if it mattered.')) +
+      '</div>';
+    // Nothing to watch: do not hold the "you never played the recording"
+    // warning against a rater who was never given a recording. A link that
+    // failed to mint is different — the rating is blocked outright.
+    videoPlayed = true;
+    if (stuck) { $('submitBtn').disabled = true; blockedReason = 'no-playback'; }
+    return;
+  }
+  slot.innerHTML = '<video id="vid" controls preload="metadata" playsinline></video>' +
+    '<div class="seekhint">Click any line of the transcript to jump the video to roughly that moment. ' +
+    'The transcript clock is taken from the conversation log, so it can sit a second or two off the video.</div>';
+  const v = $('vid');
+  v.src = media.video_url;
+  v.addEventListener('play', () => { videoPlayed = true; });
+  v.addEventListener('timeupdate', () => highlightTurn(v.currentTime));
+}
+
+function renderTurns() {
+  const turns = packet.transcript || [];
+  if (!turns.length) {
+    $('turns').innerHTML = '<div class="empty-hint">This encounter has no transcript.</div>';
+    return;
+  }
+  let html = '';
+  let lastAgent = null;
+  turns.forEach((turn, i) => {
+    // A change of counterpart is something the participant lived through, so it
+    // belongs in the transcript. The packet's own segment/interaction labels are
+    // instrument structure and are deliberately not shown even if present.
+    if (turn.role === 'agent') {
+      const who = speakerName(turn);
+      if (lastAgent !== null && who !== lastAgent) html += `<div class="scenebreak">now with ${esc(who)}</div>`;
+      lastAgent = who;
+    }
+    const text = (turn.text || '').trim();
+    // The packet carries a neutral, non-evaluative sentence for each of the two
+    // delivery flags. Use its wording where it is given, because how these are
+    // phrased is an instrument decision, not a UI one: a marker that reads as a
+    // judgement about the character would push the rater's judgement about the
+    // participant with it.
+    const note = turn.note ? ` <span class="gap">[${esc(turn.note)}]</span>` : '';
+    let body;
+    if (!text && turn.transcript_missing) {
+      body = `<div class="text gap">[this turn was spoken but its transcript was lost]${note}</div>`;
+    } else if (!text) {
+      body = '<div class="text gap">[no text recorded for this turn]</div>';
+    } else if (note) {
+      body = `<div class="text">${esc(text)}${note}</div>`;
+    } else {
+      body = `<div class="text">${esc(text)}${turn.interrupted ? ' <span class="gap">[cut off — the participant spoke over this]</span>' : ''}</div>`;
+    }
+    html += `<button class="turn ${turn.role === 'participant' ? 'participant' : ''}" data-t="${turn.t == null ? '' : turn.t}" data-i="${i}">
+      <span class="ts">${esc(mmss(turn.t))}</span>
+      <span><span class="who">${esc(speakerName(turn))}</span>${body}</span>
+    </button>`;
+  });
+  $('turns').innerHTML = html;
+  $('turns').querySelectorAll('.turn').forEach(el => {
+    el.addEventListener('click', () => {
+      const t = parseFloat(el.dataset.t);
+      const v = $('vid');
+      if (v && !isNaN(t)) { v.currentTime = Math.max(0, t - 1); v.play().catch(() => {}); }
+    });
+  });
+}
+
+function highlightTurn(now) {
+  const els = $('turns').querySelectorAll('.turn');
+  let best = null;
+  els.forEach(el => {
+    const t = parseFloat(el.dataset.t);
+    if (!isNaN(t) && t <= now + 0.5) best = el;
+    el.classList.remove('here');
+  });
+  if (best) best.classList.add('here');
+}
+
+function renderItems() {
+  // The item bank is never hard-coded here. It comes down with the packet, in
+  // the order the server chose (item order is randomised within group and group
+  // order across raters, per the instrument's administration notes), and this
+  // page renders that order verbatim. Two consequences worth stating: a
+  // proprietary instrument is not sitting in a static file the whole internet
+  // can GET, and the randomisation lives in one place instead of two.
+  const items = packetItems();
+  if (!items.length) {
+    $('items').innerHTML = '<div class="empty-hint">This packet carried no items. ' +
+      'Do not rate this encounter — tell the study team.</div>';
+    $('submitBtn').disabled = true;
+    blockedReason = 'no-items';
+    return;
+  }
+  $('items').innerHTML = items.map((it, i) => {
+    const id = it.id;
+    const qid = `q-${id}`;
+    // Reverse-scored items are shown exactly like the rest, unmarked. They
+    // double as straight-lining checks, and flagging them here would destroy
+    // that. `it.reverse` is carried in the packet for the server's benefit and
+    // ignored on purpose.
+    const opts = ['1', '2', '3', '4', '5'].map(v =>
+      `<label class="opt"><input type="radio" name="${esc(id)}" value="${v}"
+         aria-label="${v}"><span>${v}</span></label>`).join('') +
+      `<label class="opt na"><input type="radio" name="${esc(id)}" value="${NA}"
+         aria-label="Not enough information to judge"><span>N/A</span></label>`;
+    return `<div class="item" id="item-${esc(id)}" data-item="${esc(id)}">
+      <div class="q" id="${esc(qid)}"><span class="n">${i + 1}</span><span>${esc(it.text || '')}</span></div>
+      <div class="opts" role="radiogroup" aria-labelledby="${esc(qid)}">${opts}</div>
+    </div>`;
+  }).join('');
+  $('items').querySelectorAll('input[type=radio]').forEach(r => {
+    r.addEventListener('change', () => {
+      answers[r.name] = r.value === NA ? NA : parseInt(r.value, 10);
+      markDirty();
+      refreshProgress();
+      saveDraft();
+    });
+  });
+}
+
+/* The item bank travels with the packet. `items` is where the route is expected
+   to put it; `esci_items` is accepted because the packet builder and the route
+   are separate modules and this page should not be the thing that breaks if
+   they disagree on the name. Either way the order is the server's — item order
+   is randomised within competency group and group order across raters, and this
+   page renders what it is handed rather than shuffling a second time. */
+function packetItems() {
+  if (!packet) return [];
+  // `item_bank` is the whole payload server/esci.py's item_bank() returns
+  // (notice, source, scale, constructs, items); `items` is that payload's item
+  // list on its own. Both are accepted because the packet builder and the route
+  // are separate modules, and this page should not be the thing that breaks if
+  // they disagree about which of the two to send.
+  if (packet.item_bank && Array.isArray(packet.item_bank.items)) return packet.item_bank.items;
+  return packet.items || packet.esci_items || [];
+}
+
+function refreshProgress() {
+  const items = packetItems();
+  let n = 0;
+  items.forEach(it => {
+    const el = $(`item-${it.id}`);
+    const has = Object.prototype.hasOwnProperty.call(answers, it.id);
+    if (has) n++;
+    if (el) {
+      el.classList.toggle('answered', has);
+      if (has) el.classList.remove('missing');
+    }
+  });
+  const pct = items.length ? Math.round((n / items.length) * 100) : 0;
+  $('progFill').style.width = pct + '%';
+  $('progText').textContent = `${n} of ${items.length} answered`;
+  return n;
+}
+
+/* ---- drafts -------------------------------------------------------------- */
+
+/* A rater who reloads, or whose laptop sleeps, should not lose twenty answers.
+   The draft is this rater's own working copy on their own machine, cleared the
+   moment the server accepts the submission. It holds scores and their two notes
+   — no participant identity, since the packet carries none. */
+function draftKey() { return packet ? `rf.rating.draft.${packet.assignment_id}` : null; }
+
+function saveDraft() {
+  const k = draftKey();
+  if (!k || submitted) return;
+  try {
+    localStorage.setItem(k, JSON.stringify({
+      answers, better: $('obBetter').value, notable: $('obNotable').value, at: Date.now(),
+    }));
+  } catch (e) { /* private mode, quota — a lost draft is not worth an error */ }
+}
+
+function clearDraft() {
+  const k = draftKey();
+  try { if (k) localStorage.removeItem(k); } catch (e) {}
+}
+
+function loadDraft() {
+  const k = draftKey();
+  if (!k) return false;
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return false; }
+  if (!d || !d.answers) return false;
+  answers = {};
+  Object.keys(d.answers).forEach(id => {
+    const v = d.answers[id];
+    const el = document.querySelector(`input[name="${CSS.escape(id)}"][value="${v === null ? NA : v}"]`);
+    if (el) { el.checked = true; answers[id] = v; }
+  });
+  $('obBetter').value = d.better || '';
+  $('obNotable').value = d.notable || '';
+  return Object.keys(answers).length > 0 || !!d.better || !!d.notable;
+}
+
+function markDirty() { dirty = true; confirmPending = null; setSubmitLabel(); }
+
+/* ---- timing -------------------------------------------------------------- */
+
+function tick() {
+  const now = performance.now();
+  if (!document.hidden && lastTick) activeMs += now - lastTick;
+  lastTick = now;
+  if (packet && !submitted) {
+    const s = Math.round(activeMs / 1000);
+    $('timeText').textContent = `${mmss(s)} on this encounter`;
+  }
+}
+setInterval(tick, 1000);
+document.addEventListener('visibilitychange', tick);
+
+/* ---- open one assignment ------------------------------------------------- */
+
+async function openAssignment(assignmentId) {
+  const res = await api(`/api/rater/packet/${encodeURIComponent(assignmentId)}`);
+  if (!res.ok) {
+    if (res.status === 404) {
+      alert('That encounter is not on your list any more. Refreshing your queue.');
+      await loadQueue();
+      return;
+    }
+    alert(`Could not open that encounter (HTTP ${res.status}). Try again, or tell the study team.`);
+    return;
+  }
+  packet = res.body || {};
+  packet.assignment_id = packet.assignment_id || assignmentId;
+  answers = {};
+  submitted = (packet.status === 'submitted');
+  inFlight = false;
+  confirmPending = null;
+  videoPlayed = false;
+  activeMs = 0; lastTick = performance.now();
+  dirty = false;
+  blockedReason = null;
+
+  // The packet may not know its own assignment status — rater_packet.build is
+  // about the encounter, not the assignment — so fall back to the queue entry,
+  // which does. Opening an already-submitted assignment must land read-only
+  // whichever of the two says so.
+  const qentry = queue.find(a => a.assignment_id === packet.assignment_id);
+  if (!submitted && qentry && qentry.status === 'submitted') submitted = true;
+
+  const idx = queue.findIndex(a => a.assignment_id === packet.assignment_id);
+  const code = packet.rating_code || packet.assignment_id;
+  $('barCode').textContent = code;
+  $('mediaCode').textContent = idx >= 0 ? `${code} · encounter ${idx + 1} of ${queue.length}` : code;
+
+  renderSituation();
+  renderVideo();
+  renderTurns();
+  renderItems();
+  renderPacketNotes();
+  $('obBetter').value = '';
+  $('obNotable').value = '';
+  $('submitMsg').textContent = '';
+  $('submitMsg').className = 'submitmsg';
+
+  if (submitted) {
+    lockDown('You have already submitted this rating. It is shown here read-only.');
+  } else {
+    const restored = loadDraft();
+    if (restored) {
+      $('submitMsg').className = 'submitmsg';
+      $('submitMsg').textContent = 'Restored the answers you had already entered on this encounter.';
+    }
+    $('submitBtn').disabled = false;
+    setSubmitLabel();
+  }
+  refreshProgress();
+  show('ratePane');
+  $('backBtn').focus();
+  say(`Encounter ${code} opened.`);
+  window.scrollTo(0, 0);
+}
+
+/* Three things the packet says that belong on screen rather than in a log.
+
+   The licensing notice is hard-coded into the page as well as carried by the
+   packet, and both are shown. That is not redundancy for its own sake: the
+   hard-coded one guarantees the warning is in front of the rater even if a
+   future packet stops carrying it, and the packet's own wording is the
+   instrument document's wording, which is the version that matters if the two
+   ever drift. Neither may be removed to tidy this up.
+
+   The scale note is the instrument's instruction about N/A, in the instrument's
+   words, next to the buttons it is about.
+
+   The turn counts are surfaced once at the top because a marker halfway down a
+   ten-turn transcript is a marker a rater scrolls past. */
+function renderPacketNotes() {
+  const extra = $('packetNotice');
+  extra.innerHTML = packet.instrument_notice
+    ? `<div style="margin-top:6px">${esc(packet.instrument_notice)}</div>` : '';
+
+  const note = $('scaleNote');
+  note.innerHTML = packet.scale_note ? `<div style="margin-top:8px"><b>${esc(packet.scale_note)}</b></div>` : '';
+
+  const counts = packet.counts || {};
+  const flags = [];
+  if (counts.untranscribed_turns) {
+    flags.push(`${counts.untranscribed_turns} line${counts.untranscribed_turns === 1 ? '' : 's'} ` +
+               'spoken but not transcribed — watch those moments in the video rather than reading the gap as silence');
+  }
+  if (counts.interrupted_turns) {
+    flags.push(`${counts.interrupted_turns} line${counts.interrupted_turns === 1 ? '' : 's'} ` +
+               'the participant spoke over, so the text shown is not all of what was heard');
+  }
+  const banner = $('turnFlags');
+  if (flags.length) {
+    banner.style.display = 'block';
+    banner.textContent = 'In this transcript: ' + flags.join('; ') + '.';
+  } else {
+    banner.style.display = 'none';
+    banner.textContent = '';
+  }
+}
+
+function lockDown(msg) {
+  $('items').querySelectorAll('input').forEach(i => { i.disabled = true; });
+  $('obBetter').disabled = true;
+  $('obNotable').disabled = true;
+  $('submitBtn').disabled = true;
+  $('submitBtn').textContent = 'Submitted';
+  $('submitMsg').className = 'submitmsg';
+  $('submitMsg').textContent = msg;
+  dirty = false;
+}
+
+/* ---- submit -------------------------------------------------------------- */
+
+function setSubmitLabel() {
+  $('submitBtn').textContent = confirmPending ? 'Submit anyway' : 'Submit rating';
+}
+
+function missingItems() {
+  return packetItems().filter(
+    it => !Object.prototype.hasOwnProperty.call(answers, it.id));
+}
+
+function flagMissing(missing) {
+  missing.forEach(it => { const el = $(`item-${it.id}`); if (el) el.classList.add('missing'); });
+  const first = missing[0] && $(`item-${missing[0].id}`);
+  if (first) {
+    first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const r = first.querySelector('input[type=radio]');
+    if (r) r.focus();
+  }
+}
+
+function looksStraightLined() {
+  const vals = Object.values(answers);
+  if (vals.length < 5) return false;
+  return vals.every(v => v === vals[0]);
+}
+
+async function onSubmit() {
+  if (submitted || inFlight) return;          // the hard double-submit guard
+  if (blockedReason) {
+    // The packet itself said not to rate this one — no items came down, or the
+    // encounter has a video that could not be served. Both are faults to report
+    // rather than things to rate around, and a rating collected in either state
+    // would be scored as if it had been made on the full artefact.
+    $('submitMsg').className = 'submitmsg err';
+    $('submitMsg').textContent = blockedReason === 'no-items'
+      ? 'This encounter arrived without its rating items. Do not rate it — tell the study team.'
+      : 'This encounter has a recording that could not be loaded. Do not rate it from the transcript alone — tell the study team.';
+    return;
+  }
+  const items = packetItems();
+  const missing = missingItems();
+  if (missing.length) {
+    confirmPending = null; setSubmitLabel();
+    const positions = missing.map(m => items.indexOf(m) + 1);
+    const list = positions.slice(0, 8).join(', ') + (positions.length > 8 ? '…' : '');
+    $('submitMsg').className = 'submitmsg err';
+    $('submitMsg').textContent =
+      `${missing.length} statement${missing.length === 1 ? '' : 's'} still need an answer ` +
+      `(number${positions.length === 1 ? '' : 's'} ${list}). Every statement needs a 1–5 or N/A — ` +
+      `N/A is a real answer, use it when the encounter gave you nothing to judge on.`;
+    say(`${missing.length} statements still need an answer.`);
+    flagMissing(missing);
+    return;
+  }
+
+  // Two soft gates. Each is shown once and cleared by a second click, and any
+  // edit in between resets them — so a rater who reconsiders is not nagged, and
+  // a rater who does not reconsider has at least been asked.
+  const seconds = Math.round(activeMs / 1000);
+  let warn = null;
+  if (looksStraightLined()) {
+    warn = 'Every statement has the same answer. Some of these statements are worded ' +
+           'in the opposite direction on purpose, so an identical column is usually a slip. ' +
+           'Please check, then submit again if it is what you mean.';
+  } else if (seconds < MIN_SECONDS_BEFORE_SUBMIT || !videoPlayed) {
+    warn = (!videoPlayed ? 'You have not played the recording. ' : '') +
+           `You have spent ${mmss(seconds)} on this encounter. These encounters run seven to ` +
+           'twelve minutes and the rating is meant to rest on watching one. Submit again if you are sure.';
+  }
+  if (warn && confirmPending !== warn) {
+    confirmPending = warn;
+    setSubmitLabel();
+    $('submitMsg').className = 'submitmsg warn';
+    $('submitMsg').textContent = warn;
+    say(warn);
+    return;
+  }
+
+  inFlight = true;
+  $('submitBtn').disabled = true;
+  $('submitBtn').textContent = 'Submitting…';
+  $('submitMsg').className = 'submitmsg';
+  $('submitMsg').textContent = '';
+
+  // N/A travels as null, never as a number: the instrument's "not enough
+  // information to judge" is the absence of a score, and any numeric stand-in
+  // would be averaged into the construct mean by something downstream.
+  const scores = {};
+  items.forEach(it => { const v = answers[it.id]; scores[it.id] = (v === NA ? null : v); });
+
+  const res = await api(`/api/rater/ratings/${encodeURIComponent(packet.assignment_id)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      scores,
+      open_ended: { better: $('obBetter').value.trim(), notable: $('obNotable').value.trim() },
+      seconds,
+    }),
+  });
+
+  inFlight = false;
+  if (!res.ok && res.status !== 409) {
+    $('submitBtn').disabled = false;
+    confirmPending = null;
+    setSubmitLabel();
+    $('submitMsg').className = 'submitmsg err';
+    $('submitMsg').textContent =
+      `The rating was not saved (HTTP ${res.status}). Your answers are still here — try Submit again. ` +
+      'If it keeps failing, tell the study team and do not close this tab.';
+    say('Submission failed.');
+    return;
+  }
+
+  // 409 means the server already holds a rating for this assignment; that is a
+  // success from the rater's point of view and must not invite a retry.
+  submitted = true;
+  clearDraft();
+  const q = queue.find(a => a.assignment_id === packet.assignment_id);
+  if (q) q.status = 'submitted';
+  lockDown(res.status === 409
+    ? 'This rating was already recorded. Nothing further to do here.'
+    : 'Rating submitted. Thank you.');
+  renderQueue();
+  say('Rating submitted.');
+
+  const next = queue.find(a => a.status !== 'submitted');
+  const bar = $('submitMsg');
+  bar.className = 'submitmsg';
+  bar.innerHTML = esc(bar.textContent) + (next
+    ? ' <button class="secondary" id="nextBtn" style="margin-top:8px">Next encounter &rarr;</button>'
+    : ' <button class="secondary" id="nextBtn" style="margin-top:8px">Back to queue</button>');
+  $('nextBtn').addEventListener('click', () => {
+    if (next) openAssignment(next.assignment_id); else toQueue();
+  });
+}
+
+/* ---- navigation ---------------------------------------------------------- */
+
+function toQueue() {
+  if (dirty && !submitted &&
+      !confirm('You have answers on this encounter that have not been submitted. ' +
+               'They are kept in this browser, but the study team will not see them. Go back to the queue?')) {
+    return;
+  }
+  packet = null;
+  $('barCode').textContent = '';
+  renderQueue();
+  show('queuePane');
+  window.scrollTo(0, 0);
+}
+
+window.addEventListener('beforeunload', (e) => {
+  if (dirty && !submitted) { e.preventDefault(); e.returnValue = ''; return ''; }
+});
+
+/* Keyboard: with focus anywhere inside a statement, 1–5 scores it and 0 or N
+   marks it N/A, then focus moves to the next unanswered statement. Radios keep
+   their native arrow-key behaviour; this is an accelerator on top, not a
+   replacement, and it stays out of the way while a note is being typed. */
+document.addEventListener('keydown', (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'textarea' || tag === 'input' && e.target.type === 'text') return;
+  const row = e.target.closest && e.target.closest('.item');
+  if (!row) return;
+  let val = null;
+  if ('12345'.includes(e.key)) val = e.key;
+  else if (e.key === '0' || e.key.toLowerCase() === 'n') val = NA;
+  if (val === null) return;
+  const input = row.querySelector(`input[value="${val}"]`);
+  if (!input || input.disabled) return;
+  e.preventDefault();
+  input.checked = true;
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  const nextMissing = missingItems()[0];
+  const target = nextMissing && $(`item-${nextMissing.id}`);
+  if (target) {
+    const r = target.querySelector('input[type=radio]');
+    if (r) { r.focus(); target.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  }
+});
+
+/* ---- boot ---------------------------------------------------------------- */
+
+async function loadQueue() {
+  const res = await api('/api/rater/assignments');
+  if (!res.ok) {
+    gate(`Could not load your assignments (HTTP ${res.status}). Try reloading; if it keeps failing, tell the study team.`);
+    return false;
+  }
+  queue = Array.isArray(res.body) ? res.body : [];
+  renderQueue();
+  show('queuePane');
+  return true;
+}
+
+async function boot() {
+  if (!token || !/^rt_[0-9a-f]{32}$/.test(token)) {
+    gate('This page needs the personal link the study team sent you. ' +
+         'It ends in <code>?token=rt_…</code>. Open that link again — or ask for a new one ' +
+         'if it has expired.');
+    return;
+  }
+  const res = await api('/api/rater/me');
+  if (!res.ok) {
+    gate(res.status === 401 || res.status === 403
+      ? 'This link is not valid any more. Rater links expire, and a revoked link stops working immediately. Ask the study team for a new one.'
+      : `Could not reach the rating server (HTTP ${res.status}). Try again in a minute.`);
+    return;
+  }
+  me = res.body || {};
+  $('who').innerHTML = `<b>${esc(me.name || 'Rater')}</b>${me.kind ? ' · ' + esc(me.kind) : ''}`;
+  await loadQueue();
+}
+
+$('backBtn').addEventListener('click', toQueue);
+$('submitBtn').addEventListener('click', onSubmit);
+$('obBetter').addEventListener('input', () => { markDirty(); saveDraft(); });
+$('obNotable').addEventListener('input', () => { markDirty(); saveDraft(); });
+
+boot();
+</script>
+</body>
+</html>

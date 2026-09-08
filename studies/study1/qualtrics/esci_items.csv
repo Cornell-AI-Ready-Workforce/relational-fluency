@@ -1,0 +1,23 @@
+item_id,item_no,construct,item_text,reverse_scored,scale_min,scale_max,na_allowed,notice
+ESCI-08,8,conflict_management,Tries to resolve conflict instead of allowing it to fester,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-14,14,conflict_management,Resolves conflict by de-escalating the emotions in a situation,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-15,15,conflict_management,Allows conflict to fester,TRUE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-26,26,conflict_management,Tries to resolve conflict by openly talking about disagreements with those involved,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-46,46,conflict_management,Resolves conflict by bringing it into the open,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-03,3,influence,Convinces others by getting support from key people,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-17,17,influence,Convinces others by using multiple approaches,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-20,20,influence,Convinces others by appealing to their self-interest,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-38,38,influence,Anticipates how others will respond when trying to convince them,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-49,49,influence,Convinces others by developing behind-the-scenes support,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-68,68,influence,Convinces others through discussion,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-05,5,inspirational_leadership,Leads by building pride in the group,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-07,7,inspirational_leadership,Leads by inspiring people,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-24,24,inspirational_leadership,Does not inspire followers,TRUE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-27,27,inspirational_leadership,Leads by bringing out the best in people,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-61,61,inspirational_leadership,Leads by articulating a compelling vision,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-11,11,teamwork,Does not cooperate with others,TRUE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-12,12,teamwork,Works well in teams by being supportive,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-25,25,teamwork,Works well in teams by encouraging cooperation,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-33,33,teamwork,Works well in teams by soliciting others' input,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-37,37,teamwork,Works well in teams by being respectful of others,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed
+ESCI-56,56,teamwork,Works well in teams by encouraging participation of everyone present,FALSE,1,5,TRUE,Proprietary ESCI item — research reference only; licensing unconfirmed

@@ -1379,6 +1379,579 @@ def _run_context(participant_id: Optional[str], run_id: Optional[str] = None) ->
         return None
 
 
+# --- Phase 2: human rating ---
+#
+# Phase 1 records encounters; Phase 2 turns them into gold labels. Two or three
+# independent raters score each recorded encounter on all 22 ESCI Relationship
+# Management items, and reliability is computed before anything is modelled.
+#
+# Two credentials meet in this section, and they are deliberately disjoint:
+#
+#   SESSION_KEY (check_key) opens the study data: the rater roster, the
+#       assignment plan, the ratings export, the reliability report. It is the
+#       researcher's credential and it is the same one that already opens
+#       /researcher, /evidence and every download route.
+#
+#   rt_<32 hex> (a rater token) opens exactly one rater's own work: their
+#       assignments, the packet for each of those assignments, and their own
+#       submissions. Nothing else. It is issued per rater, it expires, and it
+#       can be revoked.
+#
+# Neither credential is accepted where the other one belongs. check_key compares
+# against SESSION_KEY and never consults the rater roster, so a rater token can
+# never open a researcher route. The rater routes never call check_key, so
+# SESSION_KEY cannot be used to walk into a rater's console and submit under
+# their name — which matters, because the whole point of independent raters is
+# that each score has one identifiable author.
+#
+# Rater auth is positive validation (resolve the token, or refuse), not a
+# comparison against a configured secret. That is why the "SESSION_KEY is unset,
+# so everything is open" posture of local development does not extend here: with
+# no token, or an unknown or expired one, a rater route answers 401 regardless
+# of how the server is configured.
+#
+# Two blinding rules are enforced by what these routes choose to return:
+#
+#   A rater sees a *rating code*, never a session id, and never the participant
+#   key. The rating code is the only handle they can quote in a bug report or a
+#   calibration meeting, and it cannot be turned back into a participant.
+#
+#   Requesting an assignment that belongs to somebody else is 404, not 403. A
+#   403 would confirm that the assignment exists, which lets a rater enumerate
+#   the wave one id at a time and learn how many encounters were recorded, and
+#   who else is rating what. As far as a rater's token is concerned, the rest of
+#   the study does not exist.
+
+# The items are not ours to hand out. The rating instrument's own header says so
+# and this is the point where the items leave the building, so the warning
+# travels with them: on the rater's packet (where a human is about to read the
+# items) and on the ratings export (where the item ids leave for analysis). It
+# is a field of the response, not a comment in a file nobody opens.
+ITEM_LICENSE_NOTICE = (
+    "ESCI items are a proprietary instrument (Boyatzis, Goleman & Korn Ferry), "
+    "reproduced for research reference only. Confirm licensing/permission "
+    "before fielding."
+)
+
+# The modules that own the items attach their own wording under their own field
+# names (rater_packet: instrument_notice, reliability: item_source_notice). This
+# route layer's job is to make sure the warning is *there*, not to stamp a second
+# copy of it next to theirs — two notices reading slightly differently is how a
+# reader learns to skip both.
+_NOTICE_FIELDS = ("notice", "instrument_notice", "item_source_notice")
+
+
+def _with_notice(payload: dict) -> dict:
+    """Guarantee the licensing warning on a body that carries the items."""
+    if any(payload.get(f) for f in _NOTICE_FIELDS):
+        return payload
+    payload["notice"] = ITEM_LICENSE_NOTICE
+    return payload
+
+
+def _json_safe(value):
+    """Replace non-finite floats with null, recursively.
+
+    JSON has no NaN and no infinity, and Starlette serialises with
+    allow_nan=False, so a single NaN anywhere in a response body is a 500 with
+    nothing in it — not a missing field, the whole report. A reliability
+    coefficient genuinely can be undefined (Krippendorff's alpha over an item
+    with no observed disagreement has 0/0 in it, and the study wave produced
+    exactly that on ESCI-15), and "undefined" is null.
+
+    This is a serialisation repair, not a statistics decision: the module that
+    computes the number should be saying None itself, and every row already
+    carries the n and rater counts that say why a coefficient is missing. Until
+    it does, a researcher gets the other twenty-one items instead of a 500.
+    """
+    if isinstance(value, float):
+        return value if -float("inf") < value < float("inf") else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def _rater_from_token(token: Optional[str]) -> dict:
+    """Resolve a rater token, or refuse.
+
+    The only entry point for rater-facing authentication. An unknown token and
+    an expired one are the same answer on purpose: a rater whose 30 days ran out
+    should be told to ask for a fresh link, not told that their token was once
+    real.
+    """
+    from . import raters
+
+    tok = (token or "").strip()
+    if not tok:
+        raise HTTPException(401, "Bad or missing rater token")
+    rater = raters.rater_for_token(tok)
+    if rater is None:
+        raise HTTPException(401, "Bad or missing rater token")
+    return rater
+
+
+def _rater_assignment(rater: dict, assignment_id: str) -> dict:
+    """Load one assignment and prove it belongs to this rater.
+
+    Missing and not-yours collapse into the same 404 (see the blinding note
+    above). Both are answered with the same message, so response text cannot be
+    used to tell them apart either.
+    """
+    from . import raters
+
+    assignment = raters.get_assignment((assignment_id or "").strip())
+    if assignment is None or assignment.get("rater_id") != rater.get("rater_id"):
+        raise HTTPException(404, "no such assignment")
+    return assignment
+
+
+def _rateable_sessions(cohort: str) -> list:
+    """Session ids in one cohort that are worth putting in front of a rater.
+
+    Assignment can be driven either by an explicit list of session ids or by a
+    cohort, and the cohort form is the one a researcher actually uses at the end
+    of a wave ("assign everything in `study`"). Resolving it here rather than in
+    raters.assign keeps the roster module out of the session index.
+
+    Two filters, both narrow on purpose. `status != 'active'` excludes an
+    encounter that is still recording — its record.json does not exist yet.
+    `n_turns > 0` excludes an encounter in which the participant never spoke;
+    there is nothing to score, and an unscoreable packet costs a rater's time
+    and pollutes the reliability denominator. Nothing else is filtered here:
+    whether an encounter is *good enough* to rate is a study decision, and it is
+    made by the researcher who picks the cohort, not by this query.
+    """
+    import sqlite3
+    from .storage import DB_PATH
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        # cohort arrived in a later migration; a pre-migration index has no
+        # such column and naming it would raise rather than return nothing.
+        have = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+        if "cohort" not in have:
+            return []
+        rows = conn.execute(
+            "SELECT id FROM sessions"
+            " WHERE status != 'active' AND cohort = ?"
+            "   AND COALESCE(n_turns, 0) > 0"
+            " ORDER BY started_at ASC",
+            (cohort,),
+        ).fetchall()
+    finally:
+        # Closed in the thread that opened it, and closed even on failure: a
+        # leaked connection holds the WAL open against every live session's
+        # writer.
+        conn.close()
+    return [r[0] for r in rows]
+
+
+# --- Rating console: rater-facing, token only ---
+
+@app.get("/rate", response_class=HTMLResponse)
+async def rater_page(token: Optional[str] = Query(None)):
+    """The rating console. Gated like every other console page in this file, on
+    the credential that belongs to it: a rater arrives on a link that already
+    carries their token, and a stale link should say so plainly here rather than
+    render an empty console that fails on its first fetch."""
+    _rater_from_token(token)
+    page = STATIC_DIR / "rater.html"
+    if not page.exists():
+        raise HTTPException(404, "rating console is not installed")
+    return page.read_text(encoding="utf-8")
+
+
+@app.get("/api/rater/me")
+async def api_rater_me(token: Optional[str] = Query(None)):
+    """Who this token belongs to, and how much work is left."""
+    from . import raters
+
+    rater = _rater_from_token(token)
+    pending = raters.assignments_for_rater(rater["rater_id"], status="pending")
+    return {
+        "rater_id": rater["rater_id"],
+        "name": rater.get("name"),
+        "kind": rater.get("kind"),
+        "assignments_pending": len(pending),
+        # Carried here as well as on the packet so the console can keep the
+        # licensing notice in its chrome, visible on every screen, instead of
+        # only on the one where the items are rendered.
+        "notice": ITEM_LICENSE_NOTICE,
+    }
+
+
+@app.get("/api/rater/assignments")
+async def api_rater_assignments_mine(token: Optional[str] = Query(None),
+                                     status: Optional[str] = Query(None)):
+    """This rater's queue.
+
+    Four fields, and the omissions are the design. No session id (the rating
+    code is the rater-facing handle). No construct: the instrument requires
+    raters to be blind to the scenario's primary-competency designation, and
+    every encounter is rated on all 22 items regardless, so telling a rater
+    which competency the encounter was built to elicit would bias the other 16
+    or 17 items. No participant key, no scenario id.
+    """
+    from . import rater_packet, raters
+
+    rater = _rater_from_token(token)
+    want = (status or "").strip() or None
+    return [
+        {
+            "assignment_id": a.get("assignment_id"),
+            "rating_code": rater_packet.rating_code(a.get("session_id")),
+            "status": a.get("status"),
+            "assigned_at": a.get("assigned_at"),
+        }
+        for a in raters.assignments_for_rater(rater["rater_id"], status=want)
+    ]
+
+
+@app.get("/api/rater/packet/{assignment_id}")
+async def api_rater_packet(assignment_id: str, token: Optional[str] = Query(None)):
+    """The blinded packet for one assignment: the situation the participant saw,
+    the transcript, the video, and the items.
+
+    What is *in* the packet is rater_packet.build's contract, not this route's,
+    and this route does not second-guess it. In particular it does not mint a
+    playback URL of its own: the packet builds its media block from
+    video.playback_url and keeps three states apart there — a playable video, an
+    encounter that never had one, and a video whose link could not be signed —
+    and a second URL minted here would flatten that distinction and sign the
+    same object twice per packet read. The two fields this route does add are
+    about the assignment, which the packet has no reason to know about, and the
+    licensing warning, added only if the packet did not already carry one.
+    """
+    from . import rater_packet
+
+    rater = _rater_from_token(token)
+    assignment = _rater_assignment(rater, assignment_id)
+    # Seed the item order on the assignment, so this rater's order is their own
+    # and is the same every time they reopen the packet.
+    packet = rater_packet.build(assignment["session_id"], order_seed=assignment_id)
+    if not packet:
+        # The assignment exists but its encounter does not (a session directory
+        # removed after assignment). Same 404 as an unknown assignment: there is
+        # nothing here to rate either way.
+        raise HTTPException(404, "no such assignment")
+    packet = dict(packet)
+    packet.setdefault("assignment_id", assignment.get("assignment_id"))
+    packet.setdefault("status", assignment.get("status"))
+    return _with_notice(packet)
+
+
+@app.post("/api/rater/ratings/{assignment_id}")
+async def api_rater_submit(assignment_id: str, request: Request,
+                           token: Optional[str] = Query(None)):
+    """One rater's scores for one encounter.
+
+    Body: {scores: {item_id: 1..5 | null}, open_ended: {better, notable},
+    seconds}. A null score is "not enough information to judge" — the instrument
+    requires that option, and it is stored as null rather than as a number so it
+    can be excluded pairwise at analysis instead of being averaged in as a 3.
+    """
+    from . import ratings
+
+    rater = _rater_from_token(token)
+    assignment = _rater_assignment(rater, assignment_id)
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001, empty body is fine, the checks below catch it
+        pass
+    if not isinstance(body, dict):
+        raise HTTPException(400, "body must be a JSON object")
+
+    scores = body.get("scores")
+    if not isinstance(scores, dict):
+        raise HTTPException(400, "scores must be an object of item_id -> 1..5 or null")
+    open_ended = body.get("open_ended")
+    if open_ended is None:
+        open_ended = {}   # absent is fine: both prompts are optional
+    if not isinstance(open_ended, dict):
+        raise HTTPException(400, "open_ended must be an object")
+
+    # Time on task, used to spot a rater who clicked through 22 items in ninety
+    # seconds. It is diagnostic, not data: a browser that reports it wrongly must
+    # not be able to reject a rating a human spent twenty minutes on. An unusable
+    # value becomes None — "we do not know how long this took" — rather than 0,
+    # which is a number nobody measured and which reads as straight-lining.
+    raw_seconds = body.get("seconds")
+    try:
+        seconds = float(raw_seconds) if raw_seconds is not None else None
+        if seconds is not None and seconds < 0:
+            seconds = None
+    except (TypeError, ValueError):
+        seconds = None
+
+    try:
+        record = ratings.submit(
+            assignment["assignment_id"], rater["rater_id"], scores, open_ended, seconds
+        )
+    except LookupError:
+        # ratings.submit re-checks the assignment and answers "no such
+        # assignment" for both missing and not-yours, exactly as this layer
+        # does. Reachable only in a race — the assignment removed between the
+        # ownership check above and the write — and answered the same way.
+        raise HTTPException(404, "no such assignment")
+    except ValueError as e:
+        # esci.validate's problems reach the rater as text, because they are
+        # written to be read by one ("ESCI-08: 7 is outside 1..5"). Only
+        # ValueError: see the note on the assignment draw below.
+        raise HTTPException(400, str(e))
+    if isinstance(record, dict) and record.get("errors"):
+        raise HTTPException(400, "; ".join(str(x) for x in record["errors"]))
+    if not isinstance(record, dict):
+        return {"ok": True, "submitted_at": None}
+    # A repeat submission is an amendment, not a conflict. ratings.submit
+    # appends version n+1 and leaves version n byte-identical, so a rater who
+    # spots a mis-click can correct it and the original is still there to be
+    # audited — which is a better answer than this layer refusing the second
+    # POST and leaving the wrong numbers in the ICC. The version comes back so
+    # the console can say which one it just filed.
+    return {
+        "ok": True,
+        "submitted_at": record.get("submitted_at"),
+        "version": record.get("version"),
+        "amends": record.get("amends"),
+    }
+
+
+# --- Rating administration: researcher-facing, SESSION_KEY ---
+
+@app.post("/api/raters")
+async def api_rater_create(payload: Optional[dict] = None,
+                           key: Optional[str] = Query(None)):
+    """Enrol a rater. kind is crowd | trained | expert, and it is recorded
+    because reliability computed over a pool of mixed provenance has to be
+    reportable by pool."""
+    check_key(key)
+    from . import raters
+
+    body = payload or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name is required")
+    kind = (body.get("kind") or "crowd").strip()
+    email = (body.get("email") or "").strip() or None
+    try:
+        return raters.create_rater(name, kind=kind, email=email)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/raters")
+async def api_raters_list(key: Optional[str] = Query(None)):
+    """The rater roster."""
+    check_key(key)
+    from . import raters
+
+    # Stored token material never leaves the process, not even to a researcher
+    # and not even as a hash. It cannot be turned back into a token, but this
+    # listing is the kind of thing that gets pasted into a shared spreadsheet,
+    # and credential material has no business travelling that way.
+    return [
+        {k: v for k, v in r.items() if "token" not in k.lower() and "hash" not in k.lower()}
+        for r in raters.list_raters()
+    ]
+
+
+@app.post("/api/raters/{rater_id}/token")
+async def api_rater_issue_token(rater_id: str, payload: Optional[dict] = None,
+                                key: Optional[str] = Query(None)):
+    """Issue a scoped token for one rater. Shown once: only a hash is stored, so
+    a lost token is reissued, never recovered."""
+    check_key(key)
+    from . import raters
+
+    if raters.get_rater(rater_id) is None:
+        raise HTTPException(404, "no such rater")
+    raw_days = (payload or {}).get("days", 30)
+    try:
+        days = int(raw_days)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "days must be a whole number")
+    # An unbounded expiry is a standing credential to participant video held by
+    # somebody outside the study team, and the upper bound is deliberately
+    # shorter than a study year.
+    if not 1 <= days <= 365:
+        raise HTTPException(400, "days must be between 1 and 365")
+    return {
+        "token": raters.issue_token(rater_id, days=days),
+        "rater_id": rater_id,
+        "days": days,
+        "note": "Shown once. Only a hash is stored; a lost token must be reissued.",
+    }
+
+
+@app.post("/api/rater-assignments")
+async def api_rater_assignments_create(payload: Optional[dict] = None,
+                                       key: Optional[str] = Query(None)):
+    """Build the rating plan: which raters see which encounters.
+
+    Either name the encounters (`session_ids`) or name a cohort and let the
+    session index supply them — "assign everything in study" is what a
+    researcher does at the end of a wave, and spelling out 400 session ids by
+    hand is how an encounter gets missed. `seed` makes the draw reproducible,
+    which is what lets the assignment plan be reported in a methods section.
+    """
+    check_key(key)
+    from starlette.concurrency import run_in_threadpool
+
+    from . import raters
+
+    body = payload or {}
+    rater_ids = body.get("rater_ids") or []
+    if not isinstance(rater_ids, list) or not all(isinstance(r, str) for r in rater_ids):
+        raise HTTPException(400, "rater_ids must be a list of rater ids")
+    if not rater_ids:
+        raise HTTPException(400, "rater_ids is required")
+
+    session_ids = body.get("session_ids")
+    cohort = (body.get("cohort") or "").strip() or None
+    if session_ids is not None:
+        if not isinstance(session_ids, list) or not all(isinstance(s, str) for s in session_ids):
+            raise HTTPException(400, "session_ids must be a list of session ids")
+    elif cohort:
+        # sqlite3 is synchronous and this coroutine shares its event loop with
+        # every live encounter; a wave-sized query must not stall the audio.
+        session_ids = await run_in_threadpool(_rateable_sessions, cohort)
+    else:
+        raise HTTPException(400, "pass session_ids or cohort")
+    if not session_ids:
+        raise HTTPException(400, "no encounters to assign")
+
+    try:
+        per_encounter = int(body.get("per_encounter", 3))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "per_encounter must be a whole number")
+    if per_encounter < 1:
+        raise HTTPException(400, "per_encounter must be at least 1")
+    if per_encounter > len(rater_ids):
+        # Caught here rather than deep in the draw, because the message a
+        # researcher needs is arithmetic, not a traceback: independent ratings
+        # cannot come from the same rater twice.
+        raise HTTPException(
+            400,
+            f"per_encounter {per_encounter} needs at least that many raters, "
+            f"got {len(rater_ids)}",
+        )
+    seed = body.get("seed")
+    if seed is not None and not isinstance(seed, int):
+        try:
+            seed = int(seed)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "seed must be a whole number")
+
+    try:
+        created = raters.assign(
+            session_ids, rater_ids, per_encounter=per_encounter, seed=seed
+        )
+    except ValueError as e:
+        # A ValueError here is the draw telling the researcher their request
+        # cannot be satisfied ("encounter s_x needs 2 more raters but only 1 of
+        # the 3 given are not already on it"), which is exactly a 400. Anything
+        # else is a bug in the draw and must surface as a 500 with a traceback,
+        # not as a 400 that sends the researcher hunting for a mistake in their
+        # own request. This is not hypothetical: the draw once answered
+        # "_repair_connectivity() takes 3 positional arguments but 4 were given"
+        # and it arrived looking like bad input.
+        raise HTTPException(400, str(e))
+    return {
+        "created": len(created),
+        "n_sessions": len(session_ids),
+        "n_raters": len(rater_ids),
+        "per_encounter": per_encounter,
+        "cohort": cohort,
+        "seed": seed,
+        "assignments": created,
+    }
+
+
+@app.get("/api/rater-assignments")
+async def api_rater_assignments_list(key: Optional[str] = Query(None),
+                                     rater_id: Optional[str] = Query(None),
+                                     cohort: Optional[str] = Query(None),
+                                     status: Optional[str] = Query(None)):
+    """The rating plan as it stands: who owes what.
+
+    The researcher is not blinded, so this carries the session id *and* the
+    rating code — the code is the only handle a rater can quote, so the join
+    from "rater says RC-XXXXXXXXXX is broken" back to an encounter has to exist
+    somewhere, and this is that somewhere.
+    """
+    check_key(key)
+    from . import rater_packet, raters
+
+    want_status = (status or "").strip() or None
+    want_cohort = (cohort or "").strip() or None
+    if rater_id:
+        # One rater's queue is asked for by rater, because that is the question
+        # ("what does this person still owe us") and because it is the only form
+        # that has to 404 on an unknown rater rather than quietly return nothing.
+        if raters.get_rater(rater_id) is None:
+            raise HTTPException(404, "no such rater")
+        found = raters.assignments_for_rater(rater_id, status=want_status)
+        if want_cohort:
+            found = [a for a in found if a.get("cohort") == want_cohort]
+    else:
+        found = raters.list_assignments(cohort=want_cohort, status=want_status)
+
+    roster = {r.get("rater_id"): r for r in raters.list_raters()}
+    out = []
+    for a in found:
+        entry = dict(a)
+        who = roster.get(a.get("rater_id")) or {}
+        entry["rater_name"] = who.get("name")
+        entry["rater_kind"] = who.get("kind")
+        entry["rating_code"] = rater_packet.rating_code(a.get("session_id"))
+        out.append(entry)
+    out.sort(key=lambda e: (e.get("assigned_at") or "", e.get("assignment_id") or ""))
+    return out
+
+
+@app.get("/api/ratings")
+async def api_ratings_export(key: Optional[str] = Query(None),
+                             cohort: Optional[str] = Query(None)):
+    """Every submitted rating, for export.
+
+    Wrapped in an object rather than returned as a bare array so the licensing
+    notice can ride with it. This is the file that becomes a CSV on somebody's
+    laptop and then an appendix; the items are not ours to redistribute, and the
+    warning has to survive the trip.
+    """
+    check_key(key)
+    from . import ratings
+
+    rows = ratings.all_ratings(cohort)
+    return {
+        "notice": ITEM_LICENSE_NOTICE,
+        "cohort": cohort,
+        "n": len(rows),
+        "ratings": rows,
+    }
+
+
+@app.get("/api/reliability")
+async def api_reliability(key: Optional[str] = Query(None),
+                          cohort: Optional[str] = Query(None)):
+    """ICC, weighted kappa and Krippendorff's alpha, per construct and per item.
+
+    Computed on demand rather than cached: it is read a handful of times at the
+    end of a wave, and a stale reliability number is worse than a slow one.
+    """
+    check_key(key)
+    from . import reliability
+
+    report = reliability.report(cohort)
+    if not isinstance(report, dict):
+        return _json_safe(report)
+    return _with_notice(_json_safe(dict(report)))
+
+
 # --- Participant: text path ---
 
 @app.websocket("/ws/participant")

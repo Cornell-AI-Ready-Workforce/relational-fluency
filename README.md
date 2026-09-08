@@ -217,6 +217,52 @@ currently hidden behind `SHOW_SCORE = true` in `static/researcher.html`.
 This offline judge is the seed of the Phase 3 scorer, which will be benchmarked
 against human ICC/κ on the ESCI items rather than these interim rubrics.
 
+## Phase 2 — human rating and reliability
+
+The human ICC/κ that benchmark is measured against comes from here. Two to three
+independent raters score every recorded encounter on all 22 ESCI Relationship
+Management items, and reliability is computed per construct **before** anything
+is modelled. Full operational guide: [`docs/RATING.md`](docs/RATING.md).
+
+> **The ESCI items are a proprietary instrument**, reproduced in this repository
+> for research reference only, and **licensing for this use is not confirmed in
+> writing**. The warning is attached to them in the console, in the exported item
+> bank, and in the instrument doc. Resolve it before fielding.
+
+Raters work in a console this platform serves, at `/rate`:
+
+```
+/rate?token=rt_…      the rater's own link — queue, video, transcript, 22 items
+```
+
+- **What they rate** is the webcam recording, which carries the mixed
+  conversation audio, with the aligned transcript beside it. The per-channel
+  WAVs cannot be played back as a conversation; an encounter whose video upload
+  failed is rated from the transcript alone, and the console says so.
+- **What they never see** — a rater holds a scoped `rt_` token, never the
+  session key, and the packet is blinded: the situation the participant saw, the
+  counterparts, the video and the transcript, and none of the participant key,
+  the stage directions, the planted triggers, their ESCI tags, the actor briefs,
+  or the judge's score. Encounters are identified to a rater by an opaque rating
+  code. Another rater's assignment answers 404, not 403.
+- **N/A is a real answer**, stored as `null` and never as a number. Nothing is
+  pre-selected, and submit is refused until all 22 items carry a 1–5 or an N/A.
+
+```bash
+# researcher side, with the usual SESSION_KEY
+curl -sX POST "$RF/api/raters?key=$KEY"            -d '{"name":"…","kind":"trained"}'
+curl -sX POST "$RF/api/raters/$RID/token?key=$KEY" -d '{"days":30}'   # shown once
+curl -sX POST "$RF/api/rater-assignments?key=$KEY" -d '{"cohort":"study","rater_ids":[…],"per_encounter":3,"seed":1}'
+curl -s      "$RF/api/ratings?cohort=study&key=$KEY"       # the export
+python -m server.reliability --cohort study                # ICC(2,1)/ICC(2,k), weighted κ, α
+```
+
+Statistics are pure Python — no numpy, no scipy, no new runtime dependency for a
+22 × 27 matrix. The Qualtrics route stays open (`esci_items.csv` imports, and
+`ratings.import_qualtrics` ingests an export), but the console is the working
+path, because the platform cannot get answers back out of Qualtrics without a
+survey and an API round trip that do not exist.
+
 ## Model configuration
 
 Every model client is built in [`server/llm.py`](server/llm.py) from explicit
