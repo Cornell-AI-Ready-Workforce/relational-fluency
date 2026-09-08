@@ -7,19 +7,20 @@ runs on the critical path of every turn.
 """
 from __future__ import annotations
 
-import os
 from typing import List, Optional
 
 from anthropic import AsyncAnthropic
 
-from .llm import text_client
+from .llm import setting, text_client
 
 from .scenarios import Agent, Scenario
 
 
 # Routing is high-frequency and benefits from speed > deliberation. Haiku is
-# fine; can be overridden via env if you want to A/B against Sonnet.
-DIRECTOR_MODEL = os.getenv("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite")
+# fine; can be overridden via env if you want to A/B against Sonnet. Resolved
+# via the shared .env-first accessor so an override in .env actually takes
+# effect (os.getenv would ignore the .env file).
+DIRECTOR_MODEL = setting("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite")
 DIRECTOR_MAX_SPEAKERS = 3
 
 
@@ -192,74 +193,3 @@ Decide who speaks next."""
                         seen_last = aid
                 return cleaned
         return [{"agent_id": self.scenario.cast[0].id}]
-
-    async def route_continuation(
-        self,
-        shared_history: list,
-        last_speaker_id: str,
-    ) -> List[dict]:
-        """After an agent speaks, decide whether another agent must respond now
-        *because the speaker handed them the floor by name*. Returns 0 or 1
-        speaker, never the agent who just spoke. Empty is the common case, the
-        floor returns to the human facilitator. This is what lets an agent who
-        is asked for their opinion answer without the human re-prompting them.
-        """
-        transcript = _format_transcript(shared_history, self._name_lookup)
-        last_name = self._name_lookup.get(last_speaker_id, last_speaker_id)
-        system = f"""You are a meeting director in a multi-party voice conversation. An AI agent ({last_name}) just finished speaking. The human is the facilitator. Your job: decide whether ONE other agent should respond right now because {last_name} turned to them, so the human does not have to call on that agent manually.
-
-## Cast
-{self._cast_block}
-
-## Scene
-{self.scenario.scene or '(no scene description)'}
-
-## Scenario routing guidance
-{self.scenario.director_prompt or '(none)'}
-
-## Route to one agent when {last_name}'s turn turns to a SPECIFIC other agent, any of these:
-- Asks them a question, by name or clearly implied ("Jordan, can you walk us through the timeline?", "What did you see on the dashboards, Rae?").
-- Names them as the person who should speak / would know best ("Sam can speak to the deploy side", "Jordan probably has a better read on this than I do", "I'd want Rae to weigh in").
-- Directly invites their response or pushes back on their stated position, expecting a reply.
-- Attacks, belittles, talks down to, or throws a pointed jab AT another agent by name (e.g. {last_name} just went after someone). Route the targeted agent so they can fire back, heated exchanges should ping-pong, not die.
-- The Scenario routing guidance above calls for a specific agent to jump in right after a remark like the one {last_name} just made (for example, to call out condescension or dismissiveness). Honor that guidance and route that agent NOW, even if {last_name} was addressing the human rather than another agent.
-Route to the agent who was turned to (or attacked, or who the guidance says should jump in).
-
-## Return an EMPTY list (floor goes back to the human facilitator) when:
-- {last_name} answered or addressed the human, or made a general statement to the room with no specific person turned to.
-- {last_name} only mentioned, thanked, or agreed with someone without inviting them to speak ("thanks, Paul, for saying that").
-- {last_name} closed, summarized, or transitioned ("that's all from me", "let's move on").
-- It is ambiguous who, if anyone, should speak. When unsure, return empty, the human will route.
-
-## Rules
-- Use ONLY agent_ids from the cast above. Never invent ids.
-- Never return {last_speaker_id}, an agent cannot answer their own turn.
-- At most ONE agent. An empty list is a common, correct answer."""
-        user_msg = f"""## Recent transcript
-{transcript}
-
-The last speaker was {last_name}. Did {last_name} turn to a specific other agent (ask them, name them as who should speak, or push on their position)? If so, return that one agent. Otherwise return an empty list."""
-        try:
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=100,
-                system=system,
-                tools=[_DIRECTOR_TOOL],
-                tool_choice={"type": "tool", "name": "set_speakers"},
-                messages=[{"role": "user", "content": user_msg}],
-            )
-        except Exception:
-            return []  # on failure, return the floor to the human (safer than forcing talk)
-
-        for block in response.content:
-            if getattr(block, "type", None) == "tool_use" and block.name == "set_speakers":
-                raw = block.input.get("speakers", []) or []
-                for s in raw:
-                    aid = s.get("agent_id")
-                    if aid in self._valid_ids and aid != last_speaker_id:
-                        entry = {"agent_id": aid}
-                        if s.get("intent"):
-                            entry["intent"] = str(s["intent"])[:300]
-                        return [entry]  # first valid hand-off target only
-                return []
-        return []

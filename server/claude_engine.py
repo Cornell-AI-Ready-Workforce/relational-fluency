@@ -6,19 +6,18 @@ controls take effect on the next reply.
 """
 from __future__ import annotations
 
-import os
-from typing import AsyncIterator, Dict, List, Optional
+from typing import AsyncIterator, List, Optional
 
 from anthropic import AsyncAnthropic
 
-from .llm import text_client
+from .llm import setting, text_client
 from anthropic.types import MessageParam
 
 from .persona import Persona
 from .scenarios import Branch, Scenario, compose_system_prompt
 
 
-DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite")
+DEFAULT_MODEL = setting("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite")
 # Voice replies should be short; cap output tokens so a runaway model doesn't
 # block the speaker for 30 seconds.
 DEFAULT_MAX_TOKENS = 400
@@ -78,18 +77,25 @@ class ConversationEngine:
         self.history.append({"role": "user", "content": user_text})
 
         full = []
-        async with self.client.messages.stream(
-            model=self.model,
-            max_tokens=DEFAULT_MAX_TOKENS,
-            system=self._system_prompt(),
-            messages=self.history,
-        ) as stream:
-            async for delta in stream.text_stream:
-                full.append(delta)
-                yield delta
-
-        assistant_text = "".join(full)
-        self.history.append({"role": "assistant", "content": assistant_text})
+        try:
+            async with self.client.messages.stream(
+                model=self.model,
+                max_tokens=DEFAULT_MAX_TOKENS,
+                system=self._system_prompt(),
+                messages=self.history,
+            ) as stream:
+                async for delta in stream.text_stream:
+                    full.append(delta)
+                    yield delta
+        finally:
+            # Append whatever text the participant already saw/heard, even if the
+            # stream errored mid-way or the consumer abandoned the generator
+            # (client disconnect, barge-in -> GeneratorExit at the yield). Dropping
+            # it would leave the user turn unpaired and corrupt later context.
+            if full:
+                self.history.append(
+                    {"role": "assistant", "content": "".join(full)}
+                )
 
         # Branches that were "for your next turn only" are consumed.
         # We keep them in `triggered_branches` for logging, but a transient
