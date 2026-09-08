@@ -115,6 +115,13 @@ def _script_mismatch(text: str) -> bool:
     return latin / len(letters) < 0.5
 
 
+def _is_stage_direction(text: str) -> bool:
+    """'[Priya remains quiet.]' or '[Silence]': the model narrating instead of
+    speaking. Treated as no reply; the native-audio route does this sometimes."""
+    t = (text or "").strip()
+    return bool(t) and t.startswith(("[", "(", "*")) and t.endswith(("]", ")", "*")) and len(t) < 80
+
+
 def _norm_speech(text: str) -> str:
     """Lowercase, strip punctuation: comparable across transcriber quirks."""
     return " ".join("".join(c if c.isalnum() or c.isspace() else " "
@@ -244,7 +251,8 @@ class RealtimeVoiceSessionRunner:
             "SHORT: one or two spoken sentences, at most about 25 words, then "
             "stop and let others respond. Make one point per turn, never a "
             "list of points. Never monologue. Never read out JSON, markdown, "
-            "or stage directions."
+            "or stage directions. Never narrate in brackets like [remains quiet]; "
+            "if you have nothing to add, say a short spoken line instead."
         )
         if self.is_group():
             voice_rules += (
@@ -398,11 +406,15 @@ class RealtimeVoiceSessionRunner:
         """Group interaction: one session per character, all listening."""
         await self._close_room()
         agents = self._resolve_agents()
+        # No end_conversation tool for room members: the group pump never
+        # acted on it, group scenes end via the participant's button and the
+        # pacing gates, and the native-audio model calls it constantly, which
+        # produced empty turns instead of replies (raw bridge log, 2026-09-08).
         self.room = GroupRoom(
             agents,
             instructions_for=lambda a: self._instructions_for(a),
             voice_for=lambda a: self._voice_for(a),
-            tools=[END_SEGMENT_TOOL],
+            tools=[],
         )
         await self.room.open()
         self.session.store.event(
@@ -426,6 +438,18 @@ class RealtimeVoiceSessionRunner:
         for t in self._pumps:
             t.cancel()
         self._pumps = []
+        if self.room is not None and os.getenv("RT_DEBUG"):
+            # Raw bridge events per member, for diagnosing route behaviour.
+            try:
+                sdir = self.session.store.dir
+                for aid, rt in list(self.room.sessions.items()) + [("scribe", self.room.scribe)]:
+                    if rt is None or not rt.debug_log:
+                        continue
+                    with open(sdir / f"raw_{aid}.jsonl", "w", encoding="utf-8") as fh:
+                        for ts, et, raw in rt.debug_log:
+                            fh.write(json.dumps({"t": round(ts, 3), "type": et, "raw": raw}) + "\n")
+            except Exception:  # noqa: BLE001
+                pass
         if self.room is not None:
             await self.room.close()
             self.room = None
@@ -684,6 +708,9 @@ class RealtimeVoiceSessionRunner:
     async def _finalize_member(self, agent, text: str, interrupted: bool = False) -> None:
         """Close one character's turn in a group room."""
         text = _clean_agent_text(text)
+        if _is_stage_direction(text):
+            self.session.store.event("stage_direction_output", agent_id=agent.id, text=text)
+            text = ""
         await self._finalize_member_inner(agent, text, interrupted)
 
     async def _finalize_member_inner(self, agent, text: str, interrupted: bool = False) -> None:
@@ -840,12 +867,28 @@ class RealtimeVoiceSessionRunner:
         self.session.store.event(
             "realtime_session_started", model=self.rt.model, **provenance()
         )
+        # The first loop to finish ends the encounter (normally the client
+        # socket closing). With a plain gather the watchdog kept looping and
+        # the finally never ran: rooms and gateway sessions leaked on every
+        # disconnect, and the registry never dropped the session.
+        tasks = [
+            asyncio.ensure_future(self._client_to_model()),
+            asyncio.ensure_future(self._model_to_client()),
+            asyncio.ensure_future(self._silence_watchdog()),
+        ]
         try:
-            await asyncio.gather(
-                self._client_to_model(),
-                self._model_to_client(),
-                self._silence_watchdog(),
-            )
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+            for t in pending:
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+            for t in done:
+                exc = t.exception()
+                if exc is not None and not isinstance(exc, WebSocketDisconnect):
+                    raise exc
         finally:
             self._closed = True
             await self._close_room()
@@ -1475,10 +1518,14 @@ class RealtimeVoiceSessionRunner:
         if not text:
             return None
         lowered = text.lower()
+        last_pos, last_id = -1, None
         for a in self._resolve_agents():
-            if a.name.lower() in lowered:
-                return a.id
-        return None
+            pos = lowered.rfind(a.name.lower())
+            if pos > last_pos:
+                last_pos, last_id = pos, a.id
+        # People address the target last: "Sorry to cut in, Alex, but I want
+        # to hear from Jordan first. Jordan, how are you?" is for Jordan.
+        return last_id
 
     # ── director ───────────────────────────────────────────────────────────
     async def _steer(self) -> None:
