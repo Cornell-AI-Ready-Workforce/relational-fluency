@@ -103,6 +103,22 @@ stream) and drive commits. Barge-in likewise has to be handled locally by
 dropping queued agent audio when the participant starts speaking. Budget for
 this; it is the main piece the gateway does not give us for free.
 
+**`nto.gemini-live-2.5-flash-native-audio` is not usable through the gateway
+(checked 2026-09-08).** The socket connects and `session.created` /
+`session.updated` arrive, then nothing, ever: no input transcription, no
+auto-fired reply, no reply to an explicit `input_audio_buffer.commit` +
+`response.create`, and no error. Tried nine configurations: the working
+flat config, no `voice`, no `tools`, a different voice, no `session.update`
+at all, `modalities`, `output_modalities`, the GA nested `audio` block, and
+`input/output_audio_format`. A control run of `nto.gemini-live-2.5-flash`
+through the identical harness returned 34 audio chunks, transcript, and
+text. So the native-audio route is broken on the gateway side, not a
+client-config problem. If `nto.gemini-live-2.5-flash` is retired before the
+native-audio route is fixed, the only working fallbacks on this gateway are
+`gpt-realtime-2.1` (native VAD, different quirks) or going direct to Google.
+Switching is one environment variable, `REALTIME_MODEL`, followed by a full
+re-verification with the simulated participant.
+
 **Alternatives.** `gpt-realtime-2.1` also works on the same gateway and *does*
 provide server VAD natively — useful as a comparison or fallback.
 `nto.gemini-live-2.5-flash-native-audio` exists but was not re-tested after the
