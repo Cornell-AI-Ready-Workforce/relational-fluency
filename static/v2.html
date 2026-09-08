@@ -658,6 +658,33 @@
   // the audio playback clock so the transcript reveals in time with the voice
   // (text deltas arrive far ahead of the spoken audio, so we pace them here).
   let speechQueue = [];    // [{agent_id, el, fullText, shown, startCtx, endCtx, done, latency, metaAdded}]
+  let scheduledSources = [];  // buffered agent audio, so a barge-in can stop it
+
+  // The participant cut in: silence whatever agent audio is still queued and
+  // freeze the caption at what was actually heard. Without this the buffered
+  // seconds kept playing and the caption ran on to the full sentence.
+  function stopScheduledAudio() {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    for (const src of scheduledSources) { try { src.stop(); } catch (e) {} }
+    scheduledSources = [];
+    playbackTime = now;
+    speechQueue = speechQueue.filter(turn => {
+      if (turn.startCtx == null) return false;          // never started: drop
+      if (turn.endCtx > now) {
+        const dur = Math.max(0.05, turn.endCtx - turn.startCtx);
+        const prog = Math.min(1, Math.max(0, (now - turn.startCtx) / dur));
+        const cut = sentenceCut(turn.fullText, Math.floor(prog * turn.fullText.length));
+        turn.fullText = turn.fullText.slice(0, cut).trim() + '…';
+        turn.endCtx = now;
+      }
+      turn.done = true;
+      return true;
+    });
+    currentTurn = null;
+    assistantSpeaking = false;
+    setActiveSpeaker(null);
+  }
   let speechRaf = null;
   let timerInt = null;     // conversation elapsed-time ticker
   let timerStartMs = 0;
@@ -1142,6 +1169,7 @@
     buf.copyToChannel(float, 0);
     const src = audioCtx.createBufferSource();
     src.buffer = buf;
+    scheduledSources.push(src);
     src.connect(playDest || audioCtx.destination);
     if (recDest) { try { src.connect(recDest); } catch (e) {} }
     const now = audioCtx.currentTime;
@@ -1157,6 +1185,7 @@
     }
     if (speechRaf == null) tickSpeech();
     src.onended = () => {
+      const i = scheduledSources.indexOf(src); if (i >= 0) scheduledSources.splice(i, 1);
       if (audioCtx && audioCtx.currentTime >= playbackTime - 0.01 && assistantSpeaking) {
         // Last scheduled chunk finished, the whole multi-speaker turn is done.
         assistantSpeaking = false;
@@ -1337,6 +1366,7 @@
           setActiveSpeaker(null);
           setTurnState('Your turn', 'you');
         } else if (m.type === 'assistant_interrupted') {
+          stopScheduledAudio();
           setTurnState("You're speaking", 'you');
         } else if (m.type === 'error') {
           appendTranscript('user', null, 'error: ' + m.message);
