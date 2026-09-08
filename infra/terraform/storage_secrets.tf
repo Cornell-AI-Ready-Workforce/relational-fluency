@@ -76,7 +76,7 @@ resource "aws_s3_bucket_cors_configuration" "study_data" {
   cors_rule {
     allowed_methods = ["PUT"]
     allowed_origins = [
-      "https://rf.ai-ready-workforce.ai.cornell.edu",
+      "https://${local.app_fqdn}",
       "http://127.0.0.1:8765",
       "http://localhost:8765",
     ]

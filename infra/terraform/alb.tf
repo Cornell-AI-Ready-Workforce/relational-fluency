@@ -22,7 +22,22 @@ resource "aws_lb_target_group" "agent" {
     matcher             = "200"
   }
 
-  deregistration_delay = 30
+  # The app keeps per-instance state (run files on local disk, sqlite index,
+  # in-memory sessions). Pin each client to one task so a participant's follow-up
+  # requests and the researcher console reach the task that holds their run.
+  # NOTE: researcher + participant for one run must land on the same task.
+  stickiness {
+    type            = "lb_cookie"
+    enabled         = true
+    cookie_duration = 86400
+  }
+
+  # Keep the ALB from force-closing a draining target's connections at the 30s
+  # default. NOTE: this does NOT let a multi-minute voice encounter finish — the
+  # container itself is still SIGKILLed at Fargate's hard 120s stopTimeout cap
+  # (see ecs.tf), so a deploy rolled mid-encounter drops that session. Deploy
+  # between collection sessions.
+  deregistration_delay = 1800
 }
 
 resource "aws_lb_listener" "https" {

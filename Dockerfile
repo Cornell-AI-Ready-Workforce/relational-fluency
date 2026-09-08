@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 # System deps — none beyond what python:slim ships; everything in pure Python.
 
@@ -22,6 +22,13 @@ COPY config ./config
 # The volume gets mounted here. mkdir is just for first-boot when there is no
 # volume yet (local docker run, etc.).
 RUN mkdir -p /data
+
+# Drop root: run as an unprivileged user. A code-execution bug in the app then
+# yields an ordinary uid, not root over /app and the mounted /data volume.
+# Pin uid 1000 to match the EFS access point (infra/terraform/ecs.tf), which
+# owns the mounted /data as 1000:1000 so this non-root user can write to it.
+RUN useradd -m -u 1000 appuser && chown -R appuser /app /data
+USER appuser
 
 EXPOSE 8080
 

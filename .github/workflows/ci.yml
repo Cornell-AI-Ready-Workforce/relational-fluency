@@ -38,7 +38,7 @@ jobs:
           python - <<'PY'
           import glob, sys, yaml
           bad = []
-          files = sorted(glob.glob("scenarios/*.yaml"))
+          files = sorted(glob.glob("scenarios/*.yaml") + glob.glob("scenarios/v3/*.yaml"))
           for path in files:
               try:
                   if not isinstance(yaml.safe_load(open(path)), dict):
