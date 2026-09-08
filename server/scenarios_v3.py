@@ -12,14 +12,22 @@ edit the YAML the researchers reason about, and the runnable form follows.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import yaml
 
 from .scenarios import Agent, Scenario
 
 V3_DIR = Path(__file__).parent.parent / "scenarios" / "v3"
+
+log = logging.getLogger(__name__)
+
+# Keys compile_scenario / _by_construct dereference unconditionally. A spec
+# missing any of them cannot be compiled, so it must be kept out of the index
+# rather than 500 the whole scenario list and every run creation.
+_REQUIRED_KEYS = ("id", "agents", "construct", "variant", "title")
 
 def _join(names: list) -> str:
     if len(names) <= 1:
@@ -32,10 +40,22 @@ _VOICES = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
 
 
 def _spec_files() -> Dict[str, Path]:
-    return {
-        yaml.safe_load(p.read_text())["id"]: p
-        for p in sorted(V3_DIR.glob("*.yaml"))
-    }
+    out: Dict[str, Path] = {}
+    for p in sorted(V3_DIR.glob("*.yaml")):
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8"))
+        except Exception:
+            log.warning("skipping unparseable v3 spec %s", p.name)
+            continue
+        if not isinstance(data, dict):
+            continue
+        missing = [k for k in _REQUIRED_KEYS if not data.get(k)]
+        if missing:
+            log.warning("skipping incomplete v3 spec %s (missing %s)",
+                        p.name, ", ".join(missing))
+            continue
+        out[data["id"]] = p
+    return out
 
 
 def available() -> List[str]:
@@ -46,7 +66,31 @@ def load_spec(scenario_id: str) -> Dict[str, Any]:
     files = _spec_files()
     if scenario_id not in files:
         raise FileNotFoundError(f"No v3 scenario {scenario_id!r} in {V3_DIR}")
-    return yaml.safe_load(files[scenario_id].read_text())
+    return yaml.safe_load(files[scenario_id].read_text(encoding="utf-8"))
+
+
+def _copresent_names(spec: dict, key: str) -> List[str]:
+    """Names of cast members who actually share the room with ``key``.
+
+    Only ``group`` interactions put characters in the scene together. A
+    ``one_to_one`` or ``one_to_one_series`` segment is an isolated 1:1 scene, so
+    a character appearing only in those has no one else present, telling them a
+    colleague is 'in this scene' would corrupt the isolated 1:1 the study
+    measures.
+    """
+    present: set = set()
+    for i in spec.get("interactions", []):
+        if i.get("mode") != "group":
+            continue
+        members = i.get("agents")
+        if not members:
+            a = i.get("agent")
+            members = [a] if isinstance(a, str) else []
+        if key in members:
+            present.update(m for m in members if m != key)
+    agents = spec.get("agents", {})
+    # Preserve cast declaration order for a stable prompt.
+    return [agents[k]["name"] for k in agents if k in present]
 
 
 def _render_prompt(spec: dict, key: str, agent: dict) -> str:
@@ -55,7 +99,7 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
     runner as they fire, not dumped up front, an agent that can see every
     planted beat tends to rush through them."""
     name = agent["name"]
-    others = [a["name"] for k, a in spec["agents"].items() if k != key]
+    others = _copresent_names(spec, key)
     parts = [f"# You are {name}", "", agent["system_prompt"].strip()]
     if spec.get("setup"):
         parts += ["", "## Situation", spec["setup"].strip()]
