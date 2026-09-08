@@ -6,7 +6,6 @@
 container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:5a45420"
 
 # Live voice model. Switched to the native-audio route 2026-09-08 (nto.gemini-live-2.5-flash is being deprecated).
-# Native-audio is verified for 1:1 but not yet for group rooms in production
-# (members answer with empty responses after the first turn, 2026-09-08).
-# Back on the original route until that is fixed; switch = change this line.
-actor_model = "nto.gemini-live-2.5-flash"
+# Live voice model. Native-audio route (nto.gemini-live-2.5-flash is being
+# deprecated); verified for 1:1 and group rooms on 5a45420, 2026-09-08.
+actor_model = "nto.gemini-live-2.5-flash-native-audio"
