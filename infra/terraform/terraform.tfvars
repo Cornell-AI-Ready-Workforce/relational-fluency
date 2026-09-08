@@ -3,7 +3,7 @@
 # non-existent :bootstrap placeholder.
 #
 # To release a new build: push the image, update this tag, commit, apply.
-container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:6b504f3"
+container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:5a45420"
 
 # Live voice model. Switched to the native-audio route 2026-09-08 (nto.gemini-live-2.5-flash is being deprecated).
 # Native-audio is verified for 1:1 but not yet for group rooms in production
