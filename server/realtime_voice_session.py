@@ -1378,11 +1378,23 @@ class RealtimeVoiceSessionRunner:
                         if r.get("agent_id") in self.room.sessions
                     ]
                     # Anti-dominance: absent a direct address, prefer a
-                    # candidate who did not just speak.
+                    # candidate who did not just speak. If the director's only
+                    # candidate is the character who just spoke, do not let
+                    # them answer again: rotate to the next member instead
+                    # (in production the director handed Dan four of five
+                    # unnamed turns this way).
                     first = next(
-                        (c for c in candidates if c != self._last_group_speaker),
-                        candidates[0] if candidates else None,
+                        (c for c in candidates if c != self._last_group_speaker), None,
                     )
+                    if first is None and candidates:
+                        if self._last_group_speaker in order and len(order) > 1:
+                            nxt = (order.index(self._last_group_speaker) + 1) % len(order)
+                            first = order[nxt]
+                            self.session.store.event(
+                                "dominance_rotated", from_agent=candidates[0], to_agent=first,
+                            )
+                        else:
+                            first = candidates[0]
                 except Exception as exc:  # noqa: BLE001
                     self.session.store.event("director_error", message=str(exc))
             if first is None:
