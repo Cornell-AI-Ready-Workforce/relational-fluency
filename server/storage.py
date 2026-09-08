@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import struct
 import threading
@@ -192,7 +193,11 @@ class SessionStore:
         self.agent_ids = list(agent_ids or [])
         self.started_at = time.time()
         self.events_path = self.dir / "events.jsonl"
-        self.events_fh = self.events_path.open("a", buffering=1)
+        # event() writes json.dumps(..., ensure_ascii=False), so the log must be
+        # UTF-8. Without an explicit encoding the locale default (cp1252 on a
+        # Windows host) raises UnicodeEncodeError on the first non-ANSI character
+        # a participant or the model produces, killing the live encounter.
+        self.events_fh = self.events_path.open("a", buffering=1, encoding="utf-8")
         self.user_audio: Optional[WavAppender] = None
         self.assistant_audio: Dict[str, WavAppender] = {}
         if capture_audio:
@@ -218,6 +223,12 @@ class SessionStore:
         self._write_manifest(status="active")
 
     def event(self, type_: str, **fields: Any) -> None:
+        # Guard against writes after close(): a fire-and-forget steering task or
+        # a still-connected researcher socket can call event() after the store
+        # was closed; writing to the closed handle would raise ValueError and
+        # kill that task/socket. Drop the late event silently instead.
+        if self.events_fh is None or self.events_fh.closed:
+            return
         rec: Dict[str, Any] = {
             "t": round(time.time() - self.started_at, 3),
             "wall": time.time(),
@@ -264,7 +275,12 @@ class SessionStore:
                 "assistant_audio_duration_s_by_agent": per_agent_audio,
             },
         }
-        (self.dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        # Write atomically: a kill mid-write must not leave a truncated
+        # manifest, which /api/encounters would skip, vanishing the encounter
+        # from the dashboard even though its events/WAVs are intact.
+        tmp = self.dir / "manifest.json.tmp"
+        tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        os.replace(tmp, self.dir / "manifest.json")
 
     def close(self, *, n_turns: int = 0) -> None:
         ended_at = time.time()
@@ -277,6 +293,7 @@ class SessionStore:
             self.events_fh.close()
         except Exception:
             pass
+        self.events_fh = None
         self._write_manifest(status="closed", ended_at=ended_at, n_turns=n_turns)
         # Build the analysis-facing aligned record alongside the raw event log.
         try:
@@ -304,7 +321,12 @@ def create_participant(code: str, consent_given: bool, consent_version: str) -> 
         "consent_text_version": consent_version,
         "created_at": time.time(),
     }
-    (PARTICIPANTS_DIR / f"{pid}.json").write_text(json.dumps(rec, indent=2))
+    # Atomic write: a kill mid-write must not leave a truncated consent file,
+    # which get_participant would fail to parse and lock the participant out.
+    dest = PARTICIPANTS_DIR / f"{pid}.json"
+    tmp = PARTICIPANTS_DIR / f"{pid}.json.tmp"
+    tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+    os.replace(tmp, dest)
     with _db() as conn:
         conn.execute(
             """INSERT INTO participants
@@ -316,8 +338,20 @@ def create_participant(code: str, consent_given: bool, consent_version: str) -> 
     return pid
 
 
+_PID_RE = re.compile(r"p_[0-9]+_[0-9a-f]{6}")
+
+
 def get_participant(pid: str) -> Optional[Dict[str, Any]]:
+    # pid arrives from a websocket query parameter, which may contain '/'.
+    # Validate its exact minted shape before touching the filesystem so a
+    # traversal string (e.g. "../runs/<run_id>") cannot resolve to another
+    # record and slip past the voice-path consent gate.
+    if not pid or not _PID_RE.fullmatch(pid):
+        return None
     path = PARTICIPANTS_DIR / f"{pid}.json"
     if not path.exists():
         return None
-    return json.loads(path.read_text())
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None

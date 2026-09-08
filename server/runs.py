@@ -13,8 +13,12 @@ matching second-attempt sequence.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import os
 import random
+import re
 import time
 import uuid
 from pathlib import Path
@@ -43,8 +47,46 @@ def _by_construct() -> Dict[str, List[str]]:
     return out
 
 
+_RUN_ID_RE = re.compile(r"[0-9a-f]{12}")
+
+
 def _path(run_id: str) -> Path:
     return RUNS_DIR / f"{run_id}.json"
+
+
+def _write_atomic(p: Path, data: str) -> None:
+    """Write via a temp file + os.replace so a crash mid-write can never leave a
+    truncated run JSON (which would 404 the participant and fork a duplicate)."""
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(data, encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def _run_code_secret() -> bytes:
+    """Server-side key for the completion HMAC.
+
+    Kept out of the participant-visible run id so a partial code cannot be
+    turned into a finished code by editing a string. Prefers an env override;
+    otherwise a per-deployment key persisted next to the data.
+    """
+    env = os.environ.get("RUN_CODE_SECRET")
+    if env:
+        return env.encode()
+    key_path = DATA_DIR / ".run_code_secret"
+    try:
+        existing = key_path.read_bytes()
+        if existing:
+            return existing
+    except OSError:
+        pass
+    secret = os.urandom(32)
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        key_path.write_bytes(secret)
+    except OSError:
+        pass
+    return secret
 
 
 def create(
@@ -106,7 +148,7 @@ def create(
         "variants": chosen,
     }
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    _path(run["run_id"]).write_text(json.dumps(run, indent=2))
+    _write_atomic(_path(run["run_id"]), json.dumps(run, indent=2))
     return run
 
 
@@ -122,7 +164,7 @@ def find_for_participant(participant_id: str) -> Optional[dict]:
     best = None
     for f in RUNS_DIR.glob("*.json"):
         try:
-            run = json.loads(f.read_text())
+            run = json.loads(f.read_text(encoding="utf-8"))
         except ValueError:
             continue
         if run.get("participant_id") != participant_id:
@@ -135,28 +177,35 @@ def find_for_participant(participant_id: str) -> Optional[dict]:
 def completion_code(run: dict) -> str:
     """Code the participant carries back to the survey as proof of completion.
 
-    Derived from the run id so it can be checked later without a lookup table,
-    and prefixed so a partial run is visibly not a finished one.
+    The digest is an HMAC over the run id *and* the finished state keyed by a
+    server-side secret, so the finished code cannot be forged from the partial
+    one (the two now differ by more than the literal "PARTIAL-" substring) and
+    cannot be computed from the public run id alone.
     """
-    import hashlib
-
-    digest = hashlib.sha256(run["run_id"].encode()).hexdigest()[:8].upper()
     finished = run["index"] >= len(run["scenarios"])
+    state = "finished" if finished else "partial"
+    msg = f"{run['run_id']}:{state}".encode()
+    digest = hmac.new(_run_code_secret(), msg, hashlib.sha256).hexdigest()[:8].upper()
     return f"RF-{digest}" if finished else f"RF-PARTIAL-{digest}"
 
 
 def get(run_id: str) -> Optional[dict]:
+    # Run ids are uuid4().hex[:12]. Reject anything else before it reaches the
+    # filesystem so a crafted id (backslashes, drive letters, ../) cannot escape
+    # RUNS_DIR and read or write an arbitrary *.json on a Windows host.
+    if not run_id or not _RUN_ID_RE.fullmatch(run_id):
+        return None
     p = _path(run_id)
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text())
+        return json.loads(p.read_text(encoding="utf-8"))
     except ValueError:
         return None
 
 
 def save(run: dict) -> None:
-    _path(run["run_id"]).write_text(json.dumps(run, indent=2))
+    _write_atomic(_path(run["run_id"]), json.dumps(run, indent=2))
 
 
 def advance(run_id: str, session_id: Optional[str] = None) -> Optional[dict]:
@@ -164,6 +213,13 @@ def advance(run_id: str, session_id: Optional[str] = None) -> Optional[dict]:
     run = get(run_id)
     if run is None:
         return None
+    # Idempotent on session_id: a retried/duplicated advance for an encounter
+    # already recorded must not skip the next construct. If this session_id is
+    # already in `completed`, return the run untouched.
+    if session_id is not None and any(
+        c.get("session_id") == session_id for c in run.get("completed", [])
+    ):
+        return run
     if run["index"] < len(run["scenarios"]):
         entry = dict(run["scenarios"][run["index"]])
         entry["session_id"] = session_id
