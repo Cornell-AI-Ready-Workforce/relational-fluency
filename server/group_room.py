@@ -61,7 +61,19 @@ class GroupRoom:
             await rt.connect(open_conversation=False)
             self.scribe = rt
 
-        await asyncio.gather(start_scribe(), *(start(a) for a in self.agents))
+        # gather with return_exceptions so a single failed connect does not
+        # leave the siblings that DID connect running unclosed in the
+        # background. Every started coroutine runs to completion (success or
+        # exception) and registers itself; on any failure close() tears down
+        # everything that registered before re-raising the first error.
+        results = await asyncio.gather(
+            start_scribe(), *(start(a) for a in self.agents),
+            return_exceptions=True,
+        )
+        errors = [r for r in results if isinstance(r, BaseException)]
+        if errors:
+            await self.close()
+            raise errors[0]
 
     async def hear(self, pcm: bytes, *, exclude: Optional[str] = None) -> None:
         """Everyone in the room hears this audio.
@@ -102,6 +114,12 @@ class GroupRoom:
             # in the conversation history from the auto-commit.
             if rt.pending_input < 3200:
                 await rt.send_audio(b"\x00" * 9600)
+            # A prior reply whose response.done was lost leaves _response_active
+            # stuck True; request_response() would then silently send nothing
+            # and this character would be muted for the rest of the encounter.
+            # Clear the stale flag so the commit actually produces a reply.
+            if rt.responding:
+                rt.clear_response_state()
             await rt.commit_input()
             await rt.request_response()
         except Exception:  # noqa: BLE001, a dead session must not kill the turn
