@@ -126,6 +126,9 @@
   .novideo { background: var(--surface); border: 1px dashed var(--line-soft); border-radius: 8px;
              padding: 14px 16px; font-size: 13px; color: var(--muted); line-height: 1.5; }
   .seekhint { font-size: 11px; color: var(--muted); margin: 6px 0 0; }
+  .playnote { font-size: 12px; color: var(--fg); background: #fff7f7; border: 1px solid var(--line-soft);
+              border-left: 3px solid var(--accent); border-radius: 6px; padding: 8px 10px; margin-top: 8px; }
+  .playnote button { margin-left: 6px; padding: 3px 10px; font-size: 12px; }
 
   .turns { margin-top: 6px; }
   .turn { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 7px 8px; border-radius: 6px;
@@ -166,9 +169,12 @@
   .opts { display: grid; grid-template-columns: repeat(5, 1fr) 1.6fr; gap: 4px; }
   .opt { position: relative; }
   .opt input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  /* -webkit- first: unprefixed user-select only reached Safari 17, and without
+     it a rater who drags a fraction while clicking highlights the digit instead
+     of selecting the answer — 22 times an encounter. */
   .opt span { display: block; text-align: center; padding: 6px 2px; border: 1px solid var(--line);
               border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--muted);
-              background: var(--surface); user-select: none; }
+              background: var(--surface); -webkit-user-select: none; user-select: none; }
   .opt:hover span { background: var(--surface-2); color: var(--fg); }
   .opt input:checked + span { background: var(--accent); border-color: var(--accent); color: #fff; }
   /* N/A is a deliberate answer, never a default and never a resting state that
@@ -340,6 +346,15 @@ let lastTick = 0;
 let videoPlayed = false;
 let dirty = false;
 let blockedReason = null;  // set when the packet itself says not to rate this one
+let videoSeekable = true;  // false once loadedmetadata says the file has no duration index
+let videoUrlRefreshed = false;  // the playback URL has already been re-minted once
+let videoRefreshTimer = null;   // pre-emptive swap before the presigned link expires
+let videoLoadTimer = null;      // "nothing has loaded at all" watchdog
+// A recording that has produced neither metadata nor an error by now is stuck,
+// not slow. Generous on purpose: the cost of being wrong is telling a rater
+// their video failed when it was about to arrive.
+const VIDEO_LOAD_TIMEOUT_MS = 25000;
+const cancelTimer = (t) => { if (t != null && typeof clearTimeout === 'function') clearTimeout(t); };
 
 /* ---- shell --------------------------------------------------------------- */
 
@@ -487,12 +502,159 @@ function renderVideo() {
     return;
   }
   slot.innerHTML = '<video id="vid" controls preload="metadata" playsinline></video>' +
-    '<div class="seekhint">Click any line of the transcript to jump the video to roughly that moment. ' +
+    '<div class="playnote" id="playNote" style="display:none"></div>' +
+    '<div class="seekhint" id="seekHint">Click any line of the transcript to jump the video to roughly that moment. ' +
     'The transcript clock is taken from the conversation log, so it can sit a second or two off the video.</div>';
   const v = $('vid');
   v.src = media.video_url;
   v.addEventListener('play', () => { videoPlayed = true; });
   v.addEventListener('timeupdate', () => highlightTurn(v.currentTime));
+
+  // A recording this browser cannot decode used to be a black box with a dead
+  // control bar and no message: not one of the four states renderVideo names,
+  // because from the server's point of view the video is fine. The rater
+  // assumed the encounter had no camera, rated from the transcript, and all
+  // that happened was the soft "you have not played the recording" warning —
+  // one extra click, cleared, and stored with no marker separating that rating
+  // from one made while watching. Phase 2 rates video; a gold label made
+  // without the artefact and indistinguishable from a good one is the worst
+  // thing this console can produce.
+  //
+  // A wave is a mix of containers by design: Chrome and Firefox participants
+  // record WebM/VP8+Opus, Safari participants record MP4/H.264+AAC, and both
+  // land under the same key with the browser's own Content-Type
+  // (server/video.py:274-278 says so deliberately). Nothing transcodes. The
+  // crossings that matter are a Safari rater on a WebM recording and a
+  // Firefox/Linux rater with no system H.264 decoder on an MP4 one — but
+  // which engine is which is not worth guessing at, so this listens for the
+  // decode failing, which is the same question asked of every engine.
+  v.addEventListener('error', () => { onVideoError(v); });
+
+  // The playback URL is a presigned S3 GET valid for `expires_in` seconds
+  // (3600 today, and the packet has always carried the number). The console
+  // invites raters to work a queue with no time limit, so the hour is easy to
+  // reach — and an expired link answers 403, which arrives here as exactly the
+  // same MediaError as an undecodable container. Swap in a fresh URL before
+  // that happens rather than making the rater discover it.
+  cancelTimer(videoRefreshTimer); videoRefreshTimer = null;
+  const ttl = Number(media.expires_in);
+  if (isFinite(ttl) && ttl > 60) {
+    const openedFor = packet.assignment_id;
+    videoRefreshTimer = setTimeout(() => {
+      if (packet && packet.assignment_id === openedFor) refreshVideoUrl(v, 'expiry');
+    }, Math.max(30, ttl - 300) * 1000);
+  }
+
+  // Raw MediaRecorder output carries no duration and no seek index — the
+  // recorder is started with a timeslice and the chunks are PUT unchanged, and
+  // nothing in the repo remuxes — so `duration` reads Infinity and a seek to an
+  // arbitrary point either snaps back or jumps to the end. The page promises
+  // click-to-seek in prose directly under the video; where the file cannot
+  // honour that, say so rather than leaving a dead affordance the rater blames
+  // themselves for.
+  v.addEventListener('loadedmetadata', () => {
+    videoSeekable = isFinite(v.duration) && v.duration > 0;
+    const hint = $('seekHint');
+    if (hint && !videoSeekable) {
+      hint.textContent = 'This recording carries no duration index, so jumping to a point in it does not '
+        + 'work reliably. Use the player controls and read the transcript alongside them.';
+    }
+    // An explicit "there is no audio track here" from the engine is worth
+    // repeating: a container whose picture decodes and whose sound does not is
+    // the one failure that sets videoPlayed and slips past every gate. Only
+    // negative signals engines actually expose are read, so a browser that
+    // exposes neither (Chrome, by default) says nothing rather than guessing.
+    const noAudio = (v.audioTracks && v.audioTracks.length === 0)
+      || (typeof v.mozHasAudio === 'boolean' && v.mozHasAudio === false);
+    if (noAudio) {
+      showPlayNote('This browser reports no audio track in this recording. Do not rate the conversation '
+        + 'from the picture alone: open it in Google Chrome, and tell the study team if it is silent '
+        + 'there too.');
+    }
+  });
+
+  // Neither a decode error nor any metadata after a generous wait means the
+  // load is stuck. Said, not blocked: a rater whose network is merely slow must
+  // not be stopped from rating, and a Retry is cheaper for them than a reload.
+  cancelTimer(videoLoadTimer); videoLoadTimer = null;
+  videoLoadTimer = setTimeout(() => {
+    videoLoadTimer = null;
+    if ($('vid') !== v) return;
+    // readyState is a number on every engine with a <video>; anything else
+    // means we are not looking at a real media element and have nothing to
+    // report. Only HAVE_NOTHING with no error is a stuck load.
+    if (typeof v.readyState !== 'number' || v.readyState > 0 || v.error) return;
+    showPlayNote('This recording has not loaded. Its playback link may have expired.', true);
+  }, VIDEO_LOAD_TIMEOUT_MS);
+}
+
+// One place that says a recording cannot be played here, in the words a rater
+// needs, using the machinery the packet's own 'failed' and 'unsigned' states
+// already use: the rating is blocked and the reason is on screen. Blocking is
+// deliberate — an undecodable recording should be reported, not rated around.
+function videoUnplayable(detail) {
+  $('videoSlot').innerHTML =
+    '<div class="novideo"><b>This recording cannot be played in this browser.</b> '
+    + esc(detail || '')
+    + ' Open this console in Google Chrome and try again. If it will not play there either, do not '
+    + 'rate this encounter: tell the study team.</div>';
+  videoPlayed = false;
+  blockedReason = 'no-playback';
+  $('submitBtn').disabled = true;
+  $('submitMsg').className = 'submitmsg err';
+  $('submitMsg').textContent = blockedMessage();
+}
+
+function showPlayNote(text, withRetry) {
+  const note = $('playNote');
+  if (!note) return;
+  note.style.display = 'block';
+  note.innerHTML = esc(text) +
+    (withRetry ? ' <button type="button" class="secondary" id="playRetry">Retry</button>' : '');
+  if (withRetry) {
+    // Delegated off the note itself: the button is written as markup so this
+    // works wherever innerHTML does, and the retry is a plain re-mint.
+    note.addEventListener('click', (e) => {
+      if (!e.target || e.target.id !== 'playRetry') return;
+      const v = $('vid');
+      if (v) refreshVideoUrl(v, 'manual');
+    });
+  }
+}
+
+// Re-mint the playback URL and put the rater back where they were. The packet
+// route is idempotent and the console already re-fetches packets, so this costs
+// one request and saves a rater concluding that an encounter has no video when
+// its link had merely aged out.
+async function refreshVideoUrl(v, why) {
+  if (!packet || !packet.assignment_id) return false;
+  if (why !== 'manual' && videoUrlRefreshed) return false;
+  videoUrlRefreshed = true;
+  const at = v && v.currentTime ? v.currentTime : 0;
+  const res = await api(`/api/rater/packet/${encodeURIComponent(packet.assignment_id)}`);
+  const media = res.ok && res.body && res.body.media;
+  if (!media || !media.video_url) return false;
+  packet.media = media;
+  const el = $('vid');
+  if (!el) return false;
+  const note = $('playNote');
+  if (note) { note.style.display = 'none'; note.textContent = ''; }
+  el.src = media.video_url;
+  if (at) { try { el.currentTime = at; } catch (e) {} }
+  return true;
+}
+
+// An error here is one of three things and the MediaError alone cannot tell
+// them apart: an expired link (403), a container this engine cannot decode, or
+// a transfer that failed. Try the cheap, recoverable one first — once — and
+// report honestly if that does not fix it.
+async function onVideoError(v) {
+  cancelTimer(videoLoadTimer); videoLoadTimer = null;
+  if (!videoUrlRefreshed && await refreshVideoUrl(v, 'error')) return;
+  const code = v && v.error && v.error.code;
+  videoUnplayable(code === 4
+    ? 'The browser reported that it cannot decode this recording format.'
+    : 'The browser could not load it.');
 }
 
 function renderTurns() {
@@ -539,7 +701,19 @@ function renderTurns() {
     el.addEventListener('click', () => {
       const t = parseFloat(el.dataset.t);
       const v = $('vid');
-      if (v && !isNaN(t)) { v.currentTime = Math.max(0, t - 1); v.play().catch(() => {}); }
+      if (!v || isNaN(t)) return;
+      // A file with no duration index cannot honour an arbitrary seek; the hint
+      // under the player says so once loadedmetadata has told us, and a seek
+      // that snaps back would just look broken.
+      if (!videoSeekable) { v.play().catch(() => {}); return; }
+      const go = () => { try { v.currentTime = Math.max(0, t - 1); } catch (e) {} };
+      // A click in the first moments arrives while readyState is still
+      // HAVE_NOTHING. Chrome and Firefox hold the pending seek; Safari has
+      // historically dropped it and stayed at 0, so wait for metadata instead
+      // of setting currentTime into a void.
+      if (v.readyState === 0) v.addEventListener('loadedmetadata', go, { once: true });
+      else go();
+      v.play().catch(() => {});
     });
   });
 }
@@ -676,17 +850,39 @@ function markDirty() { dirty = true; confirmPending = null; setSubmitLabel(); }
 
 /* ---- timing -------------------------------------------------------------- */
 
+// The two-minute gate, and the `seconds` this posts to the server, are the
+// study's only defence against a skimmed rating — so time spent in another tab
+// must not be credited to this encounter. It used to be: on hide, lastTick was
+// set to the hide moment; timers were then throttled or suspended; on show,
+// visibilitychange fired with document.hidden already false and lastTick still
+// at the hide moment, and the whole absence was booked as time on this
+// encounter. Open an encounter, go away for five minutes, come back, answer 22
+// items and submit: the gate is passed and the evidence for the gate is
+// inflated with it. Only accumulate from a timestamp taken while visible.
 function tick() {
   const now = performance.now();
-  if (!document.hidden && lastTick) activeMs += now - lastTick;
+  if (!document.hidden && lastTick) {
+    // Clamp a single accumulation. A laptop that slept, or an engine that
+    // stopped the interval entirely, can hand back a gap of hours; nothing
+    // legitimate produces more than a few seconds between ticks.
+    activeMs += Math.min(now - lastTick, MAX_TICK_MS);
+  }
   lastTick = now;
   if (packet && !submitted) {
     const s = Math.round(activeMs / 1000);
     $('timeText').textContent = `${mmss(s)} on this encounter`;
   }
 }
+const MAX_TICK_MS = 5000;
 setInterval(tick, 1000);
-document.addEventListener('visibilitychange', tick);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    tick();          // bank what was earned up to the moment of leaving
+    lastTick = 0;    // falsy: the existing `&& lastTick` guard skips the return
+  } else {
+    lastTick = performance.now();
+  }
+});
 
 /* ---- open one assignment ------------------------------------------------- */
 
@@ -711,6 +907,11 @@ async function openAssignment(assignmentId) {
   activeMs = 0; lastTick = performance.now();
   dirty = false;
   blockedReason = null;
+  // Playback state belongs to the packet being opened, not to the last one.
+  videoSeekable = true;
+  videoUrlRefreshed = false;
+  cancelTimer(videoRefreshTimer); videoRefreshTimer = null;
+  cancelTimer(videoLoadTimer); videoLoadTimer = null;
 
   // The packet may not know its own assignment status — rater_packet.build is
   // about the encounter, not the assignment — so fall back to the queue entry,
@@ -731,6 +932,16 @@ async function openAssignment(assignmentId) {
   renderPacketNotes();
   $('obBetter').value = '';
   $('obNotable').value = '';
+  // The values were cleared here and the disabled flags were not, and nothing
+  // anywhere in the file ever set these two back to false — so from the second
+  // encounter of a rater's sitting onwards, both open-ended boxes were dead grey
+  // rectangles. The scale still worked, submit still worked, and the rating
+  // posted with empty open_ended. Phase 2's qualitative data was silently lost
+  // for every encounter after each rater's first, invisibly on both ends. The
+  // enable and the disable live in one function now (setFormEnabled) so they
+  // cannot drift apart again.
+  setFormEnabled(true);
+  $('submitBtn').textContent = 'Submit rating';
   $('submitMsg').textContent = '';
   $('submitMsg').className = 'submitmsg';
 
@@ -809,10 +1020,17 @@ function renderPacketNotes() {
   }
 }
 
+// One place that turns the whole answer form on and off. The radios used to
+// recover by accident (renderItems rebuilds #items wholesale); the textareas are
+// static markup and recovered never.
+function setFormEnabled(on) {
+  $('items').querySelectorAll('input').forEach(i => { i.disabled = !on; });
+  $('obBetter').disabled = !on;
+  $('obNotable').disabled = !on;
+}
+
 function lockDown(msg) {
-  $('items').querySelectorAll('input').forEach(i => { i.disabled = true; });
-  $('obBetter').disabled = true;
-  $('obNotable').disabled = true;
+  setFormEnabled(false);
   $('submitBtn').disabled = true;
   $('submitBtn').textContent = 'Submitted';
   $('submitMsg').className = 'submitmsg';
@@ -988,12 +1206,33 @@ window.addEventListener('beforeunload', (e) => {
    marks it N/A, then focus moves to the next unanswered statement. Radios keep
    their native arrow-key behaviour; this is an accelerator on top, not a
    replacement, and it stays out of the way while a note is being typed. */
+// Which statement the accelerator applies to. Focus alone was not enough: the
+// radios are opacity:0 overlays, macOS does not give a clicked control keyboard
+// focus, and under the default "text boxes and lists only" keyboard setting Tab
+// does not reach radios at all — so on a Mac the first keystroke landed on the
+// body, closest('.item') returned null, and the whole accelerator was
+// unreachable. Tracking the last statement the rater touched (by pointer as
+// well as by focus) makes both routes in work on every OS.
+let lastItemRow = null;
+document.addEventListener('pointerdown', (e) => {
+  const row = e.target.closest && e.target.closest('.item');
+  if (row) lastItemRow = row;
+}, true);
+document.addEventListener('focusin', (e) => {
+  const row = e.target.closest && e.target.closest('.item');
+  if (row) lastItemRow = row;
+});
+
 document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'textarea' || tag === 'input' && e.target.type === 'text') return;
-  const row = e.target.closest && e.target.closest('.item');
+  let row = e.target.closest && e.target.closest('.item');
+  // Fall back to the last statement touched, and only while it is still on the
+  // page (renderItems rebuilds #items wholesale between encounters).
+  if (!row && lastItemRow && lastItemRow.isConnected) row = lastItemRow;
   if (!row) return;
+  lastItemRow = row;
   let val = null;
   if ('12345'.includes(e.key)) val = e.key;
   else if (e.key === '0' || e.key.toLowerCase() === 'n') val = NA;

@@ -22,6 +22,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .storage import replace_with_retry
+
 
 def build(session_dir: Path) -> Dict[str, Any]:
     events_path = session_dir / "events.jsonl"
@@ -215,5 +217,15 @@ def build(session_dir: Path) -> Dict[str, Any]:
 def write(session_dir: Path) -> Path:
     record = build(session_dir)
     out = session_dir / "record.json"
-    out.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Temp file + rename, the same as the manifest next to it, and for the same
+    # reason: this runs inside SessionStore.close while the console, the rater
+    # packet builder and any verification pass may be reading record.json.
+    # Writing in place truncates the file first, so a reader that arrives in
+    # that window gets a partial JSON document and reports the encounter as
+    # unreadable — and on Windows a reader holding the file can fail the write
+    # outright. replace_with_retry covers the Windows rename window; POSIX
+    # rename is atomic and never blocks.
+    tmp = session_dir / "record.json.tmp"
+    tmp.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+    replace_with_retry(tmp, out)
     return out

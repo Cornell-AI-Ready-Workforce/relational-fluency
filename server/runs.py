@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .scenarios_v3 import available, load_spec
-from .storage import DATA_DIR
+from .storage import DATA_DIR, replace_with_retry
 
 RUNS_DIR = DATA_DIR / "runs"
 
@@ -175,6 +175,14 @@ def normalize_participant_key(raw: Optional[str]) -> Tuple[Optional[str], str]:
 
 
 def _path(run_id: str) -> Path:
+    # Validate where the filename is minted as well as where it is read (get()
+    # already checks). save() takes the id straight off a run dict, so an id
+    # that was never uuid4().hex[:12] would otherwise reach the filesystem on
+    # the write side only — and on Windows a component like "nul" is a device
+    # that accepts the bytes and discards them, which loses a participant's run
+    # while every call returns cleanly.
+    if not run_id or not _RUN_ID_RE.fullmatch(str(run_id)):
+        raise ValueError(f"bad run_id: {run_id!r}")
     return RUNS_DIR / f"{run_id}.json"
 
 
@@ -184,7 +192,10 @@ def _write_atomic(p: Path, data: str) -> None:
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(data, encoding="utf-8")
-    os.replace(tmp, p)
+    # Retried, not bare: on Windows this rename fails outright while any handle
+    # is open on either side, and a run advance racing a participant's poll of
+    # the same file is exactly that. See storage.replace_with_retry.
+    replace_with_retry(tmp, p)
 
 
 def _run_code_secret() -> bytes:

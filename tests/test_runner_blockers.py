@@ -1880,3 +1880,155 @@ def test_a_one_to_one_steer_says_which_way_it_went():
     assert held.steer_delivered == [None]
     assert held.store.of("steer_deferred")
     assert not held.store.of("steer_delivered")
+
+
+def test_a_late_delta_does_not_reopen_an_abandoned_reply(monkeypatch):
+    """P5 by its third and likeliest route: a late transcript DELTA.
+
+    The whole-line branch was fenced with `if not buf`; the delta branch was
+    not, and a delta arriving after response.done is the ordinary case - it is
+    the entire reason a grace period exists. Announcing on one cleared the
+    `finalized` latch, so the real response.done behind the bridge's synthetic
+    `interrupted` one spawned a SECOND finalize on the buffer the first was
+    still grace-waiting on. The second read the full buffer, wrote the turn and
+    cleared it; the first woke on an empty buffer and wrote the same reply again
+    as text="" flagged transcript_missing - a rater's one signal that audio
+    played whose text was lost, hung on a turn that never happened.
+
+    Reproduced against the real pump before the fix: two assistant_turns, two
+    steering_pairs and one transcript_missing for a single reply whose
+    transcript was in fact complete."""
+    monkeypatch.setenv("TRANSCRIPT_GRACE_SECONDS", "1.5")
+
+    async def scenario():
+        runner, session, ws = make_runner("S4A")
+        dan = runner._resolve_agents()[0]
+        rt = _room_with(runner, dan)
+        pump = asyncio.ensure_future(runner._pump_member(dan, rt))
+        for ev in (
+            {"type": "agent_audio", "pcm": b"\x00\x01" * 40},
+            {"type": "agent_transcript_delta", "text": "Turn one words."},
+            {"type": "response_done", "interrupted": True},
+            # The rest of the SAME reply's transcript, arriving late.
+            {"type": "agent_transcript_delta", "text": " And the rest of them."},
+            {"type": "response_done"},
+        ):
+            rt.feed(ev)
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(2.5)
+        pump.cancel()
+        return session, ws
+
+    session, ws = asyncio.run(scenario())
+    turns = session.store.of("assistant_turn")
+    assert len(turns) == 1, f"one reply was recorded as {len(turns)} turns"
+    # The late half is not dropped either: it belongs to the turn that is
+    # closing, which is what makes it late rather than new.
+    assert turns[0]["text"] == "Turn one words. And the rest of them."
+    assert turns[0]["transcript_missing"] is False
+    assert not session.store.of("transcript_missing"), (
+        "a turn that never happened was flagged transcript_missing"
+    )
+    assert len(session.store.of("steering_pair")) == 1
+    assert len(ws.frames("assistant_started")) == 1, (
+        "late text told the page a second character turn had begun"
+    )
+
+
+def test_late_text_does_not_strand_the_next_replys_grace_wait(monkeypatch):
+    """The other half of the same fence, and the one that silently truncates.
+
+    Announcing on late text left `announced` True and this reply's `settled`
+    gate - the end-of-transcript signal P6's fast path reads - in place. The
+    NEXT reply then found both stranded: no assistant_started for the page, and
+    a finalize whose gate was ALREADY set, so it returned without waiting and
+    recorded the turn as whatever fragment had arrived by then. A transcript
+    that is silently half-recorded is worse than one that is missing, because
+    nothing marks it. P5/P6."""
+    monkeypatch.setenv("TRANSCRIPT_GRACE_SECONDS", "1.5")
+
+    async def scenario():
+        runner, session, ws = make_runner("S4A")
+        dan = runner._resolve_agents()[0]
+        rt = _room_with(runner, dan)
+        pump = asyncio.ensure_future(runner._pump_member(dan, rt))
+        for ev in (
+            {"type": "agent_audio", "pcm": b"\x00\x01" * 40},
+            {"type": "agent_transcript_delta", "text": "Turn one words."},
+            {"type": "response_done", "interrupted": True},
+            {"type": "agent_transcript", "text": "Turn one words, all of them."},
+            {"type": "response_done"},
+            # A genuinely new reply, whose own transcript finishes late.
+            {"type": "agent_audio", "pcm": b"\x00\x01" * 40},
+            {"type": "agent_transcript_delta", "text": "Second reply, first half."},
+            {"type": "response_done"},
+            {"type": "agent_transcript_delta", "text": " Second half."},
+        ):
+            rt.feed(ev)
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(2.5)
+        pump.cancel()
+        return session, ws
+
+    session, ws = asyncio.run(scenario())
+    texts = [t["text"] for t in session.store.of("assistant_turn")]
+    assert texts == [
+        "Turn one words, all of them.",
+        "Second reply, first half. Second half.",
+    ], f"the second reply was recorded as {texts[1:]!r}"
+    assert len(ws.frames("assistant_started")) == 2, (
+        "a reply the participant heard was never announced to the page"
+    )
+
+
+def test_a_group_shift_reaches_the_record_saying_it_reached_nobody(tmp_path,
+                                                                   monkeypatch):
+    """B42's other half, against the REAL Session rather than a stand-in.
+
+    `delivered` is only worth threading if it survives all the way into the
+    three places an analyst or a researcher actually reads: the knob_set row in
+    events.jsonl, the steering_log the researcher console replays, and the live
+    broadcast. A room shift that reaches nobody until the next planted beat -
+    S3 and S4, half the study - was written exactly like one that had landed."""
+    from server import storage
+    from server.session import Session
+
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "index.db")
+    monkeypatch.setattr(storage, "PARTICIPANTS_DIR", tmp_path / "participants")
+    storage.init_storage()
+
+    async def scenario(delivered):
+        sess = Session("S1A")
+        sess.auto_steering = True
+        aid = sess.scenario.cast[0].id
+
+        async def review(*a, **k):
+            return [{"knob": "warmth", "value": 0.2, "agent_id": aid,
+                     "reason": "cooling off"}]
+        sess.steering.review = review
+        console = FakeWS()
+        sess.researcher_wss.add(console)
+        await sess.auto_steer(delivered=delivered)
+        rows = [
+            json.loads(line)
+            for line in (sess.store.dir / "events.jsonl").read_text(
+                encoding="utf-8").splitlines() if line.strip()
+        ]
+        return [r for r in rows if r["type"] == "knob_set"], sess, console
+
+    knob_rows, sess, console = asyncio.run(scenario(False))
+    assert len(knob_rows) == 1
+    assert knob_rows[0]["delivered"] is False, (
+        "a room shift the actor was never told about is on the record as applied"
+    )
+    assert sess.steering_log[-1]["delivered"] is False
+    assert console.frames("steering")[-1]["delivered"] is False
+
+    # And the 1:1 caller, which cannot know yet, says exactly that rather than
+    # claiming delivery: the steer_delivered / steer_deferred event that follows
+    # is what resolves it.
+    knob_rows, sess, console = asyncio.run(scenario(None))
+    assert knob_rows[0]["delivered"] is None
+    assert sess.steering_log[-1]["delivered"] is None

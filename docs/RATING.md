@@ -93,10 +93,28 @@ Set these once per shell. `$KEY` is the researcher session key — the same one
 `/researcher` uses. Everything in this section needs it; nothing a rater does
 does.
 
+bash / zsh (macOS, Linux, Git Bash):
+
 ```bash
 export RF=http://127.0.0.1:8765          # or the deployed host
 export KEY=...                            # SESSION_KEY
 ```
+
+Windows PowerShell:
+
+```powershell
+$RF = "http://127.0.0.1:8765"            # or the deployed host
+$KEY = "..."                              # SESSION_KEY
+```
+
+**Windows note, once, for this whole section.** The `curl` blocks below are
+bash. In Windows PowerShell `curl` is an alias for `Invoke-WebRequest` and
+rejects `-s`, and in cmd.exe the single-quoted JSON bodies are passed through
+*literally* — apostrophes and all — so the server rejects them as malformed
+JSON and the error looks like a bug in the API rather than in the shell. Phase 2
+setup is where a coordinator on Windows would otherwise stall, so each of the
+three POST commands below carries a PowerShell form beside the bash one. There
+are only three; the read-only `curl -s` lines just need `curl.exe`.
 
 ### 1. Register the raters
 
@@ -104,6 +122,11 @@ export KEY=...                            # SESSION_KEY
 curl -s -X POST "$RF/api/raters?key=$KEY" \
   -H 'content-type: application/json' \
   -d '{"name":"R. Okonkwo","kind":"trained","email":"ro99@example.edu"}'
+```
+
+```powershell
+$body = @{ name = "R. Okonkwo"; kind = "trained"; email = "ro99@example.edu" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$RF/api/raters?key=$KEY" -ContentType application/json -Body $body
 ```
 
 `kind` is one of `crowd`, `trained`, `expert`. It is recorded because
@@ -121,6 +144,11 @@ curl -s "$RF/api/raters?key=$KEY"        # everyone registered
 curl -s -X POST "$RF/api/raters/rtr_ab12cd34/token?key=$KEY" \
   -H 'content-type: application/json' -d '{"days":30}'
 # {"token":"rt_9f2c…"}
+```
+
+```powershell
+$body = @{ days = 30 } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$RF/api/raters/rtr_ab12cd34/token?key=$KEY" -ContentType application/json -Body $body
 ```
 
 **The token is shown once.** Only a hash is stored, so it cannot be recovered —
@@ -142,6 +170,16 @@ curl -s -X POST "$RF/api/rater-assignments?key=$KEY" \
   -H 'content-type: application/json' \
   -d '{"cohort":"study","rater_ids":["rtr_ab12cd34","rtr_ef56ab78","rtr_1234abcd"],
        "per_encounter":3,"seed":20260401}'
+```
+
+```powershell
+$body = @{
+  cohort        = "study"
+  rater_ids     = @("rtr_ab12cd34", "rtr_ef56ab78", "rtr_1234abcd")
+  per_encounter = 3
+  seed          = 20260401
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$RF/api/rater-assignments?key=$KEY" -ContentType application/json -Body $body
 ```
 
 Either `cohort` (every encounter in that cohort) or an explicit `session_ids`
@@ -168,7 +206,7 @@ curl -s "$RF/api/rater-assignments?key=$KEY"     # everything assigned, with sta
 ### 4. Watch it come in
 
 ```bash
-curl -s "$RF/api/ratings?cohort=study&key=$KEY" | python3 -m json.tool | head -40
+curl -s "$RF/api/ratings?cohort=study&key=$KEY" | python -m json.tool | head -40
 ```
 
 Every submitted rating, with its scores (N/A as `null`), the two open-ended
@@ -224,6 +262,51 @@ The console is built to make a careful rating easy and a careless one awkward:
 Keyboard: tab between items, arrows within an item, or press `1`–`5` to score
 and `0` / `n` for N/A — which then jumps to the next unanswered item. It fits a
 laptop window; below about 1100px the two columns stack.
+
+## What a rater plays
+
+**Recordings do not all arrive in the same container, and nothing upstream
+normalises them.** The participant page (`static/v2.html`) picks the first
+`MediaRecorder` type the participant's browser admits, in this order:
+
+| Order | Type tried | Who takes it |
+|---|---|---|
+| 1 | `video/webm;codecs=vp8,opus` | Chrome, Firefox |
+| 2 | `video/webm` | Chrome, Firefox (older builds) |
+| 3 | `video/mp4;codecs=h264,aac` | Safari |
+| 4 | `video/mp4` | Safari (fallback) |
+
+So a wave produces **WebM/VP8+Opus** files from Chrome and Firefox
+participants and **MP4/H.264** files from Safari participants, because Safari
+implements `MediaRecorder` but supports only MP4/H.264. Both are stored as-is
+and both are handed to raters.
+
+What this means operationally:
+
+- **The rater's own browser has to play both.** Chrome and Firefox play WebM
+  and MP4. Safari's WebM support is the uncertain one: it has been partial and
+  version-dependent, and this has **not been tested on real hardware for the
+  Safari versions raters will actually use** — treat it as unverified rather
+  than as either a yes or a no. The safe operational rule needs no such test:
+  **ask raters to use Chrome or Firefox.** Both play every file a wave can
+  produce, so the question never arises. If a rater reports "some videos won't
+  play" — especially if the ones that fail are most of them — ask which browser
+  they are using before looking for a bug in the console or a failed upload.
+  (This is a constraint on *raters*, who are recruited and instructed by the
+  study team. It is not a constraint on participants, who are the public and
+  must be able to use any of the three.)
+- **"No video on the encounter" has two distinct causes** that look identical in
+  the console: the upload genuinely failed, or the file is there and the rater's
+  browser will not decode it. The console's message covers the first; the second
+  is a browser question. Check whether *other* raters can play the same rating
+  code before treating an encounter as video-less.
+- **A participant whose browser admitted none of the four types was never
+  recorded at all.** The participant page says so in their transcript rather
+  than letting the camera preview imply otherwise, but there is no
+  researcher-side alert — the encounter simply arrives with no video.
+
+The supported participant matrix, and why Safari is a first-class target rather
+than an afterthought, is in the [README](../README.md#browsers).
 
 ---
 

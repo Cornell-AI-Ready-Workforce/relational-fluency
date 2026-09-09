@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -36,6 +37,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+
+log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).parent.parent
 # DATA_DIR can be overridden via env var so the deploy host can mount a
@@ -62,6 +65,101 @@ DB_PATH = DATA_DIR / "index.db"
 SAMPLE_RATE = 16000
 CHANNELS = 1
 SAMPLE_WIDTH = 2  # bytes; 16-bit PCM
+
+
+# ---------- identifiers that become filenames ----------
+#
+# The three platforms disagree about what a path component means, and every
+# disagreement below was reproduced on the Windows 11 dev box rather than
+# assumed:
+#
+#   * case:      "S_1772460300_44C9A2" opens the directory "s_1772460300_44c9a2"
+#                on Windows and on a default (case-insensitive APFS) macOS
+#                volume; on Linux it is a different name and 404s.
+#   * trailing:  "s_1772460300_44c9a2." and "s_1772460300_44c9a2 " are silently
+#                stripped to the bare name by the Windows API — mkdir("sub.")
+#                creates "sub" — so two ids that are distinct on Linux address
+#                one directory on Windows.
+#   * devices:   a component named NUL (and, depending on the Windows build,
+#                CON/PRN/AUX/COM1-9/LPT1-9, with or without an extension) is a
+#                character device: writing to it succeeds and the bytes are
+#                discarded. Verified here: Path("nul").write_text("hello")
+#                returns cleanly and reads back "".
+#   * separator: "\" is a separator on Windows only, so a check that looks for
+#                "/" alone leaves a traversal open on one platform.
+#
+# Nothing about that is theoretical for this study: rater_packet.rating_code
+# HMACs the session id STRING, so on a Windows or macOS host the same encounter
+# addressed under two spellings mints two different RC- codes and the blinded
+# handle stops being one-per-encounter; video.video_key builds an S3 key from
+# the same string, and S3 keys are case-sensitive everywhere, so a wrong-cased
+# id would upload a participant's webcam recording to a key nothing else looks
+# at. The defence is to validate the id against the shape it was MINTED in
+# rather than to ask the filesystem what matches — the minted shape is
+# lowercase by construction, which settles the case question on all three
+# platforms at once.
+
+# Session ids are minted by session.new_session_id as f"s_{epoch}_{token_hex(3)}".
+# raters.py has enforced exactly this for a while; it lives here now so app.py,
+# rater_packet.py and video.py can share the one definition instead of the
+# permissive [A-Za-z0-9_-]{1,64} they each carried, which accepted uppercase.
+SESSION_ID_RE = re.compile(r"s_[0-9]{1,20}_[0-9a-f]{6}")
+
+# Reserved device names, checked without the extension because older Windows
+# builds treat "nul.yaml" as the device too.
+_WINDOWS_DEVICE_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{i}" for i in range(1, 10)]
+    + [f"LPT{i}" for i in range(1, 10)]
+)
+
+
+def valid_session_id(session_id: Optional[str]) -> bool:
+    """True when this is exactly the shape session.new_session_id mints."""
+    return bool(session_id) and SESSION_ID_RE.fullmatch(session_id) is not None
+
+
+def is_safe_path_component(name: Optional[str]) -> bool:
+    """True when `name` names the same single path component on all three OSes.
+
+    For identifiers whose charset cannot be narrowed to a minted shape — a
+    scenario id is a human-written filename fragment like S1A or
+    missed_deadlines — this is the portable floor: no separator of either
+    flavour, no traversal, no Windows device name, and nothing whose trailing
+    characters Windows would quietly rewrite.
+    """
+    if not name or name in (".", ".."):
+        return False
+    if "/" in name or "\\" in name or ":" in name or "\x00" in name:
+        return False
+    if name != name.rstrip(". "):
+        return False
+    return name.split(".", 1)[0].upper() not in _WINDOWS_DEVICE_NAMES
+
+
+def replace_with_retry(tmp: Path, dest: Path, attempts: int = 8) -> None:
+    """os.replace, retried past the Windows "file in use" window.
+
+    POSIX rename() over an open file always succeeds, so on macOS and Linux this
+    is os.replace with an unreachable loop. Windows fails the rename with
+    PermissionError if ANY handle is open on EITHER side — a concurrent reader
+    on the destination (WinError 5: app.py's _load_manifest, rater_packet and
+    raters all read manifest.json from FastAPI's sync threadpool while the loop
+    closes a session), or a scanner still holding the brand-new temp file
+    (WinError 32: Defender opens .tmp files the moment they appear). Both were
+    reproduced on the dev box, and both cleared on the first retry.
+
+    Raises the last PermissionError if the window never closes, so a caller that
+    must know still finds out.
+    """
+    for i in range(attempts):
+        try:
+            os.replace(tmp, dest)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.05 * (i + 1))
 
 
 def init_storage() -> None:
@@ -262,6 +360,14 @@ class SessionStore:
         participant_key: Optional[str] = None,
         encounter_index: Optional[int] = None,
     ):
+        # Validate at the point the directory is minted, not only where the id
+        # is later used to find it. Every reader downstream (app._session_dir,
+        # rater_packet, video, raters) now insists on this shape, so a store
+        # created under any other one would write an encounter that no packet
+        # builder, console route or rater assignment could ever address — and it
+        # would do so silently, halfway through a paid participant's session.
+        if not valid_session_id(session_id):
+            raise ValueError(f"bad session_id: {session_id!r}")
         self.id = session_id
         self.dir = SESSIONS_DIR / session_id
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -381,7 +487,7 @@ class SessionStore:
         # from the dashboard even though its events/WAVs are intact.
         tmp = self.dir / "manifest.json.tmp"
         tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        os.replace(tmp, self.dir / "manifest.json")
+        replace_with_retry(tmp, self.dir / "manifest.json")
 
     def close(self, *, n_turns: int = 0) -> None:
         ended_at = time.time()
@@ -395,7 +501,18 @@ class SessionStore:
         except Exception:
             pass
         self.events_fh = None
-        self._write_manifest(status="closed", ended_at=ended_at, n_turns=n_turns)
+        try:
+            self._write_manifest(status="closed", ended_at=ended_at, n_turns=n_turns)
+        except OSError:  # noqa: BLE001, the close must finish regardless
+            # Everything below this line is independent of the manifest, and
+            # each of it matters more. Unguarded, a manifest write that lost the
+            # rename race (Windows; see replace_with_retry) skipped BOTH the
+            # record.json build and the DB status flip, so the encounter stayed
+            # 'active' in the index and carried no analysis record at all: it
+            # vanished from /api/encounters and from the rater packet builder
+            # while its audio and events.jsonl sat on disk, intact and unread.
+            # A stale manifest is a bad outcome; an invisible encounter is worse.
+            log.exception("manifest write failed at close for %s", self.id)
         # Build the analysis-facing aligned record alongside the raw event log.
         try:
             from .encounter_record import write as write_record
@@ -427,7 +544,10 @@ def create_participant(code: str, consent_given: bool, consent_version: str) -> 
     dest = PARTICIPANTS_DIR / f"{pid}.json"
     tmp = PARTICIPANTS_DIR / f"{pid}.json.tmp"
     tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
-    os.replace(tmp, dest)
+    # Retry the rename: a consent record is read by get_participant on every
+    # socket open, and on Windows a reader holding the destination fails the
+    # rename outright — losing the one field an IRB reads.
+    replace_with_retry(tmp, dest)
     with _db() as conn:
         conn.execute(
             """INSERT INTO participants
@@ -501,7 +621,10 @@ def record_decline(pid: str, consent_version: str,
     dest = PARTICIPANTS_DIR / f"{pid}.json"
     tmp = PARTICIPANTS_DIR / f"{pid}.json.tmp"
     tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
-    os.replace(tmp, dest)
+    # Retry the rename: a consent record is read by get_participant on every
+    # socket open, and on Windows a reader holding the destination fails the
+    # rename outright — losing the one field an IRB reads.
+    replace_with_retry(tmp, dest)
     with _db() as conn:
         conn.execute(
             "UPDATE participants SET consent_given = 0, consent_text_version = ? WHERE id = ?",
@@ -537,7 +660,10 @@ def record_consent(pid: str, consent_version: str) -> Optional[Dict[str, Any]]:
     dest = PARTICIPANTS_DIR / f"{pid}.json"
     tmp = PARTICIPANTS_DIR / f"{pid}.json.tmp"
     tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
-    os.replace(tmp, dest)
+    # Retry the rename: a consent record is read by get_participant on every
+    # socket open, and on Windows a reader holding the destination fails the
+    # rename outright — losing the one field an IRB reads.
+    replace_with_retry(tmp, dest)
     with _db() as conn:
         conn.execute(
             "UPDATE participants SET consent_given = 1, consent_text_version = ? WHERE id = ?",

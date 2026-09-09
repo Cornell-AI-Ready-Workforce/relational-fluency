@@ -23,6 +23,19 @@
   body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
          background: var(--bg); color: var(--fg); font-size: 14px; -webkit-font-smoothing: antialiased; }
   .app { display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
+  /* This was the only one of the five pages with no breakpoint at all, and the
+     research brief has researchers running the console beside the participant's
+     call. Half a 1280 laptop leaves 260px for the transcript column; 150% zoom
+     on a 1440 display leaves 580px, 200% leaves 340px. Nothing errored — the
+     session labels truncated to uselessness and the transcript wrapped to two
+     words a line. Same rule rater.html already uses, one breakpoint lower
+     because the right column here is 380px rather than 440px. */
+  @media (max-width: 1000px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: auto auto; height: auto; }
+    .left, .right { overflow: visible; }
+    .left { border-right: 0; }
+    .right { border-left: 0; border-top: 1px solid var(--line-soft); }
+  }
   .left { padding: 20px 24px; overflow-y: auto; border-right: 1px solid var(--line-soft); }
   .right { padding: 20px 24px; overflow-y: auto; background: var(--bg-right);
            border-left: 1px solid var(--line-soft); }
@@ -130,9 +143,17 @@
                 border-radius: 8px; padding: 14px 16px; }
   .empty-hint code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
                      font-size: 12px; }
+  .reconnect-row { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--warn);
+                   background: var(--surface); border: 1px solid var(--line-soft);
+                   border-left: 3px solid var(--warn); border-radius: 6px;
+                   padding: 8px 10px; margin-bottom: 12px; }
   .closed-banner { font-size: 12px; color: var(--muted); background: var(--surface);
                    border: 1px solid var(--line-soft); border-left: 3px solid var(--muted);
                    border-radius: 6px; padding: 8px 10px; margin-bottom: 12px; }
+  /* macOS renders <select> popups with system styling and drops this colour
+     (Safari always; Chrome's native popup menus too), so the dimming is not a
+     signal anyone can rely on. The optgroup labels carry the distinction, and
+     the option text now says it as well — see refreshSessions. */
   .picker option.closed { color: var(--muted); }
   .score { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
   .score-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px;
@@ -202,6 +223,10 @@
     </div>
 
     <h2>Transcript</h2>
+    <div class="reconnect-row" id="reconnectRow" style="display:none">
+      <span>The live connection to this session ended.</span>
+      <button id="reconnectBtn" class="secondary">Reconnect</button>
+    </div>
     <div class="msgs" id="msgs"></div>
   </div>
 
@@ -330,7 +355,8 @@
         opt.value = s.id;
         opt.className = 'closed';
         const dur = s.duration_s ? ` · ${s.duration_s}s` : '';
-        opt.textContent = `${s.title} · ${s.turn_count} turns${dur} · ${s.id}`;
+        // In the text, not only in CSS: see .picker option.closed.
+        opt.textContent = `${s.title} · closed · ${s.turn_count} turns${dur} · ${s.id}`;
         grp.appendChild(opt);
       });
       picker.appendChild(grp);
@@ -739,9 +765,35 @@
       return;
     }
     setRightPanel('active');
+    openLiveSocket(sessionId);
+  }
+
+  // How often to send a frame that exists only to keep the connection warm. The
+  // ALB in front of this socket has a 120-second idle timeout
+  // (infra/terraform/alb.tf) and neither side pings, so two silent minutes — a
+  // researcher who connects at launch and waits while the participant works
+  // through consent, instructions and the microphone prompt — closed the
+  // socket. The server answers an unknown type with an error frame it does not
+  // act on, and the message handler above ignores frames it does not know, so
+  // this is bidirectional traffic and nothing else.
+  const WS_PING_MS = 30000;
+  const WS_RETRY_MS = [1000, 2000, 4000, 8000];
+
+  function openLiveSocket(sessionId, attempt) {
+    attempt = attempt || 0;
     const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/researcher?session_id=${encodeURIComponent(sessionId)}${keyParam}`;
     const sock = new WebSocket(url);
     ws = sock;
+    let ping = null;
+    sock.addEventListener('open', () => {
+      if (ws !== sock) return;
+      attempt = 0;
+      $('reconnectRow').style.display = 'none';
+      ping = setInterval(() => {
+        if (sock.readyState !== 1) return;
+        try { sock.send(JSON.stringify({ type: 'ping' })); } catch (e) {}
+      }, WS_PING_MS);
+    });
     sock.addEventListener('message', (ev) => {
       const m = JSON.parse(ev.data);
       if (m.type === 'state') { state = m; renderState(); }
@@ -749,17 +801,40 @@
       else if (m.type === 'steering') { appendSteer(m); }
     });
     sock.addEventListener('close', () => {
+      if (ping) { clearInterval(ping); ping = null; }
       // Ignore the close of a socket that has already been superseded by a
       // newer connect() — otherwise switching sessions clobbers the new panel.
       if (ws !== sock) return;
+      // A drop is not proof the session ended. Declaring it closed took the
+      // steering controls away from a session that was still running, and there
+      // was no way back: connect() was reachable only from the picker's change
+      // event (which does not fire when the same session is re-selected) and
+      // from a launch poll behind a one-shot guard, so the only recovery was a
+      // full page reload in the middle of an encounter.
+      if (currentSessionStatus === 'active' && currentSessionId === sessionId
+          && attempt < WS_RETRY_MS.length) {
+        const div = document.createElement('div');
+        div.className = 'msg'; div.style.color = 'var(--warn)';
+        div.textContent = '(connection lost — reconnecting)';
+        $('msgs').appendChild(div);
+        const delay = WS_RETRY_MS[attempt];
+        setTimeout(() => {
+          if (ws !== sock || currentSessionId !== sessionId) return;
+          openLiveSocket(sessionId, attempt + 1);
+        }, delay);
+        return;
+      }
       const div = document.createElement('div');
       div.className = 'msg'; div.style.color = 'var(--warn)';
       div.textContent = '(disconnected)';
       $('msgs').appendChild(div);
       // The live session ended: disable the steering controls so knob clicks
-      // are no longer silently dropped.
+      // are no longer silently dropped. The Reconnect button stays available,
+      // because "the socket gave up" and "the encounter is over" look the same
+      // from here and only the researcher can tell them apart.
       currentSessionStatus = 'closed';
       setRightPanel('closed');
+      $('reconnectRow').style.display = 'flex';
     });
   }
 
@@ -940,6 +1015,17 @@
       $('fileList').innerHTML = '<div class="files-empty">No session selected.</div>';
       $('msgs').innerHTML = '';
     }
+  });
+  // Re-selecting the same session in the picker does not fire `change`, so
+  // without this there was no way back to a live session but a page reload.
+  $('reconnectBtn').addEventListener('click', () => {
+    if (!currentSessionId) return;
+    $('reconnectRow').style.display = 'none';
+    // connect() re-reads the session's status from sessionsCache, so this lands
+    // on the live view if the encounter is still running and on the closed view
+    // if it genuinely ended — which is the honest answer to a researcher who
+    // cannot tell those two apart from a dropped socket.
+    connect(currentSessionId);
   });
   $('refreshSessions').addEventListener('click', refreshSessions);
   $('agentPicker').addEventListener('change', (e) => {

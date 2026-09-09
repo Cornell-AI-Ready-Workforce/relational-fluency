@@ -12,7 +12,9 @@ WebSocket support. Roughly 30 minutes end-to-end.
 ## What you'll have when you're done
 
 - A URL like `https://rf-yourname.fly.dev` accessible from anywhere
-- HTTPS (required for browser mic access)
+- HTTPS (required for browser mic and webcam access on every supported browser
+  — see the [supported browser matrix](../README.md#browsers), which also
+  explains why recordings come back in two different containers)
 - A 1 GB persistent volume at `/data` holding sessions and SQLite
 - Access protected by a session key (anyone without it gets `401`)
 - API keys stored as Fly secrets, not in the image
@@ -28,8 +30,36 @@ WebSocket support. Roughly 30 minutes end-to-end.
 
 ### 1. Install the Fly CLI
 
+One line per platform rather than one line plus a POSIX fallback: the fallback
+below fails twice over in Windows PowerShell, where `curl` is an alias for
+`Invoke-WebRequest` (and rejects `-L`) and `sh` does not exist at all.
+
+macOS:
+
 ```bash
-brew install flyctl   # or: curl -L https://fly.io/install.sh | sh
+brew install flyctl
+```
+
+Linux (and macOS without Homebrew):
+
+```bash
+curl -L https://fly.io/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+iwr https://fly.io/install.ps1 -useb | iex
+```
+
+> **Confirm the Windows URL before relying on it.** Fly publishes a PowerShell
+> installer, but the exact path above has not been checked against fly.io from
+> this machine (no network access during the portability pass). If it 404s, take
+> the current command from Fly's own install page rather than guessing.
+
+Then, in every shell:
+
+```
 fly version
 ```
 
@@ -43,8 +73,11 @@ Fly requires a credit card on file even for the free-ish tier. The default plan 
 
 ### 3. Pick an app name and region
 
-```bash
-cd ~/relational_fluency
+From the repository root (`cd` there however your shell spells it — the old
+`cd ~/relational_fluency` here named a directory nothing in this repo creates,
+and `~` is not a path in cmd.exe):
+
+```
 fly apps create rf-jennie     # replace rf-jennie with whatever you want; must be globally unique
 ```
 
@@ -64,9 +97,15 @@ fly volumes create rf_data --region ewr --size 1 --yes
 
 Generate a strong session key first — anyone with this string can use your deployed app:
 
-```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+(`python`, not `python3` — on Windows there is no `python3.exe` from a
+python.org install, only `python.exe` and the `py` launcher. Inside an
+activated virtualenv `python` is the project interpreter everywhere. This same
+command is the portable way to generate the AWS secret too, see
+[`DEPLOY-AWS.md`](DEPLOY-AWS.md#2-set-the-secrets).)
 
 Then set the secrets. `ANTHROPIC_API_KEY` here is your **LiteLLM virtual key** for
 the Cornell gateway — the server sends it as the bearer token to the gateway, so a

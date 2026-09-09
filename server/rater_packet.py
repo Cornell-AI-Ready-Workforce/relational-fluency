@@ -44,7 +44,6 @@ import hmac
 import json
 import logging
 import random
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -52,14 +51,22 @@ from . import esci, video
 from .encounter_record import build as build_record
 from .runs import _run_code_secret
 from .scenarios_v3 import compile_scenario
-from .storage import SESSIONS_DIR
+from .storage import SESSION_ID_RE, SESSIONS_DIR
 
 log = logging.getLogger(__name__)
 
-# Same shape check the storage layer mints and app.py's _session_dir enforces.
+# Same shape check the storage layer mints and app.py's _session_dir enforces —
+# now literally the same object, not a second, looser transcription of it.
 # Rating codes and packets are reached from rater-facing routes, so a session id
 # is untrusted input by the time it arrives here.
-_SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+#
+# The old [A-Za-z0-9_-]{1,64} accepted uppercase, and rating_code HMACs the id
+# STRING: on Windows or a default macOS volume "S_1772460300_44C9A2" and
+# "s_1772460300_44c9a2" open the one encounter directory but mint two different
+# RC- codes, so the handle a rater quotes and a researcher joins on stops being
+# one-per-encounter. The minted shape is lowercase by construction, so pinning
+# it removes the ambiguity on every platform rather than papering over it here.
+_SESSION_ID_RE = SESSION_ID_RE
 
 # How long a packet's playback link lives. One sitting; see
 # video.MAX_PLAYBACK_SECONDS for why it is not longer.

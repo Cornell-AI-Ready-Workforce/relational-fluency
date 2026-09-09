@@ -20,7 +20,76 @@ jobs:
         working-directory: agents
         run: pytest
 
-  platform-check:
+  # WHY this is a matrix, and why it runs tests/ at all.
+  #
+  # This job used to be one cell: ubuntu-latest × Python 3.12, an import check
+  # and some scenario validation. It never ran tests/ — 17 modules and 845 tests
+  # covering the live path (the API, the voice runner, the rating console,
+  # reliability, the client blockers). Whether the participant-facing suite was
+  # green depended on who remembered to run it locally.
+  #
+  # The other half is the matrix. Participants are recruited from the public and
+  # reach this study from Chrome, Firefox or Safari on macOS, Windows or Linux;
+  # researchers run the server and the ops runbook on all three OSes. One cell
+  # catches none of that. Concretely, what the extra legs are for:
+  #
+  #   * windows-latest — path handling and newline handling. The suite passes on
+  #     Windows today (verified: 845 passed, Python 3.12.10); this is what keeps
+  #     it that way rather than discovering a regression mid-wave.
+  #   * macos-latest — where a BSD-vs-GNU host assumption shows up if one ever
+  #     enters a test or a tool (the `sed -i ''` class of bug).
+  #   * Python 3.13 — the first thing anywhere to execute the pure-Python
+  #     `_ratecv`/`_rms` fallback in server/voice/realtime.py, which carries the
+  #     participant microphone stream once PEP 594 removes `audioop`.
+  #   * Python 3.11 — the declared floor (see requirements.txt). Untested floors
+  #     are not floors.
+  #
+  # fail-fast is off: one red cell must not hide the state of the other eight.
+  platform-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      # `shell: bash` on every multi-line step. The default shell on
+      # windows-latest is pwsh, whose wrapper only checks the exit code of the
+      # *last* line, so a failing install in the middle of a block would pass
+      # silently. GitHub ships bash on all three runners and runs it with
+      # `set -eo pipefail`.
+      - name: Install platform dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # pytest is deliberately not in requirements.txt: that file is the
+          # frozen production dependency set, and adding a test runner to it
+          # would ship pytest inside every deployed container. A
+          # requirements-dev.txt is the tidier home for this line.
+          pip install pytest
+      # Imports the FastAPI app with no credentials present — catches syntax
+      # errors, bad imports, and anything that reaches for a key at import time.
+      - name: Import check
+        shell: bash
+        run: python -c "import server.app; print('server.app imports OK')"
+      # The suite that guards participant-facing behaviour. No RF_FIXTURE is set
+      # here, so the wave-backed guards skip by design (tests/conftest.py) rather
+      # than failing on a path that exists only on one laptop.
+      - name: Platform test suite
+        shell: bash
+        run: pytest tests -q
+
+  # Instrument integrity. Not platform-specific, so one cell is the right amount
+  # of CI: these steps read scenario YAML and regenerate a markdown table. The
+  # scenario-map step in particular is a byte-for-byte `git diff`, and running it
+  # on three OSes would compare working trees whose line endings differ by
+  # checkout (see .gitattributes) rather than by content.
+  scenario-integrity:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -29,10 +98,6 @@ jobs:
           python-version: "3.12"
       - name: Install platform dependencies
         run: pip install -r requirements.txt
-      # Imports the FastAPI app with no credentials present — catches syntax
-      # errors, bad imports, and anything that reaches for a key at import time.
-      - name: Import check
-        run: python -c "import server.app; print('server.app imports OK')"
       # "Does it parse to a mapping" is much weaker than what the loaders need,
       # and the gap is silent by design: scenarios_v3._spec_files() drops any
       # spec missing a required key, list_scenarios() swallows a compile

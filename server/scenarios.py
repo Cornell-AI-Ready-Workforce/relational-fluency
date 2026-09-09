@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from .persona import Persona
+from .storage import is_safe_path_component
 
 
 SCENARIOS_DIR = Path(__file__).parent.parent / "scenarios"
@@ -216,14 +217,40 @@ def _legacy_by_id() -> Dict[str, Path]:
 _SCENARIO_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
+def _exists_exact(path: Path) -> bool:
+    """path.exists(), but case-exact on every platform.
+
+    Path.exists() asks the filesystem, and the filesystem answers differently
+    per platform: Windows and a default (case-insensitive APFS) macOS volume say
+    yes to "S1a.yaml" for a file named "S1A.yaml", Linux says no. A scenario id
+    reaches this module from a participant-facing query parameter and is stamped
+    onto the recording and into the manifest, so a wrong-cased link that loads a
+    scenario on the researcher's Mac, 404s on the Linux container, and labels the
+    encounter with whichever spelling the URL carried is a data problem, not a
+    cosmetic one. Comparing against the directory's own listing gives one answer
+    everywhere. (The dict lookups below — _legacy_by_id and the v3 registry — are
+    already case-exact by construction; this probe was the one that was not.)
+    """
+    try:
+        return any(entry.name == path.name for entry in path.parent.iterdir())
+    except OSError:
+        return False
+
+
 def _find_scenario_file(scenario_id: str) -> Path:
-    if not _SCENARIO_ID_RE.fullmatch(scenario_id or ""):
+    if not _SCENARIO_ID_RE.fullmatch(scenario_id or "") \
+            or not is_safe_path_component(scenario_id):
         # Same error as an unknown id, deliberately: the caller learns nothing
         # about the filesystem from the shape of the string it sent. The pattern
-        # admits no separator, so the join below cannot leave SCENARIOS_DIR.
+        # admits no separator, so the join below cannot leave SCENARIOS_DIR. The
+        # second check adds what a charset cannot express: "nul", "con", "aux",
+        # "com1" and friends match [A-Za-z0-9_-] but are character DEVICES on
+        # Windows, where opening one succeeds and reads back nothing — a
+        # scenario that silently loads as empty rather than reporting "no such
+        # scenario".
         raise FileNotFoundError(f"No scenario: {scenario_id!r}")
     direct = SCENARIOS_DIR / f"{scenario_id}.yaml"
-    if direct.exists():
+    if _exists_exact(direct):
         return direct
     path = _legacy_by_id().get(scenario_id)
     if path is None:

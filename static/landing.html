@@ -129,7 +129,10 @@
 
   /* Modal */
   .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(26,26,26,0.55); backdrop-filter: blur(4px);
+    /* -webkit- first: unprefixed backdrop-filter only reached Safari 18 and
+       Firefox 103. The rgba scrim below is the fallback and still darkens. */
+    position: fixed; inset: 0; background: rgba(26,26,26,0.55);
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
     display: none; align-items: center; justify-content: center; z-index: 50;
     padding: 24px;
   }
@@ -293,7 +296,7 @@
 
 <!-- Modal -->
 <div class="modal-backdrop" id="modal">
-  <div class="modal" role="dialog" aria-labelledby="modalTitle">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal-header">
       <h3 id="modalTitle">How would you like to start?</h3>
       <button class="close" id="closeModal" aria-label="Close">×</button>
@@ -381,8 +384,41 @@
     $('count-group').textContent = `${groupCount} scenarios`;
   }
 
-  function openModal() { $('modal').classList.add('show'); showStep(1); }
-  function closeModal() { $('modal').classList.remove('show'); }
+  // Opening used to add a class and nothing else: focus stayed on the button
+  // behind the scrim, Tab walked the page underneath the dialog, no aria-modal
+  // told a screen reader the background was unavailable, the page behind stayed
+  // scrollable, and closing restored focus nowhere. A participant arriving from
+  // CloudResearch who navigates by keyboard could not get into the format
+  // picker at all. Escape and the backdrop click were already right.
+  let modalReturnFocus = null;
+  function focusablesIn(root) {
+    return Array.from(root.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+      .filter(el => !el.disabled && el.offsetParent !== null);
+  }
+  function openModal() {
+    modalReturnFocus = document.activeElement;
+    $('modal').classList.add('show');
+    showStep(1);
+    document.body.style.overflow = 'hidden';
+    const close = $('closeModal');
+    if (close && close.focus) close.focus();
+  }
+  function closeModal() {
+    $('modal').classList.remove('show');
+    document.body.style.overflow = '';
+    if (modalReturnFocus && modalReturnFocus.focus) modalReturnFocus.focus();
+    modalReturnFocus = null;
+  }
+  // Keep Tab inside the dialog while it is open, wrapping at both ends.
+  $('modal').addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    const items = focusablesIn($('modal'));
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
 
   function showStep(n) {
     $('step1').style.display = n === 1 ? 'block' : 'none';
@@ -445,7 +481,9 @@
   document.querySelectorAll('.format-card').forEach(b => {
     b.addEventListener('click', () => renderScenarios(b.dataset.format));
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('modal').classList.contains('show')) closeModal();
+  });
 
   loadScenarios();
 </script>

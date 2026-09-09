@@ -64,5 +64,14 @@ for construct, items in seen.items():
     L.append("")
 
 out_path = ROOT / "docs" / "scenario-map.md"
-out_path.write_text("\n".join(L) + "\n", encoding="utf-8")
+# newline="" is pinned for the same reason as the encoding above. Text mode
+# translates "\n" to the platform default on write, so a researcher regenerating
+# the map on Windows emits CRLF where macOS and Linux emit LF. CI regenerates it
+# on ubuntu-latest and then runs `git diff --exit-code -- docs/scenario-map.md`:
+# a CRLF file in the index makes that diff the WHOLE file, so the freshness step
+# fails on every subsequent PR with a message about a stale spec — which is not
+# what went wrong, and not something anyone will guess from it. (A .gitattributes
+# with `* text=auto eol=lf` at the repo root is the other half of this; it is
+# outside this file.)
+out_path.write_text("\n".join(L) + "\n", encoding="utf-8", newline="")
 print(f"wrote {out_path} from {len(specs)} specs")

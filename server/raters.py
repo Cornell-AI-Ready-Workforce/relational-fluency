@@ -61,7 +61,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 # keeps the two from drifting apart on locking behaviour, which is the kind of
 # difference that only shows up as an intermittent "database is locked" under a
 # researcher poll and a rater submitting at the same moment.
-from .storage import DATA_DIR, SESSIONS_DIR, _add_missing_columns, _db
+from .storage import (
+    DATA_DIR, SESSION_ID_RE, SESSIONS_DIR, _add_missing_columns, _db,
+    replace_with_retry,
+)
 
 log = logging.getLogger(__name__)
 
@@ -81,8 +84,12 @@ DEFAULT_TOKEN_DAYS = 30
 _RATER_ID_RE = re.compile(r"rr_[0-9a-f]{12}")
 _ASSIGNMENT_ID_RE = re.compile(r"as_[0-9a-f]{12}")
 _TOKEN_RE = re.compile(r"rt_[0-9a-f]{32}")
-# Minted by session._new_session_id as f"s_{int(time.time())}_{token_hex(3)}".
-_SESSION_ID_RE = re.compile(r"s_[0-9]{1,20}_[0-9a-f]{6}")
+# Minted by session.new_session_id as f"s_{int(time.time())}_{token_hex(3)}".
+# This shape check now lives in storage so app.py, rater_packet.py and video.py
+# enforce the same one; a wrong-cased id must be refused identically on Linux,
+# where it never resolves, and on Windows/macOS, where it resolves to the real
+# directory and would mint a second rating code for one encounter.
+_SESSION_ID_RE = SESSION_ID_RE
 
 _STATUS_PENDING = "pending"
 _STATUS_SUBMITTED = "submitted"
@@ -159,7 +166,10 @@ def _write_atomic(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    # Retried, not bare: on Windows the rename fails while any handle is open on
+    # either side, and an assignment being written while the rater console reads
+    # the same document is that race. See storage.replace_with_retry.
+    replace_with_retry(tmp, path)
 
 
 def _read_json(path: Path) -> Optional[Dict[str, Any]]:

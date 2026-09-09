@@ -13,7 +13,6 @@ Key layout matches the encounter record: encounters/{session_id}/webcam.webm.
 from __future__ import annotations
 
 import json
-import re
 from typing import Optional
 
 import boto3
@@ -21,17 +20,26 @@ from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from .llm import setting
-from .storage import SESSIONS_DIR
+from .storage import SESSION_ID_RE, SESSIONS_DIR
 
 BUCKET = setting("S3_BUCKET", "relational-fluency-study-data")
 REGION = setting("AWS_REGION", "us-east-1")
 
-# Session ids are minted as s_{epoch}_{6 hex} (session.py:34). Anything that is
-# not plain identifier characters is refused before it reaches the filesystem or
-# an object key: Phase 2 puts a rater-supplied assignment id in front of this
-# module, and a crafted session id must be unable to walk out of SESSIONS_DIR on
-# a Windows host or aim a signed GET at some other prefix of the study bucket.
-_SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+# Session ids are minted as s_{epoch}_{6 hex} (session.new_session_id). Anything
+# else is refused before it reaches the filesystem or an object key: Phase 2 puts
+# a rater-supplied assignment id in front of this module, and a crafted session
+# id must be unable to walk out of SESSIONS_DIR on a Windows host or aim a
+# signed GET at some other prefix of the study bucket.
+#
+# Shared with storage rather than transcribed, and narrowed from the old
+# [A-Za-z0-9_-]{1,64}, which accepted uppercase. S3 keys are case-sensitive on
+# every platform while Windows and default-APFS macOS directory lookups are not,
+# so on a researcher's own machine a wrong-cased id passed the "does this
+# session exist?" check in presign_upload and then signed a PUT for
+# encounters/S_.../webcam.webm — an object key nothing else in the system ever
+# looks at. The participant's webcam recording, which is the artefact raters
+# score, would upload successfully and be unfindable.
+_SESSION_ID_RE = SESSION_ID_RE
 
 # Ceiling on a playback link's life, whatever the caller asks for. A rater opens
 # a packet and rates it in one sitting, so an hour covers the work; beyond that
@@ -122,6 +130,19 @@ class UploadUnconfirmed(PresignRefused):
 
 
 def video_key(session_id: str) -> str:
+    """The one object key for this encounter's webcam recording.
+
+    Validated here, at the point the key is minted, and not only in the readers
+    further down: every other function in this module derives its key from this
+    one, so this is the single place that decides which object a participant's
+    recording is written to and which object a rater's packet plays back. A
+    session id that differs only in case (or by a trailing "." or " ", which
+    Windows strips from a path but S3 keeps in a key) names the same directory
+    on a Windows/macOS host and a DIFFERENT S3 object — an upload that succeeds
+    and can never be found.
+    """
+    if not _SESSION_ID_RE.fullmatch(session_id or ""):
+        raise ValueError("bad session_id")
     return f"encounters/{session_id}/webcam.webm"
 
 
@@ -258,6 +279,12 @@ def presign_upload(session_id: str, *, expires: int = 3600) -> Optional[dict]:
     # safely read as "the earlier PUT landed, do not send the bytes again". The
     # other two raise (see PresignRefused) so neither can reach the browser
     # wearing a confirmation's clothes.
+    # Shape first, filesystem second. On Windows and on a default macOS volume
+    # SESSIONS_DIR/"S_1772460300_44C9A2" IS the real session directory, so
+    # is_dir() below would say yes and every key signed from here would carry
+    # the caller's spelling into an S3 key that no reader ever derives.
+    if not _SESSION_ID_RE.fullmatch(session_id or ""):
+        raise NoSuchSession(session_id)
     session_dir = SESSIONS_DIR / session_id
     if not session_dir.is_dir():
         raise NoSuchSession(session_id)

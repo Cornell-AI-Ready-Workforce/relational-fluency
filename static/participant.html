@@ -65,7 +65,9 @@
   }
   .level { width: 90px; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
   .level > div { height: 100%; width: 0%; background: var(--accent); transition: width 80ms linear; }
-  .consent-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.45); backdrop-filter: blur(3px);
+  /* -webkit- first: unprefixed backdrop-filter only reached Safari 18. */
+  .consent-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.45);
+                     -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
                       display:flex; align-items:center; justify-content:center; z-index: 50; padding: 20px; }
   .consent-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 14px;
                   max-width: 620px; width: 100%; padding: 26px 28px; max-height: 92vh; overflow-y: auto;
@@ -271,6 +273,35 @@
   let rafId = null;         // level-meter animation handle
   let levelRunning = false; // guards the level-meter loop
   let turnDone = false;     // assistant_done received for the current turn
+  let voiceFrameErrorNoted = false;  // one notice per session for a frame we could not handle
+  let workletSink = null;   // zero-gain path that keeps the capture worklet rendered
+
+  // NOTE: this page is the legacy participant path (GET /?scenario= and
+  // GET /chat). It captures voice but no webcam, so any participant who lands
+  // here produces an encounter with no video by construction; the study's
+  // capture path is static/v2.html. The fixes below are the ones that stop it
+  // failing silently, not an endorsement of routing anyone to it.
+  // Feature-detected, never user-agent sniffed: the DOMException name a
+  // getUserMedia rejection carries is the same across all three engines, and a
+  // sniff would be wrong for the long tail of browsers.
+  function captureMessage(err) {
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      return 'This page is not being served over a secure connection, so the browser will not let it ' +
+             'use your microphone. Please tell the study team.';
+    }
+    const name = err && err.name;
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+      return 'We couldn’t turn on your microphone. Please allow microphone access and try again.';
+    }
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError'
+        || name === 'NotReadableError' || name === 'TrackStartError'
+        || name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
+      return 'We couldn’t find a working microphone. Check that one is plugged in and that no other ' +
+             'app is using it, then try again.';
+    }
+    return 'This browser cannot run the audio this conversation needs. Please open this link in an ' +
+           'up-to-date Google Chrome and try again.';
+  }
 
   async function startVoiceCapture() {
     // Fresh AudioContext clock starts near 0; reset the accumulator to match.
@@ -278,16 +309,38 @@
     assistantSpeaking = false;
     turnDone = false;
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    await audioCtx.audioWorklet.addModule('/static/pcm-worklet.js');
+    // WebKit starts an AudioContext suspended and needs an explicit resume
+    // inside the user gesture that created it. A suspended context calls no
+    // process() on the capture worklet and renders no output, so the
+    // participant granted the microphone, saw "Listening, speak any time" and
+    // was deaf and mute in both directions. v2.html has had this since it was
+    // written (with a comment naming the hazard); this page never got it.
+    if (audioCtx.state === 'suspended') {
+      try { await audioCtx.resume(); } catch (e) {}
+    }
+    // Ask for the microphone before awaiting the worklet module, so the prompt
+    // is as close to the click that authorised it as this code can put it.
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
+    await audioCtx.audioWorklet.addModule('/static/pcm-worklet.js');
     micNode = audioCtx.createMediaStreamSource(mediaStream);
     workletNode = new AudioWorkletNode(audioCtx, 'pcm-capture', {
       processorOptions: { targetSampleRate: 16000 },
     });
     micNode.connect(workletNode);
-    // Don't connect worklet to destination, we don't want monitor playback.
+    // The worklet needs a path to a destination or the render graph is not
+    // obliged to pull it, and process() is never called — no PCM is posted, no
+    // ws.send happens, and the level meter (a separate analyser, pulled
+    // differently) keeps moving so every visible signal says the microphone is
+    // working. A gain node at zero is the sink: reachable, and inaudible, so
+    // there is still no monitor playback and no feedback path.
+    try {
+      workletSink = audioCtx.createGain();
+      workletSink.gain.value = 0;
+      workletNode.connect(workletSink);
+      workletSink.connect(audioCtx.destination);
+    } catch (e) { workletSink = null; }
     workletNode.port.onmessage = (ev) => {
       if (ws && ws.readyState === 1) ws.send(ev.data);
     };
@@ -341,6 +394,32 @@
     setMicVisualState('live');
   }
 
+  // Probe, do not assume: build at the source rate where the engine allows it
+  // (exact), and resample with linear interpolation where it does not.
+  let nativeRateBuffers = null;   // null = not yet probed
+  function makeAgentBuffer(float, srcRate) {
+    if (nativeRateBuffers !== false) {
+      try {
+        const b = audioCtx.createBuffer(1, float.length, srcRate);
+        b.copyToChannel(float, 0);
+        nativeRateBuffers = true;
+        return b;
+      } catch (e) { nativeRateBuffers = false; }
+    }
+    const ratio = audioCtx.sampleRate / srcRate;
+    const outLen = Math.max(1, Math.round(float.length * ratio));
+    const b = audioCtx.createBuffer(1, outLen, audioCtx.sampleRate);
+    const out = b.getChannelData(0);
+    for (let i = 0; i < outLen; i++) {
+      const pos = i / ratio;
+      const i0 = Math.floor(pos);
+      const i1 = Math.min(float.length - 1, i0 + 1);
+      const frac = pos - i0;
+      out[i] = float[i0] * (1 - frac) + float[i1] * frac;
+    }
+    return b;
+  }
+
   function playPcmChunk(bytes) {
     if (!audioCtx) return;
     // A chunk for the current turn is still arriving — keep saying the
@@ -349,9 +428,11 @@
     const int16 = new Int16Array(bytes);
     const float = new Float32Array(int16.length);
     for (let i = 0; i < int16.length; i++) float[i] = int16[i] / 32768;
-    // Source is 16 kHz mono. createBuffer at that rate; Web Audio resamples.
-    const buf = audioCtx.createBuffer(1, float.length, 16000);
-    buf.copyToChannel(float, 0);
+    // Source is 16 kHz mono. Ask the engine for a 16 kHz buffer once; if it
+    // refuses (WebKit has enforced a narrower AudioBuffer rate range than the
+    // spec minimum), resample to the context's own rate instead of throwing
+    // out of an unguarded message handler and killing every later chunk too.
+    const buf = makeAgentBuffer(float, 16000);
     const src = audioCtx.createBufferSource();
     src.buffer = buf;
     src.connect(audioCtx.destination);
@@ -371,7 +452,14 @@
     $('startVoice').onclick = async () => {
       $('startVoice').disabled = true;
       try { await startVoiceCapture(); } catch (e) {
-        appendMsg('meta', 'We couldn’t turn on your microphone. Please allow microphone access and try again.'); $('startVoice').disabled = false; return;
+        // Not every failure here is a permission failure. A browser with no
+        // AudioWorklet, a page served over plain HTTP (where every engine
+        // leaves navigator.mediaDevices undefined and this line sees a
+        // TypeError), a microphone held by another app — all used to be
+        // reported as "please allow microphone access", which is advice the
+        // participant has already taken and cannot take again.
+        appendMsg('meta', captureMessage(e));
+        $('startVoice').disabled = false; return;
       }
       $('startVoice').style.display = 'none';
       $('stopVoice').style.display = 'inline-block';
@@ -381,7 +469,21 @@
       ws = new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';
       ws.addEventListener('open', () => setMicVisualState('live'));
+      // One throw used to cost the whole encounter rather than one frame: an
+      // unguarded listener that throws on a chunk throws on every chunk after
+      // it, so the participant hears nothing for the rest of the conversation
+      // and the only trace is console noise nobody is watching.
       ws.addEventListener('message', (ev) => {
+        try { handleVoiceFrame(ev); }
+        catch (err) {
+          if (!voiceFrameErrorNoted) {
+            voiceFrameErrorNoted = true;
+            appendMsg('meta', 'Something went wrong handling part of this conversation. ' +
+                      'If you stop hearing the other person, reload the page.');
+          }
+        }
+      });
+      function handleVoiceFrame(ev) {
         if (typeof ev.data === 'string') {
           const m = JSON.parse(ev.data);
           if (m.type === 'session') applyHello(m);
@@ -453,7 +555,7 @@
           // Binary audio chunk from TTS.
           playPcmChunk(ev.data);
         }
-      });
+      }
       ws.addEventListener('close', () => { appendMsg('meta', 'The connection was lost. Please reload to reconnect.'); setMicVisualState('idle'); });
     };
     $('stopVoice').onclick = () => {

@@ -35,6 +35,7 @@ from .scenarios import list_scenarios, load_scenario
 from .session import registry
 from .storage import (
     create_participant, get_participant, init_storage, record_consent, record_decline,
+    valid_session_id,
 )
 from .realtime_voice_session import RealtimeVoiceSessionRunner
 
@@ -828,15 +829,52 @@ async def api_launch_status(launch_id: str, key: Optional[str] = Query(None)):
 
 
 def _session_dir(session_id: str) -> Path:
-    """Resolve a session's on-disk directory, blocking path traversal."""
-    if not session_id or "/" in session_id or ".." in session_id:
+    """Resolve a session's on-disk directory, blocking path traversal.
+
+    Checked against the shape storage mints (storage.valid_session_id) rather
+    than by asking the filesystem what matches, because the filesystem answers
+    differently per platform. The old check — no "/", no ".." — let three
+    spellings of one encounter through on Windows and on a default macOS
+    volume: "S_1772460300_44C9A2" (case-insensitive lookup), and the same id
+    with a trailing "." or " " (Windows strips both). All three opened the real
+    directory here and 404'd on Linux, and each one HMACs to a DIFFERENT
+    rater_packet.rating_code, so one encounter could be issued several blinded
+    handles depending on which host the console was run from. It also missed
+    "\\", which is a separator on Windows only.
+    """
+    if not valid_session_id(session_id):
         raise HTTPException(400, "bad session_id")
     sdir = (SESSIONS_DIR / session_id).resolve()
-    if not str(sdir).startswith(str(SESSIONS_DIR.resolve())):
+    # Parent identity, not a string prefix: "sessions_old" starts with
+    # "sessions" too. Unreachable given the shape check above, kept as the
+    # second lock on the one route family that takes a filesystem path from a URL.
+    if sdir.parent != SESSIONS_DIR.resolve():
         raise HTTPException(400, "bad session_id")
     if not sdir.is_dir():
         raise HTTPException(404, "session not found")
     return sdir
+
+
+def _rating_code_or_none(session_id: Optional[str]) -> Optional[str]:
+    """The blinded handle for one listing row, or None if it cannot have one.
+
+    rater_packet.rating_code now refuses anything that is not the exact minted
+    session id shape — deliberately, because two spellings of one encounter must
+    not mint two codes on the platforms whose filesystems accept both. But a
+    listing is a loop over stored rows, and a single unexpected row (an
+    assignment written by hand, one predating the shape, a fixture) must not
+    turn a rater's entire queue or the researcher's whole assignment board into
+    a 500. The row still lists; it lists without a code, which is visible, and
+    the reason is printed for whoever has to fix the row.
+    """
+    from . import rater_packet
+
+    try:
+        return rater_packet.rating_code(session_id)
+    except ValueError:
+        print(f"  WARNING: no rating code for assignment row with session_id "
+              f"{session_id!r}: not a minted session id")
+        return None
 
 
 def _load_manifest(sdir: Path) -> dict:
@@ -2178,7 +2216,7 @@ async def api_rater_assignments_mine(token: Optional[str] = Query(None),
         return [
             {
                 "assignment_id": a.get("assignment_id"),
-                "rating_code": rater_packet.rating_code(a.get("session_id")),
+                "rating_code": _rating_code_or_none(a.get("session_id")),
                 "status": a.get("status"),
                 "assigned_at": a.get("assigned_at"),
             }
@@ -2519,7 +2557,7 @@ async def api_rater_assignments_list(key: Optional[str] = Query(None),
             who = roster.get(a.get("rater_id")) or {}
             entry["rater_name"] = who.get("name")
             entry["rater_kind"] = who.get("kind")
-            entry["rating_code"] = rater_packet.rating_code(a.get("session_id"))
+            entry["rating_code"] = _rating_code_or_none(a.get("session_id"))
             out.append(entry)
         return out
 

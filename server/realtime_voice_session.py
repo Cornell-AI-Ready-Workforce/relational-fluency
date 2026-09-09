@@ -1026,7 +1026,32 @@ class RealtimeVoiceSessionRunner:
                         await self.room.hear(ev["pcm"], exclude=agent.id)
 
                 elif etype == "agent_transcript_delta":
-                    if not state["announced"]:
+                    if not state["announced"] and not buf:
+                        # An EMPTY buffer is what makes this delta the start of
+                        # a NEW reply rather than the closing one's transcript
+                        # arriving late — the same test the agent_transcript
+                        # branch below makes, and it belongs here even more,
+                        # because a late DELTA is the ordinary case: transcript
+                        # deltas arriving after response.done are the whole
+                        # reason a grace period exists.
+                        #
+                        # Announcing on late text cleared `finalized` (and
+                        # `barged_in`), so the real response.done behind the
+                        # bridge's synthetic one spawned a SECOND finalize on
+                        # the buffer the first was still grace-waiting on. The
+                        # two raced, and the reply was written as two
+                        # assistant_turns, the second empty and flagged
+                        # transcript_missing — a flag that tells a rater "the
+                        # audio played but its text was lost", hung on a turn
+                        # that never happened. Reproduced from: audio, delta,
+                        # response_done(interrupted), delta, response_done.
+                        #
+                        # It also stranded `announced` True and left this
+                        # reply's `settled` gate in place, so the NEXT reply
+                        # was never announced to the page and its finalize
+                        # found an already-set gate and returned without
+                        # waiting, recording that turn as its first fragment.
+                        # P5.
                         state["announced"] = True
                         state["barged_in"] = False   # see agent_audio above
                         state["finalized"] = False   # see agent_audio above
@@ -1051,7 +1076,7 @@ class RealtimeVoiceSessionRunner:
                     # replace the buffer, so a turn whose deltas arrived
                     # piecemeal after response.done is recorded in full instead
                     # of as its first fragment.
-                    if not state["announced"]:
+                    if not state["announced"] and not buf:
                         # Announce here too, exactly as the two branches above
                         # do. A reply delivered ONLY as a whole-line transcript
                         # (no deltas, no audio) was otherwise never announced:
@@ -1061,30 +1086,34 @@ class RealtimeVoiceSessionRunner:
                         # wait entirely when announced is False — leaving the
                         # record and the screen disagreeing about whether this
                         # character spoke.
+                        #
+                        # An EMPTY buffer is what makes this a new reply rather
+                        # than the closing one's transcript arriving late. The
+                        # R6 case this branch exists for — a reply delivered
+                        # only as a whole line, no deltas and no audio — has
+                        # nothing in the buffer; a finalize that is still
+                        # grace-waiting has its turn's text sitting in it.
+                        # Clearing the finalize latch on late text let the real
+                        # response.done behind it spawn a SECOND finalize on
+                        # that same buffer, and the reply was written twice, the
+                        # second copy empty and falsely flagged
+                        # transcript_missing. That is P5 by another route, and
+                        # reproducible from: audio, delta,
+                        # response_done(interrupted), agent_transcript,
+                        # response_done. Announcing on late text ALSO stranded
+                        # `announced` True and this reply's `settled` gate in
+                        # place, so the next reply went unannounced and its
+                        # finalize returned on the stale gate without waiting
+                        # for its own transcript.
+                        #
+                        # Late text keeps the OUTSTANDING finalize's gate on
+                        # purpose, so setting it below hands that finalize the
+                        # whole line at once instead of leaving it to time out
+                        # on silence.
                         state["announced"] = True
                         state["barged_in"] = False   # see agent_audio above
-                        if not buf:
-                            # An EMPTY buffer is what makes this a new reply
-                            # rather than the closing one's transcript arriving
-                            # late. The R6 case this branch exists for — a reply
-                            # delivered only as a whole line, no deltas and no
-                            # audio — has nothing in the buffer; a finalize that
-                            # is still grace-waiting has its turn's text sitting
-                            # in it. Clearing the finalize latch on late text let
-                            # the real response.done behind it spawn a SECOND
-                            # finalize on that same buffer, and the reply was
-                            # written twice, the second copy empty and falsely
-                            # flagged transcript_missing. That is P5 by another
-                            # route, and reproducible from: audio, delta,
-                            # response_done(interrupted), agent_transcript,
-                            # response_done.
-                            #
-                            # Late text keeps the OUTSTANDING finalize's gate on
-                            # purpose, so setting it below hands that finalize
-                            # the whole line at once instead of leaving it to
-                            # time out on silence.
-                            state["finalized"] = False
-                            state["settled"] = asyncio.Event()
+                        state["finalized"] = False   # see agent_audio above
+                        state["settled"] = asyncio.Event()   # see agent_audio above
                         await self._send({
                             "type": "assistant_started",
                             "agent_id": agent.id,

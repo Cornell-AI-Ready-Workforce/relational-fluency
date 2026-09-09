@@ -1,3 +1,38 @@
+# Supported Python: 3.11, 3.12 or 3.13. 3.12 is what the production image
+# (Dockerfile) and the release leg of CI run; treat it as the reference.
+#
+# WHY this is stated at all: nothing in the repository named a version, and the
+# four places that implied one disagreed — dependency metadata implies >=3.10,
+# agents/pyproject.toml says >=3.11, the Dockerfile and CI pinned 3.12, and
+# server/voice/realtime.py carries a 3.13-aware fallback. A researcher setting
+# up on macOS, Windows or Linux downloads whatever python.org offers that day
+# and none of those four answers is visible to them.
+#
+# What changes per version:
+#   3.11  — the floor. Read off installed metadata rather than guessed: of the
+#           resolved dependency set, websockets is the binding constraint at
+#           Requires-Python >=3.11 (17.1; the 16.1.1 pin below has not been
+#           checked offline, so CI's 3.11 leg is what actually confirms this
+#           floor). Everything else floors at 3.8-3.10.
+#   3.12  — the reference. Production image and the pinned CI leg.
+#   3.13+ — works, but `audioop` was removed by PEP 594, so every microphone
+#           chunk goes through the pure-Python `_ratecv`/`_rms` fallback in
+#           server/voice/realtime.py instead of the C implementation. That is
+#           the audio that reaches Gemini Live and the audio that is recorded,
+#           so it is not a detail. The fallback now has direct coverage
+#           (tests/test_deploy_portability.py runs it against the C path on
+#           3.12 and against known-good vectors everywhere), and it was checked
+#           against a real CPython 3.13.3 — audioop is genuinely gone there and
+#           the fallback produces identical output to the 3.12 run. What has
+#           NOT been checked is that these exact wheel pins resolve on 3.13;
+#           the CI leg is what confirms that.
+#
+# NOT YET DONE, needs a version check with network access before committing:
+# adding `audioop-lts; python_version >= "3.13"` here would restore the C path
+# on 3.13 and make the choice moot. The package name is right but the pin is
+# not verifiable offline, and every other line in this file is exact — see the
+# paragraph below. Do not add it unpinned.
+#
 # Exact pins for reproducible production images. The instrument is frozen per
 # study wave (immutable ECR tags, pinned terraform image tag), so builds of the
 # same git SHA must resolve identical dependencies. Bump deliberately and

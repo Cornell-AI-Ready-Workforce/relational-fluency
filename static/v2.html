@@ -287,7 +287,11 @@
   }
 
   /* End-of-session debrief overlay. */
-  .debrief-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.5); backdrop-filter: blur(4px);
+  /* -webkit- first: Safari only shipped backdrop-filter unprefixed at 18, so
+     without it the scrim behind this overlay is flat on every earlier Mac.
+     The rgba background is the real fallback and already correct. */
+  .debrief-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.5);
+                     -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
                  display: flex; align-items: flex-start; justify-content: center; z-index: 60; padding: 28px 16px;
                  overflow-y: auto; }
   .debrief-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 16px;
@@ -353,7 +357,8 @@
     .metrics { grid-template-columns: 1fr; }
     .debrief-card { padding: 20px 18px; }
   }
-  .consent-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.45); backdrop-filter: blur(3px);
+  .consent-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.45);
+                     -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
                       display:flex; align-items:center; justify-content:center; z-index: 50; padding: 20px; }
   .consent-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 14px;
                   max-width: 620px; width: 100%; padding: 26px 28px; max-height: 92vh; overflow-y: auto;
@@ -998,6 +1003,20 @@
   let liveUpload = null;
   let videoNotice = '';      // one line to show the participant when a recording was lost
   let closing = false;       // showClosing has taken over the completion overlay
+  // Why this encounter has no camera, in the browser's own words
+  // (NotAllowedError / NotFoundError / NotReadableError / OverconstrainedError),
+  // or a name for a recorder that would not start. The confirm endpoint is the
+  // ONLY record of what became of a recording — server/video.py answers "does
+  // this encounter have a video?" from that event and never from S3 — so an
+  // encounter that never had a camera has to send one too, or it is
+  // indistinguishable from an encounter whose upload was lost.
+  let cameraFailReason = null;
+  let workletSink = null;    // zero-gain path that keeps the capture worklet rendered
+  let playElUsable = true;   // false once the <audio> playback element has refused to play
+  let playbackChecked = false;   // the "did the element actually start" check has been armed
+  let silentPlaybackNoted = false;
+  let ctxWatchdog = null;    // timer arming the "context did not come back" notice
+  let frameErrorNoted = false;   // one notice per session for a frame we could not handle
   // How long each part of the upload may take. The presign and the confirm are
   // small JSON round trips. The PUT carries the whole recording and gets a wide
   // bound. The last three are how long a participant may be asked to wait on
@@ -1009,6 +1028,10 @@
   const VIDEO_UPLOAD_WAIT_MS = 45000;
   const NEXT_UPLOAD_HOLD_MS = 60000;
   const CLOSING_UPLOAD_WAIT_MS = 12000;
+  // How long a stopped MediaRecorder may take to flush its last chunk and fire
+  // onstop before the camera and the AudioContext are released anyway. Only a
+  // backstop for a recorder that never fires it at all.
+  const RECORDER_FLUSH_MS = 8000;
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
   let sessionId = null;      // server session id once connected
   let sessionMode = 'single';// 'single' | 'group'
@@ -1759,7 +1782,58 @@
   }
 
   // ---------- audio capture + playback ----------
+  // Capture can fail for reasons that have nothing to do with permission, and
+  // one message for all of them ("please allow microphone access") sends a
+  // participant who already allowed it round a loop with no exit. These carry
+  // a `kind` so startSession can say the true thing. Feature-detected, never
+  // sniffed: a user-agent string is wrong for the long tail of engines and
+  // ages badly, while "is there an audioWorklet on this context" is exactly
+  // the question being asked.
+  function captureError(kind, message) {
+    const e = new Error(message);
+    e.captureKind = kind;
+    return e;
+  }
+  const CAPTURE_MESSAGES = {
+    denied: 'We couldn’t turn on your microphone. Please allow microphone access and try again.',
+    missing: 'We couldn’t find a working microphone. Check that one is plugged in and that no other ' +
+             'app (a video call, a recorder) is using it, then try again.',
+    insecure: 'This page is not being served over a secure connection, so the browser will not let it ' +
+              'use your microphone. Nothing you can change will fix this — please tell the study team.',
+    unsupported: 'This browser cannot run the audio this study needs. Please open the study link in ' +
+                 'an up-to-date Google Chrome and try again.',
+  };
+  // The name a browser gives a getUserMedia rejection is the only reliable
+  // signal here, and all three engines use the same DOMException names.
+  function captureKindFor(err) {
+    const name = err && (err.captureKind || err.name);
+    if (err && err.captureKind) return err.captureKind;
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') return 'denied';
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError'
+        || name === 'NotReadableError' || name === 'TrackStartError'
+        || name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') return 'missing';
+    // A TypeError here is a missing navigator.mediaDevices or a missing
+    // audioWorklet, not a denial — the two used to throw on the same line and
+    // be reported identically.
+    return 'unsupported';
+  }
+
   async function startCapture() {
+    // Every engine hides navigator.mediaDevices entirely on a non-secure
+    // origin (plain HTTP that is not localhost), so a deployment mistake threw
+    // a TypeError on the very line a real denial throws on and the participant
+    // was told to grant a permission they had already granted. Checked
+    // explicitly, and only when the engine actually reports false, so an
+    // environment without the property is not accused of anything.
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      throw captureError('insecure', 'not a secure context');
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw captureError('unsupported', 'no navigator.mediaDevices');
+    }
+    if (typeof AudioWorkletNode === 'undefined') {
+      throw captureError('unsupported', 'no AudioWorkletNode');
+    }
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     // Recording bus. Raters watch these videos, so the file must carry BOTH
     // sides of the conversation: the mic and the agent playback are mixed here
@@ -1776,33 +1850,101 @@
     if (playEl) { try { playEl.pause(); } catch {} playEl.srcObject = null; playEl = null; }
     playEl = new Audio();
     playEl.srcObject = playDest.stream;
-    playEl.play().catch(() => {});
+    // A rejected play() used to be discarded. Every word the characters speak
+    // goes through this element, so an element that never starts — an autoplay
+    // policy, a lost gesture, or an engine that will not make a WebAudio
+    // MediaStream audible through an <audio> at all — left the participant in
+    // total silence while captions scrolled and the page said "Alex is
+    // speaking". Keep the rejection and fall back to the context's own
+    // destination: that costs Chrome's echo-canceller reference (agent speech
+    // can bleed back through an open mic), which is a real cost and a far
+    // smaller one than a silent paid encounter.
+    playElUsable = true;
+    playbackChecked = false;
+    silentPlaybackNoted = false;
+    playEl.play().catch(() => { playElUsable = false; });
     // iOS/Safari start AudioContexts suspended; resume within the Start-button
     // gesture or both mic capture and TTS playback stay silent.
     if (audioCtx.state === 'suspended') {
       try { await audioCtx.resume(); } catch {}
     }
+    // Nothing reads audioCtx.state after this point unless something watches
+    // it. WebKit has a fourth state, 'interrupted', that no other engine has:
+    // a phone call or a system taking audio focus parks the context and it
+    // does not restart itself, so process() stops being called on the capture
+    // worklet and the encounter goes deaf and mute while the page still says
+    // "Listening, speak any time". Worse for the data than for the moment:
+    // pcm-worklet.js emits one sample per input sample precisely so the
+    // recorded WAV is a true wall-clock timeline, and an interruption removes
+    // samples rather than zeroing them, so the file compacts and drifts out of
+    // alignment with the agent audio and the webcam recording.
+    watchAudioContextState(audioCtx);
     playbackTime = 0;  // fresh timeline (important when restarting a session)
-    await audioCtx.audioWorklet.addModule('/static/pcm-worklet.js');
     const audioConstraints = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-    // Camera-on by default for the Zoom-like tile. Fall back to audio-only if
-    // the camera is missing or permission is denied, the session still runs.
+    // The microphone is asked for FIRST, on its own, and as close to the Start
+    // click as this code can get it. The old shape asked for audio+video
+    // together and retried audio-only in a bare catch several awaits later —
+    // and WebKit ties a capture prompt to a live user gesture, so a Mac whose
+    // camera was busy (an open FaceTime or Zoom window is enough) failed the
+    // combined request and then had the audio-only retry refused for want of a
+    // gesture, on a machine where the microphone was never the problem. On
+    // Firefox the same shape auto-denied the retry for anyone who ticked
+    // "Remember this decision" while blocking the combined prompt. Two
+    // requests also hand us the camera's own error, which is what the notice
+    // below reports.
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    // Camera-on by default for the Zoom-like tile, and strictly non-fatal: an
+    // encounter with audio and no video is worth far more than no encounter.
+    cameraFailReason = null;
     try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints,
+      const cam = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
       });
+      // A track we cannot adopt must not stay live, or the camera light stays
+      // on for a stream nothing is reading.
+      cam.getVideoTracks().forEach(t => {
+        try { mediaStream.addTrack(t); } catch (e) { try { t.stop(); } catch (e2) {} }
+      });
     } catch (e) {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      // NotAllowedError (denied), NotFoundError (no camera), NotReadableError
+      // (held by Zoom/Teams — common on Windows) and OverconstrainedError all
+      // land here and used to be indistinguishable from each other and from a
+      // camera that worked. Keep the name: it is what the confirm beacon and
+      // the participant's notice are built from.
+      cameraFailReason = (e && e.name) || 'unknown';
+    }
+    // addModule is awaited AFTER the prompts so the microphone request is not
+    // pushed further from the gesture by a module fetch. Its own failure is a
+    // missing worklet or a mis-served /static/pcm-worklet.js, not a denial.
+    try {
+      if (!audioCtx.audioWorklet) throw captureError('unsupported', 'no audioWorklet');
+      await audioCtx.audioWorklet.addModule('/static/pcm-worklet.js');
+    } catch (e) {
+      throw e && e.captureKind ? e : captureError('unsupported', 'audio worklet module failed to load');
     }
     attachCamera();  // show the live feed in the self tile if we got video
     startVideoRecording();
+    watchMediaTracks();
     micNode = audioCtx.createMediaStreamSource(mediaStream);
     try { micNode.connect(recDest); } catch (e) {}
     workletNode = new AudioWorkletNode(audioCtx, 'pcm-capture', {
       processorOptions: { targetSampleRate: 16000 },
     });
     micNode.connect(workletNode);
+    // Give the worklet somewhere to go. The Web Audio rendering model pulls the
+    // graph from a destination; a node with an input and no path to one is an
+    // island an engine is not obliged to render, and if process() is never
+    // called then not one PCM byte is posted, ws.send is never reached, the
+    // server's VAD never fires and no character ever answers — while the level
+    // meter (a separate analyser, pulled differently) keeps moving and every
+    // visible signal says the microphone is working. Zero gain, so nothing is
+    // audible and no feedback path is created; the node is simply reachable.
+    try {
+      workletSink = audioCtx.createGain();
+      workletSink.gain.value = 0;
+      workletNode.connect(workletSink);
+      workletSink.connect(audioCtx.destination);
+    } catch (e) { workletSink = null; }
     workletNode.port.onmessage = (ev) => {
       if (ws && ws.readyState === 1) ws.send(ev.data);
     };
@@ -1826,6 +1968,63 @@
     micLevelRaf = requestAnimationFrame(tick);
   }
 
+  // A context that stops running mid-encounter ends both directions silently.
+  // Try to bring it back; if it does not come back, treat it the way a lost
+  // socket is treated — say so plainly and offer the same Reconnect — because
+  // continuing quietly is the one option that produces unusable data that
+  // looks usable. Capability-shaped rather than engine-shaped: 'interrupted'
+  // is WebKit's, but every engine can suspend, and the handler does not care
+  // which one it is looking at.
+  function watchAudioContextState(ctx) {
+    if (!ctx || !ctx.addEventListener) return;
+    ctx.addEventListener('statechange', () => {
+      if (!started || ctx !== audioCtx) return;
+      if (ctx.state === 'running') {
+        if (ctxWatchdog) { clearTimeout(ctxWatchdog); ctxWatchdog = null; }
+        return;
+      }
+      if (ctx.state === 'closed') return;   // teardown, not an interruption
+      try { ctx.resume && ctx.resume(); } catch (e) {}
+      if (ctxWatchdog) return;
+      ctxWatchdog = setTimeout(() => {
+        ctxWatchdog = null;
+        if (!started || ctx !== audioCtx || ctx.state === 'running') return;
+        appendNotice('Your browser paused this page’s audio, so nothing was being heard or recorded. ' +
+                     'Click Reconnect to continue this conversation.');
+        onConnectionDropped();
+      }, 2000);
+    });
+  }
+
+  // The page handles a dropped WebSocket well and gave media tracks none of the
+  // same treatment. A participant who revokes camera or microphone permission
+  // from site settings mid-encounter, unplugs a USB webcam, or has the camera
+  // seized by another application ends the track — the recorder stops
+  // producing data and the level meter stops moving — while every other signal
+  // on screen stays green, the encounter runs to a normal ending, and a
+  // truncated blob is uploaded and confirmed as a successful capture. Wrong
+  // data that looks like good data is the worst thing this study can produce.
+  function watchMediaTracks() {
+    if (!mediaStream || !mediaStream.getTracks) return;
+    mediaStream.getTracks().forEach(track => {
+      if (!track || !track.addEventListener) return;
+      track.addEventListener('ended', () => {
+        if (!started) return;   // ordinary teardown stops every track
+        if (track.kind === 'video') {
+          if (!cameraFailReason) cameraFailReason = 'track_ended';
+          noteNoCamera('The camera stopped part way through, so the rest of this conversation ' +
+                       'was not captured on camera.');
+        } else {
+          // Without a microphone there is no encounter left to have: the
+          // participant would keep talking into a dead channel while the
+          // characters wait.
+          appendNotice('Your microphone stopped working, so this conversation cannot continue.');
+          onConnectionDropped();
+        }
+      });
+    });
+  }
+
   // "Muted" means the worklet substitutes silence for the participant's voice,
   // NOT that it stops sending: the capture stream must never pause, because
   // user_audio.wav is a straight concatenation of what arrives and a pause
@@ -1835,17 +2034,73 @@
     setMicVisual(muted ? 'muted' : 'live');
   }
 
+  // The agent stream is 16 kHz mono. Building the AudioBuffer AT 16 kHz asks
+  // the engine to accept a rate far below the hardware rate, and WebKit has
+  // historically enforced a narrower AudioBuffer range than the spec minimum
+  // and answered NotSupportedError. This resamples to the context's own rate
+  // with the same linear interpolation the capture worklet already uses, so
+  // the rate the engine is asked for is always one it is definitely running
+  // at; the native-rate path is kept for the engines that take it, because it
+  // is exact. `nativeRateBuffers` is a probe of what this engine does, not a
+  // guess about which engine it is.
+  let nativeRateBuffers = null;   // null = not yet probed
+  function makeAgentBuffer(float, srcRate) {
+    if (nativeRateBuffers !== false) {
+      try {
+        const buf = audioCtx.createBuffer(1, float.length, srcRate);
+        buf.copyToChannel(float, 0);
+        nativeRateBuffers = true;
+        return buf;
+      } catch (e) { nativeRateBuffers = false; }
+    }
+    const ratio = audioCtx.sampleRate / srcRate;
+    const outLen = Math.max(1, Math.round(float.length * ratio));
+    const buf = audioCtx.createBuffer(1, outLen, audioCtx.sampleRate);
+    const out = buf.getChannelData(0);
+    for (let i = 0; i < outLen; i++) {
+      const pos = i / ratio;
+      const i0 = Math.floor(pos);
+      const i1 = Math.min(float.length - 1, i0 + 1);
+      const frac = pos - i0;
+      out[i] = float[i0] * (1 - frac) + float[i1] * frac;
+    }
+    return buf;
+  }
+
   function playPcmChunk(bytes) {
     if (!audioCtx) return;
     const int16 = new Int16Array(bytes);
     const float = new Float32Array(int16.length);
     for (let i = 0; i < int16.length; i++) float[i] = int16[i] / 32768;
-    const buf = audioCtx.createBuffer(1, float.length, 16000);
-    buf.copyToChannel(float, 0);
+    const buf = makeAgentBuffer(float, 16000);
     const src = audioCtx.createBufferSource();
     src.buffer = buf;
-    src.connect(playDest || audioCtx.destination);
+    // `playDest || audioCtx.destination` never took the second branch —
+    // playDest is assigned unconditionally in startCapture, so the fallback was
+    // dead code and a refused <audio> element meant silence with no way out.
+    // Honour what play() actually did.
+    src.connect(playElUsable && playDest ? playDest : audioCtx.destination);
     if (recDest) { try { src.connect(recDest); } catch (e) {} }
+    // Check the element really started, once, shortly after the first chunk is
+    // scheduled. `paused` staying true is the engine telling us the
+    // participant is hearing nothing; move the rest of the encounter onto the
+    // context's destination and record it, so a researcher can tell a silent
+    // encounter from a good one instead of both looking identical.
+    if (playElUsable && playEl && !playbackChecked) {
+      playbackChecked = true;
+      setTimeout(() => {
+        if (!playEl || !playElUsable) return;
+        if (playEl.paused) {
+          playElUsable = false;
+          if (!silentPlaybackNoted) {
+            silentPlaybackNoted = true;
+            appendNotice('Your browser would not play the conversation audio through its usual path, ' +
+                         'so we have switched to another one. If you still cannot hear anyone, ' +
+                         'check your volume and your output device.');
+          }
+        }
+      }, 500);
+    }
     const now = audioCtx.currentTime;
     if (playbackTime < now + 0.02) playbackTime = now + 0.02;
     const chunkStart = playbackTime;
@@ -1911,9 +2166,60 @@
   }
 
   // ---------- webcam recording (IRB 6a: browser -> storage, never a model) --
+  // Said once, in the plain voice the page already uses when the browser cannot
+  // record at all. The participant consented to being filmed; when they are not
+  // being filmed they are entitled to know, rather than being left to infer it
+  // from a camera tile that is showing them their own face.
+  let noCameraNoted = false;
+  function noteNoCamera(text) {
+    if (noCameraNoted) return;
+    noCameraNoted = true;
+    const el = document.createElement('div');
+    el.className = 'scene';
+    el.textContent = text;
+    $('transcript').appendChild(el);
+    $('transcript').scrollTop = $('transcript').scrollHeight;
+  }
+
+  // An encounter that never had a camera has to leave a record. server/video.py
+  // answers "does this encounter have a video?" from the confirm event and
+  // never from S3, and finishVideoRecording returns null when there is no
+  // recorder — so uploadRecording is never called, no event is ever appended,
+  // and the encounter is invisible: indistinguishable from one whose recording
+  // was made and lost. sendBeacon so it survives a page that is already
+  // leaving; a keepalive fetch for an engine without it.
+  function reportNoCamera(reason) {
+    const sid = sessionId;
+    if (!sid || !reason) return false;
+    const base = videoUrls(sid).confirm;
+    const url = base + (base.includes('?') ? '&' : '?') +
+      'client_error=' + encodeURIComponent('no_camera:' + reason);
+    try {
+      if (navigator.sendBeacon && navigator.sendBeacon(url)) return true;
+    } catch (e) { /* fall through to the fetch */ }
+    try { fetch(url, { method: 'POST', keepalive: true }); } catch (e) {}
+    return true;
+  }
+
   function startVideoRecording() {
-    videoChunks = []; videoRecorder = null;
-    if (!mediaStream || mediaStream.getVideoTracks().length === 0) return;
+    videoChunks = []; videoRecorder = null; noCameraNoted = false;
+    if (!mediaStream || mediaStream.getVideoTracks().length === 0) {
+      // A bare return here was the silence: the encounter ran perfectly, the
+      // transcript filled, the characters answered, and the participant — who
+      // consented to webcam capture and can see their own camera tile is dark
+      // — was told nothing, no event was sent, and Phase 2 was handed an
+      // encounter with no video and no explanation for it.
+      videoMime = null;
+      noteNoCamera(cameraFailReason === 'NotReadableError' || cameraFailReason === 'TrackStartError'
+        ? 'Your camera is in use by another application, so this conversation will not be captured ' +
+          'on camera. The conversation itself is unaffected.'
+        : cameraFailReason === 'NotAllowedError' || cameraFailReason === 'PermissionDeniedError'
+          ? 'Camera access was not granted, so this conversation will not be captured on camera. ' +
+            'The conversation itself is unaffected.'
+          : 'No camera is available, so this conversation will not be captured on camera. ' +
+            'The conversation itself is unaffected.');
+      return;
+    }
     // Safari (macOS + iOS) implements MediaRecorder but supports ONLY MP4/H.264,
     // not WebM, so an MP4 fallback is required or the IRB webcam recording is
     // silently lost on those browsers even though the camera preview works.
@@ -1924,11 +2230,8 @@
       // No supported recording type: surface it rather than letting the
       // participant believe (from the live camera tile) that they are recorded.
       videoMime = null;
-      const el = document.createElement('div');
-      el.className = 'scene';
-      el.textContent = 'Note: this browser cannot record video, so this conversation will not be captured on camera.';
-      $('transcript').appendChild(el);
-      $('transcript').scrollTop = $('transcript').scrollHeight;
+      if (!cameraFailReason) cameraFailReason = 'no_supported_mime';
+      noteNoCamera('Note: this browser cannot record video, so this conversation will not be captured on camera.');
       return;
     }
     videoMime = mime;
@@ -1940,8 +2243,25 @@
       videoRecorder = new MediaRecorder(new MediaStream(tracks), { mimeType: mime,
         videoBitsPerSecond: 600000 });
       videoRecorder.ondataavailable = e => { if (e.data.size) videoChunks.push(e.data); };
+      // A recorder that dies mid-encounter used to leave every signal on screen
+      // green: the encounter ran to a normal ending and a truncated blob was
+      // uploaded and confirmed as a successful capture. Say it, and record it.
+      videoRecorder.onerror = (ev) => {
+        const name = (ev && ev.error && ev.error.name) || 'RecorderError';
+        if (!cameraFailReason) cameraFailReason = 'recorder_error:' + name;
+        videoNotice = 'The camera recording stopped part way through this conversation.';
+        noteNoCamera('The camera recording stopped part way through, so only part of this ' +
+                     'conversation was captured on camera.');
+      };
       videoRecorder.start(2000);
-    } catch (e) { videoRecorder = null; }
+    } catch (e) {
+      // Swallowed before: a MediaRecorder that will not construct produced an
+      // encounter that nobody could tell from a recorded one.
+      videoRecorder = null;
+      if (!cameraFailReason) cameraFailReason = 'recorder_failed:' + ((e && e.name) || 'unknown');
+      noteNoCamera('This browser could not start the camera recording, so this conversation will ' +
+                   'not be captured on camera. The conversation itself is unaffected.');
+    }
   }
 
   // Every request in the upload chain gets a deadline. Without one a socket
@@ -2110,7 +2430,19 @@
     return noteUploadFailure(confirmed === false ? 'confirm_no_object' : confirmReason);
   }
 
-  function finishVideoRecording() {
+  function finishVideoRecording(teardown) {
+    // `teardown` releases the recorder's INPUT tracks and the AudioContext, and
+    // it has to run after the recorder has flushed, not before. endSession used
+    // to stop the camera track and close the context three statements after
+    // rec.stop() — which is asynchronous, and still owes a final dataavailable
+    // and an onstop — so the last chunk, and on Safari the fragmented-MP4
+    // finalization that makes the file playable at all, raced a teardown that
+    // destroyed both halves of the recorded stream. What reached S3 could be
+    // truncated or unopenable, and the chain confirmed it as a success: the
+    // record says "captured", the rater is handed a file, and the file will not
+    // play. Called as the first line of onstop instead, and on every path out
+    // of here, so nothing leaks when there is no recorder to wait for.
+    const release = () => { if (teardown) { const f = teardown; teardown = null; try { f(); } catch (e) {} } };
     // Returns a promise for the S3 upload; null when nothing was recorded.
     // It resolves with {ok, reason} and never rejects, because the callers have
     // to be able to tell a landed recording from a lost one. Every failure path
@@ -2118,7 +2450,17 @@
     // an encounter whose webcam recording never reached the bucket looked —
     // to the participant, to the researcher and to the rater — exactly like one
     // whose recording did.
-    if (!videoRecorder || videoRecorder.state === 'inactive') return null;
+    if (!videoRecorder || videoRecorder.state === 'inactive') {
+      // No recorder means no upload and therefore no confirm event — and the
+      // confirm event is the only thing that distinguishes "this encounter
+      // never had a camera" from "this encounter had one and the upload was
+      // lost". An encounter that generates no event at all is invisible to
+      // server/video.py, which answers the "is there a video?" question from
+      // the event and never from the bucket. Report the absence.
+      if (cameraFailReason) reportNoCamera(cameraFailReason);
+      release();
+      return null;
+    }
     const rec = videoRecorder; videoRecorder = null;
     const sid = sessionId;
     // Tracked separately from `videoUpload` because the completion overlay
@@ -2130,6 +2472,10 @@
     liveUpload = live;
     videoUpload = new Promise((resolve) => {
       rec.onstop = async () => {
+        // FIRST: the recorder has flushed, so its input tracks and the
+        // AudioContext feeding them can go. Doing this before the Blob is
+        // built is what makes the file whole on every engine.
+        release();
         let blob = null;
         const baseMime = (videoMime || 'video/webm').split(';')[0];
         try {
@@ -2145,7 +2491,12 @@
       // A recorder that will not stop never fires onstop, so nothing is ever
       // uploaded. That is a lost recording like any other and is reported like
       // one, rather than resolving quietly and letting the run continue.
-      try { rec.stop(); } catch (e) { resolve(noteUploadFailure('recorder_stop_failed')); }
+      try { rec.stop(); } catch (e) { release(); resolve(noteUploadFailure('recorder_stop_failed')); }
+      // A recorder that accepts stop() but never fires onstop would hold the
+      // camera light on and the context open for the rest of the page's life.
+      // The bound is generous — a healthy flush is milliseconds — so it can
+      // only ever fire after the engine has had every chance to finish.
+      setTimeout(release, RECORDER_FLUSH_MS);
     });
     live.promise = videoUpload;
     // Whatever it resolves is kept: after the completion overlay's bounded wait
@@ -2174,11 +2525,18 @@
       audioCtx = null;
       if (playEl) { try { playEl.pause(); } catch {} playEl.srcObject = null; playEl = null; }
       if (micLevelRaf) { cancelAnimationFrame(micLevelRaf); micLevelRaf = null; }
+      if (ctxWatchdog) { clearTimeout(ctxWatchdog); ctxWatchdog = null; }
+      workletSink = null;
       try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
       mediaStream = null;
       // The same rule as the error frame above: the app said this, not the
       // participant, and the microphone was never on to record them saying it.
-      appendNotice('We couldn’t turn on your microphone. Please allow microphone access and try again.');
+      // One sentence for every failure was worse than unhelpful: a browser with
+      // no AudioWorklet, a page on a non-secure origin and a camera held by
+      // another app all threw here and all told the participant to allow a
+      // permission they had already allowed, offering a Start button that would
+      // fail identically forever. Say which of them it was.
+      appendNotice(CAPTURE_MESSAGES[captureKindFor(e)] || CAPTURE_MESSAGES.denied);
       $('startBtn').disabled = false; return;
     }
     $('startBtn').style.display = 'none';
@@ -2191,6 +2549,7 @@
     }
     started = true;
     intentionalClose = false;
+    frameErrorNoted = false;
     sessionStartedAt = Date.now();
     userTurns = 0;
     setTurnState('Connecting…', '');
@@ -2208,7 +2567,23 @@
     ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
     ws.addEventListener('open', () => setMicMuted(false));
+    // Every frame is handled inside one try/catch. Unguarded, a single throw —
+    // a createBuffer an engine refuses, a JSON.parse on a truncated frame, a
+    // detached ArrayBuffer — did not cost one frame, it cost the encounter:
+    // the listener threw for every subsequent frame too, so the participant
+    // heard nothing for the rest of the conversation and the only trace was
+    // console noise nobody was watching.
     ws.addEventListener('message', (ev) => {
+      try { handleServerFrame(ev); }
+      catch (err) {
+        if (!frameErrorNoted) {
+          frameErrorNoted = true;
+          appendNotice('Something went wrong handling part of this conversation. ' +
+                       'If you stop hearing the other people, click Reconnect.');
+        }
+      }
+    });
+    function handleServerFrame(ev) {
       if (typeof ev.data === 'string') {
         const m = JSON.parse(ev.data);
         if (m.type === 'session') {
@@ -2365,7 +2740,7 @@
       } else {
         playPcmChunk(ev.data);
       }
-    });
+    }
     ws.addEventListener('close', () => {
       // An unexpected drop mid-encounter must be visible: otherwise the timer
       // keeps running, the camera stays on, and the participant keeps talking to
@@ -2402,14 +2777,29 @@
     const sid = sessionId;
     const wantDebrief = debrief && sessionMode === 'group' && userTurns > 0 && !!sid;
 
-    finishVideoRecording();   // upload starts now; tracks stop after onstop fires
+    // The recorder's INPUT tracks — the camera track it is recording and the
+    // recDest audio track that is the other half of the recorded stream — are
+    // released by finishVideoRecording once the recorder has actually flushed.
+    // Stopping them here, three statements after rec.stop(), raced the final
+    // dataavailable and (on Safari's fragmented MP4) the finalization that
+    // makes the file playable at all, and the upload chain confirmed the result
+    // as a success either way. Capture the references now, because the lines
+    // below null the variables out.
+    const doomedStream = mediaStream;
+    const doomedCtx = audioCtx;
+    finishVideoRecording(() => {
+      try { doomedStream && doomedStream.getTracks().forEach(t => t.stop()); } catch {}
+      try { doomedCtx && doomedCtx.close(); } catch {}
+      const selfCam = $('selfCam');
+      if (selfCam && selfCam.srcObject === doomedStream) selfCam.srcObject = null;
+    });
     intentionalClose = true;
     try { ws && ws.close(); } catch {}
-    try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
-    try { audioCtx && audioCtx.close(); } catch {}
     if (playEl) { try { playEl.pause(); } catch {} playEl.srcObject = null; playEl = null; }
     ws = null; audioCtx = null; mediaStream = null;
     started = false;
+    if (ctxWatchdog) { clearTimeout(ctxWatchdog); ctxWatchdog = null; }
+    workletSink = null;
     userFinals = []; userLiveEl = null;
     currentTurn = null;
     speechQueue = [];

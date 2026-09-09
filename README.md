@@ -95,13 +95,69 @@ config are in the migration plan.
 
 ## Quick start
 
+**Python 3.11, 3.12 or 3.13.** 3.12 is the reference version — it is what the
+production image and CI's pinned leg run. `requirements.txt` says what changes
+on 3.13 and why it matters for the audio path.
+
+Three blocks, not one POSIX block with caveats. `&&`, `source`, `cp` and the
+virtualenv layout itself all differ, and a block a reader has to translate
+line-by-line is a block that does not run: `python -m venv .venv && source
+.venv/bin/activate` is a **parse error** in Windows PowerShell 5.1 — the whole
+line is refused before anything executes — and there is no `.venv/bin/` on
+Windows to source even once the `&&` is fixed. Pick your shell.
+
+Once the virtualenv is activated, `python` is the project interpreter on all
+three platforms, and every other command in these docs assumes that.
+
+### macOS and Linux (bash, zsh)
+
 ```bash
-cd ~/relational_fluency
-python -m venv .venv && source .venv/bin/activate
+git clone <repo-url> relational-fluency
+cd relational-fluency
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in API keys
+cp .env.example .env       # then edit: ANTHROPIC_API_KEY=<Cornell LiteLLM virtual key>
 python -m server.app
 ```
+
+### Windows — PowerShell
+
+```powershell
+git clone <repo-url> relational-fluency
+cd relational-fluency
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+python -m server.app
+```
+
+If activation is refused with "running scripts is disabled on this system",
+allow it for this window only — this changes nothing outside the current
+PowerShell session:
+
+```powershell
+Set-ExecutionPolicy -Scope Process RemoteSigned
+```
+
+### Windows — Command Prompt (cmd.exe)
+
+```bat
+git clone <repo-url> relational-fluency
+cd relational-fluency
+py -3.12 -m venv .venv
+.venv\Scripts\activate.bat
+pip install -r requirements.txt
+copy .env.example .env
+python -m server.app
+```
+
+Both Windows blocks use `py -3.12` to name the reference interpreter
+explicitly. If 3.12 is not installed, `py -3` picks the newest you do have —
+fine, as long as it is 3.11, 3.12 or 3.13. Both blocks were run verbatim on
+Windows 11 / PowerShell 5.1 and cmd.exe: after activation, `python` resolves to
+`.venv\Scripts\python.exe` in each.
 
 Open (to be updated):
 
@@ -111,8 +167,43 @@ Open (to be updated):
 - Researcher view: <http://127.0.0.1:8765/researcher>
 - Steering dashboard: <http://127.0.0.1:8765/director>
 
-Mic capture needs a secure context — `127.0.0.1` counts, remote hosts need
-HTTPS. Chrome or Safari.
+Mic and webcam capture need a secure context — `127.0.0.1` counts, any remote
+host needs HTTPS.
+
+## Browsers
+
+Participants are recruited from the public through CloudResearch, so this is a
+requirement, not a preference: **Chrome, Firefox and Safari, on macOS, Windows
+and Linux**. A participant whose recording silently fails is an encounter lost,
+and because they were paid it is an encounter lost expensively.
+
+Safari ships only on macOS (and iOS), so the grid is seven real combinations
+rather than nine. Saying that out loud saves someone an afternoon looking for a
+Windows Safari build to test on.
+
+|  | macOS | Windows | Linux |
+|---|---|---|---|
+| **Chrome** | supported | supported | supported |
+| **Firefox** | supported | supported | supported |
+| **Safari** | supported | Safari does not exist on this OS | Safari does not exist on this OS |
+
+**Minimum versions are deliberately not stated.** Nobody has run the
+participant page against a pinned older build on real hardware, and a version
+number recalled from memory is worse than no number, because a screener will be
+written against it. Confirm on real machines before one goes into the
+CloudResearch screener.
+
+**Recordings arrive in two different containers, and both must play.**
+`static/v2.html` picks the first `MediaRecorder` type the browser admits, in
+this order: `video/webm;codecs=vp8,opus`, `video/webm`,
+`video/mp4;codecs=h264,aac`, `video/mp4`. So Chrome and Firefox participants
+produce **WebM/VP8+Opus**, and Safari — which implements `MediaRecorder` but
+supports only MP4/H.264 — produces **MP4/H.264**. The rater console plays both;
+see [What a rater plays](docs/RATING.md#what-a-rater-plays) for what to check
+when a rater reports a file that will not play. If a browser admits none of the
+four, the page writes a line into the transcript saying the conversation will
+not be captured on camera, rather than letting the live camera tile imply a
+recording is being made.
 
 ## Concepts
 
@@ -248,6 +339,12 @@ Raters work in a console this platform serves, at `/rate`:
 - **N/A is a real answer**, stored as `null` and never as a number. Nothing is
   pre-selected, and submit is refused until all 22 items carry a 1–5 or an N/A.
 
+These are bash/zsh. The single-quoted JSON bodies are passed **literally** by
+cmd.exe, which has no single-quote quoting, so the server rejects them as
+malformed JSON; in Windows PowerShell `curl` is an alias for
+`Invoke-WebRequest` and rejects `-s` entirely. Windows forms of the three POST
+commands are in [`docs/RATING.md`](docs/RATING.md).
+
 ```bash
 # researcher side, with the usual SESSION_KEY
 curl -sX POST "$RF/api/raters?key=$KEY"            -d '{"name":"…","kind":"trained"}'
@@ -283,8 +380,17 @@ Consequences of that rule:
   `record.json` under `provenance`.
 
 ```bash
-curl -s localhost:8765/health | python3 -m json.tool
+curl -s localhost:8765/health | python -m json.tool
 ```
+
+`python`, not `python3`: the python.org Windows installer creates `python.exe`
+and the `py` launcher and no `python3.exe`, while Windows ships an App
+Execution Alias at `%LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe` that
+opens the Microsoft Store — or, where it does resolve, resolves to the system
+interpreter rather than the activated virtualenv. In an activated venv
+`python` is the project interpreter on all three platforms. In PowerShell,
+also write `curl.exe`; see the note at the top of
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ## Privacy
 
