@@ -2242,9 +2242,27 @@ async def ws_researcher(ws: WebSocket, session_id: str = Query(...), key: Option
 
 
 if __name__ == "__main__":
+    import sys
     import uvicorn
+
+    # Windows consoles default to cp1252, which cannot encode most of the
+    # punctuation in this codebase — and the very first thing `python -m
+    # server.app` did was print an arrow, so on Windows the documented way to
+    # start the server crashed before uvicorn was reached. Every scenario title,
+    # persona brief and participant transcript in this study also carries em
+    # dashes and curly quotes, so any later print of study content would have
+    # failed the same way. Reconfigure the streams once, here, rather than
+    # policing every print; errors="replace" means an unprintable character
+    # degrades to a placeholder instead of killing the process.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            # Not a real console (a pipe, a service manager, an older Python).
+            # Nothing to reconfigure, and the ASCII banner below still prints.
+            pass
 
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8765"))
-    print(f"Relational Fluency Platform → http://{host}:{port}")
+    print(f"Relational Fluency Platform -> http://{host}:{port}")
     uvicorn.run("server.app:app", host=host, port=port, reload=False, log_level="info")
