@@ -35,6 +35,32 @@ setup: >-
   was kept last quarter with an off-cycle raise. You are meeting your manager,
   Morgan.
 
+# Setup sentences that must NOT reach the actors. `setup` is written to the
+# participant and doubles as the shared scene every actor's system prompt opens
+# with, so anything left in it is briefed to Morgan. These two are the
+# participant's leverage — the whole construct is whether they choose when to
+# play it — and Morgan's own brief says in as many words "You do not volunteer
+# this". An actor who has already been told the offer exists cannot be
+# persuaded of it.
+#
+# Declared rather than inferred. Without this key server/scenarios_v3.py falls
+# back to _matching_asset, a word-overlap guess against `assets:` that logs a
+# WARNING on every compile asking a human to confirm it. The guess has picked
+# exactly these two sentences so far, but a reworded setup could drop below its
+# three-shared-content-words threshold and brief Morgan with the competing
+# offer, and the encounter would still look fine in the recording — the
+# Influence measurement would just be of a different situation. An explicit
+# list cannot drift with the prose. It must be COMPLETE: when it is present the
+# guess is not consulted at all.
+#
+# Entries are matched as case-insensitive substrings of a setup sentence, so
+# these are the sentences verbatim. `_analysis_scene` keeps them for the
+# debrief judge and the steering controller, which need the leverage to score
+# the encounter; only the actors lose it.
+private_setup:
+  - "You now hold a written competing offer at higher pay."
+  - "A peer was kept last quarter with an off-cycle raise."
+
 # Facts the participant can deploy. The last ladder rung is contradicted by the
 # precedent, the scenario is winnable, but only by using it.
 assets:

@@ -299,16 +299,119 @@ def _transcript(record: Dict[str, Any]) -> List[dict]:
     return out
 
 
+def _last_upload_event(session_id: str) -> Optional[Dict[str, Any]]:
+    """The last thing the confirm endpoint wrote about this session's video.
+
+    Not the same question as video.upload_receipt, which answers "is there a
+    playable object?" and therefore ignores an event whose byte count is zero.
+    This answers "was a recording ever made and reported?", which is the only
+    way the server can tell a participant who never turned a camera on from one
+    whose recording was captured and then lost on the way to the bucket. The
+    browser posts the confirmation either way and it carries `status` ("ok" or
+    "failed") and a short `error`; an older event has neither, and `bytes: 0`
+    says the same thing about it.
+
+    Last one wins, matching upload_receipt and encounter_record.build: a
+    repeated confirmation is the later, better-informed one.
+    """
+    if not _SESSION_ID_RE.fullmatch(session_id or ""):
+        return None
+    events_path = SESSIONS_DIR / session_id / "events.jsonl"
+    if not events_path.is_file():
+        return None
+    latest = None
+    try:
+        with events_path.open(encoding="utf-8") as fh:
+            for line in fh:
+                # Cheap prefilter: events.jsonl is hundreds of lines per
+                # encounter and only a couple are ever this type.
+                if '"video_uploaded"' not in line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                if ev.get("type") == "video_uploaded":
+                    latest = ev
+    except OSError:
+        return None
+    return latest
+
+
+def _blinded_code(value: Any, session_id: str) -> Optional[str]:
+    """A reported failure, trimmed to something a rater can quote.
+
+    Two constraints meet here. The rater is the person who will report this, so
+    a short code ("put 403") turns "the video is missing" into something the
+    study team can act on. But the packet is blinded, and this string came from
+    a browser rather than from this module — so it is capped, and dropped
+    outright if the session id has found its way into it (a URL in an error
+    message is the obvious route), because the whole point of the rating code is
+    that a rater cannot link two packets to one participant.
+    """
+    if not value:
+        return None
+    # The blinding check runs on the WHOLE string, before the cap. Truncating
+    # first defeated it: an id at offset 110 of a 130-character message is cut
+    # in half, `session_id in text` is then False, and the surviving prefix —
+    # `s_<unix timestamp>` — is exactly the start-time-to-the-second that lets a
+    # rater tell which packets belong to one participant (see _media below).
+    # A partial id leaking is the same leak as a whole one; only the cap is
+    # about length, and it is applied to a string already cleared.
+    raw = str(value).strip()
+    if not raw or session_id in raw:
+        return None
+    return raw[:120]
+
+
+def _upload_error(event: Dict[str, Any], session_id: str) -> Optional[str]:
+    """What broke, as far as anyone can say: this server's finding, then the
+    browser's.
+
+    Two fields, two authors, and the second one was being thrown away. `error`
+    is what this server's own HEAD found, and on a failed upload it is ALWAYS
+    set — "not_found" when S3 answered plainly that the object is absent. That
+    is a true statement and a nearly useless one: it says the recording is not
+    there, which the rater can already see, and nothing about why. `client_error`
+    is the browser's own diagnosis (put_http_403, confirm_timeout, timeout,
+    abandoned), it is the only account of the leg that actually broke, and it
+    reached neither a rater, a researcher nor verify_record — so the one fact
+    that says whether this is a permissions problem, a network problem or a
+    participant who closed the tab was written down and never read.
+
+    Both are shown when both exist, because they answer different questions and
+    an "AccessDenied / put_http_403" pair is a diagnosis where either half alone
+    is a guess.
+    """
+    ours = _blinded_code(event.get("error"), session_id)
+    theirs = _blinded_code(event.get("client_error"), session_id)
+    if ours and theirs and theirs != ours:
+        return f"{ours}; browser reported {theirs}"
+    return ours or theirs
+
+
 def _media(session_id: str) -> Dict[str, Any]:
     """The rateable artefact: the webcam recording, behind a short-lived link.
 
-    Three states, kept distinct on purpose. A video that exists and can be
+    Four states, kept distinct on purpose. A video that exists and can be
     played; an encounter that has no video at all (two of the twenty-seven in
-    the reference wave); and a video that exists but whose link could not be
-    minted, which is a deployment fault. Collapsing the third into the second
-    would show a rater "no video recorded" for an encounter that has one, and
-    they would rate it from the transcript alone with nothing anywhere saying
-    the video had been withheld.
+    the reference wave); a video that exists but whose link could not be minted,
+    which is a deployment fault; and a recording that was made and could not be
+    stored or confirmed, which is a different deployment fault and the one that
+    actually happens at scale (a 403 on the PUT, a region redirect, a presign
+    that 500ed). Collapsing either fault into "no video" would show a rater "no video
+    recorded" for an encounter that had one, and they would rate it from the
+    transcript alone with nothing anywhere saying the video had been lost.
+
+    That last state is why this function reads the event trail directly rather
+    than stopping at video.upload_receipt. The receipt is about the object; the
+    event is about the attempt, and "the camera was never on" and "the camera
+    was on and we lost it" are different facts about the encounter. A rating
+    made from the transcript because there is nothing to watch and a rating made
+    from the transcript because the upload broke land in the same ratings table
+    and feed the same reliability figure, so the difference has to be visible at
+    the moment of rating, not reconstructed afterwards from a bucket listing
+    that no longer has anything to list.
 
     Audio is deliberately absent. The WAVs are per-channel — mic on one, each
     agent on another — so there is no file on disk that plays back as a
@@ -332,9 +435,45 @@ def _media(session_id: str) -> Dict[str, Any]:
     """
     receipt = video.upload_receipt(session_id)
     if receipt is None:
+        attempt = _last_upload_event(session_id)
+        if attempt is not None:
+            # A confirmation exists but there is no object behind it: the
+            # browser held a recording of known size and it could not be stored
+            # or confirmed — the confirm endpoint's own words, and the right
+            # ones, because a refused PUT and an S3 that could not be asked at
+            # all are the same fact from here. The note stops short of "it never
+            # reached storage": that is a claim about the bucket this process is
+            # in no position to make, and overclaiming about the video is
+            # exactly how this state came to be reported as "no camera".
+            # `video_available` stays True because it is what tells the rating
+            # console this is a fault to report rather than an encounter to rate
+            # from the transcript — the same treatment the unsignable state
+            # gets, for the same reason: a rating made against a missing video
+            # cannot be undone afterwards, and a blocked one can.
+            err = _upload_error(attempt, session_id)
+            return {
+                "video_url": None,
+                "video_available": True,
+                "video_status": "failed",
+                "upload_error": err,
+                "expires_in": None,
+                "note": "This encounter WAS recorded, but the recording could "
+                        "not be stored or confirmed, so there is nothing to "
+                        "play. Do not rate it from the transcript — report it, "
+                        "so the study team can tell this apart from an "
+                        "encounter that had no camera."
+                        + (f" (reported: {err})" if err else ""),
+            }
         return {
             "video_url": None,
             "video_available": False,
+            "video_status": "absent",
+            # Present and null, not absent. Every branch below carries the same
+            # key set, so a Python consumer can read media["upload_error"] on
+            # any state without a KeyError deciding, at import time, whether an
+            # encounter had an upload fault. An analysis that crashes on the
+            # 'absent' rows is an analysis that gets run on the others.
+            "upload_error": None,
             "expires_in": None,
             "note": "No webcam recording was captured for this encounter. "
                     "Rate it from the transcript, and use the "
@@ -352,6 +491,8 @@ def _media(session_id: str) -> Dict[str, Any]:
         return {
             "video_url": None,
             "video_available": True,
+            "video_status": "unsigned",
+            "upload_error": None,   # same key on every branch; see 'absent'
             "expires_in": None,
             "note": "This encounter has a webcam recording, but a playback link "
                     "could not be issued. Do not rate it yet — report it.",
@@ -359,6 +500,8 @@ def _media(session_id: str) -> Dict[str, Any]:
     return {
         "video_url": url,
         "video_available": True,
+        "video_status": "ok",
+        "upload_error": None,   # same key on every branch; see 'absent'
         "expires_in": PLAYBACK_SECONDS,
         "note": None,
     }

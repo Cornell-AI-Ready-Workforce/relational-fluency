@@ -117,9 +117,20 @@ interactions:
           low:
             answer: "Yeah. Today. Whatever works."
             why: "tone never addressed → that conflict festers (R)"
+      # Same repair as S1A t3/t4, and the parallel form needs it in the same
+      # places or the two variants stop being interchangeable under silence.
+      # Nothing in a 1:1 speaks first, so a participant who freezes here stalls
+      # the encounter: the watchdog probes only when the next unfired trigger
+      # carries an on_silence, and the scene cannot advance past an unfired
+      # beat. Each probe carries that beat's own move and hands the floor back.
+      # t3 defends the substance only — Drew conceding the delivery is t4's
+      # move, and naming the tone himself would answer the question this
+      # encounter is asking the participant.
       - id: t3_defensiveness
         cue: "Drew defends: 'I was blunt because nobody listens otherwise'"
+        on_silence: "I was blunt because nobody listens otherwise. You going to tell me I'm wrong?"
         esci: [de_escalate, talk_openly]
       - id: t4_half_concession
         cue: "Drew half-concedes: 'Fine, maybe the CC was much. But the handoff problem is real.'"
+        on_silence: "Fine, maybe the CC was much. But the handoff problem is real. So where does that leave us?"
         esci: [de_escalate, resolve_not_fester]

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import csv
 import glob
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -462,13 +461,19 @@ def test_construct_of_a_slug_matches_the_spec_that_declares_it():
 
 # --- Against the fixture wave ------------------------------------------------
 
-_fixture_env = os.environ.get("RF_FIXTURE") or os.environ.get("DATA_DIR") or ""
-FIXTURE = Path(_fixture_env) if _fixture_env else None
+# The wave arrives through tests/conftest.py's `wave_sessions` fixture, which
+# skips with instructions when there is not one. The module-level skipif this
+# replaces asked whether `<DATA_DIR>/sessions` *existed* — but server.storage
+# creates that directory the moment it is imported, so pointing DATA_DIR at a
+# fresh temp directory (which is what a first local run does) got past the
+# guard with zero records and then died on `assert seen` below: a missing
+# fixture reported as a defect. conftest calls a directory a wave only when it
+# actually holds a record, so reaching the assertion now means the wave is
+# present and the assertion is about the wave's contents, which is what it is
+# for.
 
 
-@pytest.mark.skipif(FIXTURE is None or not (FIXTURE / "sessions").exists(),
-                    reason="point RF_FIXTURE (or DATA_DIR) at a recorded wave")
-def test_every_esci_tag_in_a_recorded_wave_resolves():
+def test_every_esci_tag_in_a_recorded_wave_resolves(wave_sessions):
     """The crosswalk against real recorded encounters, not just the specs.
 
     Each entry in a record's `steering_log` carries the fired trigger's `esci`
@@ -479,7 +484,7 @@ def test_every_esci_tag_in_a_recorded_wave_resolves():
     import json
     seen, unresolved = set(), set()
     per_construct = {}
-    for rec in sorted(FIXTURE.glob("sessions/*/record.json")):
+    for rec in sorted(wave_sessions.glob("*/record.json")):
         doc = json.loads(rec.read_text(encoding="utf-8"))
         for entry in doc.get("steering_log", []):
             for slug in (entry.get("esci") or []):

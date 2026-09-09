@@ -455,24 +455,33 @@ function renderSituation() {
 
 function renderVideo() {
   const slot = $('videoSlot');
-  // Three states, kept apart because collapsing them misleads a rater: a video
-  // that plays; an encounter that never had one (two of the twenty-seven in the
-  // reference wave); and a video that exists but whose link could not be
-  // minted, which is a fault to report rather than a transcript-only rating.
+  // Four states, kept apart because collapsing them misleads a rater: a video
+  // that plays (`ok`); an encounter that never had one (`absent` — two of the
+  // twenty-seven in the reference wave); a recording that was made but whose
+  // upload could not be stored or confirmed (`failed`); and one that is in the
+  // bucket but whose playback link could not be minted (`unsigned`). The last
+  // two are faults to report rather than transcript-only ratings, and they are
+  // named apart on screen because they need different people to fix them: a
+  // lost recording is the study team's, an unsignable link is the deployment's.
+  // The packet's own note carries the detail; this is the headline.
   const media = packet.media || { video_url: packet.video_url, video_available: !!packet.video_url };
   if (!media.video_url) {
     const stuck = media.video_available === true;
-    slot.innerHTML = `<div class="novideo"><b>${stuck
-      ? 'The video for this encounter could not be loaded.'
-      : 'No video for this encounter.'}</b> ` +
+    slot.innerHTML = `<div class="novideo"><b>${!stuck
+      ? 'No video for this encounter.'
+      : media.video_status === 'failed'
+        ? 'This encounter was recorded, but the recording could not be stored.'
+        : 'The video for this encounter could not be loaded.'}</b> ` +
       esc(media.note || (stuck
         ? 'Do not rate it yet — tell the study team.'
         : 'The webcam recording is missing, so rate from the transcript alone. ' +
           'Expect to answer N/A more often than usual — say so in the notes if it mattered.')) +
       '</div>';
     // Nothing to watch: do not hold the "you never played the recording"
-    // warning against a rater who was never given a recording. A link that
-    // failed to mint is different — the rating is blocked outright.
+    // warning against a rater who was never given a recording. A recording that
+    // exists and cannot be played — `failed` or `unsigned` — is different: the
+    // rating is blocked outright, here and again in openAssignment, which must
+    // not re-enable the button this line disables.
     videoPlayed = true;
     if (stuck) { $('submitBtn').disabled = true; blockedReason = 'no-playback'; }
     return;
@@ -733,7 +742,22 @@ async function openAssignment(assignmentId) {
       $('submitMsg').className = 'submitmsg';
       $('submitMsg').textContent = 'Restored the answers you had already entered on this encounter.';
     }
-    $('submitBtn').disabled = false;
+    // Only re-enable a button nothing has blocked. renderVideo and renderItems
+    // run above this and disable it when the packet itself says not to rate
+    // this encounter — a recording that could not be stored, a link that could
+    // not be signed, a packet with no items. Re-enabling unconditionally left
+    // the control looking live on exactly those packets: the submit was still
+    // refused (onSubmit checks blockedReason), but the rater found that out by
+    // filling the form in and pressing the button, and a button that looks
+    // usable on an encounter that must not be rated is the wrong thing to show
+    // — the more so now that "recorded, upload failed" is a state uploads will
+    // actually reach.
+    if (blockedReason) {
+      $('submitMsg').className = 'submitmsg err';
+      $('submitMsg').textContent = blockedMessage();
+    } else {
+      $('submitBtn').disabled = false;
+    }
     setSubmitLabel();
   }
   refreshProgress();
@@ -802,6 +826,16 @@ function setSubmitLabel() {
   $('submitBtn').textContent = confirmPending ? 'Submit anyway' : 'Submit rating';
 }
 
+// Why this packet must not be rated, in the words the rater needs. Said in two
+// places on purpose: when the encounter is opened (the submit button is
+// disabled there, so a rater who is never told would be left guessing at a
+// dead control) and again if a submit is attempted anyway.
+function blockedMessage() {
+  return blockedReason === 'no-items'
+    ? 'This encounter arrived without its rating items. Do not rate it — tell the study team.'
+    : 'This encounter has a recording that could not be loaded. Do not rate it from the transcript alone — tell the study team.';
+}
+
 function missingItems() {
   return packetItems().filter(
     it => !Object.prototype.hasOwnProperty.call(answers, it.id));
@@ -831,9 +865,7 @@ async function onSubmit() {
     // rather than things to rate around, and a rating collected in either state
     // would be scored as if it had been made on the full artefact.
     $('submitMsg').className = 'submitmsg err';
-    $('submitMsg').textContent = blockedReason === 'no-items'
-      ? 'This encounter arrived without its rating items. Do not rate it — tell the study team.'
-      : 'This encounter has a recording that could not be loaded. Do not rate it from the transcript alone — tell the study team.';
+    $('submitMsg').textContent = blockedMessage();
     return;
   }
   const items = packetItems();

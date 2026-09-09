@@ -35,7 +35,6 @@ from __future__ import annotations
 import csv
 import json
 import math
-import os
 import sys
 from pathlib import Path
 
@@ -850,24 +849,32 @@ class TestAgainstTheRealThing:
             "inspirational_leadership", "teamwork"]
         assert sorted(i["number"] for i in items if i["reverse"]) == [11, 15, 24]
 
-    @pytest.mark.skipif(
-        not os.environ.get("DATA_DIR"),
-        reason="set DATA_DIR to a collection wave to exercise the real ids")
-    def test_report_over_a_real_collection_wave(self, items):
-        """Rate every recorded encounter in DATA_DIR and gate the wave.
+    def test_report_over_a_real_collection_wave(self, items, wave_encounters):
+        """Rate every recorded encounter in the wave and gate it.
 
         The fixture wave has no ratings on disk (Phase 2 has not been run), so
         the ratings are synthesised here; the encounter ids, their count and
         their distribution are the real ones, which is what exercises the
         report's aggregation, its missing-data accounting and its warnings at
         realistic scale.
+
+        The wave comes from tests/conftest.py, which skips when there is not
+        one. The old guard was `skipif DATA_DIR unset` plus a `sessions/`
+        existence check, and those two do not cover the same ground:
+        server.storage creates `DATA_DIR/sessions` on import, so DATA_DIR
+        pointed at a fresh temp directory — an ordinary first local run — got
+        past both and then failed on `assert encounters`. A missing wave and
+        an empty one mean the same thing and now skip the same way.
         """
         import random
-        sessions_dir = Path(os.environ["DATA_DIR"]) / "sessions"
-        if not sessions_dir.exists():
-            pytest.skip(f"no sessions under {sessions_dir}")
-        encounters = sorted(p.name for p in sessions_dir.iterdir() if p.is_dir())
-        assert encounters, "the wave has no recorded encounters"
+        encounters = wave_encounters
+        # The assertions below are about behaviour "at realistic scale" — an
+        # incomplete design with four raters, a computable ICC per construct.
+        # A handful of encounters cannot produce that, so a small wave is a
+        # skip with its size named, not a failure about the wave's size.
+        if len(encounters) < 8:
+            pytest.skip(f"the wave has only {len(encounters)} encounters; this "
+                        "checks the report at collection scale (8 or more)")
 
         rng = random.Random(11)
         pool = ["rt_alice", "rt_bo", "rt_cai", "rt_dee"]

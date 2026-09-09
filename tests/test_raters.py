@@ -28,11 +28,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-FIXTURE_DIR = Path(
-    "C:/Users/benj9/AppData/Local/Temp/claude/"
-    "C--Users-benj9-Downloads-relational-fluency-main--1-/"
-    "4b640cd3-9836-4d35-8114-6f2468c17345/scratchpad/fixture"
-)
+# The recorded wave, when there is one, arrives through the `wave_sessions`
+# fixture in tests/conftest.py (RF_FIXTURE_DIR / RF_FIXTURE / DATA_DIR, or a
+# wave checked in under tests/data). This module used to carry one machine's
+# absolute scratchpad path with a session UUID in it and no override at all,
+# so the allocator's only test against real manifests was a silent skip on
+# every other machine.
 
 
 # ---------- harness ----------
@@ -712,17 +713,23 @@ def test_coverage_report(raters):
 
 # ---------- against the real fixture wave ----------
 
-@pytest.mark.skipif(not FIXTURE_DIR.exists(), reason="fixture wave not present")
-def test_against_the_fixture_wave(tmp_path, monkeypatch):
-    """Allocate the fixture's 26 study encounters to 5 raters, 3 apiece.
+def test_against_the_fixture_wave(tmp_path, monkeypatch, wave_sessions):
+    """Allocate the wave's study encounters to 5 raters, 3 apiece.
 
     The manifests are copied into a scratch DATA_DIR rather than assigned in
-    place: the fixture is shared, and this would otherwise write raters, an
+    place: the wave is shared, and this would otherwise write raters, an
     assignment directory and index rows into it.
+
+    The counts are derived from the wave rather than written down. The old
+    version hard-coded 26 encounters, 78 assignments and a [15,15,16,16,16]
+    load split against one machine's scratchpad fixture — true of that wave
+    only, so any other recorded wave failed here for no reason. What is under
+    test is the allocator's *properties* (three distinct raters each, a load
+    spread of at most one, a connected design), and those hold on any wave.
     """
     data = tmp_path / "wave"
     (data / "sessions").mkdir(parents=True)
-    for src in sorted((FIXTURE_DIR / "sessions").iterdir()):
+    for src in sorted(wave_sessions.iterdir()):
         manifest = src / "manifest.json"
         if manifest.exists():
             dest = data / "sessions" / src.name
@@ -743,18 +750,24 @@ def test_against_the_fixture_wave(tmp_path, monkeypatch):
         m = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
         if m.get("cohort") == "study":
             study.append(d.name)
-    assert len(study) == 26, "the fixture wave should carry 26 study encounters"
+    if len(study) < 3:
+        pytest.skip(f"the wave under {wave_sessions} has fewer than 3 study "
+                    "encounters, too few to allocate 3 raters apiece")
 
     pool = [raters_mod.create_rater(f"Coder {i}", kind="trained")["rater_id"]
             for i in range(5)]
     created = raters_mod.assign(study, pool, per_encounter=3, seed=2026)
-    assert len(created) == 78
+    assert len(created) == 3 * len(study)
 
     plan = {s: [a["rater_id"] for a in raters_mod.assignments_for_encounter(s)]
             for s in study}
     assert all(len(set(v)) == 3 for v in plan.values())
     per = loads(plan)
-    assert sorted(per.values()) == [15, 15, 16, 16, 16]  # 78 slots over 5 raters
+    # Every slot allocated, and no rater carries more than one encounter's
+    # worth above the lightest — the balance property, not one wave's numbers.
+    counts = [per.get(r, 0) for r in pool]   # a rater with no work counts as 0
+    assert sum(counts) == 3 * len(study)
+    assert max(counts) - min(counts) <= 1
     assert is_connected(plan)
 
     # Every construct in the wave reached an assignment, which is what the

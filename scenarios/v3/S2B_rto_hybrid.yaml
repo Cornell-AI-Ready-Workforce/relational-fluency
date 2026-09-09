@@ -25,6 +25,27 @@ setup: >-
   Rivera's team kept hybrid by making a productivity case. You are meeting
   your manager, Sasha.
 
+# Same declaration as S2A, and the parallel form needs it in the same place or
+# the two variants stop being interchangeable: the participant's leverage is
+# withheld from the actor in one form and left to a heuristic in the other.
+# Only ONE sentence is private here, and the omission of the other is the point.
+# Sasha's brief says "Rivera's team kept hybrid by making a productivity case.
+# You do not volunteer this", so the precedent is the participant's to play.
+# The remote-days sentence stays: it is the premise of the encounter — Sasha
+# knows there is an RTO mandate and knows who she is meeting about it — and a
+# scene without it leaves the actor with no reason for the meeting. It also
+# sits one content word from the word-overlap guess's threshold against the
+# asset "Your performance record across the remote days", which is precisely
+# why this is declared and not inferred: a small rewording of that sentence
+# could take the encounter's whole premise out of the actor's brief, and the
+# recording would still look like a clean encounter.
+#
+# Matched as a case-insensitive substring of a setup sentence, so it is the
+# sentence verbatim. When present this list REPLACES the guess entirely, so it
+# has to be complete.
+private_setup:
+  - "Rivera's team kept hybrid by making a productivity case."
+
 assets:
   - "Your performance record across the remote days"
   - "Rivera's team, who kept hybrid by making a productivity case"

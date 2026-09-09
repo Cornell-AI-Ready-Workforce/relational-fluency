@@ -182,6 +182,13 @@
     background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;
     letter-spacing: .02em; }
   .transcript .scene .with { font-weight: 400; opacity: .9; }
+  /* A message from the app itself, not a line anybody spoke. It has to be
+     visually distinct from a turn: a system message rendered as a turn is
+     attributed to whoever the turn says spoke it, and this transcript is also
+     what the participant reads back to check they were understood. */
+  .transcript .system-note { margin: 10px 0; padding: 6px 10px; border-radius: 6px;
+    background: var(--surface-2); color: var(--muted);
+    font-size: 12px; font-style: italic; }
   .tile.absent { opacity: .3; filter: grayscale(1); }
   /* The next character's tile offers a way in, so the participant can move on
      when the current conversation is done rather than waiting it out. */
@@ -654,7 +661,11 @@
     $('nextBody').innerHTML =
       `<p>You have finished all ${run ? run.total : 4} conversations. Thank you.</p>` +
       (code ? `<p>Your completion code is <b class="code">${esc(code)}</b>` +
-              `, you will be asked for it in the survey.</p>` : '');
+              `, you will be asked for it in the survey.</p>` : '') +
+      // If the last encounter's recording was lost, say so here too. The
+      // completion code comes first and is unaffected: a failed upload is our
+      // problem, not a reason to withhold their payment.
+      takeVideoNotice();
 
     $('nextAlt').style.display = 'none';   // no second door needed: they finished
     if (cfg.return_url) {
@@ -664,7 +675,20 @@
       });
       $('nextBtn').textContent = cfg.return_label || 'Return to the survey';
       $('nextBtn').style.display = 'inline-block';
-      $('nextBtn').onclick = () => { location.href = back; };
+      // The last encounter's upload is the one most likely to still be running
+      // when this screen appears — the completion overlay's wait is bounded and
+      // this is what it releases them onto — and leaving the page kills it. Hold
+      // the exit the same way every other exit in this page holds it, and report
+      // the loss if they leave anyway. The completion code is already on screen,
+      // so nothing they need is behind the hold.
+      $('nextBtn').onclick = () => {
+        const leave = () => { reportAbandonedUpload(); location.href = back; };
+        if (!liveUpload || liveUpload.settled) { leave(); return; }
+        const live = liveUpload;
+        $('nextBtn').textContent = 'Saving your recording — press again to leave now';
+        $('nextBtn').onclick = leave;
+        Promise.race([live.promise.catch(() => null), wait(CLOSING_UPLOAD_WAIT_MS)]).then(leave);
+      };
     } else {
       $('nextBtn').style.display = 'none';
       $('nextBody').innerHTML += '<p>You can close this window and return to the survey.</p>';
@@ -682,6 +706,7 @@
     // Paint immediately and fetch the return link afterwards: the participant
     // has just asked to stop, so nothing they are looking at should wait on a
     // network call that may not answer.
+    closing = true;   // this surface owns the overlay now; nothing may repaint over it
     $('consentOverlay').style.display = 'none';
     $('situationOverlay').style.display = 'none';
     $('nextTitle').textContent = title;
@@ -700,7 +725,24 @@
       });
       $('nextBtn').textContent = cfg.return_label || 'Return to the survey';
       $('nextBtn').style.display = 'inline-block';
-      $('nextBtn').onclick = () => { location.href = back; };
+      $('nextBtn').onclick = () => {
+        // Leaving aborts an in-flight PUT, and on this path one usually is in
+        // flight: the withdrawal handlers call endSession, which starts the
+        // webcam upload, and then land here seconds later. The conversation
+        // they did have is still the artefact Phase 2 rates, so hold the exit
+        // briefly rather than throwing it away. Never trap them for it: the
+        // wait ends by itself, and a second press leaves at once. Whichever way
+        // it ends, leaving with the PUT still running reports the abandonment,
+        // so a recording lost on the way out is recorded as one rather than
+        // looking like an encounter that never had a camera.
+        const leave = () => { reportAbandonedUpload(); location.href = back; };
+        if (!videoUpload) { leave(); return; }
+        const pending = videoUpload;
+        videoUpload = null;
+        $('nextBtn').textContent = 'Saving your recording — press again to leave now';
+        $('nextBtn').onclick = leave;
+        Promise.race([pending.catch(() => null), wait(CLOSING_UPLOAD_WAIT_MS)]).then(leave);
+      };
     } else {
       $('nextBody').innerHTML += '<p>You can close this window now.</p>';
     }
@@ -718,18 +760,35 @@
   // The second door out of the completion overlay: their code so far and the
   // way back to the survey. A server-side fault should cost a participant a
   // conversation, not their payment.
-  function offerExit(label) {
+  //
+  // The default body is written for the failure call sites, where /advance did
+  // not land and this last encounter really may not have been counted. The door
+  // offered during the upload wait sits on the far side of a successful advance
+  // — `run = advanced` has already happened there — so that call site passes its
+  // own body rather than telling the participant something the code knows to be
+  // untrue about their own run.
+  function offerExit(label, bodyHtml) {
     const alt = $('nextAlt');
     alt.textContent = label;
     alt.style.display = 'inline-block';
     alt.onclick = () => showClosing(
       'Finishing here',
-      '<p>Thank you for the conversations you did have. What you recorded is ' +
-      'stored on our side, though this last one may not have been counted ' +
-      'towards your run.</p>' +
-      '<p>Take the code below back to the survey, and tell the researcher there ' +
-      'how far you got.</p>',
+      bodyHtml ||
+      ('<p>Thank you for the conversations you did have. What you recorded is ' +
+       'stored on our side, though this last one may not have been counted ' +
+       'towards your run.</p>' +
+       '<p>Take the code below back to the survey, and tell the researcher there ' +
+       'how far you got.</p>'),
       run?.completion_code || '');
+  }
+
+  // The lost-recording line, consumed once. Whichever screen comes next after
+  // the upload wait shows it, and only that screen: repeating it on every later
+  // overlay would make one failed upload look like several.
+  function takeVideoNotice() {
+    const html = videoNotice;
+    videoNotice = '';
+    return html;
   }
 
   async function onEncounterComplete() {
@@ -785,19 +844,91 @@
       return;
     }
     run = advanced;
-    $('nextAlt').style.display = 'none';   // the advance landed: no exit to offer
+    // They withdrew while this /advance was in flight. showClosing has already
+    // painted their goodbye card and owns the overlay, and the encounter is
+    // recorded either way, so there is nothing left for this function to paint.
+    // Checking here rather than only after the upload race is the whole point:
+    // the old code painted the wait screen over the goodbye card first, and by
+    // the time it checked, the participant was looking at a modal whose primary
+    // button was the skip handler the race had already consumed — a full-page
+    // overlay with no working way out, which is the exact failure the bounded
+    // wait exists to prevent. Returning early also leaves `videoUpload` set, so
+    // showClosing's own press-again-to-leave hold can still see the upload.
+    if (closing) return;
     if (videoUpload) {
+      // The upload gets a bounded wait, not an open-ended one. This overlay
+      // covers the whole page, and it used to hide every control and then
+      // `await videoUpload` with nothing behind it: no timeout, no abort, no
+      // button. A ten-minute encounter is ~45 MB at the 600 kbps this page
+      // records at, which is minutes of PUT on a home uplink even when
+      // everything works, and a hung socket never settled at all — so a slow
+      // bucket cost the participant the rest of the study and their completion
+      // code. Waiting a little is still right, because navigating on to the
+      // next encounter kills the PUT; waiting forever is not. So: a deadline,
+      // a button that skips it, and the usual second door left open. What the
+      // deadline releases them onto still holds the navigation for the upload
+      // (see the Start-encounter button below), which is what makes the line
+      // "the upload keeps going" true rather than a promise the next click
+      // breaks.
       $('nextTitle').textContent = 'Saving your recording…';
-      $('nextBody').innerHTML = '<p>One moment, your video is being saved.</p>';
-      $('nextBtn').style.display = 'none';
+      $('nextBody').innerHTML =
+        '<p>One moment, your video is being saved. You can carry on without ' +
+        'waiting if you would rather — the upload keeps going, and we hold the ' +
+        'next page for up to a minute so it can finish.</p>';
+      $('nextBtn').textContent = 'Continue without waiting';
+      $('nextBtn').style.display = 'inline-block';
+      let skip = null;
+      // `pending` rather than `silent`: neither a skip nor a deadline is a
+      // verdict on the recording, but neither is it the plain success screen.
+      // Marking them silent is what made a slow-but-healthy upload vanish — the
+      // page said nothing, dropped the promise and navigated, and the recording
+      // died with no notice, no confirm and no events line.
+      const skipped = new Promise(r => { skip = () => r({ ok: false, reason: 'skipped', pending: true }); });
+      $('nextBtn').onclick = skip;
+      offerExit('I can’t continue — finish here',
+        '<p>Thank you for the conversations you did have. The one you just ' +
+        'finished was counted towards your run — only its video was still ' +
+        'uploading, and the study team can see how that ended.</p>' +
+        '<p>Take the code below back to the survey, and tell the researcher ' +
+        'there how far you got.</p>');
       $('nextOverlay').style.display = 'flex';
-      try { await videoUpload; } catch (e) {}
+      let outcome = await Promise.race([
+        videoUpload.catch(() => ({ ok: false, reason: 'upload_threw' })),
+        skipped,
+        wait(VIDEO_UPLOAD_WAIT_MS).then(() => ({ ok: false, reason: 'slow', pending: true })),
+      ]);
       videoUpload = null;
+      // If they took the exit door while we were waiting, showClosing owns the
+      // overlay: leave it alone rather than painting the next encounter over
+      // somebody's goodbye screen.
+      if (closing) return;
+      // The skip handler's promise has been consumed, so a second press of it
+      // would do nothing at all. Never leave a dead handler on a visible button.
+      $('nextBtn').onclick = null;
+      // The race can be won by the deadline in the same beat the upload
+      // settles. Prefer the real verdict when there is one: `liveUpload` keeps
+      // the result after `videoUpload` is cleared precisely so this screen can
+      // report what happened rather than what it happened to be waiting on.
+      if (outcome && outcome.pending && liveUpload && liveUpload.settled) {
+        outcome = liveUpload.result || outcome;
+      }
+      videoNotice =
+        (outcome && outcome.pending)
+          ? '<p>The video from that conversation is still being saved. There is ' +
+            'nothing for you to do — when you continue we give it a moment to ' +
+            'finish, and if it cannot, the study team is told.</p>'
+        : (outcome && outcome.ok === false && !outcome.silent)
+          ? '<p>We could not save the video from that conversation. The study ' +
+            'team can see that it is missing; nothing else about your ' +
+            'participation changes.</p>'
+        : '';
     }
+    $('nextAlt').style.display = 'none';   // the advance landed and the wait is over: no exit to offer
     if (run.done) { await showRunComplete(); return; }
     $('nextTitle').textContent = `Encounter ${run.position - 1} of ${run.total} complete`;
     $('nextBody').innerHTML =
       `<p>That conversation is finished. Ready for the next one?</p>` +
+      takeVideoNotice() +
       runStepsHtml(0);
     $('nextBtn').textContent = `Start encounter ${run.position} of ${run.total}`;
     $('nextBtn').style.display = 'inline-block';
@@ -811,7 +942,26 @@
       if (launchId) qs.set('launch', launchId);
       const m = params.get('model'); if (m) qs.set('model', m);
       if (participantId) qs.set('participant_id', participantId);
-      location.href = `/v2?${qs}`;
+      let left = false;
+      const go = () => { if (left) return; left = true; location.href = `/v2?${qs}`; };
+      // Navigating kills the PUT. The wait above is bounded — it has to be, a
+      // participant may not be held on a modal indefinitely — but a bound that
+      // releases them onto a button which unloads the page is a bound that
+      // throws the recording away, and 45 MB (a ten-minute encounter at the
+      // 600 kbps this page records) takes longer than the 45-second bound on
+      // any uplink under about 8 Mbps. That is a hotspot or a rural line, not
+      // an exotic case. So the exit is held the same way the closing card holds
+      // it: one press starts a short hold, the hold ends by itself, and a
+      // second press leaves at once — but leaving with the upload still running
+      // reports the abandonment, so what is lost is recorded as "captured, not
+      // uploaded" instead of vanishing into "this encounter had no video".
+      if (!liveUpload || liveUpload.settled) { go(); return; }
+      const live = liveUpload;
+      const leaveNow = () => { reportAbandonedUpload(); go(); };
+      $('nextBtn').textContent = 'Saving your recording — press again to continue now';
+      $('nextBtn').onclick = leaveNow;
+      Promise.race([live.promise.catch(() => null), wait(NEXT_UPLOAD_HOLD_MS)])
+        .then(leaveNow);
     };
     $('nextOverlay').style.display = 'flex';
   }
@@ -838,7 +988,28 @@
   let playEl = null;         // so Chrome's echo canceller can subtract it
   let videoChunks = [];      // recorded video pieces
   let videoMime = 'video/webm'; // container/codec actually used by MediaRecorder
-  let videoUpload = null;    // promise resolving when the upload lands in S3
+  let videoUpload = null;    // promise for the upload; resolves {ok, reason}, never rejects
+  // The same upload, tracked so it survives the completion overlay clearing
+  // `videoUpload`. { sid, promise, settled, result }. Something has to outlive
+  // the bounded wait: an upload that is still running when the participant is
+  // released still has to hold the page against the next navigation, and if it
+  // is abandoned anyway that has to be reported. Cleared only when a new
+  // recording starts.
+  let liveUpload = null;
+  let videoNotice = '';      // one line to show the participant when a recording was lost
+  let closing = false;       // showClosing has taken over the completion overlay
+  // How long each part of the upload may take. The presign and the confirm are
+  // small JSON round trips. The PUT carries the whole recording and gets a wide
+  // bound. The last three are how long a participant may be asked to wait on
+  // the upload: on the completion overlay, on the button that leaves that
+  // overlay for the next encounter, and on the way out of the study.
+  const PRESIGN_TIMEOUT_MS = 15000;
+  const PUT_TIMEOUT_MS = 180000;
+  const CONFIRM_TIMEOUT_MS = 15000;
+  const VIDEO_UPLOAD_WAIT_MS = 45000;
+  const NEXT_UPLOAD_HOLD_MS = 60000;
+  const CLOSING_UPLOAD_WAIT_MS = 12000;
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
   let sessionId = null;      // server session id once connected
   let sessionMode = 'single';// 'single' | 'group'
   let userTurns = 0;         // committed participant turns this session (gates debrief)
@@ -977,11 +1148,26 @@
       // real outcome: the refusal is reported, capture never starts, and the
       // participant is sent to a closing card instead of being left to abandon
       // the tab. We only claim the refusal was noted when the server said so.
+      //
+      // "Said so" means the BODY, not the status. The route answers 200 even
+      // when it recorded nothing — deliberately, because re-prompting somebody
+      // who has just refused would be worse than a thin record — and says what
+      // it did in {recorded, withdrawn, reason}. Reading r.ok alone showed the
+      // "you have not taken part / nothing about you was recorded" card to a
+      // participant whose record already carries consent, which is the case the
+      // server refuses precisely BECAUSE audio and webcam may already have been
+      // captured under that consent. Telling that person nothing was recorded
+      // is a false statement about their own data, made by the one screen they
+      // will read carefully, and it also leaves them believing they are out of
+      // a study they are still enrolled in.
       async function onDecline() {
         if (!confirm('This ends your participation — you will not take part in the study. Is that what you want?')) return;
         decline.disabled = true;
         submit.disabled = true;
-        let recorded = false;
+        // Three outcomes, not two: recorded, refused-with-an-explanation, and
+        // never-answered. `null` is the last of those and is never treated as
+        // either of the first two.
+        let outcome = null;
         try {
           const r = await fetch('/api/consent/decline' + keyParamFirst, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -992,17 +1178,45 @@
               consent_given: false,
             }),
           });
-          recorded = r.ok;
-        } catch (e) { recorded = false; }
-        showClosing(
-          'You have not taken part',
-          '<p>Thank you for reading the consent form. Your microphone and camera ' +
-          'were never switched on, and nothing about you was recorded.</p>' +
-          (recorded
-            ? '<p>We have noted that you chose not to take part.</p>'
-            : '<p>We could not reach the server to note your decision, so please ' +
-              'tell the researcher you declined if you would like that on file.</p>'),
-          '');
+          if (r.ok) outcome = await r.json().catch(() => null);
+        } catch (e) { outcome = null; }
+        const recorded = !!(outcome && outcome.recorded);
+        const alreadyConsented = !!(outcome && outcome.reason === 'already_consented');
+        if (recorded) {
+          showClosing(
+            'You have not taken part',
+            '<p>Thank you for reading the consent form. Your microphone and camera ' +
+            'were never switched on, and nothing about you was recorded.</p>' +
+            '<p>We have noted that you chose not to take part' +
+            (outcome.withdrawn ? ', and your session has been closed.' : '.') + '</p>',
+            '');
+        } else if (alreadyConsented) {
+          // Do not repeat the "nothing was recorded" line here: this record
+          // carries consent, so an encounter may already have been recorded
+          // under it, and only a person can sort that out.
+          showClosing(
+            'We could not record that decision',
+            '<p>Our records show that consent has already been given for this ' +
+            'participant — most often because the form was submitted in another ' +
+            'tab or window. Because of that, this page cannot withdraw it for ' +
+            'you, and anything already recorded is unchanged.</p>' +
+            '<p>Nothing further will be recorded while you stay on this page. If ' +
+            'you do not want to take part, please tell the researcher, who can ' +
+            'stop your participation and remove what was recorded.</p>',
+            '');
+        } else {
+          // Either the server never answered, or it answered that there is no
+          // record to mark. Nothing was captured in either case, so the first
+          // paragraph is still true; what we must not do is claim the refusal
+          // is on file.
+          showClosing(
+            'You have not taken part',
+            '<p>Thank you for reading the consent form. Your microphone and camera ' +
+            'were never switched on, and nothing about you was recorded.</p>' +
+            '<p>We could not note your decision on file, so please tell the ' +
+            'researcher you declined if you would like that recorded.</p>',
+            '');
+        }
         // Deliberately never resolves: the boot sequence, Start and the
         // situation card all wait on this Promise, and none of them may proceed.
       }
@@ -1500,6 +1714,26 @@
     return el;
   }
 
+  // A message from the app, written into the transcript with nobody's name on
+  // it. Everything that reaches the participant used to go through
+  // appendTranscript, which needs a role, and 'user' was the role these calls
+  // passed — so "Something went wrong. Please try again." and the microphone
+  // failure were both rendered as "You: ...". The server sends {"type":"error"}
+  // for a boundary the runner could not cross and for a lost transcription
+  // channel, neither of which the participant said, and a transcript is the one
+  // artefact where who said what is the entire content. It is also what the
+  // participant reads back to check they were understood, and a rater may read
+  // the same lines: a system message wearing the participant's name is a
+  // falsified turn, which is worse than an ugly one.
+  function appendNotice(text) {
+    const el = document.createElement('div');
+    el.className = 'system-note';
+    el.textContent = text;
+    $('transcript').appendChild(el);
+    $('transcript').scrollTop = $('transcript').scrollHeight;
+    return el;
+  }
+
   // ---- user caption: one consolidated, live-updating bubble per utterance ----
   function renderUserCaption(partial) {
     const text = [...userFinals, partial].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
@@ -1710,36 +1944,214 @@
     } catch (e) { videoRecorder = null; }
   }
 
+  // Every request in the upload chain gets a deadline. Without one a socket
+  // that hangs — a throttled bucket, a network that went away mid-PUT — never
+  // settles, and the promise the completion overlay is waiting on never
+  // settles either. A deadline turns that into an ordinary failure the chain
+  // can report and retry, which is a thing this page knows how to survive.
+  function fetchWithDeadline(url, opts, ms) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), ms);
+    return fetch(url, Object.assign({}, opts, { signal: ac.signal }))
+      .finally(() => clearTimeout(timer));
+  }
+
+  // Say it where the participant is looking, in the same plain voice the page
+  // already uses when the browser cannot record at all (see startVideoRecording).
+  // They agreed to be recorded; when the recording does not survive, they are
+  // entitled to know rather than being shown the success screen regardless.
+  function noteUploadFailure(reason) {
+    const el = document.createElement('div');
+    el.className = 'scene';
+    el.textContent = 'Note: the video of this conversation could not be saved. ' +
+      'Nothing else about your participation changes, and there is nothing for you to do.';
+    $('transcript').appendChild(el);
+    $('transcript').scrollTop = $('transcript').scrollHeight;
+    return { ok: false, reason };
+  }
+
+  // The two upload endpoints for one session, built in one place. Both bind the
+  // upload to the owning participant, so participant_id must ride along (with
+  // '&' or '?' depending on whether a key is already in the query) or the
+  // server answers 403. The abandonment beacon below has to address exactly the
+  // same session and participant the chain does, or it records the gap against
+  // nothing.
+  function videoUrls(sid) {
+    const pidQ = participantId
+      ? (keyParamFirst ? '&' : '?') + 'participant_id=' + encodeURIComponent(participantId)
+      : '';
+    return {
+      presign: `/api/sessions/${encodeURIComponent(sid)}/video-upload-url` + keyParamFirst + pidQ,
+      confirm: `/api/sessions/${encodeURIComponent(sid)}/video-uploaded` + keyParamFirst + pidQ,
+    };
+  }
+
+  // The participant left while the PUT was still running, so the upload is
+  // about to die with the page. Report it: the confirm endpoint appends the
+  // video_uploaded event whatever S3 says, and that event is the only thing
+  // that tells "this encounter was captured and the upload did not finish"
+  // apart from "this encounter never had a camera". Phase 2 rates the video, so
+  // an encounter that quietly loses one without a trace is an encounter nobody
+  // can tell from one that never had one. sendBeacon because the page is
+  // unloading and an ordinary fetch is cancelled with it; a keepalive fetch is
+  // the fallback for a browser without it. Idempotent: `liveUpload` is cleared
+  // on the first call, so the button handler and the pagehide net can both fire.
+  function reportAbandonedUpload() {
+    const live = liveUpload;
+    if (!live || live.settled || !live.sid) return false;
+    liveUpload = null;
+    const base = videoUrls(live.sid).confirm;
+    const url = base + (base.includes('?') ? '&' : '?') + 'client_error=abandoned';
+    try {
+      if (navigator.sendBeacon && navigator.sendBeacon(url)) return true;
+    } catch (e) { /* fall through to the fetch */ }
+    try { fetch(url, { method: 'POST', keepalive: true }); } catch (e) {}
+    return true;
+  }
+  // Every other way out of the page — the browser Back button, a closed tab, a
+  // withdrawal that navigates to the survey — goes through here rather than
+  // through a handler this page wrote, so the loss is recorded on those paths
+  // too. Guarded rather than assumed: this script is loaded in a page and also
+  // driven headlessly by the suite, and a missing window must not take the
+  // whole script down at parse time.
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('pagehide', () => { reportAbandonedUpload(); });
+  }
+
+  // Presign -> PUT -> confirm, with the retries and the reporting the original
+  // three bare fetches lacked. Resolves {ok, reason}; `silent` marks an outcome
+  // the participant should not be told about because nothing was lost.
+  async function uploadRecording(sid, blob, baseMime) {
+    // Nothing was recorded, or there is no session to attach it to. There is no
+    // object to confirm and nothing to report: the absence is genuine, and a
+    // record that says "no video" for this encounter is telling the truth.
+    if (!blob || !blob.size || !sid) return { ok: false, reason: 'nothing_recorded', silent: true };
+
+    // Both endpoints bind the upload to the owning participant; see videoUrls.
+    const { presign: presignUrl, confirm: confirmUrl } = videoUrls(sid);
+
+    // Two goes at presign + PUT. One transient S3 throttle or a stalled socket
+    // used to lose the recording outright, and a second presign is available:
+    // the server refuses one only once the object already exists.
+    //
+    // 409 is the ONLY status that may skip the PUT, and it is worth being exact
+    // about why. The server answers 409 for one thing: S3 was asked and
+    // confirmed the object is in the bucket. That makes it not a failure — the
+    // first PUT did land and only our reading of the response was lost — so the
+    // chain falls through to the confirm instead of re-sending tens of
+    // megabytes. The server used to answer 409 for two other refusals as well,
+    // including one that rests on its own earlier receipt while S3 declines to
+    // answer at all; those are now 404 and 503, so an unverified refusal cannot
+    // be read here as a landed recording. Treating "nobody checked" as success
+    // is the one outcome this chain must never produce.
+    let landed = false;
+    let reason = 'upload_failed';
+    for (let attempt = 0; attempt < 2 && !landed; attempt++) {
+      if (attempt) await wait(1000);
+      try {
+        const g = await fetchWithDeadline(presignUrl, {}, PRESIGN_TIMEOUT_MS);
+        if (g.status === 409) { landed = true; break; }
+        if (!g.ok) { reason = 'presign_http_' + g.status; continue; }
+        // A 200 always carries a url: the route returns the presign dict or
+        // raises, so there is no "200 with a null body" case any more — the
+        // branch that used to name one (`presign_unavailable`, for a bucket
+        // that was not configured) described a response the server cannot
+        // produce. The check stays because a 200 without a url would mean the
+        // two sides of this contract have drifted apart, and reading `.url` off
+        // null would surface that as a bare 'network' — a reason that sends a
+        // researcher looking at the wrong seam entirely.
+        const body = await g.json().catch(() => null);
+        if (!body || !body.url) { reason = 'presign_no_url'; continue; }
+        const put = await fetchWithDeadline(body.url, {
+          method: 'PUT', body: blob, headers: { 'Content-Type': baseMime },
+        }, PUT_TIMEOUT_MS);
+        if (!put.ok) { reason = 'put_http_' + put.status; continue; }
+        landed = true;
+      } catch (e) {
+        reason = (e && e.name === 'AbortError') ? 'timeout' : 'network';
+      }
+    }
+
+    // Confirm either way, and retry it. The confirm is what appends the
+    // video_uploaded event, and that event is the only local record of what
+    // became of the recording: after a landed PUT it is the receipt Phase 2
+    // plays the video from (server/video.py answers "is there a video?" from
+    // the receipt, never from S3), and after a failed one it is the difference
+    // between "this encounter was never captured" and "this encounter was
+    // captured and the upload failed". Losing a single confirm after a landed
+    // PUT is the worst case in the whole chain — the bytes are in the bucket
+    // and the rater is told to score from the transcript alone — and the
+    // endpoint only appends an event and rebuilds the record, so re-sending it
+    // is safe. The client's own reason rides along as a query parameter for a
+    // server that wants to record it; one that does not simply ignores it.
+    const confirmWithReason = confirmUrl +
+      (landed ? '' : (confirmUrl.includes('?') ? '&' : '?') +
+        'client_error=' + encodeURIComponent(reason));
+    let confirmed = null;   // true | false from the server, null if it never answered
+    let confirmReason = 'confirm_failed';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await wait(800 * attempt);
+      try {
+        const c = await fetchWithDeadline(confirmWithReason, { method: 'POST' }, CONFIRM_TIMEOUT_MS);
+        if (!c.ok) { confirmReason = 'confirm_http_' + c.status; continue; }
+        const j = await c.json().catch(() => null);
+        confirmed = !!(j && j.ok);
+        break;
+      } catch (e) {
+        confirmReason = (e && e.name === 'AbortError') ? 'confirm_timeout' : 'confirm_network';
+      }
+    }
+
+    if (!landed) return noteUploadFailure(reason);
+    if (confirmed === true) return { ok: true };
+    // The PUT reported success but the server cannot see the object, or never
+    // answered at all. Name the two apart: they need different fixes, and the
+    // reason is what the researcher will have to go on.
+    return noteUploadFailure(confirmed === false ? 'confirm_no_object' : confirmReason);
+  }
+
   function finishVideoRecording() {
     // Returns a promise for the S3 upload; null when nothing was recorded.
+    // It resolves with {ok, reason} and never rejects, because the callers have
+    // to be able to tell a landed recording from a lost one. Every failure path
+    // here used to resolve a bare `false` that the only caller threw away, so
+    // an encounter whose webcam recording never reached the bucket looked —
+    // to the participant, to the researcher and to the rater — exactly like one
+    // whose recording did.
     if (!videoRecorder || videoRecorder.state === 'inactive') return null;
     const rec = videoRecorder; videoRecorder = null;
     const sid = sessionId;
+    // Tracked separately from `videoUpload` because the completion overlay
+    // clears that one when its bounded wait ends, and the pages that come after
+    // the wait still need to know whether bytes are in the air: the next
+    // encounter's button holds for it, and reportAbandonedUpload records it if
+    // the participant leaves anyway.
+    const live = { sid, promise: null, settled: false, result: null };
+    liveUpload = live;
     videoUpload = new Promise((resolve) => {
       rec.onstop = async () => {
+        let blob = null;
+        const baseMime = (videoMime || 'video/webm').split(';')[0];
         try {
-          const baseMime = (videoMime || 'video/webm').split(';')[0];
-          const blob = new Blob(videoChunks, { type: baseMime });
-          videoChunks = [];
-          if (!blob.size || !sid) { resolve(false); return; }
-          // These endpoints now bind the upload to the owning participant, so we
-          // must send participant_id (with '&' or '?' depending on whether a key
-          // is already in the query), or the server returns 403.
-          const pidQ = participantId
-            ? (keyParamFirst ? '&' : '?') + 'participant_id=' + encodeURIComponent(participantId)
-            : '';
-          const g = await fetch(`/api/sessions/${encodeURIComponent(sid)}/video-upload-url` + keyParamFirst + pidQ);
-          if (!g.ok) { resolve(false); return; }
-          const { url } = await g.json();
-          const put = await fetch(url, { method: 'PUT', body: blob,
-            headers: { 'Content-Type': baseMime } });
-          if (!put.ok) { resolve(false); return; }
-          const c = await fetch(`/api/sessions/${encodeURIComponent(sid)}/video-uploaded` + keyParamFirst + pidQ, { method: 'POST' });
-          resolve(c.ok ? (await c.json()).ok : false);
-        } catch (e) { resolve(false); }
+          blob = new Blob(videoChunks, { type: baseMime });
+        } catch (e) { /* fall through: uploadRecording treats a null blob as nothing recorded */ }
+        videoChunks = [];
+        try {
+          resolve(await uploadRecording(sid, blob, baseMime));
+        } catch (e) {
+          resolve(noteUploadFailure('unexpected'));
+        }
       };
-      try { rec.stop(); } catch (e) { resolve(false); }
+      // A recorder that will not stop never fires onstop, so nothing is ever
+      // uploaded. That is a lost recording like any other and is reported like
+      // one, rather than resolving quietly and letting the run continue.
+      try { rec.stop(); } catch (e) { resolve(noteUploadFailure('recorder_stop_failed')); }
     });
+    live.promise = videoUpload;
+    // Whatever it resolves is kept: after the completion overlay's bounded wait
+    // has released the participant, this is the only place the verdict still
+    // exists, and a verdict nobody kept is a verdict nobody can report.
+    videoUpload.then((v) => { live.settled = true; live.result = v; });
     return videoUpload;
   }
 
@@ -1764,7 +2176,9 @@
       if (micLevelRaf) { cancelAnimationFrame(micLevelRaf); micLevelRaf = null; }
       try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()); } catch {}
       mediaStream = null;
-      appendTranscript('user', null, 'We couldn’t turn on your microphone. Please allow microphone access and try again.');
+      // The same rule as the error frame above: the app said this, not the
+      // participant, and the microphone was never on to record them saying it.
+      appendNotice('We couldn’t turn on your microphone. Please allow microphone access and try again.');
       $('startBtn').disabled = false; return;
     }
     $('startBtn').style.display = 'none';
@@ -1940,7 +2354,13 @@
           setActiveSpeaker(null);
           setTurnState('Your turn', 'you');
         } else if (m.type === 'error') {
-          appendTranscript('user', null, 'Something went wrong. Please try again.');
+          // Not a turn: this is the runner reporting a segment boundary it
+          // could not cross or a transcription channel it lost. Rendered as a
+          // 'user' turn it appeared as "You: Something went wrong", and
+          // _advance_segment retries the boundary, so a persistent failure
+          // wrote one more sentence into the participant's own transcript per
+          // attempt.
+          appendNotice('Something went wrong. Please try again.');
         }
       } else {
         playPcmChunk(ev.data);

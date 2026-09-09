@@ -591,6 +591,52 @@
     $('launchAutoSteer').textContent = launchAuto ? 'On' : 'Off';
   });
 
+  // The URL this card loads in the PARTICIPANT's tab, which is why it must not
+  // carry `key`. On this page `key` is SESSION_KEY: the researcher credential
+  // that opens /researcher, /director, /evidence, the encounter list and every
+  // per-session download.zip. Appending it here put the whole dataset's
+  // credential in a participant's address bar, where v2.html then reads it and
+  // carries it forward for the rest of their run. The participant page does not
+  // want it either: check_participant is a no-op unless the deployment sets
+  // PARTICIPANT_KEY_REQUIRED, which is exactly the rule the /start entrance
+  // applies, and now the rule this card applies too.
+  //
+  // /api/run/config is a participant-open route behind that same
+  // check_participant, so one unkeyed GET answers the only question we have:
+  // 200 means the participant page loads without a key, 401 means it will not.
+  // Anything else — a network error, a surprising status, a server that does
+  // not answer at all — falls back to not forwarding. A participant page that
+  // answers 401 is a visible mistake a researcher can fix in a second; a leaked
+  // dataset credential is neither visible nor fixable.
+  //
+  // The probe is bounded because it sits on the critical path of handing a
+  // participant their link: the tab is already open and blank, and an unbounded
+  // GET that hangs never returns, so the tab is never pointed anywhere, the
+  // launch button stays disabled, the status stays on "Creating session…" and
+  // the launch record expires unreached — with no error, because a hung socket
+  // never reaches the catch. A deadline turns that into the ordinary
+  // fall-back-to-not-forwarding case, which is a launch the researcher can see
+  // and retry.
+  const PROBE_TIMEOUT_MS = 5000;
+  async function participantUrl(d) {
+    const url = d.participant_url;
+    if (!key) return url;
+    // A server that already applied the rule itself has the last word.
+    if (typeof d.participant_key_required === 'boolean') {
+      return d.participant_key_required ? url + `&key=${encodeURIComponent(key)}` : url;
+    }
+    if (/[?&]key=/.test(url)) return url;
+    let required = false;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), PROBE_TIMEOUT_MS);
+    try {
+      const probe = await fetch('/api/run/config', { signal: ac.signal });
+      required = probe.status === 401;
+    } catch (e) { required = false; }
+    finally { clearTimeout(timer); }
+    return required ? url + `&key=${encodeURIComponent(key)}` : url;
+  }
+
   $('launchBtn').addEventListener('click', async () => {
     if (!launchDetail) return;
     // Open the tab synchronously inside the click so popup blockers allow it.
@@ -609,7 +655,7 @@
       });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const d = await r.json();
-      const purl = d.participant_url + (key ? `&key=${encodeURIComponent(key)}` : '');
+      const purl = await participantUrl(d);
       if (tab) {
         tab.location = purl;
         $('launchStatus').textContent = 'Conversation tab opened. Waiting for the participant to press Start…';

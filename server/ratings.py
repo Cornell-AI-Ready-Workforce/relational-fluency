@@ -38,6 +38,7 @@ CLI-free by design: submissions arrive over HTTP (``POST
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sqlite3
@@ -304,15 +305,74 @@ def _clean_open_ended(open_ended: Any) -> Dict[str, Any]:
 
 
 def _coerce_seconds(seconds: Any) -> Optional[float]:
+    """How long the rater took, or None if nobody measured it.
+
+    float() is generous in a way this store cannot afford: "nan", "NaN", "inf",
+    "Infinity" and "1e400" all parse, and a non-finite value then walks straight
+    past `val < 0` and through round() into the record. json.dumps writes it as
+    the bare token NaN and json.loads reads it back, so nothing on this side
+    notices — but the version file, which this module's docstring calls a
+    record kept forever, is no longer JSON. jq, R's jsonlite, pandas and a
+    browser all refuse it, and GET /api/ratings 500s for the entire export
+    because one row cannot be serialised. So the non-finite cases are settled
+    here, at the only door they can come through.
+
+    Every non-finite value becomes None, and none of them costs the rater their
+    work. They arrive for different reasons — NaN is pandas' missing-value
+    marker, and a Qualtrics export is a pandas CSV, so a blank duration column
+    comes across as the literal text "nan"; Infinity is a broken clock, a
+    "1e400" from a scripted client, a browser subtracting two timestamps the
+    wrong way round — but the duration is diagnostic, not data, and the contract
+    stated at server/app.py:1933-1937 is that a browser reporting it wrongly
+    must not be able to reject a rating a human spent twenty minutes on.
+    Refusing Infinity broke exactly that: InvalidRating is a ValueError, app.py
+    turns it into a 400, and 22 answered items were discarded over a number
+    nobody would have used anyway. So an unusable value becomes None — "we do
+    not know how long this took" — and the record says so out loud rather than
+    swallowing it: _quality_flags adds "no_timing", and submit() adds
+    "bad_timing" when a number was reported that no clock could have produced
+    (see _timing_was_unusable). A negative duration is still refused: it is
+    finite, so none of the above applies, and app.py already normalises it to
+    None before this is reached — the refusal only bites the import path, where
+    a row can be rejected, corrected and re-sent.
+    """
     if seconds is None or seconds == "":
         return None
     try:
         val = float(seconds)
     except (TypeError, ValueError):
         raise InvalidRating([f"seconds must be a number, got {seconds!r}"])
+    if math.isnan(val) or math.isinf(val):
+        # Neither is storable: json.dumps writes both as bare tokens no other
+        # JSON reader accepts, and the allow_nan=False backstop in
+        # _append_version would refuse to write the entire rating.
+        return None
     if val < 0:
         raise InvalidRating(["seconds must not be negative"])
     return round(val, 3)
+
+
+def _timing_was_unusable(seconds: Any) -> bool:
+    """True when a duration was reported and no clock could have produced it.
+
+    Kept apart from _coerce_seconds so that function keeps its Optional[float]
+    contract, and because the two answers are different facts. A missing
+    duration and a duration of Infinity both store as None, but "nobody measured
+    this" and "something measured this and reported nonsense" mean different
+    things to whoever later asks why a rating has no timing: the second says the
+    console or the import was broken at that moment, which is worth knowing
+    before the rest of that wave's timings are trusted to spot straight-lining.
+
+    NaN is deliberately not counted here. It is pandas' marker for an empty
+    cell, so it really does mean "not measured", and "no_timing" already says
+    that.
+    """
+    if seconds is None or seconds == "":
+        return False
+    try:
+        return math.isinf(float(seconds))
+    except (TypeError, ValueError):
+        return False
 
 
 def _completeness_problems(scores: Dict[str, Any], already: str = "") -> List[str]:
@@ -422,7 +482,10 @@ def submit(
     rater_id: str,
     scores: Dict[str, Any],
     open_ended: Optional[Dict[str, Any]] = None,
-    seconds: Optional[float] = None,
+    # Any, not Optional[float]: this is whatever the console or a CSV column
+    # said, and _coerce_seconds is the thing that decides what it means. The
+    # import path deliberately hands the raw value through (see import_qualtrics).
+    seconds: Any = None,
     *,
     source: str = SOURCE_CONSOLE,
     submitted_at: Optional[float] = None,
@@ -462,6 +525,12 @@ def submit(
 
     text = _clean_open_ended(open_ended)
     took = _coerce_seconds(seconds)
+    # A duration that arrived and could not be used is not the same fact as no
+    # duration at all, and both store as None. Flag the difference here, where
+    # the raw value is still in hand — one layer down it is already gone.
+    flags = _quality_flags(clean, took)
+    if _timing_was_unusable(seconds) and "bad_timing" not in flags:
+        flags.append("bad_timing")
 
     # Reverse scoring is applied once, here, and stored beside the raw answers
     # rather than instead of them. Reliability wants the scored values; a rater
@@ -492,7 +561,7 @@ def submit(
         "item_count": len(esci.all_items()),
         "n_answered": len(answered),
         "n_na": len(clean) - len(answered),
-        "quality_flags": _quality_flags(clean, took),
+        "quality_flags": flags,
         "amends": None if previous is None else previous.get("rating_id"),
         "note": note,
         "instrument_notice": INSTRUMENT_NOTICE,
@@ -544,8 +613,18 @@ def _append_version(record: Dict[str, Any]) -> Dict[str, Any]:
             continue
         out = dict(record, version=version, rating_id=rating_id)
         try:
-            _write_atomic(path, json.dumps(out, indent=2, ensure_ascii=False))
-        except OSError:
+            # allow_nan=False is the backstop under _coerce_seconds. Python's
+            # json happily writes NaN/Infinity as bare tokens that no other JSON
+            # reader accepts, and a version file is never opened for writing
+            # again — so a record that is not JSON is not a bug to fix later,
+            # it is a permanently unreadable rating. Refusing to write it is the
+            # only outcome that stays recoverable. A ValueError from here is a
+            # write that failed, so it rolls the reservation back the same way
+            # an OSError does rather than leaving an index row pointing at a
+            # file that was never created.
+            _write_atomic(path, json.dumps(out, indent=2, ensure_ascii=False,
+                                           allow_nan=False))
+        except (OSError, ValueError):
             with _db() as conn:
                 conn.execute(
                     "DELETE FROM ratings WHERE assignment_id = ? AND version = ?",
@@ -920,7 +999,14 @@ def import_qualtrics(rows: List[Dict[str, Any]],
 
         try:
             stored = submit(
-                assignment["assignment_id"], rater_id, clean, cleaned_text, took,
+                # The RAW duration, not `took`. submit re-coerces it to exactly
+                # the same value, and passing the raw is what lets it tell an
+                # empty duration column apart from an "inf" one: both coerce to
+                # None, and only the raw still says which arrived. `took` is
+                # kept for the duplicate check above, which compares against a
+                # stored (already coerced) value.
+                assignment["assignment_id"], rater_id, clean, cleaned_text,
+                meta.get("seconds"),
                 source=SOURCE_QUALTRICS,
             )
         except RatingError as exc:

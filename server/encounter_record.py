@@ -112,15 +112,64 @@ def build(session_dir: Path) -> Dict[str, Any]:
     # webcam.webm), not written to the session dir, so a disk glob finds nothing
     # in production. Prefer the 'video_uploaded' event the confirm endpoint writes
     # once S3 acknowledges the PUT; fall back to a local glob for dev captures.
+    #
+    # `video` lists what can be PLAYED, so it takes the last event carrying bytes
+    # — last wins, matching verify_record and upload_receipt, because the page
+    # retries the confirm and a "failed" event routinely sits ahead of the "ok"
+    # one. An empty list therefore means "nothing to play", and on its own it
+    # cannot say why, which is the defect `video_upload` below exists to fix.
+    upload_events = [e for e in events if e.get("type") == "video_uploaded"]
     vid_ev = next(
-        (e for e in reversed(events)
-         if e.get("type") == "video_uploaded" and (e.get("bytes") or 0) > 0),
-        None,
+        (e for e in reversed(upload_events) if (e.get("bytes") or 0) > 0), None,
     )
     if vid_ev:
         video = [{"key": vid_ev.get("key"), "bytes": vid_ev.get("bytes")}]
     else:
         video = sorted(p.name for p in session_dir.glob("webcam*"))
+
+    # Three states, and the record has to keep them apart.
+    #
+    # This used to filter the events on bytes > 0 and keep nothing else, so a
+    # confirm that said `status: "failed"` — captured, and the upload broke or
+    # could not be confirmed — left exactly the same record as an encounter
+    # whose camera was never on: `"video": []`. record.json is the artefact the
+    # study ships to analysts and the evidence view renders, and on both of them
+    # a lost recording read as "no video". Those are different judgements. An
+    # encounter rated from the transcript because there was nothing to film is
+    # measurement working as designed; one rated from the transcript because the
+    # upload broke is a fault to report, and it can only be reported by somebody
+    # who is told it happened. A record that cannot say which is which quietly
+    # converts a recoverable fault into a permanent silence, since the bucket
+    # listing that would have settled it is gone by the time anyone looks.
+    #
+    # `client_error` is carried through for the same reason the confirm endpoint
+    # records it: the browser knows which leg broke (put_http_403,
+    # confirm_timeout, abandoned) and this server does not. It is kept in its own
+    # field, never merged into `error`, because `error` is this server's own
+    # finding from its own HEAD and this is a claim from a client.
+    if video:
+        upload_state = "ok"
+        upload_error = None
+        client_error = None
+    elif upload_events:
+        last = upload_events[-1]
+        upload_state = "failed"
+        upload_error = last.get("error") or "no reason recorded"
+        client_error = last.get("client_error")
+    else:
+        upload_state = "absent"
+        upload_error = None
+        client_error = None
+    video_upload = {
+        # "ok" — a recording exists. "failed" — one was made and could not be
+        # stored or confirmed. "absent" — no confirmation ever arrived, so the
+        # encounter was never captured (or the tab died before it could say so,
+        # which is the same absence from here).
+        "state": upload_state,
+        "error": upload_error,
+        "client_error": client_error,
+        "attempts": len(upload_events),
+    }
 
     return {
         "encounter_id": session_dir.name,
@@ -154,6 +203,7 @@ def build(session_dir: Path) -> Dict[str, Any]:
         "steering_log": directions,
         "audio": audio,
         "video": video,
+        "video_upload": video_upload,
         "counts": {
             "participant_turns": sum(1 for t in turns if t["role"] == "participant"),
             "agent_turns": sum(1 for t in turns if t["role"] == "agent"),

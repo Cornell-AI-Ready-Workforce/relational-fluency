@@ -11,10 +11,11 @@ one. So the leak has to be caught here, by name and by value, against a record
 that actually contains all of it.
 
 Everything else is hermetic: a synthetic session directory written in the shapes
-the real writers use, with SESSIONS_DIR pointed at it. The 27-encounter fixture
-wave is used as well when it is present (RF_FIXTURE_DIR, or the scratchpad path
-it was built at), because a synthetic encounter cannot demonstrate that the
-packet survives every shape a real wave contains.
+the real writers use, with SESSIONS_DIR pointed at it. A recorded wave is used
+as well when there is one (tests/conftest.py resolves it from RF_FIXTURE_DIR,
+RF_FIXTURE or DATA_DIR, or from a wave checked in under tests/data), because a
+synthetic encounter cannot demonstrate that the packet survives every shape a
+real wave contains. No wave is a skip with instructions, never a path error.
 
 No network. Presigning is HMAC arithmetic over a request that is never sent, so
 it is exercised as the local computation it is, with throwaway credentials.
@@ -616,46 +617,56 @@ def test_a_video_that_cannot_be_signed_is_not_reported_as_absent(sessions_root, 
 
 
 # --------------------------------------------------------------------------
-# The 27-encounter fixture wave, when it is on this machine.
+# The recorded wave, when there is one on this machine.
+#
+# Resolution lives in tests/conftest.py (RF_FIXTURE_DIR / RF_FIXTURE /
+# DATA_DIR, or a wave checked in under tests/data), so this module no longer
+# rebuilds one machine's scratchpad path out of %TEMP% and a session UUID, and
+# no longer disagrees with the four other modules that each did that
+# differently. `wave_sessions` skips with instructions when nothing names a
+# wave.
+#
+# Several tests below name individual encounters from the REFERENCE wave - the
+# 27-encounter synthetic one this module was written against - because they
+# assert on defects deliberately seeded into specific encounters. Those go
+# through `_reference(...)`: another wave is a wave, not a failure, so a wave
+# that does not carry them skips saying which are missing.
 # --------------------------------------------------------------------------
 
-def _fixture_sessions() -> Path | None:
-    env = os.environ.get("RF_FIXTURE_DIR")
-    candidates = [Path(env)] if env else []
-    candidates.append(Path(
-        os.environ.get("TEMP", "/tmp"),
-        "claude", "C--Users-benj9-Downloads-relational-fluency-main--1-",
-        "4b640cd3-9836-4d35-8114-6f2468c17345", "scratchpad", "fixture"))
-    for c in candidates:
-        if (c / "sessions").is_dir():
-            return c / "sessions"
-    return None
-
-
-FIXTURE = _fixture_sessions()
-needs_fixture = pytest.mark.skipif(
-    FIXTURE is None, reason="synthetic collection wave not present (set RF_FIXTURE_DIR)")
+REFERENCE_WAVE_SIZE = 27
 
 
 @pytest.fixture
-def wave(monkeypatch):
-    monkeypatch.setattr(rp, "SESSIONS_DIR", FIXTURE)
-    monkeypatch.setattr(video, "SESSIONS_DIR", FIXTURE)
-    return sorted(p.name for p in FIXTURE.iterdir() if p.is_dir())
+def wave(monkeypatch, wave_sessions):
+    monkeypatch.setattr(rp, "SESSIONS_DIR", wave_sessions)
+    monkeypatch.setattr(video, "SESSIONS_DIR", wave_sessions)
+    return sorted(p.parent.name for p in wave_sessions.glob("*/record.json"))
 
 
-@needs_fixture
-def test_every_encounter_in_the_wave_builds_a_blind_packet(wave):
+def _reference(wave, *encounter_ids):
+    """Skip unless this wave carries the named reference encounters."""
+    missing = [sid for sid in encounter_ids if sid not in wave]
+    if missing:
+        pytest.skip("this wave does not carry the reference encounters these "
+                    "assertions describe: %s" % (missing,))
+
+
+def test_every_encounter_in_the_wave_builds_a_blind_packet(wave, wave_sessions):
     """The whole wave, every encounter, both checks.
 
-    A synthetic encounter is one shape. The wave has twenty-seven, including a
-    one-turn encounter, a group scene, an interrupted delivery, two lost
-    transcripts, two encounters with no webcam upload, and an internal test run.
-    Every one of them has a real participant key, real trigger ids and real
-    stage directions sitting in its event trail, so this is the leak test run
-    against the material it is meant to hold back.
+    A synthetic encounter is one shape. The reference wave has twenty-seven,
+    including a one-turn encounter, a group scene, an interrupted delivery, two
+    lost transcripts, two encounters with no webcam upload, and an internal
+    test run. Every one of them has a real participant key, real trigger ids
+    and real stage directions sitting in its event trail, so this is the leak
+    test run against the material it is meant to hold back.
+
+    The size is deliberately not asserted. Whatever wave is present, every
+    encounter in it must build a packet that leaks nothing; `== 27` was a
+    statement about which directory the runner was pointed at, and it turned a
+    colleague's wave into a red suite without saying anything about the code.
     """
-    assert len(wave) == 27, f"expected the 27-encounter wave, saw {len(wave)}"
+    assert wave, "the wave resolved but holds no encounters"
     for sid in wave:
         packet = rp.build(sid)
         assert packet, f"{sid} produced no packet"
@@ -664,7 +675,8 @@ def test_every_encounter_in_the_wave_builds_a_blind_packet(wave):
         leaked = sorted(set(FORBIDDEN_KEYS) & seen)
         assert not leaked, f"{sid} leaked {leaked}"
 
-        record = json.loads((FIXTURE / sid / "record.json").read_text(encoding="utf-8"))
+        record = json.loads(
+            (wave_sessions / sid / "record.json").read_text(encoding="utf-8"))
         blob = _blob(packet)
         for value in (sid, record.get("participant_key"), record.get("participant_id"),
                       record.get("run_id")):
@@ -689,14 +701,12 @@ def test_every_encounter_in_the_wave_builds_a_blind_packet(wave):
         assert "esci" not in _keys(packet), f"{sid} leaked the ESCI tagging structure"
 
 
-@needs_fixture
 def test_wave_rating_codes_are_unique_and_stable(wave):
     codes = {sid: rp.rating_code(sid) for sid in wave}
     assert len(set(codes.values())) == len(wave)
     assert codes == {sid: rp.rating_code(sid) for sid in wave}
 
 
-@needs_fixture
 def test_wave_packets_are_rateable(wave):
     """Every packet carries the four things a rater needs to score it."""
     constructs = set()
@@ -714,10 +724,13 @@ def test_wave_packets_are_rateable(wave):
         for turn in packet["transcript"]:
             assert set(turn) == {"t", "role", "speaker", "text",
                                  "interrupted", "transcript_missing", "note"}
-    assert len(constructs) == 4, "the wave should cover all four constructs"
+    # A wave that never touches all four constructs leaves a whole block of the
+    # instrument unexercised, which is a study problem worth saying out loud.
+    assert len(constructs) == 4, (
+        "this wave only covers %s; a block of the instrument would never be "
+        "rated" % (sorted(constructs),))
 
 
-@needs_fixture
 def test_wave_flags_reach_the_packets(wave):
     """The specific encounters the wave seeded these defects into.
 
@@ -727,6 +740,8 @@ def test_wave_flags_reach_the_packets(wave):
     these three go quiet and a rater scores a truncated or empty line as a weak
     reply with nothing on screen saying otherwise.
     """
+    _reference(wave, "s_1772460300_44c9a2",
+               "s_1772548516_02952d", "s_1772958864_451bf5")
     interrupted = rp.build("s_1772460300_44c9a2")
     assert interrupted["counts"]["interrupted_turns"] >= 1
     assert any(t["note"] == rp.NOTE_INTERRUPTED for t in interrupted["transcript"])
@@ -738,16 +753,18 @@ def test_wave_flags_reach_the_packets(wave):
         assert all(t["note"] == rp.NOTE_NO_TRANSCRIPT for t in missing)
 
 
-@needs_fixture
 def test_wave_video_presence_matches_the_upload_receipts(wave):
-    """Twenty-five of the twenty-seven have a webcam upload; two deliberately do not.
+    """Two encounters in the reference wave deliberately have no webcam upload.
 
-    Note that record.json on disk says `"video": []` for all twenty-seven — the
+    Note that record.json on disk says `"video": []` for every encounter — the
     stored copy is written before the browser confirms the upload — which is why
     the packet rebuilds the record from events.jsonl instead of reading it.
     """
+    _reference(wave, "s_1772764657_717245", "s_1773142745_384dad")
     with_video = [sid for sid in wave if rp.build(sid)["media"]["video_available"]]
-    assert len(with_video) == 25
+    # Derived, not the reference wave's literal 25: everything except the two
+    # seeded no-upload encounters must present a playable video.
+    assert len(with_video) == len(wave) - 2
     for sid in ("s_1772764657_717245", "s_1773142745_384dad"):
         media = rp.build(sid)["media"]
         assert media["video_available"] is False
@@ -759,7 +776,6 @@ def test_wave_video_presence_matches_the_upload_receipts(wave):
         assert "X-Amz-Signature=" in media["video_url"]
 
 
-@needs_fixture
 def test_wave_one_turn_encounter_still_builds(wave):
     """P5's second encounter: the participant said one sentence.
 
@@ -767,13 +783,13 @@ def test_wave_one_turn_encounter_still_builds(wave):
     almost nothing here rather than be handed a blank screen, so the packet is
     built and its emptiness is visible in the counts.
     """
+    _reference(wave, "s_1772868851_e93ad5")
     packet = rp.build("s_1772868851_e93ad5")
     assert packet["counts"]["participant_turns"] == 1
     assert packet["counts"]["agent_turns"] >= 1
     assert packet["duration_s"] > 0
 
 
-@needs_fixture
 def test_wave_packet_build_is_deterministic(wave):
     """Same encounter, same packet — except the signature, which is time-based.
 
@@ -786,13 +802,13 @@ def test_wave_packet_build_is_deterministic(wave):
     assert a == b
 
 
-@needs_fixture
 def test_internal_test_traffic_is_not_marked_in_the_packet(wave):
     """The internal-cohort encounter looks like any other to a rater.
 
     Cohort is a researcher's concern — it decides what enters the dataset — and
     a rater who could see it would know which encounters do not count.
     """
+    _reference(wave, "s_1773142745_384dad")
     packet = rp.build("s_1773142745_384dad")
     assert packet
     # Quoted, so a scenario that happens to use the word ("a new internal
@@ -800,11 +816,11 @@ def test_internal_test_traffic_is_not_marked_in_the_packet(wave):
     assert '"internal"' not in _blob(packet)
 
 
-@needs_fixture
-def test_wave_transcript_speakers_are_names_not_ids(wave):
+def test_wave_transcript_speakers_are_names_not_ids(wave, wave_sessions):
     for sid in wave:
         packet = rp.build(sid)
-        record = json.loads((FIXTURE / sid / "record.json").read_text(encoding="utf-8"))
+        record = json.loads(
+            (wave_sessions / sid / "record.json").read_text(encoding="utf-8"))
         names = {a["name"] for a in record.get("cast") or []}
         for turn in packet["transcript"]:
             assert turn["speaker"] == "Participant" or turn["speaker"] in names \

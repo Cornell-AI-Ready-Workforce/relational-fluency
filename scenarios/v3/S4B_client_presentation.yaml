@@ -100,11 +100,43 @@ interactions:
           low:
             answer: "Deck looks great, Dan. Let's just rehearse it."
             why: "key insight lost; cooperation by silence only"
+      # Same repair as S4A t2/t3, and the parallel form needs it in the same
+      # places or the two variants stop being interchangeable under silence.
+      # The scene opens itself, but after that the silence watchdog is all that
+      # is left, and it probes only where the next unfired beat carries an
+      # on_silence: without these the room went dead between Dan's opening and
+      # the close, and could not advance past the unfired beat either. Neither
+      # probe turns to Priya — retrieving her interrupted point is what t3
+      # scores, and a room that fetches her itself has answered it.
       - id: t2_idea_relabelled
         cue: "Dan relabels Chris's phasing suggestion as 'like I said earlier'"
+        on_silence: "Dan rolls on: 'Like I said earlier, we phase it, that's the structure. Everyone good?'"
         esci: [respectful, encourages_cooperation]
+      # `agent` is pinned for the same reason as S4A t3, and the parallel form
+      # needs it in the same place or the two variants stop behaving alike under
+      # silence. The cue names nobody, so _probe_room would hand the beat to
+      # whoever did not just speak — Priya, after Dan's t2 — and a beat scored
+      # on solicits_input / encourages_participation would be delivered by the
+      # character who is supposed to be left out of the run-through, which is
+      # the retrieval the participant is being watched for. Dan owns it anyway:
+      # step 4 of his arc is "Start the run-through with Priya not slotted to
+      # speak".
+      #
+      # Same caveat as S4A t3, and it has to stay the same on both forms or the
+      # variants diverge under exactly the condition parity is meant to cover.
+      # _trigger_agent is read on the normal group-turn path too, so while this
+      # beat is next and the router routes to Priya or Chris the turn logs
+      # trigger_deferred and leaves it unspent, and _maybe_advance holds i1 open
+      # until the rotation or the silence watchdog reaches Dan; if it never
+      # does, the beat is recorded in advance_requested.skipped_triggers. A
+      # recorded gap in a re-runnable encounter is the acceptable side of this
+      # trade. Unpinning would instead have Priya retrieve her own exclusion on
+      # the probe, and score it. Fix it with a `probe_agent` key, not by
+      # unpinning.
       - id: t3_runthrough_without_priya
+        agent: dan
         cue: "The run-through starts with Priya not slotted to speak"
+        on_silence: "The run-through starts anyway: 'Okay, from the top then, unless someone wants to change something first?'"
         esci: [encourages_participation, solicits_input]
 
   - id: i2

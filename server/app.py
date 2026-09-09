@@ -11,8 +11,10 @@ validated scenarios and prompts.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -70,7 +72,9 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 # TrustedHostMiddleware because the ALB health check addresses the task by its
 # private IP, which can never be in the allowlist, TrustedHostMiddleware would
 # answer 400 and the target would be marked unhealthy forever. /health is
-# therefore exempt; it exposes nothing.
+# therefore exempt, which — with no check_key on it either — makes it the one
+# route reachable from the open internet. Whatever it returns is public: see
+# _PUBLIC_STORAGE_FIELDS, which is what keeps that true as fields are added.
 if ALLOWED_HOSTS:
 
     @app.middleware("http")
@@ -91,20 +95,198 @@ app.add_middleware(
 
 from .llm import preflight as _preflight
 
-# Verify the model gateway before anyone can join. A wrong endpoint used to show
-# up only as a 401 mid-encounter; now it is visible at boot and on /health.
-_PREFLIGHT = _preflight()
-if _PREFLIGHT.get("ambient_override_ignored"):
-    print(
-        f"  note: ignoring ambient ANTHROPIC_BASE_URL="
-        f"{_PREFLIGHT['ambient_override_ignored']}, using {_PREFLIGHT['gateway']}"
+from botocore.exceptions import BotoCoreError, ClientError
+
+from . import video as _video
+
+# The two credentialed seams — the model gateway and the study bucket — are
+# checked at STARTUP, by run_preflights() below. Neither is checked here, in the
+# module body, and that is the whole point of this comment.
+#
+# Both used to run on import. That made `import server.app` do an httpx GET to
+# the gateway, two S3 calls and a put_object into the study bucket, which is
+# wrong three times over. It is slow (a black-holed S3 path costs ~6 s per call
+# and the gateway probe another 10 s) on a module that verify_record, scoring,
+# retranscribe and every pytest process import. It fails, noisily and for no
+# reason, wherever there are no credentials — which is every offline tool run.
+# And it PUT an object into an IRB bucket as a side effect of running a report:
+# the preflight's marker key is harmless in itself, but "reading a record wrote
+# to the study bucket" is not a sentence this project should be able to say.
+#
+# The answer before the check has run is "unknown", written down as such rather
+# than defaulted to False: ok=None with checked=False is a state /health can
+# publish honestly, where ok=False would tell an operator the bucket had been
+# tested and failed. Same rule as everywhere else here — an explicit unknown
+# beats a confident wrong answer.
+_UNCHECKED_GATEWAY = {"ok": None, "checked": False}
+_UNCHECKED_STORAGE = {"ok": None, "checked": False,
+                      "bucket": _video.BUCKET, "region": _video.REGION}
+_PREFLIGHT = dict(_UNCHECKED_GATEWAY)
+_STORAGE_PREFLIGHT = dict(_UNCHECKED_STORAGE)
+
+
+def _check_gateway() -> None:
+    global _PREFLIGHT
+
+    # Verify the model gateway before anyone can join. A wrong endpoint used to
+    # show up only as a 401 mid-encounter; now it is visible at boot and on
+    # /health.
+    _PREFLIGHT = dict(_preflight(), checked=True)
+    if _PREFLIGHT.get("ambient_override_ignored"):
+        print(
+            f"  note: ignoring ambient ANTHROPIC_BASE_URL="
+            f"{_PREFLIGHT['ambient_override_ignored']}, using {_PREFLIGHT['gateway']}"
+        )
+    if not _PREFLIGHT.get("ok"):
+        print(
+            f"  WARNING: model gateway {_PREFLIGHT['gateway']} did not answer "
+            f"({_PREFLIGHT.get('status') or _PREFLIGHT.get('detail')}). "
+            f"Encounters will fail until this is fixed."
+        )
+
+def _check_storage() -> None:
+    global _STORAGE_PREFLIGHT
+
+    # The other credentialed seam. The webcam recording is the artefact Phase 2
+    # rates, it is uploaded browser-direct with a URL this process signs, and
+    # until this check existed nothing touched the bucket until the last second
+    # of the first encounter — where the failure used to be a silent
+    # resolve(false) in the participant's browser. The client half of that is
+    # fixed: static/v2.html's uploadRecording now resolves {ok:false, reason}
+    # and reports it, so the browser no longer discards the failure. This check
+    # is what makes a wrong bucket visible BEFORE a wave is collected rather
+    # than during it.
+    _STORAGE_PREFLIGHT = dict(_video.storage_preflight(), checked=True)
+    if not _STORAGE_PREFLIGHT.get("ok"):
+        print(
+            f"  WARNING: study bucket {_STORAGE_PREFLIGHT['bucket']} "
+            f"({_STORAGE_PREFLIGHT['region']}) is not "
+            f"{'readable' if not _STORAGE_PREFLIGHT.get('readable') else 'writable'}"
+            f" ({_STORAGE_PREFLIGHT.get('error_code') or _STORAGE_PREFLIGHT.get('detail')})."
+            f" Webcam recordings will be lost until this is fixed."
+        )
+
+
+def run_preflights() -> None:
+    """Check the gateway and the study bucket, and say so on stdout.
+
+    Explicit and idempotent: a launcher, a startup hook or an operator may call
+    it, and importing this module may not. Neither check gates anything — both
+    report — because a transient blip must not stop a process that can still run
+    encounters and still write every local artefact.
+
+    The two are run independently, and a failure in one does not skip the other.
+    Both are documented as never raising, so this catches nothing that is
+    supposed to happen; what it prevents is the shape where an unexpected
+    gateway error leaves the bucket silently unchecked and /health saying
+    "unknown" with nobody having asked for that answer. A check that quietly did
+    not run is exactly the state these checks exist to abolish.
+    """
+    for name, check in (("model gateway", _check_gateway),
+                        ("study bucket", _check_storage)):
+        try:
+            check()
+        except Exception as e:  # noqa: BLE001, a diagnostic must not stop the process
+            print(f"  WARNING: the {name} preflight did not complete: "
+                  f"{type(e).__name__}: {e}")
+
+
+def _refuse_unprotected_public_start() -> Optional[str]:
+    """Why this process must not serve, or None if it may.
+
+    SESSION_KEY is the only thing standing between the open internet and the
+    researcher surface: /api/sessions, /api/encounters, the per-session download
+    zips, the director view, the whole dataset (see check_key). Empty, check_key
+    waves everyone through — which is right for a laptop and catastrophic for a
+    task behind a public hostname, where the first symptom is a stranger reading
+    IRB-recorded encounters and there is no symptom at all until then.
+
+    The test is the bind address first and the host allowlist second: the
+    interface decides whether a stranger can open a socket at all, and the
+    allowlist then says which names this process will answer to once they can.
+    A non-loopback bind plus either a public hostname or an empty (= anything)
+    allowlist is a deployment somebody else can reach. Returning a string rather
+    than raising keeps a plain import side-effect-free, which the offline tools
+    (verify_record, scoring, retranscribe) and the test suite depend on; the
+    startup hook below is what actually refuses. The preflights are held to the
+    same rule and for the same reason — see run_preflights: an import decides
+    nothing, contacts nothing and writes nothing.
+    """
+    if SESSION_KEY:
+        return None
+    # Bind address first, allowlist second. ALLOWED_HOSTS DEFAULTS to the two
+    # production hostnames, so testing the allowlist alone refused to start on a
+    # fresh clone following the README quick start — which is worse than the
+    # exposure it prevents, because the first thing a new contributor meets is a
+    # server that will not run. What actually decides whether a stranger can
+    # reach this process is the interface it binds: loopback is reachable only
+    # from this machine, whatever hostnames it would answer to.
+    host = os.getenv("HOST", "127.0.0.1").strip()
+    if host in ("127.0.0.1", "localhost", "::1", ""):
+        return None
+    # "testserver" is the ASGI test harness's own host name, not a routable one:
+    # a suite that stands the app up on a local-only allowlist is a development
+    # server by any reading, and refusing it would only teach everybody to set
+    # SESSION_KEY=x — which is how the production value ends up being "x".
+    local = ("localhost", "127.0.0.1", "::1", "testserver")
+    public = [h for h in ALLOWED_HOSTS if h not in local]
+    # An EMPTY allowlist is the widest setting there is, not the narrowest.
+    # `public` is computed by filtering ALLOWED_HOSTS, so [] used to read as
+    # "no public hostnames, therefore local dev" — while line 57's own comment
+    # tells operators that emptying ALLOWED_HOSTS disables the host check, which
+    # is the first thing anyone reaches for when the ALB or a new hostname trips
+    # the guard. On a non-loopback bind that combination is the worst of both:
+    # the researcher surface unauthenticated AND the Host allowlist off, so the
+    # process answers to any name pointed at it. Describe it the way it behaves.
+    answers_to_anything = not ALLOWED_HOSTS
+    if not public and not answers_to_anything:
+        return None
+    return (
+        "SESSION_KEY is empty but this deployment binds "
+        + host
+        + " and answers to "
+        + (", ".join(public) if public else "any Host header (ALLOWED_HOSTS is empty)")
+        + ". Without it every researcher route — recorded encounters, the "
+        "download zips, the whole dataset — is open to anyone who finds the "
+        "hostname. Set SESSION_KEY, or bind HOST=127.0.0.1, or set "
+        "ALLOWED_HOSTS=localhost,127.0.0.1 for local development."
     )
-if not _PREFLIGHT.get("ok"):
-    print(
-        f"  WARNING: model gateway {_PREFLIGHT['gateway']} did not answer "
-        f"({_PREFLIGHT.get('status') or _PREFLIGHT.get('detail')}). "
-        f"Encounters will fail until this is fixed."
-    )
+
+
+async def _refuse_to_serve_unprotected() -> None:
+    """Startup hook: come up serving, or do not come up.
+
+    On the router's startup list rather than in the module body so that
+    importing server.app stays safe, and rather than only in __main__ so that
+    any launcher — uvicorn's CLI, gunicorn, a test harness — is held to it too.
+    Raising here is what stops the process: uvicorn reports the failure and
+    exits non-zero instead of binding a port.
+    """
+    refusal = _refuse_unprotected_public_start()
+    if refusal:
+        print(f"  REFUSING TO START: {refusal}")
+        raise RuntimeError(refusal)
+
+
+app.router.on_startup.append(_refuse_to_serve_unprotected)
+
+
+async def _run_preflights_on_startup() -> None:
+    """Startup hook: the gateway and bucket checks, once the process is serving.
+
+    Ordered AFTER the refusal above so a deployment that must not serve does not
+    first spend seconds on network probes, and does not write the preflight
+    marker into the study bucket on its way to exiting.
+
+    run_preflights swallows and names anything either check throws, so nothing
+    here can take the port down: a diagnostic that can stop a process which
+    could still run encounters is worse than no diagnostic.
+    """
+    run_preflights()
+
+
+app.router.on_startup.append(_run_preflights_on_startup)
+
 
 # Participant-facing HTML must never be cached. A stale build is invisible to
 # the participant and looks like a broken feature, and during collection it
@@ -122,16 +304,74 @@ async def _no_store_html(request, call_next):
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+# What an unauthenticated caller may learn about the study bucket. /health is
+# reachable from the open internet — it carries no check_key and is the one path
+# exempted from the Host allowlist above (the ALB health check addresses the
+# task by its private IP), and infra/terraform/alb.tf forwards every path to the
+# target group by default — so everything it returns is public by construction.
+#
+# The preflight dict itself is a diagnostic for an operator and holds three
+# things that must not be: the bucket name and region (a free target for exactly
+# the "seed/abuse the study bucket" attack video.presign_upload's one-shot guard
+# exists to prevent, and it names the bucket holding IRB-recorded encounters),
+# whether the task has credentials at all, and `detail` — a raw str(exc) from
+# boto3 client construction that nothing redacts. Project instead of blacklist,
+# so a field added to the preflight later is private until someone says
+# otherwise rather than published the day it appears.
+#
+# `checked` is published because without it `ok: null` is unreadable: a probe
+# cannot tell "the bucket check ran and could not decide" from "the check has
+# not run in this process at all", and the second is the ordinary state of every
+# import that is not a served app. It says whether a check happened, never what
+# it found, so it names nothing a stranger may not know.
+_PUBLIC_STORAGE_FIELDS = ("ok", "checked", "readable", "writable", "error_code")
+
+
 @app.get("/health")
-async def health() -> dict:
+async def health(key: Optional[str] = Query(None)) -> dict:
     """Liveness probe for the ALB target group. Deliberately unauthenticated and
     dependency-free: it answers whether this process can serve, not whether the
-    model gateway is reachable, so a transient upstream blip cannot cause ECS to
-    kill healthy tasks mid-encounter."""
+    model gateway or the study bucket is reachable, so a transient upstream blip
+    cannot cause ECS to kill healthy tasks mid-encounter.
+
+    Public. Answers 200 to anyone, so nothing here may say more than a stranger
+    may know — see _PUBLIC_STORAGE_FIELDS. A valid researcher key widens the
+    storage block to the operator's full diagnosis; an absent or wrong key is
+    never an error here, it just gets the narrow answer, because refusing the
+    probe would take the task out of service."""
     # Nested so the liveness field cannot be shadowed by preflight keys.
     # active_sessions: a deploy rollout retires the old task within ~2 minutes,
     # which cuts any encounter running on it. Check this is 0 before applying.
-    return {"status": "ok", "gateway": _PREFLIGHT, "active_sessions": len(registry.list_ids())}
+    #
+    # storage is the startup answer, not a fresh call: this route is hit every
+    # 30 s by the health check and a HEAD per probe would be both a cost and a
+    # way for a slow bucket to make a healthy task look dead. It is here so a
+    # misconfigured bucket is one curl away instead of a discovery made after
+    # collection, and the 200 stays unconditional for exactly that reason.
+    # `ok: null, checked: false` is what a process that never ran its startup
+    # hooks reports — an import, not a deployment — and is a genuine unknown
+    # rather than a bucket that failed its check.
+    #
+    # The gateway block is published whole: llm.preflight is documented as
+    # public and puts every message it carries through redact_key. The storage
+    # block has no such contract, so it is projected.
+    #
+    # Compared explicitly rather than through check_key, which waves everyone
+    # through when SESSION_KEY is empty — that would publish the full block on
+    # precisely the deployment least able to afford it.
+    authorised = bool(SESSION_KEY) and bool(key) and secrets.compare_digest(key, SESSION_KEY)
+    storage = (dict(_STORAGE_PREFLIGHT) if authorised else
+               {k: _STORAGE_PREFLIGHT.get(k) for k in _PUBLIC_STORAGE_FIELDS
+                if k in _STORAGE_PREFLIGHT})
+    return {"status": "ok", "gateway": _PREFLIGHT, "storage": storage,
+            # Not a secret, and the only way to check the researcher credential
+            # from outside a running task: an operator who has just deployed
+            # needs to know the key landed in the environment, and finding out
+            # by fetching /api/ratings without one is a worse way to learn it.
+            # False here says nothing an unauthenticated GET of any researcher
+            # route would not already prove.
+            "session_key_configured": bool(SESSION_KEY),
+            "active_sessions": len(registry.list_ids())}
 
 
 def _load_consent() -> dict:
@@ -392,16 +632,60 @@ async def start_run(
     # voice endpoint refuses to open, so no capture can precede consent.
     pid_record = run.get("participant_record_id")
     if not pid_record:
-        try:
-            pid_record = create_participant(
-                code=(pkey or run["run_id"]),
-                consent_given=False,
-                consent_version="",
-            )
+        # Retried once, then logged. A failed mint here is not cosmetic: the run
+        # keeps no participant_record_id, so _run_context cannot join the
+        # encounter back to the run, and the manifest records run_id, cohort and
+        # participant key as null — which per storage.py means "not study data".
+        # A consented participant's encounter then quietly falls out of the
+        # analysis set. The mint is a JSON write plus a sqlite row, so the
+        # realistic failure (a full or briefly unavailable DATA_DIR — in
+        # production an EFS mount) is transient and a second attempt usually
+        # takes; when it does not, this has to be visible at the moment it
+        # happens, because nothing downstream will ever say so.
+        #
+        # Two loops, not one. The mint and the write-back fail for the same
+        # reason (a full or stalled DATA_DIR) but they are not one unit: a
+        # single try around both meant that when the mint SUCCEEDED and
+        # runs.save then raised, the handler set pid_record = None and attempt 2
+        # minted a second record — leaving an orphaned participant record behind
+        # (two of them if the second save also failed) where the old code left
+        # exactly one. An identity that exists is still the right one to hand the
+        # page, so a save failure keeps it; it is the run write-back, not the
+        # record, that is worth a second attempt. If both saves fail the run file
+        # still has no participant_record_id, and _adopt_participant_record
+        # repairs the join at the first affirmative act.
+        for attempt in (1, 2):
+            try:
+                pid_record = create_participant(
+                    code=(pkey or run["run_id"]),
+                    consent_given=False,
+                    consent_version="",
+                )
+                break
+            except Exception as e:  # noqa: BLE001 , fall back to today's behavior
+                pid_record = None
+                if attempt == 2:
+                    print(
+                        f"  WARNING: /start could not mint a participant record "
+                        f"for run {run['run_id']} (participant {pkey}): "
+                        f"{type(e).__name__}: {e}. The encounter will proceed but "
+                        f"will not be joined to the run until consent is recorded."
+                    )
+        if pid_record:
             run["participant_record_id"] = pid_record
-            runs.save(run)
-        except Exception:  # noqa: BLE001 , fall back to today's behavior
-            pid_record = None
+            for attempt in (1, 2):
+                try:
+                    runs.save(run)
+                    break
+                except Exception as e:  # noqa: BLE001, the record itself is safe
+                    if attempt == 2:
+                        print(
+                            f"  WARNING: /start minted participant record "
+                            f"{pid_record} for run {run['run_id']} (participant "
+                            f"{pkey}) but could not write it back to the run: "
+                            f"{type(e).__name__}: {e}. The record is kept and the "
+                            f"run will adopt it when consent is recorded."
+                        )
 
     q = f"?run={run['run_id']}"
     # Forward the key only when participant routes actually demand one.
@@ -415,8 +699,16 @@ async def start_run(
     if key and PARTICIPANT_KEY_REQUIRED:
         q += f"&key={key}"
     # Prefer the run's stable participant record; otherwise never drop a
-    # participant_id that was handed to us.
-    effective_pid = pid_record or participant_id
+    # participant_id that was handed to us — but only when it names a record
+    # that exists. ?participant_id= is one of the spellings Qualtrics pipes the
+    # raw participant key through (see raw_key above), so when the mint failed
+    # this fallback used to hand the page the survey's own key dressed up as a
+    # record id; the page POSTs it to /api/consent, record_consent finds no such
+    # record, the route answers 404 and the participant is stuck in "We couldn't
+    # save your consent. Please press Continue to try again." forever. Passing
+    # nothing instead lets the page mint its own record and proceed.
+    effective_pid = pid_record or (participant_id if participant_id
+                                   and get_participant(participant_id) else None)
     if effective_pid:
         q += f"&participant_id={effective_pid}"
         # Tell the page whether this record still needs consent, so it shows the
@@ -567,6 +859,37 @@ def _require_session_owner(m: dict, participant_id: Optional[str]) -> None:
     owner = m.get("participant_id")
     if not participant_id or not owner or participant_id != owner:
         raise HTTPException(403, "not your session")
+
+
+def _consented_participant(participant_id: Optional[str]) -> Optional[dict]:
+    """The participant record a capture socket may open under, or None.
+
+    Existence is not consent, and this is the one question both participant
+    sockets have to ask. /start mints a record with consent_given=False so
+    identity is stable across a run before anyone has agreed to anything, and
+    storage.record_decline leaves the record in place with the flag off and
+    declined=True — a refusal is data, so the record survives the refusal.
+
+    The text socket used to test existence alone. A participant who read the
+    form and refused was therefore accepted on it, and _run_context still
+    stamped their withdrawn run's id, participant key and cohort "study" onto
+    the encounter: a rateable study transcript belonging to someone who said no.
+    Both sockets now ask here, so the two gates cannot drift apart again.
+
+    They differ on ONE thing, at their call sites and not here: an ABSENT
+    participant_id. The voice socket refuses it (capture is audio and webcam
+    under the IRB), the text socket allows it (the documented single-agent text
+    entrance opens with no record, and an encounter with no record resolves no
+    run, so it is unattributable rather than misattributed). None is returned
+    for the absent case either way, so a caller that wants the strict rule gets
+    it by testing this alone.
+    """
+    if not participant_id:
+        return None
+    rec = get_participant(participant_id)
+    if not rec or not rec.get("consent_given") or rec.get("declined"):
+        return None
+    return rec
 
 
 def _require_owner_or_key(sdir: Path, participant_id: Optional[str], key: Optional[str]) -> None:
@@ -766,15 +1089,75 @@ async def api_post_consent(payload: dict, key: Optional[str] = Query(None)):
     # there with consent_given=False so identity is stable across the four
     # encounters. Flip that record rather than minting a second one, or the
     # participant would end up with one identity per encounter again.
+    run_id = (payload.get("run_id") or "").strip()
+    # In a worker thread: without a run_id the repair below scans RUNS_DIR to
+    # find the participant's run, and this coroutine shares its event loop with
+    # every live encounter's audio. One consent POST per participant is not
+    # much, but it arrives while the rest of the wave is mid-encounter.
+    from starlette.concurrency import run_in_threadpool
+
     if existing:
         rec = record_consent(existing, version)
         if rec is None:
             raise HTTPException(404, "no such participant record")
+        await run_in_threadpool(_adopt_participant_record, run_id, existing, code)
         return {"participant_id": existing, "consent_text_version": version}
     if not code:
         raise HTTPException(400, "code required")
     pid = create_participant(code=code, consent_given=True, consent_version=version)
+    await run_in_threadpool(_adopt_participant_record, run_id, pid, code)
     return {"participant_id": pid, "consent_text_version": version}
+
+
+def _adopt_participant_record(run_id: str, pid: str, code: str = "") -> None:
+    """Give a run the participant record it never got, if it has none.
+
+    /start normally mints the record and stores it on the run. When that mint
+    fails the run is left without one, and the page mints its own here — a
+    record the run has never heard of, so _run_context cannot resolve the
+    encounter and the manifest records it as unattributable. Writing the id back
+    at the first affirmative act repairs the join for the rest of the run.
+
+    `code` is the belt to run_id's braces, and it is what makes this reachable
+    at all. The repair used to return immediately unless the POST carried a
+    run_id — and static/v2.html's consent-ACCEPT handler does not send one (only
+    its decline handler does), so on the one client that takes this path the
+    repair never fired and B20's harm stayed live: the run kept
+    participant_record_id None, _run_context resolved to None, and the
+    encounter's manifest recorded run_id, cohort and participant key as null,
+    which per storage.py means "not study data". The page does send `code`, and
+    `code` is the run's own participant key (v2.html sends run.participant_id),
+    so when no run_id is given the run can be found from it. Fixing the client
+    to send run_id is the better half of this and is tracked separately; this
+    half is what stops a client that forgets it from silently costing the
+    participant their first encounter.
+
+    Only ever fills a blank: a run that already names a record keeps it, because
+    that is the identity its earlier encounters were recorded under. Failure is
+    swallowed for the same reason /start's is — consent has been given and
+    recorded, and bookkeeping must not be what turns the participant away.
+    """
+    if not pid or not (run_id or code):
+        return
+    from . import runs
+
+    try:
+        run = runs.get(run_id) if run_id else None
+        if run is None and code:
+            # Their own run, not a stranger's: find_for_participant matches on
+            # the participant key, which is the same key /start created the run
+            # under. Newest wins, which is the run the consent form is being
+            # shown for — the accept happens on the first encounter of a run,
+            # before any later one exists.
+            run = runs.find_for_participant(code)
+        if run is not None and not run.get("participant_record_id"):
+            run["participant_record_id"] = pid
+            runs.save(run)
+    except Exception as e:  # noqa: BLE001
+        print(
+            f"  WARNING: could not attach participant record {pid} to run "
+            f"{run_id}: {type(e).__name__}: {e}"
+        )
 
 
 @app.post("/api/consent/decline")
@@ -788,7 +1171,19 @@ async def api_post_consent_decline(payload: dict, key: Optional[str] = Query(Non
 
     Answers 200 even when there is no record to mark. The page has already told
     the participant they are finished, and re-prompting someone who has just
-    refused would be a worse failure than a thinner record.
+    refused would be a worse failure than a thinner record. `recorded`,
+    `withdrawn` and `reason` in the body say what actually happened, so a 200 is
+    not read as "both artefacts were written".
+
+    `reason` exists because `recorded: false` covers two situations the
+    participant must not be told the same thing about. "already_consented" means
+    this record carries consent — very likely given in the other tab of a
+    duplicated study link — so an encounter may already have been recorded and
+    the page must not tell them their camera was never on. "no_record" means
+    there is nothing on file under that id at all, where nothing was captured
+    and the honest thing to say is that the refusal could not be filed. The
+    client cannot tell those apart from a boolean, and guessing would have it
+    state one of them as fact.
     """
     check_participant(key)
     from . import runs
@@ -799,11 +1194,56 @@ async def api_post_consent_decline(payload: dict, key: Optional[str] = Query(Non
     recorded = False
     if pid:
         recorded = record_decline(pid, version, run_id=run_id or None) is not None
+    if recorded:
+        reason = "recorded"
+    else:
+        # Ask the record itself rather than inferring: record_decline answers
+        # None for both cases and the difference is what the participant is
+        # about to be told.
+        prior = get_participant(pid) if pid else None
+        reason = ("already_consented"
+                  if prior is not None and (prior.get("consent_given")
+                                            or prior.get("consent_recorded_at"))
+                  else "no_record")
     # Stop the run as well, so reopening the study link cannot enrol someone who
-    # declined into the encounters they just refused.
-    if run_id and runs.get(run_id):
+    # declined into the encounters they just refused — but ONLY when the refusal
+    # was actually recorded.
+    #
+    # record_decline returns None when the record already carries consent: a
+    # decline cannot retroactively withdraw a consent under which audio and
+    # webcam have already been captured (storage.record_decline explains why).
+    # Withdrawing the run regardless, which is what this did, produced two
+    # artefacts that contradict each other — the participant file saying
+    # consented and never declined, the run file saying withdrawn BECAUSE
+    # consent was declined — split across two files so neither one alone shows
+    # the contradiction, with the participant locked out of every remaining
+    # encounter (runs.withdraw has no clearing path and runs.advance refuses a
+    # withdrawn run). That is worse-shaped than the defect it replaced. The
+    # request that triggers it is ordinary, not adversarial: both tabs of a
+    # duplicated study link get &consent=1, so the one left open still offers
+    # Decline after the other has consented.
+    #
+    # `completed` is the second guard. A run with finished encounters holds
+    # recorded data that a late decline did not undo, and marking it withdrawn
+    # would tell an analyst the participant stopped partway through a run they
+    # actually finished. Someone who consents and then wants out uses the
+    # participant page's own stop control, which withdraws the run as the
+    # separate act it is.
+    run = runs.get(run_id) if run_id else None
+    withdrawn = False
+    if recorded and run is not None and not (run.get("completed") or []):
         runs.withdraw(run_id, reason="declined_consent")
-    return {"recorded": recorded, "consent_text_version": version}
+        withdrawn = True
+    elif run is not None and not recorded:
+        # Loud, because the two records are about to disagree with what the
+        # participant just clicked and nothing downstream will say so.
+        print(
+            f"  WARNING: decline POSTed for run {run_id} (participant record "
+            f"{pid or 'none'}) was not recorded ({reason}). The run is left "
+            f"alone rather than withdrawn against a consented record."
+        )
+    return {"recorded": recorded, "withdrawn": withdrawn, "reason": reason,
+            "consent_text_version": version}
 
 
 @app.post("/api/run")
@@ -851,45 +1291,120 @@ async def api_run_create(request: Request, key: Optional[str] = None):
 
 
 @app.get("/api/sessions/{session_id}/video-upload-url")
-async def api_video_upload_url(session_id: str, participant_id: Optional[str] = None,
-                               key: Optional[str] = None):
+def api_video_upload_url(session_id: str, participant_id: Optional[str] = None,
+                         key: Optional[str] = None):
     """Presigned PUT for the participant's webcam recording. Participant-open:
     it grants a write to exactly one object, for one hour.
 
     The session must exist and belong to the presenting participant, and a
     presign is refused once the object is already there, so nobody can point a
     write at another participant's session or overwrite a finished recording.
+
+    Deliberately `def`, not `async def`: it makes a synchronous boto3 call, and
+    FastAPI runs a plain route in its threadpool. As a coroutine it ran that
+    call on the one event loop this process has, so a slow S3 froze every live
+    encounter's audio and /health along with it — measured at 6 s of total
+    silence with a 3 s HEAD, against an ALB health check that gives up at 5.
     """
     check_participant(key)
     from . import video
 
     sdir = _session_dir(session_id)  # existence + traversal check
     _require_session_owner(_load_manifest(sdir), participant_id)
-    if video.uploaded_size(session_id) > 0:
+    # One HEAD, not two. presign_upload does the same one-shot check itself, so
+    # asking here first doubled the round trip on the loop for no extra answer.
+    #
+    # Its three refusals are answered with three different statuses, because the
+    # browser acts on the difference. 409 is the only one that means "S3
+    # confirms the object is there", and static/v2.html reads that as "the
+    # earlier PUT landed" and stops re-sending tens of megabytes. Answering 409
+    # to the other two — no such session, and a refusal resting on our own
+    # receipt while S3 would not answer — told the page a recording was safe
+    # when nothing had checked, which is exactly the quiet false success this
+    # chain exists to prevent.
+    try:
+        presigned = video.presign_upload(session_id)
+    except video.NoSuchSession:
+        # Unreachable through this route (_session_dir above already 404s), so
+        # this is here for the next caller rather than for this one: a missing
+        # session must never be reported as a finished recording.
+        raise HTTPException(404, "no such session")
+    except video.UploadUnconfirmed as e:
+        print(
+            f"  WARNING: refusing a second webcam write URL for session "
+            f"{session_id} on the strength of this server's own receipt — S3 "
+            f"would not confirm the object (bucket {video.BUCKET}, region "
+            f"{video.REGION}): {e.code}"
+        )
+        raise HTTPException(503, f"cannot confirm the existing recording ({e.code})")
+    except (ClientError, BotoCoreError) as e:
+        # Signing is arithmetic, but resolving the credentials to sign WITH is
+        # not, and with no credentials at all it raises here. A 500 told the
+        # page nothing it could act on and told the operator nothing at all;
+        # 503 says "storage, not you", and the log line carries the coordinates.
+        code = video._aws_code(e)
+        print(
+            f"  WARNING: could not sign the webcam upload for session "
+            f"{session_id} (bucket {video.BUCKET}, region {video.REGION}): {code}"
+        )
+        raise HTTPException(503, f"recording storage unavailable ({code})")
+    if presigned is None:
         raise HTTPException(409, "video already uploaded")
-    return video.presign_upload(session_id)
+    return presigned
 
 
 @app.post("/api/sessions/{session_id}/video-uploaded")
-async def api_video_uploaded(session_id: str, participant_id: Optional[str] = None,
-                             key: Optional[str] = None):
+def api_video_uploaded(session_id: str, participant_id: Optional[str] = None,
+                       key: Optional[str] = None,
+                       client_error: Optional[str] = None):
     """Client confirms the upload; verified against S3 and written into the
-    session's event trail so verify_record can check for it."""
+    session's event trail so verify_record can check for it.
+
+    The event is written whatever S3 said — including when S3 said nothing at
+    all. A failed upload is not a missing video: an encounter with no event was
+    never captured, an event with status "failed" was captured and could not be
+    stored or confirmed, and only status "ok" is playable. Returning early on an
+    AWS error, as this did, collapsed the middle state into the first and left
+    the rater packet telling a rater "no webcam recording was captured" about an
+    object that may be sitting in the bucket.
+
+    Plain `def` for the same reason as the presign route above: the HEAD is
+    synchronous and must not run on the loop that carries every live encounter.
+    """
     check_participant(key)
     from . import video
 
     sdir = _session_dir(session_id)  # existence + traversal check
     _require_session_owner(_load_manifest(sdir), participant_id)
 
-    size = video.uploaded_size(session_id)
+    probe = video.head_video(session_id)
+    size = probe["bytes"]
+    ok = (size or 0) > 0
     import json as _json
     import time as _time
 
+    event = {
+        "t": None, "wall": _time.time(), "type": "video_uploaded",
+        "key": video.video_key(session_id), "bytes": size,
+        "status": "ok" if ok else "failed",
+    }
+    if not ok:
+        # A short, specific reason: the AWS code when S3 refused to answer, and
+        # "not_found" when it answered plainly that nothing is there. Both are
+        # recoverable facts; neither is recoverable from an absent event.
+        event["error"] = probe["error"] or "not_found"
+        # The browser knows things this side cannot: which of presign, PUT or
+        # timeout broke (static/v2.html sends it as ?client_error=). It is kept
+        # in its own field rather than merged into `error`, because that field
+        # is this server's own finding and this one is a claim from a client.
+        # Accepted only as a short bare token: it ends up in a record a human
+        # rater is shown, and anything longer or stranger than "put_http_403"
+        # is not a diagnosis, it is a paste.
+        hint = (client_error or "").strip()
+        if hint and len(hint) <= 40 and re.fullmatch(r"[A-Za-z0-9_.\-]+", hint):
+            event["client_error"] = hint
     with open(sdir / "events.jsonl", "a", encoding="utf-8") as fh:
-        fh.write(_json.dumps({
-            "t": None, "wall": _time.time(), "type": "video_uploaded",
-            "key": video.video_key(session_id), "bytes": size,
-        }) + "\n")
+        fh.write(_json.dumps(event) + "\n")
 
     # Rebuild the aligned record now that the video is known.
     #
@@ -907,7 +1422,19 @@ async def api_video_uploaded(session_id: str, participant_id: Optional[str] = No
         _write_record(sdir)
     except Exception:  # noqa: BLE001, never fail the upload confirmation on this
         pass
-    return {"ok": size > 0, "bytes": size, "key": video.video_key(session_id)}
+    body = {"ok": ok, "bytes": size, "key": video.video_key(session_id),
+            "status": event["status"]}
+    if not ok:
+        body["error"] = event["error"]
+    if probe["error"]:
+        # The event is already on disk, so the recording is recoverable whatever
+        # happens next; the status code exists so a retrying client can tell
+        # "S3 could not be asked, ask again" from "asked, and there is nothing
+        # there", which is a settled 200 with ok=false. Never a 500: an AWS
+        # error here is not a bug in this process, and a 500 is the one answer
+        # that made the whole thing disappear.
+        return JSONResponse(body, status_code=503)
+    return body
 
 
 @app.get("/api/run/config")
@@ -1297,12 +1824,36 @@ async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None,
             # when they are actually there.
             have = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
             extra = [c for c in ("run_id", "cohort") if c in have]
+            # Every filter belongs in the WHERE clause, because LIMIT/OFFSET
+            # counts rows the query returns, not rows the caller keeps. Filtering
+            # in Python afterwards meant a page could be emptied by rows that
+            # were never wanted — ?cohort=study&limit=1&offset=0 came back with
+            # nothing at all on the fixture wave, because the single internal
+            # test encounter is the newest row and it occupied the whole page.
+            # A pager that stops on a short page then exports a fraction of the
+            # wave and cannot tell that from the end of the data.
+            where = ["status != 'active'"]
+            params: list = []
+            if cohort:
+                if "cohort" not in have:
+                    # A pre-migration index cannot answer a cohort question, and
+                    # no row in it matches one. Same answer as before, reached
+                    # without pretending to page.
+                    return [], {s["id"]: s["title"] for s in list_scenarios()}
+                where.append("cohort = ?")
+                params.append(cohort)
+            if active_ids:
+                # A row can be both indexed and live (the index is written at
+                # open); the live copy is already in `out` above.
+                where.append(f"id NOT IN ({','.join('?' * len(active_ids))})")
+                params.extend(sorted(active_ids))
+            params.extend((max(1, min(int(limit), 1000)), max(0, int(offset))))
             rows = conn.execute(
                 "SELECT id, scenario, model, started_at, n_turns, status, duration_s"
                 + "".join(f", {c}" for c in extra)
-                + " FROM sessions WHERE status != 'active'"
-                  " ORDER BY started_at DESC LIMIT ? OFFSET ?",
-                (max(1, min(int(limit), 1000)), max(0, int(offset))),
+                + " FROM sessions WHERE " + " AND ".join(where)
+                + " ORDER BY started_at DESC LIMIT ? OFFSET ?",
+                params,
             ).fetchall()
         finally:
             # Closed in the thread that opened it, and closed even on failure:
@@ -1320,12 +1871,11 @@ async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None,
         rows, titles = await run_in_threadpool(_read_closed)
     except Exception:  # noqa: BLE001, a missing index must not empty the listing
         rows, titles = [], {}
+    # No filtering here: the query above already excluded the live ids and the
+    # other cohorts, so every row it returned is a row this page returns and the
+    # page length means what a pager thinks it means.
     for r in rows:
-        if r["id"] in active_ids:
-            continue
         row_cohort = r.get("cohort")
-        if cohort and (row_cohort or "") != cohort:
-            continue
         out.append({
             "id": r["id"],
             "scenario": r["scenario"],
@@ -1565,16 +2115,33 @@ async def rater_page(token: Optional[str] = Query(None)):
 
 @app.get("/api/rater/me")
 async def api_rater_me(token: Optional[str] = Query(None)):
-    """Who this token belongs to, and how much work is left."""
+    """Who this token belongs to, and how much work is left.
+
+    Off the loop for the same reason the draw and the plan listing are: every
+    rating-store read is a JSON scan plus a sqlite open, this coroutine shares
+    one event loop with every live encounter's audio, and the rater console
+    fetches this on load and after every submission. A wave's raters working
+    through their queues while the last encounters are still recording is not a
+    coincidence — it is what the end of a wave looks like.
+    """
+    from starlette.concurrency import run_in_threadpool
+
     from . import raters
 
-    rater = _rater_from_token(token)
-    pending = raters.assignments_for_rater(rater["rater_id"], status="pending")
+    def _read():
+        # Token lookup and queue count in ONE hop: both hit the rating store,
+        # and splitting them would put half the disk work back on the loop.
+        # HTTPException raised in here propagates out of the hop unchanged.
+        rater = _rater_from_token(token)
+        pending = raters.assignments_for_rater(rater["rater_id"], status="pending")
+        return rater, len(pending)
+
+    rater, n_pending = await run_in_threadpool(_read)
     return {
         "rater_id": rater["rater_id"],
         "name": rater.get("name"),
         "kind": rater.get("kind"),
-        "assignments_pending": len(pending),
+        "assignments_pending": n_pending,
         # Carried here as well as on the packet so the console can keep the
         # licensing notice in its chrome, visible on every screen, instead of
         # only on the one where the items are rendered.
@@ -1593,20 +2160,32 @@ async def api_rater_assignments_mine(token: Optional[str] = Query(None),
     every encounter is rated on all 22 items regardless, so telling a rater
     which competency the encounter was built to elicit would bias the other 16
     or 17 items. No participant key, no scenario id.
+
+    One worker hop, and the rating codes are minted inside it. rating_code is
+    an HMAC — arithmetic — but its key comes from runs._run_code_secret, which
+    re-reads DATA_DIR/.run_code_secret from disk on every call unless
+    RUN_CODE_SECRET is set. So an N-row queue is N disk reads, and on the loop
+    that is N reads taken out of every live encounter's audio.
     """
+    from starlette.concurrency import run_in_threadpool
+
     from . import rater_packet, raters
 
-    rater = _rater_from_token(token)
     want = (status or "").strip() or None
-    return [
-        {
-            "assignment_id": a.get("assignment_id"),
-            "rating_code": rater_packet.rating_code(a.get("session_id")),
-            "status": a.get("status"),
-            "assigned_at": a.get("assigned_at"),
-        }
-        for a in raters.assignments_for_rater(rater["rater_id"], status=want)
-    ]
+
+    def _read():
+        rater = _rater_from_token(token)
+        return [
+            {
+                "assignment_id": a.get("assignment_id"),
+                "rating_code": rater_packet.rating_code(a.get("session_id")),
+                "status": a.get("status"),
+                "assigned_at": a.get("assigned_at"),
+            }
+            for a in raters.assignments_for_rater(rater["rater_id"], status=want)
+        ]
+
+    return await run_in_threadpool(_read)
 
 
 @app.get("/api/rater/packet/{assignment_id}")
@@ -1623,14 +2202,26 @@ async def api_rater_packet(assignment_id: str, token: Optional[str] = Query(None
     same object twice per packet read. The two fields this route does add are
     about the assignment, which the packet has no reason to know about, and the
     licensing warning, added only if the packet did not already carry one.
+
+    The heaviest read on this surface, so it is the one that most needed to
+    leave the loop: rater_packet.build opens the manifest, the transcript, the
+    scenario spec and the event trail, and signs a playback URL, once for every
+    packet the rater console opens. All of it goes in one worker hop with the
+    token and assignment lookups that precede it.
     """
+    from starlette.concurrency import run_in_threadpool
+
     from . import rater_packet
 
-    rater = _rater_from_token(token)
-    assignment = _rater_assignment(rater, assignment_id)
-    # Seed the item order on the assignment, so this rater's order is their own
-    # and is the same every time they reopen the packet.
-    packet = rater_packet.build(assignment["session_id"], order_seed=assignment_id)
+    def _read():
+        rater = _rater_from_token(token)
+        assignment = _rater_assignment(rater, assignment_id)
+        # Seed the item order on the assignment, so this rater's order is their
+        # own and is the same every time they reopen the packet.
+        return assignment, rater_packet.build(assignment["session_id"],
+                                              order_seed=assignment_id)
+
+    assignment, packet = await run_in_threadpool(_read)
     if not packet:
         # The assignment exists but its encounter does not (a session directory
         # removed after assignment). Same 404 as an unknown assignment: there is
@@ -1847,8 +2438,17 @@ async def api_rater_assignments_create(payload: Optional[dict] = None,
             raise HTTPException(400, "seed must be a whole number")
 
     try:
-        created = raters.assign(
-            session_ids, rater_ids, per_encounter=per_encounter, seed=seed
+        # In the threadpool for the same reason the cohort query above is: the
+        # draw is disk-bound (a metadata read per encounter, then a JSON write
+        # and a sqlite INSERT per assignment) and this coroutine shares its loop
+        # with every live encounter. Measured on the fixture wave — 26
+        # encounters, 5 raters, k=3 — it takes 853 ms, and run inline that is
+        # 853 ms in which no participant's audio moves. A researcher allocating
+        # a wave while the last encounters are still running is not a rare
+        # coincidence; it is how the end of a wave looks.
+        created = await run_in_threadpool(
+            functools.partial(raters.assign, session_ids, rater_ids,
+                              per_encounter=per_encounter, seed=seed)
         )
     except ValueError as e:
         # A ValueError here is the draw telling the researcher their request
@@ -1884,33 +2484,52 @@ async def api_rater_assignments_list(key: Optional[str] = Query(None),
     somewhere, and this is that somewhere.
     """
     check_key(key)
+    from starlette.concurrency import run_in_threadpool
+
     from . import rater_packet, raters
 
     want_status = (status or "").strip() or None
     want_cohort = (cohort or "").strip() or None
-    if rater_id:
-        # One rater's queue is asked for by rater, because that is the question
-        # ("what does this person still owe us") and because it is the only form
-        # that has to 404 on an unknown rater rather than quietly return nothing.
-        if raters.get_rater(rater_id) is None:
-            raise HTTPException(404, "no such rater")
-        found = raters.assignments_for_rater(rater_id, status=want_status)
-        if want_cohort:
-            found = [a for a in found if a.get("cohort") == want_cohort]
-    else:
-        found = raters.list_assignments(cohort=want_cohort, status=want_status)
 
-    roster = {r.get("rater_id"): r for r in raters.list_raters()}
-    out = []
-    for a in found:
-        entry = dict(a)
-        who = roster.get(a.get("rater_id")) or {}
-        entry["rater_name"] = who.get("name")
-        entry["rater_kind"] = who.get("kind")
-        entry["rating_code"] = rater_packet.rating_code(a.get("session_id"))
-        out.append(entry)
-    out.sort(key=lambda e: (e.get("assigned_at") or "", e.get("assignment_id") or ""))
-    return out
+    # Every one of these reads the rating store from disk, and the rater console
+    # polls this route while encounters are running: 228 ms for a wave-sized
+    # listing on the loop is 228 ms of a participant's audio not being relayed.
+    # Read them all in one worker hop rather than four — INCLUDING the per-row
+    # rating_code, which was left behind on the loop and is not free: it is an
+    # HMAC under runs._run_code_secret, which re-reads DATA_DIR/.run_code_secret
+    # from disk on every call unless RUN_CODE_SECRET is set, so an N-row listing
+    # was still doing N disk reads on the loop while this comment said otherwise.
+    def _read_plan() -> Optional[list]:
+        if rater_id:
+            # One rater's queue is asked for by rater, because that is the
+            # question ("what does this person still owe us") and because it is
+            # the only form that has to 404 on an unknown rater rather than
+            # quietly return nothing.
+            if raters.get_rater(rater_id) is None:
+                return None
+            rows = raters.assignments_for_rater(rater_id, status=want_status)
+            if want_cohort:
+                rows = [a for a in rows if a.get("cohort") == want_cohort]
+        else:
+            rows = raters.list_assignments(cohort=want_cohort, status=want_status)
+        roster = {r.get("rater_id"): r for r in raters.list_raters()}
+        out = []
+        for a in rows:
+            entry = dict(a)
+            who = roster.get(a.get("rater_id")) or {}
+            entry["rater_name"] = who.get("name")
+            entry["rater_kind"] = who.get("kind")
+            entry["rating_code"] = rater_packet.rating_code(a.get("session_id"))
+            out.append(entry)
+        return out
+
+    found = await run_in_threadpool(_read_plan)
+    # None, not [], is the unknown-rater sentinel: an empty list is a real
+    # answer here (a rater who owes nothing) and must stay a 200.
+    if found is None:
+        raise HTTPException(404, "no such rater")
+    found.sort(key=lambda e: (e.get("assigned_at") or "", e.get("assignment_id") or ""))
+    return found
 
 
 @app.get("/api/ratings")
@@ -1931,7 +2550,14 @@ async def api_ratings_export(key: Optional[str] = Query(None),
         "notice": ITEM_LICENSE_NOTICE,
         "cohort": cohort,
         "n": len(rows),
-        "ratings": rows,
+        # Through _json_safe for the same reason /api/reliability is, and it was
+        # the other half of the same fix: Starlette serialises with
+        # allow_nan=False, so one non-finite float anywhere in the corpus — a
+        # record written before the coercion existed, a hand-edited file, or a
+        # future float field the coercion does not police — 500s the WHOLE
+        # export and hides every other rating behind the one bad row. Degrading
+        # that field to null loses one number instead of the wave.
+        "ratings": _json_safe(rows),
     }
 
 
@@ -1967,7 +2593,24 @@ async def ws_participant_text(
     if PARTICIPANT_KEY_REQUIRED and SESSION_KEY and key != SESSION_KEY:
         await ws.close(code=4401)
         return
-    if participant_id and not get_participant(participant_id):
+    # The text path records no audio or video, but a transcript opened under a
+    # participant record IS study data — _run_context stamps that record's run
+    # id, participant key and cohort onto the encounter, and the encounter is
+    # then queued to a human rater. So a record that has not consented, or has
+    # declined, is refused here exactly as it is on the voice socket.
+    #
+    # `participant_id and` is load-bearing, and dropping it broke the documented
+    # single-agent text entrance (README: /?scenario=missed_deadlines).
+    # static/participant.html deliberately skips the consent gate in text mode
+    # and opens this socket with no participant_id at all, so a bare
+    # `not _consented_participant(...)` refused every such connection with 4403.
+    # Restoring the guard costs nothing that matters: with no participant_id,
+    # _run_context returns None, the encounter carries no run id, no participant
+    # key and no cohort, so it can never be stamped into cohort "study" or drawn
+    # into a rating wave — which was the actual harm. The voice socket keeps the
+    # strict form, because capture there is audio and webcam under the IRB and
+    # an anonymous one has no business opening at all.
+    if participant_id and not _consented_participant(participant_id):
         await ws.close(code=4403)
         return
     await ws.accept()
@@ -2107,9 +2750,9 @@ async def ws_participant_voice(
     # Voice capture needs recorded consent, and the record existing is not the
     # same as consent having been given: /start mints one with consent_given
     # False so identity is stable before the participant has agreed to anything.
-    # Check the flag, not just the record, or the gate is decorative.
-    _p = get_participant(participant_id) if participant_id else None
-    if not _p or not _p.get("consent_given"):
+    # Check the flag, not just the record, or the gate is decorative — the same
+    # check the text socket makes, from the same helper.
+    if not _consented_participant(participant_id):
         await ws.close(code=4403)
         return
     await ws.accept()
@@ -2261,6 +2904,16 @@ if __name__ == "__main__":
             # Not a real console (a pipe, a service manager, an older Python).
             # Nothing to reconfigure, and the ASCII banner below still prints.
             pass
+
+    # Refuse to serve a public hostname with no researcher credential. Checked
+    # here rather than at import so pytest and the offline tools (verify_record,
+    # scoring, retranscribe) can still load this module on a laptop with no
+    # SESSION_KEY set; `python -m server.app` is how the container starts, so
+    # this is the door.
+    _refusal = _refuse_unprotected_public_start()
+    if _refusal:
+        print(f"  REFUSING TO START: {_refusal}")
+        sys.exit(2)
 
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8765"))

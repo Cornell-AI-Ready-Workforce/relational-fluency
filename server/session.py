@@ -243,7 +243,33 @@ class Session:
         *,
         auto: bool = False,
         reason: Optional[str] = None,
+        delivered: Optional[bool] = None,
     ) -> None:
+        """Move one persona gear and record the move.
+
+        `delivered` says whether the caller has ALSO put this shift in front of
+        the actor, and it is the difference between a stimulus history and a
+        list of intentions. A gear only reaches a speech-to-speech actor through
+        a re-brief, and no mode re-briefs on every shift:
+
+        * True  — the caller re-briefs the actor as part of this same step.
+        * False — the caller knows it does not, and the actor is still playing
+          the persona it had. This is the group-room case (S3/S4, half the
+          study): realtime_voice_session._steer cannot re-brief a room, because
+          a mid-stream session.update mutes this bridge, so a shift made on a
+          turn with no beat pending reaches nobody until the next planted beat
+          briefs that member — and a shift made after the interaction's beats
+          are spent never reaches anyone at all.
+        * None  — undetermined here; read the shift together with the delivery
+          events around it (`steer_deferred` / `steer_delivered` on the 1:1
+          path, `stage_direction` in a room).
+
+        It was absent, and every group shift was therefore written exactly like
+        one that had landed. An analyst reading knob_set, auto=true had no way
+        to tell a stimulus the participant actually met from one the record only
+        intended — which is the difference between a manipulation check that
+        means something and one that does not.
+        """
         if self._closed:
             return
         # Validate the knob name before reading it off the persona: an unknown
@@ -258,7 +284,8 @@ class Session:
         to_label = band_label(knob, value)
         # Every gear switch, manual or auto, lands in events.jsonl with the
         # band transition (and the controller's reason when auto) so the
-        # stimulus history is reconstructable.
+        # stimulus history is reconstructable — which it is only if the record
+        # also says whether the actor was told, hence `delivered`.
         self.store.event(
             "knob_set",
             agent_id=aid,
@@ -268,6 +295,7 @@ class Session:
             from_level=from_label,
             to_level=to_label,
             reason=reason,
+            delivered=delivered,
         )
         payload = {
             "type": "steering",
@@ -278,6 +306,7 @@ class Session:
             "from_level": from_label,
             "to_level": to_label,
             "reason": reason,
+            "delivered": delivered,
         }
         self.steering_log.append(payload)
         await self.broadcast(payload)
@@ -301,10 +330,15 @@ class Session:
             task.cancel()
         self._auto_steer_tasks.clear()
 
-    async def auto_steer(self) -> None:
+    async def auto_steer(self, *, delivered: Optional[bool] = None) -> None:
         """Run one steering review and apply any gear shifts. Called by the
         session runners after each completed turn; a no-op unless the
-        researcher has turned auto steering on. Never raises."""
+        researcher has turned auto steering on. Never raises.
+
+        `delivered` is passed straight to set_knob for every shift this review
+        makes; see set_knob for what the three values mean. The caller is the
+        only thing that knows whether it is about to re-brief the actor, so the
+        answer has to come in from there — this method cannot work it out."""
         if not self.auto_steering or self._closed:
             return
         try:
@@ -321,7 +355,7 @@ class Session:
             try:
                 await self.set_knob(
                     adj["knob"], adj["value"], agent_id=adj["agent_id"],
-                    auto=True, reason=adj["reason"],
+                    auto=True, reason=adj["reason"], delivered=delivered,
                 )
             except (KeyError, ValueError) as e:
                 if not self._closed:

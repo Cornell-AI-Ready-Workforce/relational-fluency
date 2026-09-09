@@ -130,6 +130,17 @@ interactions:
           low:
             answer: "Great, glad you're fine. (moves on)"
             why: "disengagement missed; low on bringing out others' best"
+      # This beat is bound to Casey (the cue names her), so _next_trigger
+      # withholds it for the whole of Jordan's segment. Without an on_silence
+      # the second half of this series had no probe at all: the participant is
+      # dropped into a fresh 1:1 where Casey cannot open — a 1:1 actor only ever
+      # takes the floor from a participant turn or from the silence watchdog —
+      # and the watchdog skips a beat that carries no probe. Dead air, then a
+      # silent WAV, for the segment that closes the encounter. The probe is
+      # Casey's own overload line and nothing more: what gets dropped, who
+      # helps, by when is the participant's move, and a Casey who proposes it
+      # herself has answered the beat she is here to pose.
       - id: t3_caseys_overload
         cue: "Casey: 'Am I supposed to absorb Priya's whole queue? I don't know how to do half of it.'"
+        on_silence: "Casey, after a pause: 'So... am I supposed to absorb Priya's whole queue? Because I don't know how to do half of it.'"
         esci: [brings_out_best, builds_pride]

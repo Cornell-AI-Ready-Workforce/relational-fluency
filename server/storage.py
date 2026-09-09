@@ -470,9 +470,27 @@ def record_decline(pid: str, consent_version: str,
     The record stays consent_given=False, so nothing downstream can mistake it
     for consent: the voice websocket already refuses any record whose flag is
     not set.
+
+    Returns None when there is no such record, and also when the record already
+    carries consent — see the guard below. A caller that needs to tell the two
+    apart should ask get_participant() first.
     """
     rec = get_participant(pid)
     if rec is None:
+        return None
+    if rec.get("consent_given") or rec.get("consent_recorded_at"):
+        # Consent is not retroactively withdrawable by a later POST. A decline
+        # can only follow an un-consented record: the mirror image of the
+        # `declined` guard in record_consent below, and for the same reason.
+        # Without it a stale second tab (both tabs get &consent=1, so the one
+        # you left open still shows Decline after you consented in the other), a
+        # back-button resubmit or a replayed request writes consent_given=False
+        # over a record that carries consent_recorded_at — and record_consent
+        # then refuses to flip it back, so the participant is locked out of the
+        # study for good. Worse, the one field an IRB reads would be denying a
+        # consent under which audio and webcam were already recorded. Someone
+        # who consents and then wants out withdraws the run, which the record
+        # already supports; it does not rewrite what they agreed to.
         return None
     rec["consent_given"] = False
     rec["declined"] = True

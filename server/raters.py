@@ -46,6 +46,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import random
 import re
@@ -61,6 +62,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 # difference that only shows up as an intermittent "database is locked" under a
 # researcher poll and a rater submitting at the same moment.
 from .storage import DATA_DIR, SESSIONS_DIR, _add_missing_columns, _db
+
+log = logging.getLogger(__name__)
 
 RATERS_DIR = DATA_DIR / "raters"
 ASSIGNMENTS_DIR = DATA_DIR / "rater_assignments"
@@ -653,6 +656,18 @@ def allocate_plan(session_ids: Sequence[str], rater_ids: Sequence[str],
     # what a half-finished wave means. They count towards the complement and
     # towards each rater's load, so topping a wave up from two raters to three
     # lands on the raters who have done least.
+    #
+    # `load` is keyed by every rater standing anywhere in this wave, not just by
+    # the caller's pool. A top-up names the raters to add, and `existing` comes
+    # from what is already on disk, so the two sets need not overlap at all: ask
+    # for a second pass over the same encounters with a fresh pair of raters and
+    # the wave contains people `raters` never mentioned. Those people are in the
+    # plan, so they are in the overlap graph _repair_connectivity walks, and a
+    # `load` that ranged only over the caller's pool made the repair index a
+    # rater it did not have — a KeyError, surfacing as a 500 from
+    # POST /api/rater-assignments with nothing written and nothing explained.
+    # Counting them here also makes the number honest: a rater who already has
+    # four encounters is not load 0 just because this call did not name them.
     load: Dict[str, int] = {r: 0 for r in raters}
     for sid, already in existing.items():
         dupes = [r for r in already if already.count(r) > 1]
@@ -661,8 +676,7 @@ def allocate_plan(session_ids: Sequence[str], rater_ids: Sequence[str],
                 f"encounter {sid} already has a duplicate rater: {sorted(set(dupes))}"
             )
         for r in already:
-            if r in load:
-                load[r] += 1
+            load[r] = load.get(r, 0) + 1
 
     # A seeded shuffle decides who wins ties. Without it the first rater in the
     # caller's list takes every tie and picks up the extra assignments in every
@@ -821,6 +835,56 @@ def _repair_connectivity(sessions: Sequence[str], plan: Dict[str, List[str]],
     raise ValueError("could not connect the rater-overlap graph")
 
 
+def _check_raters_exist(rater_ids: Iterable[str]) -> None:
+    """Refuse a wave that would be assigned to somebody who cannot rate it.
+
+    Two conditions, both fatal, both about the same silence: an assignment
+    written for a rater who does not exist, or whose record is deactivated, is
+    an assignment nobody can ever open — and it looks exactly like a pending one
+    on every listing. The encounter then sits unrated for the length of the wave
+    with the plan insisting it is covered.
+
+    The mechanism for the inactive half is ``rater_for_token`` (see above), not
+    ``issue_token``, which this docstring used to name: issuing is happy to mint
+    a token for a deactivated rater, and it is authentication that then refuses
+    it. So the credential exists, the assignment exists, and the rater still
+    cannot open it. Nothing about that is visible from the plan.
+
+    WHAT WRITES ``active: False``: no function in this module and no route in
+    server/app.py — ``create_rater`` hard-codes True and nothing flips it. The
+    branch is still live rather than dead code, because the rater's JSON
+    document under DATA_DIR/raters is the source of truth (``_load_rater``
+    re-reads it every call, ``list_raters`` reads the documents and not the
+    index), so an operator editing a record by hand — the only way to bench a
+    rater today — reaches it. Do not read it as a promise that a deactivation
+    *feature* exists; adding one is a set_rater_active helper plus a researcher
+    route, and this check is where it would already be enforced.
+
+    Called twice by ``assign``: once over the ids the caller named, so a typo is
+    refused before anything is read, and once over the finished plan, because
+    the plan is not a subset of that list. Existing on-disk assignments feed
+    ``allocate_plan``'s connectivity repair, which may hand a slot to a rater
+    this call never mentioned — and that rater's record is one this check had
+    never looked at.
+    """
+    unknown = []
+    inactive = []
+    for r in dict.fromkeys(rater_ids):
+        rec = _load_rater(r)
+        if rec is None:
+            unknown.append(r)
+        elif not rec.get("active", True):
+            inactive.append(r)
+    if unknown:
+        raise ValueError(f"unknown rater(s): {', '.join(map(str, unknown))}")
+    if inactive:
+        raise ValueError(
+            f"deactivated rater(s): {', '.join(map(str, inactive))}; they cannot "
+            "hold a token, so the encounters would show as assigned and never "
+            "be rated"
+        )
+
+
 def assign(session_ids: Sequence[str], rater_ids: Sequence[str],
            per_encounter: int = 3, seed: Optional[int] = None,
            ) -> List[Dict[str, Any]]:
@@ -867,6 +931,17 @@ def assign(session_ids: Sequence[str], rater_ids: Sequence[str],
     anyway, and repaired, for the one case construction cannot cover: a wave
     that was already split across earlier calls. See _repair_connectivity.
 
+    That repair outranks the caller's pool, and says so. Joining two blocks that
+    are already on disk means placing a rater who is in one of them, whether or
+    not `rater_ids` named them — so a top-up can create work for people the
+    request never mentioned and, in a small wave, leave the named raters with
+    none at all. Every assignment therefore carries `unrequested`, true when the
+    allocation chose that rater rather than the caller, and a call whose plan
+    substituted anyone (or benched a named rater) logs a warning naming both
+    sets. The substituted raters are checked for existence and for being active
+    before anything is written, which the pre-plan check cannot do because it
+    has not seen them.
+
     There is an upper bound on the pool this can be done for: N encounters of
     k raters span at most N*(k-1)+1 people while staying connected, and a
     larger pool is refused rather than dealt into islands.
@@ -884,8 +959,12 @@ def assign(session_ids: Sequence[str], rater_ids: Sequence[str],
     gets what they asked for, and this docstring is the warning.
 
     Raises ValueError, loudly, when the design cannot be honoured: fewer raters
-    than the complement, an unknown rater or encounter, a duplicate pairing, or
-    an overlap graph that cannot be connected.
+    than the complement, an unknown rater (named or substituted), an unknown
+    encounter, a duplicate pairing, or an overlap graph that cannot be
+    connected. A rater whose stored record carries ``active: False`` is refused
+    on the same path — but nothing in this codebase writes that flag, so read it
+    as a guard on the on-disk record rather than as a deactivation feature this
+    call protects you from. See _check_raters_exist.
     """
     init_rater_storage()
     sessions = list(dict.fromkeys(session_ids))
@@ -895,9 +974,10 @@ def assign(session_ids: Sequence[str], rater_ids: Sequence[str],
     if not raters:
         raise ValueError("no raters to assign to")
 
-    unknown_raters = [r for r in raters if _load_rater(r) is None]
-    if unknown_raters:
-        raise ValueError(f"unknown rater(s): {', '.join(map(str, unknown_raters))}")
+    # Checked here so a typo is refused before any encounter metadata is read,
+    # and checked again over the finished plan below — the plan can contain
+    # people this list never mentioned. See _check_raters_exist.
+    _check_raters_exist(raters)
 
     meta: Dict[str, Dict[str, Any]] = {}
     missing = []
@@ -918,6 +998,41 @@ def assign(session_ids: Sequence[str], rater_ids: Sequence[str],
         for sid in sessions
     }
     plan = allocate_plan(sessions, raters, per_encounter, seed, existing=existing)
+
+    requested = set(raters)
+    # Who this call will actually create work for. Not the same as `rater_ids`:
+    # `existing` comes from disk, so the connectivity repair is free to hand a
+    # slot to somebody already in the wave — that is the design, and it is what
+    # keeps the overlap graph connected — but it means the roster check above
+    # ran over the wrong set. A substituted rater has never been checked for
+    # existence or for being active by this call, and an assignment written for
+    # a rater who cannot hold a token is an encounter that reads as covered on
+    # every listing and is never rated. Check them before anything is written.
+    # Raters who merely already appear in `existing` are NOT checked: they get
+    # no new work here, and a top-up should not be blocked by a stale record it
+    # is not adding to.
+    substituted = [
+        r for r in dict.fromkeys(
+            r for sid in sessions for r in plan[sid] if r not in set(existing[sid])
+        ) if r not in requested
+    ]
+    if substituted:
+        _check_raters_exist(substituted)
+
+    # The other half of the same surprise: the substitution can leave a rater
+    # the researcher explicitly asked for with no work at all (ask for E and F
+    # over three encounters that already hold A/B and C/D, and the connected
+    # plan is A and C). Silence here would read as "your request was carried
+    # out". It is not, so say so — in the log, and on the returned assignments
+    # via `unrequested`, which is the only channel this function has back to
+    # the researcher.
+    idle = [r for r in raters if not any(r in members for members in plan.values())]
+    if idle or substituted:
+        log.warning(
+            "rater assignment: plan substituted %s to keep the overlap graph "
+            "connected; requested rater(s) with no encounter in the final plan: %s",
+            substituted or "nobody", idle or "none",
+        )
 
     now = _now()
     created: List[Dict[str, Any]] = []
@@ -945,6 +1060,15 @@ def assign(session_ids: Sequence[str], rater_ids: Sequence[str],
                 "assigned_at": now,
                 "submitted_at": None,
                 "seed": seed,
+                # True when the allocation put this encounter on a rater the
+                # request did not name, to keep the overlap graph connected.
+                # Written rather than derived: `rater_ids` is not kept anywhere
+                # else, so a year later there is no way to reconstruct whether a
+                # researcher chose this pairing or the repair did — and that is
+                # the difference between "the load was uneven" and "the design
+                # was overridden". Always present, on every assignment, so a
+                # reader can count them without a KeyError on the ordinary rows.
+                "unrequested": rater_id not in requested,
             }
             _write_atomic(_assignment_path(rec["assignment_id"]), rec)
             try:

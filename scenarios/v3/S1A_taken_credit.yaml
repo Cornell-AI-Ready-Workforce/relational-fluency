@@ -121,9 +121,21 @@ interactions:
           low:
             answer: "Sure, I'll send you the new results this afternoon."
             why: "issue dodged despite a direct prompt → fester (R)"
+      # Nothing in a 1:1 speaks first — the actor only ever takes the floor from
+      # a participant turn or from the silence probe — so a participant who
+      # freezes at t3 or t4 stalls the encounter outright: the watchdog probes
+      # only when the next unfired trigger carries an on_silence, and
+      # _maybe_advance will not advance the scene while a planted beat is still
+      # unfired. Every beat therefore gets one, as S2A/S2B already do. The probe
+      # replaces the cue for that beat rather than adding to it, so each carries
+      # that beat's own move and then hands the floor straight back, and neither
+      # proposes the authorship fix: working with the half-concession instead of
+      # demanding capitulation is exactly what t4 is there to score.
       - id: t3_defensiveness
         cue: "Sam defends: 'I did most of the legwork anyway'"
+        on_silence: "I did most of the legwork anyway. So what's the actual problem here?"
         esci: [de_escalate, talk_openly]
       - id: t4_half_concession
         cue: "Sam half-concedes: 'Maybe I could've flagged your part'"
+        on_silence: "Look, maybe I could've flagged your part. Is that what you're after?"
         esci: [de_escalate, resolve_not_fester]

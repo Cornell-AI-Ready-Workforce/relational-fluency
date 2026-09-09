@@ -11,14 +11,51 @@ Design constraints (research-grade transparency):
   - At most MAX_ADJUSTMENTS_PER_TURN knob changes per review.
   - Every change carries a one-line reason, which is logged to events.jsonl
     (knob_set with auto=true) and broadcast to the researcher view, so the
-    stimulus history is fully reconstructable.
-  - "No change" is the expected outcome on most turns.
+    controller's decision history is fully reconstructable. A decision history
+    is not by itself a stimulus history - see below - which is why every change
+    now also carries whether the actor was told about it.
+  - "No change" is the expected outcome on most turns, and is distinct from a
+    review that failed: review() raises rather than returning [] when the
+    gateway answers without the tool call it was told to make.
 
-The review fires after the agents finish speaking and any gear change takes
-effect on the next turn (system prompts are composed fresh per turn), so it
-never interrupts a reply in flight. It is NOT, however, off the critical path,
-which an earlier version of this note claimed: the voice runner awaits it both
-ways - inside the floor lock at the end of _run_group_turn for a room, and in
+The review fires after the agents finish speaking, so it never interrupts a
+reply in flight. When a gear change takes effect depends on the mode, and NO
+mode guarantees the next turn.
+
+In 1:1, _steer() re-briefs the single agent - whose system prompt is then
+composed fresh from the mutated Persona - UNLESS a reply is already in flight,
+which its own comment calls routine (a review can take eleven seconds and
+lands mid-reply often enough to matter). In that case it defers and the shift
+rides along on the next brief instead. Nothing can know which of the two will
+happen at the moment the knob moves, so a 1:1 shift is written with
+`delivered=None` and resolved by the event written right after it, which says
+what actually happened: steer_delivered when the re-brief went out,
+steer_deferred when it was held back. Even a steer_delivered means only that
+the brief left this process; it governs the NEXT reply, never the one already
+in flight.
+
+In a GROUP room (S3 and S4, half the study) _steer() returns without
+re-briefing anyone, because a blanket re-brief would have to reach every member
+at once and a mid-stream session.update mutes this bridge. A room member is
+only re-composed when the next planted beat briefs them or the interaction
+changes, so a shift made on a turn with no beat pending reaches the actor some
+turns after the controller decided it, and a shift made after that
+interaction's beats are spent is never delivered within the interaction at all.
+That is knowable in advance and always the same answer, so every group shift is
+written `delivered=False`: the knob_set line itself says the actor had not been
+told, and the later stage_direction event for the beat that re-briefs them is
+where the persona finally reaches the room.
+
+Before that flag existed the asymmetry was the trap: the 1:1 deferral left a
+steer_deferred event, so its gap was visible, while the group non-delivery left
+NOTHING and the log read exactly like a shift that landed. Both gaps are now
+stated on the record rather than inferred from an absence. `delivered` is
+resolved in realtime_voice_session._steer, which is the only code that knows,
+and carried by Session.set_knob; neither belongs here.
+
+The review is NOT off the critical path, which an earlier version of this note
+claimed: the voice runner awaits it both ways - inside the floor lock at the
+end of _run_group_turn for a room, and in
 the _finalize_turn chain ahead of _maybe_advance for a 1:1. (The text runner in
 app.py does now spawn it as a background task, so that path alone is genuinely
 off the hot path; the voice paths, which are what the study records, are not.)
@@ -216,12 +253,16 @@ class SteeringController:
         name_lookup: dict,
     ) -> List[dict]:
         """Return cleaned adjustments: [{agent_id, knob, level, value,
-        from_level, reason}]. Empty list means leave all gears alone.
-        Raises on API failure, including a timeout; the caller decides how to
-        log it. Session.auto_steer() catches it and writes auto_steer_error,
-        which is the right degradation here - unlike the director there is no
-        fallback to invent, "no change" is the honest answer, and the record
-        says a review was attempted and did not land.
+        from_level, reason}]. Empty list means the model looked and chose to
+        leave all gears alone.
+        Raises on API failure, including a timeout and a 200 that came back
+        without the forced tool call; the caller decides how to log it.
+        Session.auto_steer() catches it and writes auto_steer_error, which is
+        the right degradation here - unlike the director there is no fallback to
+        invent, "no change" is the honest answer, and the record says a review
+        was attempted and did not land. What it must never do is return the
+        empty list for a failure, because then the record says the model looked
+        and saw nothing to change, which is a claim about the participant.
         """
         if not shared_history:
             return []
@@ -298,8 +339,24 @@ Review the participant's most recent turn(s). Should any agent's gears shift in 
 
         for block in response.content:
             if getattr(block, "type", None) == "tool_use" and block.name == "adjust_persona":
+                # An empty `adjustments` list here IS a decision - "no change"
+                # is the expected outcome on most turns - so it comes back
+                # clean and untagged.
                 return self._clean(block.input.get("adjustments", []) or [], personas)
-        return []
+        # No adjust_persona block at all: a gateway that answered 200 while
+        # ignoring tool_choice, or plain text where a forced tool call was
+        # required. That is a failed review, not a decision to leave the gears
+        # alone, and the two must not read the same afterwards. Returning []
+        # made them identical - the caller iterates nothing, skips its broadcast
+        # and writes no event - so an encounter whose steering silently never
+        # worked was byte-for-byte an encounter whose participant earned no gear
+        # shifts. Raise instead, the way the Director takes its recorded
+        # director_no_decision fallback on exactly this response shape, and let
+        # Session.auto_steer's except clause write auto_steer_error.
+        raise RuntimeError(
+            "steering review returned no adjust_persona tool_use block "
+            f"(model={self.model}, stop_reason={getattr(response, 'stop_reason', None)})"
+        )
 
     def _clean(self, raw: list, personas: Dict[str, Persona]) -> List[dict]:
         """Validate ids/knobs, drop no-ops, clamp to one band step, dedupe."""

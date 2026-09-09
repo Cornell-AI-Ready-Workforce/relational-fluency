@@ -15,8 +15,12 @@ on knowing exactly what was injected into the prompt at each turn.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Callable, Dict, List, Optional
+# Import only what this module uses. `field` and `Optional` were the only two
+# pyflakes findings in the whole server/tests/tools/agents tree; a linter that
+# reports two known-harmless lines forever is a linter nobody reads, and the
+# next real finding would arrive in that noise.
+from dataclasses import dataclass, asdict
+from typing import Callable, Dict, List
 
 
 TONE_KNOBS = ("warmth", "formality", "agreeableness", "verbosity", "restraint")

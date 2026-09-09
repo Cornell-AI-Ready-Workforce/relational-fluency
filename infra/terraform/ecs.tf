@@ -189,12 +189,44 @@ resource "aws_ecs_task_definition" "agent" {
       # The live realtime path reads REALTIME_MODEL, not ACTOR_MODEL.
       { name = "REALTIME_MODEL", value = var.actor_model },
       { name = "DIRECTOR_MODEL", value = var.director_model },
+      # CLAUDE_MODEL is NOT a provenance-only label. Three readers take it:
+      # server/engine.py:26 and server/claude_engine.py:20 as DEFAULT_MODEL (the
+      # text-mode engine), server/app.py:670 as `sc.model or DEFAULT_MODEL` (the
+      # default in the researcher's pre-start model picker), and
+      # server/llm.py:117 as provenance.text_model, which lands in record.json.
+      #
+      # It was left unset once, so provenance reported llm.py's hardcoded
+      # default. The repair pinned it to var.director_model, which fixed the
+      # record by moving the engine: a text-mode encounter and the picker's
+      # default silently followed the director instead of the model the
+      # researcher configured. Both halves of that were wrong for the same
+      # reason — one variable cannot describe two jobs.
+      #
+      # So they are two variables now, and both statements are true at once.
+      # The director's model is recorded on its own path: every stage_direction
+      # event carries director_model straight off the live Director
+      # (server/realtime_voice_session.py:750, :2498, :2574, :2745), so nothing
+      # about the director depends on this line. That frees provenance's single
+      # text_model field to mean what its readers assume — the text engine that
+      # this deployment would actually run — which is exactly var.text_model,
+      # whose default is the same nto.gemini-3.1-flash-lite the code and
+      # .env.example already use. Set the two independently; do not re-pin them.
+      { name = "CLAUDE_MODEL", value = var.text_model },
       { name = "LLM_BASE_URL", value = var.llm_base_url },
       { name = "APP_HOST", value = local.app_fqdn },
       { name = "API_HOST", value = local.api_fqdn },
       { name = "S3_BUCKET", value = aws_s3_bucket.study_data.bucket },
       { name = "AWS_REGION", value = var.region },
       { name = "SURVEY_RETURN_URL", value = var.survey_return_url },
+      # The EFS volume below mounts at /data, but the only thing that made the
+      # app WRITE there was ENV DATA_DIR=/data in the Dockerfile — nothing in
+      # this file. server/storage.py:43 falls back to <repo>/data when DATA_DIR
+      # is unset, which on Fargate is the container filesystem: the app would
+      # come up healthy, serve encounters, and write every session, run and
+      # rating to a disk that the next deploy destroys, with the EFS mount
+      # sitting empty beside it and nothing saying so. State it here so the
+      # mount and the write path are one declaration in one file.
+      { name = "DATA_DIR", value = "/data" },
       { name = "HOST", value = "0.0.0.0" },
       { name = "PORT", value = "8080" },
     ]

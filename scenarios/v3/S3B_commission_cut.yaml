@@ -128,6 +128,13 @@ interactions:
           low:
             answer: "Quota's unchanged. Anything else?"
             why: "transactional; re-engagement missed"
+      # Same repair as S3A t3, and the parallel form needs it in the same place.
+      # The cue names Ari, so _next_trigger withholds this beat for the whole of
+      # Lee's segment; with no on_silence, Ari's 1:1 — the segment that closes
+      # the encounter — had no probe at all, and a 1:1 actor never opens on its
+      # own. The probe is Ari's own worry and stops there: the plain explanation
+      # of what changed is what this beat scores the participant on.
       - id: t3_anxious_junior
         cue: "Ari: 'Did I do something wrong? My draws look different and nobody explained why.'"
+        on_silence: "Ari, after a pause: 'So... did I do something wrong? My draws look different and nobody explained why.'"
         esci: [brings_out_best, builds_pride]

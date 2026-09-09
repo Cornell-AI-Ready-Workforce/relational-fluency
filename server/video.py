@@ -18,7 +18,7 @@ from typing import Optional
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from .llm import setting
 from .storage import SESSIONS_DIR
@@ -40,6 +40,10 @@ _SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # bound, for a rater who leaves a packet open across a working day.
 MAX_PLAYBACK_SECONDS = 12 * 3600
 
+# What uploaded_size() answers when S3 could not tell us anything: not "no
+# video", which is a claim about the bucket we are in no position to make.
+UNKNOWN_SIZE = -1
+
 _s3 = None
 
 
@@ -48,13 +52,181 @@ def _client():
     if _s3 is None:
         # The study bucket is KMS-encrypted, and S3 rejects presigned PUTs to
         # KMS objects unless the URL is SigV4-signed.
-        _s3 = boto3.client("s3", region_name=REGION,
-                           config=Config(signature_version="s3v4"))
+        #
+        # The timeouts and the retry mode are not tuning, they are a safety
+        # bound. boto3's defaults are 60 s connect, 60 s read and 'legacy'
+        # retries, and this client is reached from HTTP routes that share one
+        # asyncio loop with every live encounter: a black-holed S3 path (a
+        # missing VPC endpoint, a wrong egress rule) would otherwise park a
+        # request for minutes while no participant's audio moves and the ALB
+        # health check — 5 s timeout, three strikes — retires the task
+        # mid-sentence. Two standard-mode attempts against a 3 s connect and a
+        # 5 s read cap the worst case at seconds, and a capped failure is one
+        # the confirm endpoint can record as a failure.
+        _s3 = boto3.client(
+            "s3", region_name=REGION,
+            config=Config(signature_version="s3v4", connect_timeout=3,
+                          read_timeout=5,
+                          retries={"mode": "standard", "max_attempts": 2}),
+        )
     return _s3
+
+
+def _aws_code(exc: Exception) -> str:
+    """A short, loggable name for whatever AWS just refused to do.
+
+    ClientError carries the service's own code (AccessDenied, SlowDown,
+    PermanentRedirect); the BotoCoreError family — NoCredentialsError,
+    EndpointConnectionError, ReadTimeoutError — carries none, so the class name
+    is the most specific thing there is to write down.
+    """
+    if isinstance(exc, ClientError):
+        code = (exc.response or {}).get("Error", {}).get("Code")
+        if code:
+            return str(code)
+    return type(exc).__name__
+
+
+class PresignRefused(Exception):
+    """A write URL was refused for a reason that is NOT "the object is there".
+
+    presign_upload used to answer None to three different questions — no such
+    session, S3 confirms an object, and our own trail says there is one while S3
+    will not answer — and the route turned all three into 409 "video already
+    uploaded". Two of those are false statements, and the third is one the
+    browser ACTS on: a 409 tells static/v2.html the earlier PUT landed, so it
+    stops re-sending the recording. On the unconfirmable branch that is a
+    recording the page declines to retry on the strength of a receipt nobody has
+    just checked. A refusal this module cannot stand behind must not reach a
+    client looking like a confirmation.
+    """
+
+    def __init__(self, code: Optional[str] = None):
+        self.code = code or "unknown"
+        super().__init__(self.code)
+
+
+class NoSuchSession(PresignRefused):
+    """No session directory, so there is nothing to attach a recording to."""
+
+
+class UploadUnconfirmed(PresignRefused):
+    """This server's own receipt says an object exists; S3 would not confirm it.
+
+    The one-shot tamper guard still holds — no URL is issued — but the caller is
+    told "cannot confirm" rather than "already uploaded", so nothing downstream
+    can read it as a landed upload. A loud failure that costs a retry is the
+    right trade against a browser quietly deciding a recording is safe when
+    nothing checked.
+    """
 
 
 def video_key(session_id: str) -> str:
     return f"encounters/{session_id}/webcam.webm"
+
+
+# Where the boot check writes its marker. Under encounters/ deliberately: the
+# task role is granted s3:PutObject on encounters/* and steering-logs/* only
+# (infra/terraform/ecs.tf), so a probe anywhere else would report a failure that
+# says nothing about whether a participant's webcam upload can land. One fixed
+# key, overwritten each boot, so the check cannot accumulate objects.
+PREFLIGHT_KEY = "encounters/_preflight/startup-check.txt"
+
+
+def storage_preflight(client=None) -> dict:
+    """Check the study bucket before anyone records into it.
+
+    The model gateway has had a boot preflight since a wrong endpoint turned up
+    as a 401 halfway through an encounter (llm.preflight). S3 is the other
+    credentialed seam and had none, so a wrong S3_BUCKET, a wrong AWS_REGION or
+    a missing kms:GenerateDataKey grant was exercised for the first time in the
+    last second of the first encounter — by the participant's browser, which
+    discards the failure silently. This says so at boot instead.
+
+    Reachable and writable are asked separately because they fail separately and
+    are fixed differently: head_bucket needs s3:ListBucket, while the presigned
+    webcam PUT the browser executes is signed by this process's credentials and
+    so needs s3:PutObject plus the KMS grant. A read-only preflight would have
+    passed happily on a task role that cannot store a single recording.
+
+    Never raises. This is diagnosis, not a gate: a transient S3 blip must not
+    stop a process that can still run encounters and still write every local
+    artefact.
+
+    Builds its own client rather than warming the module one, and takes a
+    `client` for tests. A boto3 client resolves its credentials when it is
+    constructed, so a boot check that populated the shared client would pin
+    whatever the environment happened to hold at import — the wrong moment to
+    fix that answer for the life of the process, and the wrong client to hand
+    every later request.
+    """
+    result = {"ok": False, "bucket": BUCKET, "region": REGION,
+              "credentials": False, "readable": False, "writable": False}
+    try:
+        if client is None:
+            # Tighter than the request path's: this one runs before the port is
+            # open, and an unreachable bucket must delay the boot by seconds,
+            # not by a retry ladder.
+            client = boto3.client(
+                "s3", region_name=REGION,
+                config=Config(signature_version="s3v4", connect_timeout=3,
+                              read_timeout=3,
+                              retries={"mode": "standard", "max_attempts": 1}),
+            )
+    except Exception as exc:  # noqa: BLE001, a client that cannot be built is a config error
+        result["error_code"] = type(exc).__name__
+        result["detail"] = str(exc)[:200]
+        return result
+    # Resolving credentials is local (env, shared file, or the container
+    # metadata hop), and having none is the failure worth naming on its own:
+    # every call below would fail with NoCredentialsError and the operator would
+    # be left guessing whether the bucket name was also wrong.
+    try:
+        creds = client._request_signer._credentials
+        result["credentials"] = creds is not None
+    except Exception:  # noqa: BLE001, botocore internals are not a contract
+        result["credentials"] = False
+    try:
+        client.head_bucket(Bucket=BUCKET)
+        result["readable"] = True
+    except (ClientError, BotoCoreError) as e:
+        result["error_code"] = _aws_code(e)
+        return result
+    try:
+        client.put_object(Bucket=BUCKET, Key=PREFLIGHT_KEY,
+                          Body=b"relational-fluency storage preflight\n")
+        result["writable"] = True
+    except (ClientError, BotoCoreError) as e:
+        result["error_code"] = _aws_code(e)
+        return result
+    result["ok"] = True
+    return result
+
+
+def _note_unverified_presign(session_id: str, code: Optional[str]) -> None:
+    """Write down that a write URL was issued without a confirmed HEAD.
+
+    The one-shot guard is weakened, not held, on this path (see presign_upload),
+    and a weakening nobody can see afterwards is indistinguishable from one that
+    never happened. This is the trail's record that for this session, at this
+    moment, S3 could not say whether an object was already there.
+    """
+    import json as _json
+    import time as _time
+
+    try:
+        with (SESSIONS_DIR / session_id / "events.jsonl").open(
+                "a", encoding="utf-8") as fh:
+            fh.write(_json.dumps({
+                "t": None, "wall": _time.time(),
+                "type": "video_presign_unverified",
+                "key": video_key(session_id),
+                "error": code or "unknown",
+            }) + "\n")
+    except OSError:
+        # The URL still goes out: a missing note is worse than a lost recording
+        # only if you have both, and we would rather have the recording.
+        pass
 
 
 def presign_upload(session_id: str, *, expires: int = 3600) -> Optional[dict]:
@@ -62,17 +234,49 @@ def presign_upload(session_id: str, *, expires: int = 3600) -> Optional[dict]:
     # exists and has no object yet. This stops a participant re-requesting a URL
     # later to overwrite (tamper with) their already-captured IRB recording, and
     # stops arbitrary session_ids being used to seed/abuse the study bucket.
+    #
+    # The guarantee is weaker than it reads when S3 will not answer the HEAD,
+    # and the honest statement of it is: an object S3 CONFIRMS is refused; an
+    # object only our OWN trail knows about is refused; a recording nobody can
+    # find any evidence of is allowed through, and the fall-through is written
+    # into the trail as video_presign_unverified.
+    #
+    # Refusing outright on an unanswerable HEAD would throw away a recording
+    # that has not been made yet — the participant's encounter is over by the
+    # time anyone finds out — but issuing unconditionally, which is what this
+    # did, disabled the tamper guard for the whole duration of any HEAD-side
+    # failure. A task role with s3:PutObject and a denied or throttled
+    # HeadObject is a plausible narrow first-apply IAM state, and precisely the
+    # one the preflight exists to catch; on it, the owning participant could
+    # fetch unlimited write URLs over an already-captured IRB recording. The
+    # local receipt closes that: when we have our own acknowledged
+    # video_uploaded event, we know an object is there without asking S3, so the
+    # guard holds on exactly the recordings it was written to protect.
+    #
+    # Only ONE of those refusals returns None, and that is deliberate: None means
+    # "S3 confirmed an object is there", which is the single case a client may
+    # safely read as "the earlier PUT landed, do not send the bytes again". The
+    # other two raise (see PresignRefused) so neither can reach the browser
+    # wearing a confirmation's clothes.
     session_dir = SESSIONS_DIR / session_id
     if not session_dir.is_dir():
-        return None
-    if uploaded_size(session_id) > 0:
+        raise NoSuchSession(session_id)
+    probe = head_video(session_id)
+    if probe["bytes"] is None:
+        # S3 would not answer. Fall back to what this server itself confirmed
+        # earlier, then let the URL out and say so.
+        if upload_receipt(session_id) is not None:
+            raise UploadUnconfirmed(probe["error"])
+        _note_unverified_presign(session_id, probe["error"])
+    elif probe["bytes"] > 0:
         return None
     key = video_key(session_id)
     # Do NOT pin ContentType in the signed params: Safari/iOS MediaRecorder only
     # produces MP4 (video/mp4) while other browsers produce WebM, and a presigned
     # PUT whose signature fixes Content-Type rejects the other type. Leaving it
     # unsigned lets the browser send whichever container it recorded; the object
-    # key stays stable (webcam.webm) so uploaded_size()/one-shot checks still work.
+    # key stays stable (webcam.webm) so head_video() and the one-shot check above
+    # still find it whatever the browser actually sent.
     url = _client().generate_presigned_url(
         "put_object",
         Params={"Bucket": BUCKET, "Key": key},
@@ -81,28 +285,77 @@ def presign_upload(session_id: str, *, expires: int = 3600) -> Optional[dict]:
     return {"url": url, "key": key, "bucket": BUCKET}
 
 
-def uploaded_size(session_id: str) -> int:
-    """Bytes S3 actually holds for this session's video; 0 if absent."""
+def head_video(session_id: str) -> dict:
+    """One HEAD against the bucket, with the answer kept apart from the failure.
+
+    Returns {"bytes": int, "error": None} when S3 answered — including the
+    genuinely-absent object, which is honestly 0 bytes — and
+    {"bytes": None, "error": "<code>"} when it could not answer at all.
+
+    The distinction is the whole point. "S3 says there is no object" and "S3
+    would not tell us" look identical to a caller that only has an integer, and
+    the confirm endpoint has to write them down differently: the first is a
+    recording that never landed, the second is a recording that may well be
+    sitting in the bucket while the record says the encounter has none. Raising
+    instead — which is what this used to do for every code but 404 — put the
+    caller in the worst of the three positions: no number, and no event either.
+    """
     try:
         head = _client().head_object(Bucket=BUCKET, Key=video_key(session_id))
-        return int(head.get("ContentLength", 0))
-    except ClientError as e:
-        # Only a genuinely absent object counts as 0 bytes. Any other AWS error
-        # (AccessDenied, wrong region, throttling, clock skew) must not be
-        # silently reported as "video missing" — surface it so a real upload is
-        # not misclassified as absent with no diagnostic trail.
-        if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
-            return 0
-        raise
+        return {"bytes": int(head.get("ContentLength", 0)), "error": None}
+    except (ClientError, BotoCoreError) as e:
+        code = _aws_code(e)
+        # Only a genuinely absent object counts as 0 bytes.
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return {"bytes": 0, "error": None}
+        # Everything else — AccessDenied, an expired token, a wrong region's
+        # PermanentRedirect, a SlowDown, no credentials at all — is logged with
+        # the coordinates a person needs to act on it. Without the bucket, the
+        # region and the session id, the only trace was an ASGI traceback that
+        # named none of them.
+        print(
+            f"  WARNING: S3 HEAD failed for session {session_id} "
+            f"(bucket {BUCKET}, region {REGION}): {code}"
+        )
+        return {"bytes": None, "error": code}
+
+
+def uploaded_size(session_id: str) -> int:
+    """Bytes S3 actually holds for this session's video; 0 if absent.
+
+    UNKNOWN_SIZE (-1) when S3 could not be asked. Callers test `> 0`, so an
+    unknown state reads as "not known to be uploaded" rather than as an
+    exception escaping into a route that has no handler for it.
+
+    NOTHING IN THIS SERVER CALLS THIS ANY MORE, and that is the first thing to
+    know about it. Both former callers — the presign route and the confirm route
+    — now ask head_video() directly, because an integer cannot express the
+    difference between "S3 says there is no object" and "S3 would not say", and
+    that difference is what the confirm endpoint has to write into the record.
+    It survives as a compatibility shim for anything outside this repository
+    that still imports it, and the only exercise it gets is its own test plus a
+    monkeypatch in tests/test_rater_packet.py — which is a weak place to be: a
+    helper whose sole exercise is its own test is one nobody will notice
+    breaking, and its UNKNOWN_SIZE contract is now asserted by no production
+    code path at all. Prefer head_video() in anything new; this should be
+    deleted outright once that monkeypatch is retargeted.
+    """
+    probe = head_video(session_id)
+    return UNKNOWN_SIZE if probe["bytes"] is None else probe["bytes"]
 
 
 def upload_receipt(session_id: str) -> Optional[dict]:
     """The `video_uploaded` event S3 acknowledged, or None.
 
-    POST /api/sessions/{id}/video-uploaded calls uploaded_size() — a real HEAD
+    POST /api/sessions/{id}/video-uploaded calls head_video() — a real HEAD
     against the bucket — and only then appends this event with the byte count S3
     reported. So the event is not the browser's word for it; it is the server's
-    own receipt for an object that existed at that moment, written down.
+    own receipt for an object that existed at that moment, written down. (It
+    called uploaded_size() when this was written; that collapsed "S3 says none"
+    into "S3 would not say", which is the distinction the route now has to
+    record, so it asks head_video directly. presign_upload does the same, for
+    the same reason, so uploaded_size has no caller left in this server — see
+    its own docstring.)
 
     Reading the receipt is why playback_url can answer "is there a video?"
     without a network round trip. That matters at Phase 2 scale: a rater's
@@ -112,6 +365,15 @@ def upload_receipt(session_id: str) -> Optional[dict]:
     do. A zero-byte receipt is treated as no video, exactly as the record
     builder treats it: the confirm endpoint writes the event whether or not the
     PUT actually landed, and `"bytes": 0` is how a failed upload looks.
+
+    Since the confirm endpoint also writes the event when S3 could not answer at
+    all, an event can carry `"status": "failed"` with `"bytes": null` — captured,
+    upload unverified. That is not a receipt: nothing here has been acknowledged,
+    so it is filtered out with the zero-byte ones and playback_url stays None.
+    The failed event is still the record that the encounter HAD a recording
+    attempt, which is what tells "never captured" apart from "captured, and we
+    could not confirm it" — a distinction the rater packet has to make and
+    cannot make from a receipt alone.
     """
     if not _SESSION_ID_RE.fullmatch(session_id or ""):
         return None

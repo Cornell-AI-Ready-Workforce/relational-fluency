@@ -30,11 +30,16 @@ from fastapi.testclient import TestClient
 from server import app as appmod
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FIXTURE_DB = Path(
-    "C:/Users/benj9/AppData/Local/Temp/claude/"
-    "C--Users-benj9-Downloads-relational-fluency-main--1-/"
-    "4b640cd3-9836-4d35-8114-6f2468c17345/scratchpad/fixture/index.db"
-)
+
+# The session index the cohort tests read comes from the recorded wave, which
+# tests/conftest.py resolves from RF_FIXTURE_DIR / RF_FIXTURE / DATA_DIR or a
+# checked-in wave. This module used to name one machine's scratchpad path,
+# session UUID and all, with no environment override at all: everywhere else
+# the `fakes` fixture quietly fell back to an empty synthesised table and the
+# two cohort tests skipped, so three assertions about real data stopped
+# existing without a word. The `optional_wave` / `wave_index_db` fixtures come
+# from tests/conftest.py — the first never skips, the second skips with
+# instructions.
 
 RATER_KEY = "test-session-key"
 TOKEN_A = "rt_" + "a" * 32
@@ -205,7 +210,7 @@ def _module(name, obj):
 # --- fixtures ----------------------------------------------------------------
 
 @pytest.fixture()
-def fakes(monkeypatch, tmp_path):
+def fakes(monkeypatch, tmp_path, optional_wave):
     """Wire the fakes, the session key, and a throwaway copy of the wave index.
 
     Module globals are patched rather than environment variables because
@@ -234,12 +239,15 @@ def fakes(monkeypatch, tmp_path):
         monkeypatch.setattr(appmod, "ALLOWED_HOSTS",
                             list(appmod.ALLOWED_HOSTS) + ["testserver"])
 
-    # The cohort→sessions query runs against a copy, never the fixture itself.
-    if FIXTURE_DB.exists():
-        db = tmp_path / "index.db"
-        shutil.copy(FIXTURE_DB, db)
-    else:  # pragma: no cover - the suite still runs without the fixture
-        db = tmp_path / "index.db"
+    # The cohort→sessions query runs against a copy, never the wave itself.
+    db = tmp_path / "index.db"
+    fixture_db = (optional_wave / "index.db") if optional_wave else None
+    if fixture_db is not None and fixture_db.is_file():
+        shutil.copy(fixture_db, db)
+    else:
+        # The suite still runs without a wave: every test here except the two
+        # cohort ones is about routing, not data, and those two ask for
+        # `wave_index_db` and skip.
         conn = sqlite3.connect(db)
         conn.execute("CREATE TABLE sessions (id TEXT, status TEXT, n_turns INT,"
                      " started_at TEXT, cohort TEXT)")
@@ -322,6 +330,62 @@ def test_check_key_itself_rejects_a_rater_token(monkeypatch):
 
     with pytest.raises(HTTPException):
         appmod.check_key(TOKEN_A)
+
+
+# --- the branch nothing above exercises: no SESSION_KEY at all ---------------
+#
+# `fakes` pins SESSION_KEY to a value for every test in this file, so every
+# assertion above is about the configured branch. check_key is
+# `if SESSION_KEY and key != SESSION_KEY`, which means the unconfigured branch
+# is not a weaker guard, it is no guard: an empty SESSION_KEY opens the whole
+# researcher surface to anyone with the URL, and nothing in a response says so.
+# That is deliberate for local development (see the note above check_key), and
+# it is the deployment that forgets to set the secret that this pair of tests
+# is here to keep in view — a study server with a Gemini key, a bucket and no
+# researcher credential looks completely healthy. Refusing that configuration
+# is the startup guard's job, not check_key's; these two say exactly what the
+# routes do once it has been allowed through, so that if anyone ever decides
+# the routes should refuse instead, they change these tests deliberately.
+
+
+@pytest.fixture()
+def keyless_client(fakes, monkeypatch):
+    # A local-only allowlist as well as an empty key, because that pair is the
+    # configuration this posture is defended for: a development server on a
+    # laptop. The startup guard refuses the other pair — no key and a public
+    # hostname — and tests/test_phase2_blockers.py holds it to that.
+    monkeypatch.setattr(appmod, "SESSION_KEY", "")
+    monkeypatch.setattr(appmod, "ALLOWED_HOSTS",
+                        ["localhost", "127.0.0.1", "testserver"])
+    with TestClient(appmod.app) as c:
+        yield c
+
+
+@pytest.mark.parametrize("method,path", RESEARCHER_ROUTES + [
+    ("GET", "/api/encounters"), ("GET", "/api/sessions"), ("GET", "/api/runs"),
+    ("GET", "/researcher"), ("GET", "/evidence"),
+])
+def test_an_unset_session_key_leaves_every_researcher_route_open(
+        keyless_client, method, path):
+    r = keyless_client.request(method, path)
+    assert r.status_code != 401, (
+        "check_key is a no-op with no SESSION_KEY configured; if this route "
+        "now refuses, the posture changed and the startup guard's reason to "
+        "exist changed with it"
+    )
+
+
+def test_an_unset_session_key_does_not_open_a_rater_route(keyless_client):
+    """Rater auth is positive validation, so it does not fail open with it.
+
+    Worth pinning next to the test above: the two credentials fail in opposite
+    directions, and a reader who has just seen the researcher routes stand wide
+    open should not have to guess whether a rater console did too.
+    """
+    for method, path in RATER_ROUTES:
+        assert keyless_client.request(method, path).status_code == 401
+        assert keyless_client.request(
+            method, path, params={"token": "rt_" + "0" * 32}).status_code == 401
 
 
 # --- a token reaches only its own rater --------------------------------------
@@ -635,27 +699,56 @@ def test_assigning_named_sessions(client, fakes):
     assert fakes.raters.assign_calls == [(["s_1", "s_2"], ["ra_1", "ra_2"], 2, 7)]
 
 
-def test_assigning_a_whole_cohort_off_the_session_index(client, fakes):
+def _cohort_in_index(db, cohort):
+    """What the index says a cohort's rateable encounters are, oldest first.
+
+    Read out of the copied index rather than written down as literals. The old
+    version asserted `n_sessions == 26` and named two session ids from one
+    machine's fixture; that is an assertion about which directory the runner
+    was pointed at, not about what the route does, and it turns any other
+    recorded wave — a colleague's, the lab's, next term's — into a red suite.
+    Deriving the expectation keeps the route under test on every wave.
+    """
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute(
+            # The same two filters _rateable_sessions applies: an encounter
+            # still recording has no record to read, and one where nobody
+            # spoke has nothing to score.
+            "SELECT id FROM sessions WHERE cohort = ? AND status != 'active'"
+            "   AND COALESCE(n_turns, 0) > 0 ORDER BY started_at ASC",
+            (cohort,)).fetchall()
+    finally:
+        conn.close()
+    return [r[0] for r in rows]
+
+
+def test_assigning_a_whole_cohort_off_the_session_index(client, fakes, wave_index_db):
     """The end-of-wave move: name the cohort, not four hundred session ids."""
-    if not FIXTURE_DB.exists():  # pragma: no cover
-        pytest.skip("fixture index.db not present")
+    expected = _cohort_in_index(fakes.db, "study")
+    internal = _cohort_in_index(fakes.db, "internal")
+    if not expected:
+        pytest.skip(f"the wave at {wave_index_db.parent} has no rateable study cohort")
     r = client.post("/api/rater-assignments", params={"key": RATER_KEY},
                     json={"cohort": "study", "rater_ids": ["ra_1", "ra_2", "ra_3"],
                           "per_encounter": 3, "seed": 1})
     assert r.status_code == 200
-    assert r.json()["n_sessions"] == 26          # 26 study encounters in the wave
+    assert r.json()["n_sessions"] == len(expected)
     sids = fakes.raters.assign_calls[0][0]
-    assert sids[0] == "s_1772460300_44c9a2"      # oldest first
-    assert "s_1773142745_384dad" not in sids     # the internal test encounter
+    assert sids == expected                  # oldest first, all of them
+    for sid in internal:                     # the internal test encounters
+        assert sid not in sids               # are a separate pool
 
 
-def test_the_internal_cohort_is_a_separate_pool(client, fakes):
-    if not FIXTURE_DB.exists():  # pragma: no cover
-        pytest.skip("fixture index.db not present")
+def test_the_internal_cohort_is_a_separate_pool(client, fakes, wave_index_db):
+    expected = _cohort_in_index(fakes.db, "internal")
+    if not expected:
+        pytest.skip(f"the wave at {wave_index_db.parent} has no internal cohort")
     r = client.post("/api/rater-assignments", params={"key": RATER_KEY},
                     json={"cohort": "internal", "rater_ids": ["ra_1"],
                           "per_encounter": 1})
-    assert r.json()["n_sessions"] == 1
+    assert r.json()["n_sessions"] == len(expected)
+    assert fakes.raters.assign_calls[0][0] == expected
 
 
 def test_an_empty_cohort_is_refused_rather_than_silently_assigning_nothing(client):

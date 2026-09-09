@@ -123,21 +123,63 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
         # a judgement a human still has to make but can now see.
         reached = {i for i in ids if i}
         missed = [t for t in expected if t not in reached]
+        # A probed beat and a volunteered one both count as delivered stimulus,
+        # so both count toward coverage — but they are not the same evidence,
+        # and the line has to say which. Every beat in every spec now carries a
+        # probe, so a participant who says almost nothing gets walked through
+        # the remaining beats by the watchdog, one per PROBE_AFTER_SECONDS, and
+        # this line used to read "4/4, all": full coverage of an encounter in
+        # which the participant reached nothing on their own. static/evidence
+        # .html and the director view already split the two; this is that split,
+        # in the one report a researcher runs across a whole wave.
+        expected_set = set(expected)
+        volunteered = {e.get("trigger_id") for e in fired if not e.get("probing")}
+        volunteered.discard(None)
+        n_vol = len(volunteered & expected_set)
         checks.append((
             not missed,
             "planted triggers fired",
-            f"{len(reached)}/{len(expected)}"
-            + (f", missed: {', '.join(missed)}" if missed else ", all"),
+            f"{len(reached)}/{len(expected)} "
+            f"({n_vol} volunteered, {len(reached & expected_set) - n_vol} probed)"
+            + (f", missed: {', '.join(missed)}" if missed else ""),
         ))
         esci_seen = {i for e in fired for i in (e.get("esci") or [])}
         checks.append((bool(esci_seen), "ESCI items exercised", f"{len(esci_seen)} distinct"))
 
-    video_ev = next((e for e in events if e.get("type") == "video_uploaded"), None)
-    checks.append((
-        bool(video_ev and video_ev.get("bytes")),
-        "webcam video in S3",
-        f"{video_ev['bytes']} bytes" if video_ev and video_ev.get("bytes") else "NOT UPLOADED",
-    ))
+    # LAST wins, and only an event that carries bytes counts — the same rule
+    # encounter_record.build uses, because the two must not disagree about
+    # whether a recording exists. The confirm endpoint writes a video_uploaded
+    # event on EVERY attempt now, failures included, and the page retries the
+    # confirm up to three times; the ordinary intermittent case (the PUT lands,
+    # the first HEAD gets a 503 SlowDown, a retry succeeds) therefore leaves a
+    # "failed" event AHEAD of the "ok" one. Taking the first event reported a
+    # recording that is safely in the bucket as absent — the same false record
+    # this tool exists to catch, committed by the tool itself.
+    vid_events = [e for e in events if e.get("type") == "video_uploaded"]
+    video_ev = next(
+        (e for e in reversed(vid_events) if (e.get("bytes") or 0) > 0), None
+    )
+    if video_ev:
+        video_detail = f"{video_ev['bytes']} bytes"
+    elif not vid_events:
+        # No confirm ever arrived: nothing was captured, or the tab died before
+        # it could say so.
+        video_detail = "NOT UPLOADED"
+    else:
+        # Attempts were made and none confirmed. Two different facts, and the
+        # researcher's next move differs: "not_found" is S3 answering plainly
+        # that the object is not there, while any other code (SlowDown, 503,
+        # AccessDenied) is S3 declining to answer at all — the object may well
+        # be in the bucket with only the confirmation lost. Calling the second
+        # case NOT UPLOADED writes off a recording that exists.
+        last = vid_events[-1]
+        why = last.get("error") or last.get("client_error") or "no reason recorded"
+        video_detail = (
+            "NOT UPLOADED (S3 says the object is absent)"
+            if why == "not_found"
+            else f"CAPTURED, UPLOAD UNCONFIRMED: {why}"
+        )
+    checks.append((bool(video_ev), "webcam video in S3", video_detail))
 
     ok = all(c[0] for c in checks)
     return ok, checks

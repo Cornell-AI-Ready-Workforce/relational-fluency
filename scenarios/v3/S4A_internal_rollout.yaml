@@ -102,11 +102,50 @@ interactions:
           low:
             answer: "All-at-once works for me. (lets the interruption pass)"
             why: "exclusion unnoticed; plan-pushing → does not cooperate (R)"
+      # The scene opens on its own, but nothing carries it after that: once the
+      # participant goes quiet mid-session the silence watchdog is the only
+      # thing left, and it probes only when the next unfired trigger carries an
+      # on_silence. Without one on t2 and t3 the room simply stopped between
+      # Dan's opening and the close — a silent WAV where the design wants
+      # scoreable avoidance — and the scene could not advance past an unfired
+      # beat either. Both probes therefore carry that beat's own move and hand
+      # the floor straight back, and neither turns to Priya: retrieving her
+      # interrupted point is precisely what t3 scores, and a room that fetches
+      # her itself has answered the question for the participant.
       - id: t2_idea_relabelled
         cue: "Dan restates Chris's pilot idea as 'my earlier point'"
+        on_silence: "Dan rolls on: 'Like I said earlier, we pilot with one team first. Everyone good with that?'"
         esci: [respectful, encourages_cooperation]
+      # `agent` is pinned because the cue names nobody, and t1/t2 name Dan only
+      # by opening with his name — _trigger_agent infers from that first word.
+      # With nobody named, _probe_room falls back to "whoever did not just
+      # speak", and after t2 (Dan's beat) that is Priya: the beat scored on
+      # solicits_input / encourages_participation would be delivered by the
+      # character whose silence the participant is supposed to notice, and a
+      # Priya who speaks up unprompted has answered the question for them.
+      # Dan is also who this beat belongs to — step 3 of his own arc is "Start
+      # closing decisions while Priya is still silent".
+      #
+      # The pin is read on BOTH paths, not only by the probe, and that is
+      # intended. _run_group_turn also calls _trigger_agent on every normal
+      # turn: when the router sends the floor to Priya or Chris while this beat
+      # is next, it logs trigger_deferred and leaves the beat unspent
+      # (server/realtime_voice_session.py:2912-2929), and _maybe_advance will
+      # not close i1 while a beat is unfired (:2135). So a participant who keeps
+      # addressing Priya or Chris holds i1 open until the router's rotation or
+      # the silence watchdog reaches Dan — and if they never do, the beat lands
+      # in advance_requested.skipped_triggers when the participant moves on.
+      # That is a visible, recorded gap in a re-runnable encounter. Unpinning it
+      # trades that for the probe handing Priya's own retrieval to Priya, which
+      # scores an encounter that never happened. Do not unpin this to make the
+      # deferral go away. The narrow fix is a separate `probe_agent` key so the
+      # probe binds and normal delivery does not; it needs _trigger_agent to
+      # take a probing flag, so until that lands the pin is the right side to
+      # err on.
       - id: t3_decisions_close_with_priya_silent
+        agent: dan
         cue: "Decisions start closing while Priya has still said nothing"
+        on_silence: "The room moves to close the decision: 'So we're settled on that? Should someone start writing it up?'"
         esci: [encourages_participation, solicits_input]
 
   - id: i2

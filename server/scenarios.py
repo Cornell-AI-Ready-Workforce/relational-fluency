@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -198,7 +199,29 @@ def _legacy_by_id() -> Dict[str, Path]:
     return out
 
 
+# A scenario id is a filename fragment, so it has to look like one before it is
+# joined onto a path. It arrives from a participant-controlled websocket query
+# parameter (/ws/participant and /ws/participant/voice both hand ?scenario=
+# straight to registry.create), and unvalidated it was neither bounded by the
+# scenarios directory nor by the study: "../../.." escaped SCENARIOS_DIR
+# entirely, so any .yaml on disk that happened to be a mapping with
+# id/title/system_prompt became a live encounter — its system_prompt briefing
+# the actor, its id stamped onto the recording — and a miss told the caller
+# whether an arbitrary path existed. A slash alone was enough for the milder
+# version, "archive/mundane_chitchat", which needs no traversal to run a retired
+# scenario and label the record with it. Every id the app actually offers is
+# read out of the files themselves (list_scenarios) and every shipped one —
+# S1A..S4B, missed_deadlines, g1_hidden_profile_vendor — matches this, so
+# nothing legitimate is turned away.
+_SCENARIO_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
 def _find_scenario_file(scenario_id: str) -> Path:
+    if not _SCENARIO_ID_RE.fullmatch(scenario_id or ""):
+        # Same error as an unknown id, deliberately: the caller learns nothing
+        # about the filesystem from the shape of the string it sent. The pattern
+        # admits no separator, so the join below cannot leave SCENARIOS_DIR.
+        raise FileNotFoundError(f"No scenario: {scenario_id!r}")
     direct = SCENARIOS_DIR / f"{scenario_id}.yaml"
     if direct.exists():
         return direct

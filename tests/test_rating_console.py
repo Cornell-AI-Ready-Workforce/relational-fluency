@@ -16,21 +16,23 @@ import. What can still be tested, and is worth testing, falls into four groups:
 3. **The documentation** — that the licensing warning is still in all three
    places it is supposed to be, and that the operational guide still documents
    every route the console uses.
-4. **The blinded packet, against the real fixture wave** — the console consumes
-   a packet shape, and the fixture is 27 real encounter records. Building the
-   packet the console expects out of each of them proves the shape is derivable
-   from real data, and that the blinding actually removes what it claims to.
+4. **The blinded packet, against a recorded wave** — the console consumes a
+   packet shape, and a wave is real encounter records (the reference one is 27
+   of them). Building the packet the console expects out of each of them proves
+   the shape is derivable from real data, and that the blinding actually removes
+   what it claims to. When no wave is available these skip, saying how to point
+   the suite at one; they never depend on a path from one machine.
 
-Run from the repo root:
+Run from anywhere — every path here is derived from __file__:
 
     python -m pytest tests
+    RF_FIXTURE_DIR=/path/to/wave python -m pytest tests   # with group 4 live
 """
 
 from __future__ import annotations
 
 import csv
 import json
-import os
 import random
 import re
 import shutil
@@ -49,14 +51,15 @@ README = ROOT / "README.md"
 
 CONSTRUCTS = ["conflict_management", "influence", "inspirational_leadership", "teamwork"]
 
-# The fixture wave. DATA_DIR wins so the suite can be pointed at any wave; the
-# scratchpad path is the one this was developed against. Missing is a skip, not
-# a failure — the fixture is not part of the repository.
-FIXTURE = Path(os.environ.get("DATA_DIR") or (
-    r"C:/Users/benj9/AppData/Local/Temp/claude"
-    r"/C--Users-benj9-Downloads-relational-fluency-main--1-"
-    r"/4b640cd3-9836-4d35-8114-6f2468c17345/scratchpad/fixture"
-))
+# The recorded wave arrives through tests/conftest.py's `wave_sessions` /
+# `wave_dir` fixtures, which accept RF_FIXTURE_DIR, RF_FIXTURE or DATA_DIR and
+# skip with instructions when none names a wave. What was here before was
+# `DATA_DIR or <one machine's scratchpad path, session UUID and all>`: on any
+# other machine the fallback is missing, so the four wave-backed tests below
+# quietly stopped testing anything — and with DATA_DIR pointed at a fresh temp
+# directory two of them went red instead, because server.storage creates
+# `DATA_DIR/sessions` on import and an existing-but-empty sessions/ got past
+# the `is_dir()` guard.
 
 
 def read_console() -> str:
@@ -476,22 +479,32 @@ def blind(record: dict) -> dict:
     }
 
 
-def fixture_records() -> list[Path]:
-    sessions = FIXTURE / "sessions"
-    if not sessions.is_dir():
-        pytest.skip(f"no fixture wave at {FIXTURE}")
-    found = sorted(sessions.glob("*/record.json"))
-    if not found:
-        pytest.skip(f"no encounter records under {sessions}")
-    return found
+@pytest.fixture(scope="session")
+def fixture_records(wave_sessions) -> list[Path]:
+    """Every encounter record in the wave, oldest first.
+
+    A fixture rather than a function so the wave resolution lives in exactly
+    one place (tests/conftest.py) and an absent wave skips with instructions
+    instead of tripping over a path that only ever existed on one laptop.
+    """
+    return sorted(wave_sessions.glob("*/record.json"))
 
 
-def test_fixture_wave_is_the_expected_size():
-    assert len(fixture_records()) == 27
+def test_the_wave_holds_encounters_with_readable_records(fixture_records):
+    """The reference wave is 27 encounters; any wave must be non-empty JSON.
+
+    The size is deliberately not asserted. `== 27` is a statement about which
+    directory the runner was pointed at, not about the code, and it turns a
+    colleague's wave into a red suite — the exact portability failure this
+    file was carrying an absolute scratchpad path for.
+    """
+    assert fixture_records, "the wave resolved but holds no encounter records"
+    for path in fixture_records:
+        assert isinstance(json.loads(path.read_text(encoding="utf-8")), dict), path
 
 
-def test_every_fixture_encounter_yields_a_packet_the_console_can_render():
-    for path in fixture_records():
+def test_every_fixture_encounter_yields_a_packet_the_console_can_render(fixture_records):
+    for path in fixture_records:
         record = json.loads(path.read_text(encoding="utf-8"))
         packet = blind(record)
         # The fields the console dereferences.
@@ -510,8 +523,8 @@ def test_every_fixture_encounter_yields_a_packet_the_console_can_render():
             assert turn["t"] is None or isinstance(turn["t"], (int, float))
 
 
-def test_blinded_packet_carries_none_of_the_instrument_internals():
-    for path in fixture_records():
+def test_blinded_packet_carries_none_of_the_instrument_internals(fixture_records):
+    for path in fixture_records:
         record = json.loads(path.read_text(encoding="utf-8"))
         packet = blind(record)
         blob = json.dumps(packet, ensure_ascii=False)
@@ -528,13 +541,13 @@ def test_blinded_packet_carries_none_of_the_instrument_internals():
                 assert text not in blob, f"stage direction leaked for {path.parent.name}"
 
 
-def test_a_speaker_change_is_visible_in_the_blinded_transcript():
+def test_a_speaker_change_is_visible_in_the_blinded_transcript(fixture_records):
     # The console draws a scene break when the counterpart changes, and it does
     # it from the speaker label, because the packet drops agent_id. If the
     # blinding also flattened the labels, a two-character encounter would read
     # as one undifferentiated voice and a rater could not tell who was who.
     multi = 0
-    for path in fixture_records():
+    for path in fixture_records:
         record = json.loads(path.read_text(encoding="utf-8"))
         packet = blind(record)
         speakers = {t["speaker"] for t in packet["transcript"] if t["role"] == "agent"}
@@ -546,23 +559,23 @@ def test_a_speaker_change_is_visible_in_the_blinded_transcript():
     assert multi > 0, "no encounter in the wave has more than one counterpart"
 
 
-def test_the_console_video_url_cannot_come_from_record_json():
+def test_the_console_video_url_cannot_come_from_record_json(fixture_records):
     # Every record.json in a real wave has "video": [] — record.json is written
     # at session close and the browser's S3 upload lands afterwards. So the
     # packet's video_url has to be computed from server/video.playback_url (or
     # from the video_uploaded event), never read out of the stored record.
     # This is a live platform defect, and the packet builder must not inherit it.
     empty = 0
-    for path in fixture_records():
+    for path in fixture_records:
         record = json.loads(path.read_text(encoding="utf-8"))
         if not record.get("video"):
             empty += 1
-    assert empty == len(fixture_records()), (
+    assert empty == len(fixture_records), (
         "some records now carry video; the packet builder may read it from there"
     )
 
 
-def test_transcript_gaps_in_the_wave_are_renderable_states_not_crashes():
+def test_transcript_gaps_in_the_wave_are_renderable_states_not_crashes(fixture_records):
     """The console renders a truncated or lost agent line as an explicit note.
 
     Read from events.jsonl, not from record.json — and that is the point. The
@@ -576,12 +589,14 @@ def test_transcript_gaps_in_the_wave_are_renderable_states_not_crashes():
     makes these renderable at all.
     """
     stored = flagged = 0
-    for path in fixture_records():
+    for path in fixture_records:
         record = json.loads(path.read_text(encoding="utf-8"))
         for turn in record.get("transcript", []):
             if turn.get("interrupted") or turn.get("transcript_missing"):
                 stored += 1
         events = path.parent / "events.jsonl"
+        if not events.is_file():   # a wave may archive an encounter without its trail
+            continue
         for line in events.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
@@ -637,7 +652,8 @@ def test_presigning_a_playback_url_is_a_local_computation():
     assert "encounters/s_1772460300_44c9a2/webcam.webm" in url
 
 
-def test_the_real_packet_builder_produces_what_the_console_reads(monkeypatch):
+def test_the_real_packet_builder_produces_what_the_console_reads(
+        monkeypatch, wave_sessions, fixture_records):
     """Exercise server/rater_packet.build against the wave, and check the seams.
 
     The mirror above says what the console needs; this says the builder produces
@@ -647,9 +663,7 @@ def test_the_real_packet_builder_produces_what_the_console_reads(monkeypatch):
     signature arithmetic, not a request — the test above proves that separately
     — so stubbing the receipt lookup is the only thing being faked.
     """
-    sessions = FIXTURE / "sessions"
-    if not sessions.is_dir():
-        pytest.skip(f"no fixture wave at {FIXTURE}")
+    sessions = wave_sessions
     rater_packet = pytest.importorskip("server.rater_packet")
     from server import video as video_mod
 
@@ -680,7 +694,12 @@ def test_the_real_packet_builder_produces_what_the_console_reads(monkeypatch):
         for key in FORBIDDEN_PACKET_KEYS - {"encounter_id", "session_id"}:
             assert f'"{key}"' not in blob, f"{key} leaked for {path.parent.name}"
         checked += 1
-    assert checked == 27
+    # Every encounter in the wave, whatever wave it is. The old `== 27` was a
+    # count of one machine's fixture, so with DATA_DIR on an empty directory it
+    # read `assert 0 == 27` — a missing fixture reported as a builder defect —
+    # and on a colleague's wave it failed on the size. What matters is that the
+    # builder produced a console-shaped packet for every record present.
+    assert checked == len(fixture_records)
 
 
 # --------------------------------------------------------------------------- #
@@ -879,13 +898,11 @@ const answer = (name, value) => {
 """
 
 
-def test_the_console_runs(tmp_path, monkeypatch):
+def test_the_console_runs(tmp_path, monkeypatch, wave_sessions):
     node = shutil.which("node")
     if not node:
         pytest.skip("node is not installed; the console harness needs it")
-    sessions = FIXTURE / "sessions"
-    if not sessions.is_dir():
-        pytest.skip(f"no fixture wave at {FIXTURE}")
+    sessions = wave_sessions
     rater_packet = pytest.importorskip("server.rater_packet")
     from server import video as video_mod
 
@@ -894,6 +911,14 @@ def test_the_console_runs(tmp_path, monkeypatch):
     # landed. No AWS call is made — the two video seams are replaced.
     ordinary, untranscribed, novideo = (
         "s_1772460300_44c9a2", "s_1772548516_02952d", "s_1772764657_717245")
+    # These three ids belong to the reference wave. Another wave is a wave, not
+    # a defect: skip naming what is missing rather than fail on a build() that
+    # was asked for an encounter this wave never recorded.
+    missing = [sid for sid in (ordinary, untranscribed, novideo)
+               if not (sessions / sid / "record.json").is_file()]
+    if missing:
+        pytest.skip(f"the wave under {sessions} does not carry the reference "
+                    f"encounters this harness drives: {missing}")
     monkeypatch.setattr(rater_packet, "SESSIONS_DIR", sessions, raising=False)
     monkeypatch.setattr(
         video_mod, "upload_receipt",
