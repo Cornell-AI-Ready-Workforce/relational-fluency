@@ -225,6 +225,36 @@ print('\n'.join(e['id'] for e in json.load(sys.stdin)))" | while read SID; do
 done
 ```
 
+## How many sessions / participants (durable, survives redeploys)
+
+CloudWatch keeps every voice session start. From the terminal (a few minutes
+for a 7-day window):
+
+```bash
+DAYS=7; START=$(( ($(date +%s) - DAYS*86400) * 1000 )); aws logs filter-log-events --log-group-name /ecs/relational-fluency/agent --start-time $START --filter-pattern '"/ws/participant/voice" "[accepted]"' --query 'events[*].[timestamp,message]' --output json | python3 -c "
+import json,sys,re,datetime,collections
+ev=json.load(sys.stdin); rows=[]
+for ts,msg in ev:
+    m=re.search(r'scenario=(\w+)&participant_id=([\w\-]+)', msg)
+    if m: rows.append((datetime.datetime.fromtimestamp(ts/1000).strftime('%a %b %d'), m.group(1), m.group(2)))
+print('voice sessions:', len(rows), '| distinct participants:', len({p for _,_,p in rows}))
+print('per day:', dict(collections.Counter(d for d,_,_ in rows)))
+print('per scenario:', dict(collections.Counter(s for _,s,_ in rows)))"
+```
+
+Or in the console, CloudWatch Logs Insights on `/ecs/relational-fluency/agent`:
+
+```
+fields @timestamp, @message
+| filter @message like "/ws/participant/voice" and @message like "[accepted]"
+| parse @message /scenario=(?<scenario>\w+)&participant_id=(?<pid>[\w-]+)/
+| stats count() as sessions, count_distinct(pid) as participants by bin(1d)
+```
+
+Simulator runs (`server` verification) count like people here. Real study
+participants are the `cohort=study` runs in `/api/runs` once the Qualtrics
+link is live.
+
 ## Reading the steering trail
 
 ```bash
