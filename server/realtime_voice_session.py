@@ -115,6 +115,44 @@ def _script_mismatch(text: str) -> bool:
     return latin / len(letters) < 0.5
 
 
+_SAYS_MARKER = re.compile(
+    r"^\s*(?:\[[^\]]{1,40}\s+says\]:|\(Context, not for you to repeat:|"
+    r"[A-Z][a-z]+\s+(?:just\s+)?(?:says|said)(?:\s+out\s+loud(?:\s+to\s+the\s+group)?)?:)\s*"
+)
+
+
+def _strip_context_echo(text: str, told: list) -> str:
+    """Drop parroted colleague-context from a reply.
+
+    Seen on the native-audio route: Alex opened with '[Jordan says]: It's
+    fine. Everything's fine. What do you need to discuss?' before answering.
+    The room knows exactly what it told him, so any sentence of the reply
+    that also appears in a recently injected line is removed, along with a
+    leading 'X says:' marker.
+    """
+    t = (text or "").strip()
+    # Marker anywhere in the reply (the model sometimes narrates a colleague
+    # mid-line, or invents a note in our own format): remove the marker and
+    # the quoted or single sentence it introduces.
+    t = re.sub(
+        r"(?:\[[^\]]{1,40}\s+says\]:|\(Context, not for you to repeat:|"
+        r"\b[A-Z][a-z]+\s+(?:just\s+)?(?:says|said)(?:\s+out\s+loud(?:\s+to\s+the\s+group)?)?:)"
+        r"\s*(?:\"[^\"]*\"?|\u201c[^\u201d]*\u201d?|[^.!?]*[.!?])\)?\s*",
+        " ", t,
+    ).strip()
+    t = re.sub(r"\s{2,}", " ", t)
+    if not told or not t:
+        return t
+    told_norm = " ".join(_norm_speech(x) for x in told)
+    kept = []
+    for sent in [x for x in re.split(r"(?<=[.!?])\s+", t) if x]:
+        n = _norm_speech(sent)
+        if len(n.split()) >= 2 and n in told_norm:
+            continue
+        kept.append(sent)
+    return " ".join(kept).strip().strip('"').strip()
+
+
 def _is_stage_direction(text: str) -> bool:
     """'[Priya remains quiet.]' or '[Silence]': the model narrating instead of
     speaking. Treated as no reply; the native-audio route does this sometimes."""
@@ -238,6 +276,7 @@ class RealtimeVoiceSessionRunner:
         self._last_played: Optional[dict] = None   # {agent_id, start, end, text}
         self._turns_without_transcript = 0
         self._scribe_pump: Optional[asyncio.Task] = None
+        self._recent_told: List[str] = []   # colleague lines injected as text
         self._floor = asyncio.Lock()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -259,7 +298,11 @@ class RealtimeVoiceSessionRunner:
         )
         if self.is_group():
             voice_rules += (
-                "\nMEETING: Several people share this room. If the participant "
+                "\nMEETING: You will sometimes receive notes in parentheses "
+                "telling you what a colleague just said; they are context only. "
+                "Never read them out and never narrate what a colleague said "
+                "(no 'Casey just said...'): respond as someone who heard it, "
+                "in your own words. Several people share this room. If the participant "
                 "addresses someone else by name, stay silent and let them "
                 "answer. Do not repeat or rephrase what another person just "
                 "said, and do not answer every turn: leave room for quieter "
@@ -716,7 +759,7 @@ class RealtimeVoiceSessionRunner:
 
     async def _finalize_member(self, agent, text: str, interrupted: bool = False) -> None:
         """Close one character's turn in a group room."""
-        text = _clean_agent_text(text)
+        text = _strip_context_echo(_clean_agent_text(text), self._recent_told)
         if _is_stage_direction(text):
             self.session.store.event("stage_direction_output", agent_id=agent.id, text=text)
             text = ""
@@ -758,6 +801,7 @@ class RealtimeVoiceSessionRunner:
             segment=self.segment, transcript_missing=not text, interrupted=interrupted,
         )
         if self.room is not None and text:
+            self._recent_told = (self._recent_told + [text])[-6:]
             await self.room.tell(agent.name, text, exclude=agent.id)
         await self._send({"type": "assistant_done", "agent_id": agent.id})
         self._response_done.set()
@@ -774,6 +818,14 @@ class RealtimeVoiceSessionRunner:
         # record it once.
         if norm and norm == self._last_user_norm and now - self._last_user_at < 12:
             return
+        # Several sessions can transcribe the same utterance with slightly
+        # different wording (scribe plus members on text-capable routes):
+        # within a short window, a near-match is the same turn.
+        if norm and self._last_user_norm and now - self._last_user_at < 5:
+            a, b = set(norm.split()), set(self._last_user_norm.split())
+            if a and b and len(a & b) / min(len(a), len(b)) >= 0.6:
+                self.session.store.event("user_transcript_duplicate_dropped", text=text)
+                return
         # Echo guard: an agent's line played over speakers can come back
         # transcribed as participant speech (Chrome's AEC does not cancel
         # WebAudio playback). It must not enter the record or steer routing.

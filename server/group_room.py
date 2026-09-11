@@ -111,7 +111,10 @@ class GroupRoom:
         if not text:
             return
         await asyncio.gather(*(
-            rt.inject_text(f"[{speaker_name} says]: {text}")
+            rt.inject_text(
+                f"(Context, not for you to repeat: {speaker_name} just said out loud "
+                f"to the group: \"{text}\")"
+            )
             for aid, rt in self.sessions.items()
             if aid != exclude and accepts_text_items(rt.model)
         ), return_exceptions=True)
