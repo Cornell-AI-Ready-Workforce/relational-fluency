@@ -826,7 +826,13 @@ function check(mark, cls, name, what) {
    that read it: a copy of a rule in a second language drifts silently. */
 function familyOf(model) {
   const name = String(model || '').toLowerCase();
-  if (name.includes('gemini') && name.includes('live')) return 'gemini-live';
+  if (name.includes('gemini') && name.includes('live')) {
+    // Order matters, exactly as in family_of(): the native-audio sibling
+    // matches the gemini-live test too, and the server gives it a row of its
+    // own because folding it in feeds it 16 kHz and it then never speaks.
+    if (name.includes('native-audio')) return 'gemini-live-native-audio';
+    return 'gemini-live';
+  }
   if (name.includes('realtime') && (name.includes('gpt') || name.includes('openai'))) return 'gpt-realtime';
   return '';
 }
@@ -858,7 +864,11 @@ function paintSteering(model) {
   }
   const fam = familyOf(model);
   const m = `<span class="mono">${esc(model || 'unset')}</span>`;
-  if (fam === 'gemini-live') {
+  // Both gemini rows get this card: neither has a measurement saying a
+  // mid-session session.update is honoured (the native-audio row carries
+  // honours_session_update False because nobody probed it, which is the
+  // same promise to the researcher either way).
+  if (fam === 'gemini-live' || fam === 'gemini-live-native-audio') {
     $('steerTitle').textContent = 'A live demo on this model shows no steering. Say so first.';
     $('steerBody').innerHTML =
       `<p>The voice model configured here is ${m}. `

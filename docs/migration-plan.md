@@ -112,6 +112,164 @@ stream) and drive commits. Barge-in likewise has to be handled locally by
 dropping queued agent audio when the participant starts speaking. Budget for
 this; it is the main piece the gateway does not give us for free.
 
+**`nto.gemini-live-2.5-flash-native-audio` works, with three route-specific
+adaptations (found 2026-09-08 after it looked dead for a day).** The route
+accepts a session and then stays silent forever if it is fed 16 kHz audio:
+no transcription, no reply, no error. It wants **24 kHz PCM16 input**; the
+client resamples per model (`input_rate_for_model`). Output is 24 kHz like
+the other route (confirmed by pitch: 179 Hz vs 180 Hz for the same voice).
+Also different on this route:
+
+- It fires its own reply about 3.3 s after silence (the other route: ~1 s),
+  so the broker waits longer before requesting one (`autofire_wait_for_model`).
+- It accepts text conversation items. (This bullet used to add "the other
+  route closes the socket on them". **That is no longer true and was probably
+  never the item's fault** — see the "No longer true, 2026-09" note further
+  down: re-probed 2026-09-10 and again 2026-09-14 on a flat session config,
+  plain `nto.gemini-live-2.5-flash` accepts a user-role text item and answers
+  it, first delta 0.23 s. The 1006 belonged to the 2026-08-19 over-specified
+  session config. Nothing about the native-audio claim changes; both routes
+  take text items, and `accepts_text_items` is True for every family in
+  `REALTIME_FAMILIES` today.) Rooms use it: members hear only the
+  participant's audio, and each colleague's finished line is injected as text
+  (`GroupRoom.tell`).
+  Fanning colleague audio into a native-audio member confused its turn
+  detection: it reacted to colleagues with long replies and then never
+  fired for the participant's next turn.
+- A member still generating a reaction when the participant starts speaking
+  is cancelled (`_cancel_stale_holds`), or it never answers the new turn.
+- It emits many empty responses (logged as `empty_response`); harmless.
+
+- Room members get **no tools** on this route: it calls `end_conversation`
+  constantly and every call is an empty turn. That means `END_SEGMENT_TOOL` —
+  the wiring that lets an actor end a group conversation and advance the
+  encounter — is **not available on the route production runs**, and a group
+  segment there ends the way it did before that tool existed: the director's
+  turn budget, or the participant leaving. This is a real capability loss, it
+  is per-family (`member_tools` in `REALTIME_FAMILIES`), and it is recorded
+  here rather than absorbed silently.
+
+Verified with the simulated participant: S2B 1:1 4/4 replies, ladder intact,
+~2 s; S4A room 4 of 5 turns answered with correct name routing; S3A room with
+interjection. Switch: `actor_model = "nto.gemini-live-2.5-flash-native-audio"`
+in `terraform.tfvars`, apply, then a manual walkthrough before participants.
+
+> **Where these facts live now.** Every per-route difference above — input
+> sample rate, autofire wait, text items, colleague relay, how the floor is
+> granted, member tools, whether `response.created` alone proves a reply
+> started, the transcription language hint — is a **column on a row** in
+> `REALTIME_FAMILIES` (`server/voice/realtime.py`), one row per family, rather
+> than a substring test on the model name scattered across three modules.
+> `gemini-live-native-audio` is its own row, and it has to be: `family_of()`
+> would otherwise fold it into `gemini-live` and feed it 16 kHz, which is the
+> permanent-silence failure described at the top of this block. **Setting
+> `actor_model` and adding the row are one change, not two.**
+>
+> Two columns on the native-audio row are marked NOT PROBED and carried over
+> conservatively: `honours_session_update` (False, so the runner records a
+> stage direction as unacknowledged rather than claiming it landed) and
+> `end_of_turn` (None, so the runner's own VAD_SILENCE_MS stands, which is what
+> that route ran with in production). Probe them and say so in the row.
+>
+> **Three audio-recovery bars are also unprobed on this route**, and they are
+> not columns: `RESPONSE_STALL_S` (45 s), `AUDIO_ABSENT_S` (8 s) and
+> `REPLAY_UNANSWERED_S` (4 s) are single globals calibrated on plain flash (190
+> replies for the audio bar, 502 closed replies for the stall bar, six waves).
+> Two of the three are conservative on any route and stand as they are. The
+> third was not: 4 s is shorter than the same route's own 4.5 s autofire wait,
+> so a replayed turn was called unanswered and its session rebuilt before the
+> route was due to start speaking. `_absent_bar()` now floors the replay bar by
+> the family's `autofire_wait` for exactly that reason. If Phase 1 runs on this
+> route, re-measure all three on it.
+
+### What the per-family resolution switches OFF on the deployed route
+
+Three mechanisms measured on plain flash do not run on
+`nto.gemini-live-2.5-flash-native-audio`. None of them was deleted; each is a
+column, and each is False or overridden there because that is what that route
+was measured to need. Taken together they mean **the group path we measured is
+not the group path production runs**, which is a fact for the model decision
+rather than a bug to fix:
+
+- **`END_SEGMENT_TOOL` reaches no room member** (`member_tools=False`, above).
+  An actor cannot end a group conversation; the director's turn budget and the
+  participant's own exit are what end a segment.
+- **Colleague audio is not fanned to members** (`relay_colleagues_as_text=True`):
+  `hear()` drops those members from the audio fan and `tell()` gives them the
+  finished line as a text note instead. Our fan-out byte counters were measured
+  on the route that still fans.
+- **The floor is granted by a text nudge, not by pad-and-commit**
+  (`grant_via_text_prompt=True`). The pad-and-commit path, and the fan-out byte
+  counter that served as its `heard_something` signal, are plain-flash
+  behaviour. A grant on the deployed route injects a nudge and asks.
+
+`tests/test_origin_main_behaviours.py` holds each of these to what it was
+measured to do, in both directions — what the deployed route does, and that
+plain flash is untouched.
+
+**Fallback for the announced deprecation of `nto.gemini-live-2.5-flash`
+(verified 2026-09-08): `gpt-realtime-2.1` runs the whole platform.** The
+client is model-family aware, so the switch is one setting:
+`REALTIME_MODEL=gpt-realtime-2.1` (in Terraform: `actor_model` in
+`terraform.tfvars`, then apply). What differs on that route, all handled in
+`server/voice/realtime.py`:
+
+- Voices: the bridge rejects Gemini voice names; each scenario voice maps to
+  the nearest of `alloy, ash, ballad, coral, echo, sage, shimmer, verse,
+  marin, cedar` (stable per character).
+- Participant transcription is off unless asked for:
+  `input_audio_transcription: {model: whisper-1}` is sent (accurate, e.g.
+  "Rivera's team"). On this route the scribe only transcribes a committed
+  buffer, so the broker commits it at its own turn end.
+- Server VAD is switched off (`turn_detection: null`). Left on, every room
+  member auto-replies whenever another character's fanned-in audio ends and
+  is rejected with `conversation_already_has_active_response` (34 errors in
+  one five-turn room). The broker's own silence detector drives turns, as it
+  does for Gemini.
+- The commit itself starts the reply; an explicit `response.create` on top is
+  rejected and can double the reply, so it is not sent on this route. The room
+  probes for the started reply rather than deciding by model name
+  (`_gateway_answers_on_its_own`), and clears the response state after the
+  commit so a latched flag cannot mute the next grant.
+- `response.created` arrives well before the first audio delta here, so on this
+  family `created` alone is taken as proof a reply started
+  (`autofire_at_created`). On plain flash it is not: there, a `created` that
+  never becomes a delta does happen, and treating it as a reply latches the
+  auto-fire flag and mutes the encounter for good.
+
+### Which forms a participant gets, and which mechanism is in charge
+
+Two designs exist in this codebase and they are **not** reconciled here,
+because it is not a documentation question.
+
+1. **Variant A only (the default).** `DEFAULT_RUN_VARIANT=A` pins S1A, S2A,
+   S3A, S4A on every study run, with the construct order counterbalanced per
+   participant. This is what Phase 1 shipped with and it is what the merged
+   code does out of the box.
+2. **Three forms per construct, drawn per slot.** Twelve scenarios (S1A/B/C …
+   S4A/B/C), two of each construct's three forms used and the third held back
+   as a reserve so a second attempt has material the participant has not met;
+   `FORM_EXCLUSIONS` applied to the completed draw with a digest-rotated
+   replacement (2000 seeds: 50.7 / 49.3). This is reached with
+   `DEFAULT_RUN_VARIANT=random`.
+
+`DEFAULT_RUN_VARIANT` is the switch between them and it defaults to **A**, so
+the default behaviour after this merge is design 1. Design 2 is fully present
+and reachable by configuration.
+
+**The consequence the PI has to rule on:** `FORM_EXCLUSIONS` bars S1A from any
+run that also contains Teamwork (they overlap on grounded content, 1,631 shared
+groundings against 77), and its one escape hatch is "the caller pinned this
+form, honour it and say so". `DEFAULT_RUN_VARIANT=A` takes that hatch on every
+run, so under design 1 the exclusion never applies. See
+`docs/OPERATIONS.md` → "Which scenarios a participant gets".
+- Cost of the fallback: group replies take 5 to 7 s (a fresh generation per
+  turn; the Gemini route plays held replies in about 1 s), the model is more
+  literal about its brief (occasional meta remarks like "let me close things
+  out"), and per-character voices sound different. Verified with the
+  simulated participant: 1:1 (S2B) 4/4 replies with the ladder intact, group
+  (S4A) routed correctly with zero errors, interjection stops playback.
+
 **Alternatives.** `gpt-realtime-2.1` also works on the same gateway and *does*
 provide server VAD natively — useful as a comparison or fallback.
 `nto.gemini-live-2.5-flash-native-audio` exists but was not re-tested after the

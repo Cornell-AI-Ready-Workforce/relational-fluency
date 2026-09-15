@@ -292,6 +292,30 @@ variable "upstream_consent_version" {
   }
 }
 
+# WHICH STUDY DESIGN THE DEPLOYED SERVICE RUNS, and the language the transcript
+# is taken in. Both arrived with origin/main cabc1dd as code defaults and had no
+# way through the task definition at all until 2026-09-15, which meant
+# docs/OPERATIONS.md told an operator to "set it to B to pin the other form or
+# random for a per-construct coin flip" against a deployment where there was
+# nothing to set. The defaults below are exactly the code defaults, so declaring
+# them changes nothing about what runs; it makes them reachable.
+variable "default_run_variant" {
+  description = "A (Phase 1: pin S1A/S2A/S3A/S4A, construct order counterbalanced), B (pin the other form), or random (the per-slot draw over twelve forms with FORM_EXCLUSIONS applied). A pinned form takes the exclusion table's caller hatch, so A switches the S1A/Teamwork exclusion off study-wide — deliberate, and the PI's call."
+  type        = string
+  default     = "A"
+
+  validation {
+    condition     = contains(["A", "B", "random"], var.default_run_variant)
+    error_message = "default_run_variant must be A, B or random. Anything else is read by server/runs.py as a variant letter and refused at the entry link, which turns participants away at /start rather than failing here."
+  }
+}
+
+variable "transcription_lang" {
+  description = "Language every realtime session is told the conversation is in (ISO code, e.g. en). Rides on whatever input transcription the model family already asks for, tells the actor to speak it whatever it thinks it heard, and names it in the scribe's brief. Empty string sends no hint at all."
+  type        = string
+  default     = "en"
+}
+
 # --- Task definition & service ---
 resource "aws_ecs_task_definition" "agent" {
   family                   = "${var.project}-agent"
@@ -309,6 +333,12 @@ resource "aws_ecs_task_definition" "agent" {
     portMappings = [{ containerPort = 8080, protocol = "tcp" }]
     environment = [
       # The live realtime path reads REALTIME_MODEL, not ACTOR_MODEL.
+      # Switching the live model (e.g. to the gpt-realtime-2.1 fallback for the
+      # Gemini live deprecation) is: set actor_model in terraform.tfvars, apply.
+      # Whatever you set must have a row in server/voice/realtime.py
+      # REALTIME_FAMILIES, or require_capabilities() resolves it into the wrong
+      # family and the route misbehaves silently (16 kHz into native-audio is
+      # permanent silence — see docs/migration-plan.md).
       { name = "REALTIME_MODEL", value = var.actor_model },
       { name = "DIRECTOR_MODEL", value = var.director_model },
       # CLAUDE_MODEL is NOT a provenance-only label. Three readers take it:
@@ -345,6 +375,12 @@ resource "aws_ecs_task_definition" "agent" {
       # green /health, opens a run for every arrival and captures nothing —
       # see the variable above, which has no default so an apply cannot skip it.
       { name = "UPSTREAM_CONSENT_VERSION", value = var.upstream_consent_version },
+      # The study design and the transcript language. See the two variables
+      # above: both are read by server/ and neither had an entry here, so the
+      # deployed service ran on code defaults an operator could not change and
+      # OPERATIONS.md described a switch that was not wired to anything.
+      { name = "DEFAULT_RUN_VARIANT", value = var.default_run_variant },
+      { name = "TRANSCRIPTION_LANG", value = var.transcription_lang },
       # The EFS volume below mounts at /data, but the only thing that made the
       # app WRITE there was ENV DATA_DIR=/data in the Dockerfile — nothing in
       # this file. server/storage.py:43 falls back to <repo>/data when DATA_DIR

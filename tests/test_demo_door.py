@@ -453,7 +453,11 @@ def test_the_gemini_card_says_the_encounter_will_carry_no_steering():
     them to discover the rest live.
     """
     body = _script(_demo())
-    card = body[body.index("if (fam === 'gemini-live')"):body.index("} else if (fam === 'gpt-realtime')")]
+    # Sliced on the opening of the condition, not on a closed `)`: the card is
+    # shared by both gemini rows now (`fam === 'gemini-live' || fam ===
+    # 'gemini-live-native-audio'`), because neither has a measurement saying
+    # mid-session steering is honoured.
+    card = body[body.index("if (fam === 'gemini-live'"):body.index("} else if (fam === 'gpt-realtime')")]
     assert "steer_unacked" in card
     assert "session.update" in card
     # The two halves that are easy to leave out and impossible to recover from

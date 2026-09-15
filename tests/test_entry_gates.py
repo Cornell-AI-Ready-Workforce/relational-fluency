@@ -31,6 +31,51 @@ from starlette.websockets import WebSocketDisconnect
 
 from server import app as appmod
 
+
+# ---------------------------------------------------------------------------
+# WHICH STUDY DESIGN THESE TESTS ARE ABOUT
+#
+# A FEW of the tests below measure the PER-SLOT DRAW: twelve forms, two of each
+# construct's three used and the third held in reserve, FORM_EXCLUSIONS applied
+# to the completed draw. `DEFAULT_RUN_VARIANT=random` is the setting that
+# selects it, and those tests -- and only those -- carry
+# `@pytest.mark.usefixtures("per_slot_draw")`.
+#
+# The merged DEFAULT is `A` -- origin/main's Phase 1 design, which pins
+# S1A/S2A/S3A/S4A on every run. That is deliberate and it is the PI's call, not
+# this file's. A pinned run has nothing to say about the draw: _apply_form_
+# exclusions leaves a pinned slot alone BY DESIGN, so under the default the
+# exclusion never fires and the reserve is never drawn, and an assertion about
+# either would be testing a mechanism that is switched off rather than one that
+# is broken. Those are the marked tests.
+#
+# EVERYTHING ELSE RUNS ON THE SHIPPED DEFAULT, which is the point of this note.
+# The fixture was autouse in this module and four others until 2026-09-15, and
+# that pinned 270 tests onto `random` when 20 of them are about the draw:
+# stripped and re-run under the default, 15 failed and 255 passed. Entry links,
+# arms, gates and cohort integrity are not about form selection, and pinning
+# them meant the configuration Phase 1 will actually run had almost no coverage
+# in this suite at all.
+#
+# The shipped default itself, and the fact that it turns the S1A/Teamwork
+# exclusion off for the whole of Phase 1, is asserted head-on in
+# tests/test_default_run_variant.py.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def per_slot_draw(monkeypatch):
+    """Ask for the per-slot draw, for the handful of tests that are ABOUT it.
+
+    NOT autouse. It was, in all five of these modules, and that pinned 270
+    tests off the configuration Phase 1 actually runs when only 20 of them
+    need it: measured on 2026-09-15 by stripping the fixture and running the
+    five modules under the shipped default -- 15 failed, 255 passed. Tests
+    about entry links, arms, gates and cohort integrity are not about form
+    selection and now run on the default a participant will meet.
+    """
+    monkeypatch.setenv("DEFAULT_RUN_VARIANT", "random")
+
+
 PARTICIPANT_LINKS = ["/start", "/start/one-to-one", "/start/group"]
 ARM_LINKS = {"/start": "full", "/start/one-to-one": "one_to_one",
              "/start/group": "group"}
@@ -359,6 +404,7 @@ def test_an_unknown_variant_never_disables_the_exclusion(runs_mod, bad):
     assert bad_pairings == 0
 
 
+@pytest.mark.usefixtures("per_slot_draw")
 def test_no_variant_at_all_is_still_the_clean_baseline(runs_mod):
     """0/200, unchanged: the exclusion pass corrects every draw that lands on
     S1 A."""
@@ -455,6 +501,7 @@ def test_an_arm_link_fills_what_the_variant_pin_can_and_says_what_it_could_not(
         sorted(pool["constructs"])
 
 
+@pytest.mark.usefixtures("per_slot_draw")
 @pytest.mark.parametrize("blank", ["", "   "])
 @pytest.mark.parametrize("path", PARTICIPANT_LINKS)
 def test_an_empty_variant_means_no_pin_and_not_a_refusal(
@@ -482,6 +529,7 @@ def test_an_empty_variant_means_no_pin_and_not_a_refusal(
     assert not pinned, f"an empty variant was recorded as a caller's pin: {pinned}"
 
 
+@pytest.mark.usefixtures("per_slot_draw")
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_an_empty_variant_builds_the_run_no_variant_at_all_would(runs_mod, blank):
     """Same key, same seed, same four encounters: empty and absent are one case.
@@ -494,6 +542,7 @@ def test_an_empty_variant_builds_the_run_no_variant_at_all_would(runs_mod, blank
     assert _ids(empty) == _ids(absent)
 
 
+@pytest.mark.usefixtures("per_slot_draw")
 def test_an_empty_variant_leaves_the_exclusion_table_switched_on(runs_mod):
     """The measurement that made B4 a blocker, run against the empty value.
 

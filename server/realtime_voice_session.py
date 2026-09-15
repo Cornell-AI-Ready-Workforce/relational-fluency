@@ -23,7 +23,7 @@ import hashlib
 import json
 import os
 import time
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from .director import Director, DIRECTOR_MAX_SPEAKERS
 
@@ -102,6 +102,53 @@ def _resume_seam(buf: List[str], ev: dict) -> str:
     return " " + text
 
 
+# On every brief, group and 1:1. See the note at the call site.
+_LANGUAGE_RULE = (
+    "\n\nLANGUAGE: The participant is speaking English. Always speak English, "
+    "whatever language you think you heard."
+)
+
+
+class _MemberState:
+    """Per-character pump state for hold-and-adopt turn taking."""
+
+    def __init__(self) -> None:
+        self.mode = "idle"        # idle | holding | held_done | live | discarding
+        self.held: list = []      # [("audio", bytes) | ("text", str)]
+        self.text: list = []      # live transcript deltas
+        self.announced = False
+        self.relayed_bytes = 0
+        self.last_output_at = 0.0
+        self.done_at = 0.0
+        self.play_start: Optional[float] = None
+        self.play_end: Optional[float] = None
+        self.hold_id = None
+        self.hold_started_at = 0.0
+
+    def begin_hold(self, response_id=None) -> None:
+        self.mode = "holding"
+        self.held = []
+        self.hold_id = response_id
+        self.hold_started_at = time.time()
+
+    def hold(self, ev: dict) -> None:
+        if ev["type"] == "agent_audio":
+            self.held.append(("audio", ev["pcm"]))
+        else:
+            self.held.append(("text", ev["text"]))
+
+    def held_seconds(self) -> float:
+        return sum(len(c) for k, c in self.held if k == "audio") / 32000.0
+
+    def take_held(self) -> list:
+        held, self.held = self.held, []
+        return held
+
+    def drop(self, why: str = "") -> None:
+        self.held = []
+        self.mode = "idle"
+
+
 def _clean_agent_text(text: str) -> str:
     """Collapse transcript repeats the bridge sometimes delivers.
 
@@ -155,6 +202,58 @@ def _script_mismatch(text: str) -> bool:
         return False
     latin = sum(1 for c in letters if c.isascii())
     return latin / len(letters) < 0.5
+
+
+_SAYS_MARKER = re.compile(
+    r"^\s*(?:\[[^\]]{1,40}\s+says\]:|\(Context, not for you to repeat:|"
+    r"[A-Z][a-z]+\s+(?:just\s+)?(?:says|said)(?:\s+out\s+loud(?:\s+to\s+the\s+group)?)?:)\s*"
+)
+
+
+def _strip_context_echo(text: str, told: list) -> str:
+    """Drop parroted colleague-context from a reply.
+
+    Seen on the native-audio route: Alex opened with '[Jordan says]: It's
+    fine. Everything's fine. What do you need to discuss?' before answering.
+    The room knows exactly what it told him, so any sentence of the reply
+    that also appears in a recently injected line is removed, along with a
+    leading 'X says:' marker.
+    """
+    t = (text or "").strip()
+    # Marker anywhere in the reply (the model sometimes narrates a colleague
+    # mid-line, or invents a note in our own format): remove the marker and
+    # the quoted or single sentence it introduces.
+    # The closing `"` and `)` are optional and ORDERED, because the room's own
+    # note nests one marker inside another: `(Context, not for you to repeat:
+    # Priya just said out loud to the group: "We slipped.")` is precisely what
+    # GroupRoom.tell injects, and it is the shape a model parrots most often.
+    # The alternation stops at the INNER sentence's full stop, so without a
+    # place for the quote and the bracket to go the reply was recorded starting
+    # `") Right, so...` \u2014 the note stripped and its punctuation left behind.
+    t = re.sub(
+        r"(?:\[[^\]]{1,40}\s+says\]:|\(Context, not for you to repeat:|"
+        r"\b[A-Z][a-z]+\s+(?:just\s+)?(?:says|said)(?:\s+out\s+loud(?:\s+to\s+the\s+group)?)?:)"
+        r"\s*(?:\"[^\"]*\"?|\u201c[^\u201d]*\u201d?|[^.!?]*[.!?])[\"\u201d]?\s*\)?\s*",
+        " ", t,
+    ).strip()
+    t = re.sub(r"\s{2,}", " ", t)
+    if not told or not t:
+        return t
+    told_norm = " ".join(_norm_speech(x) for x in told)
+    kept = []
+    for sent in [x for x in re.split(r"(?<=[.!?])\s+", t) if x]:
+        n = _norm_speech(sent)
+        if len(n.split()) >= 2 and n in told_norm:
+            continue
+        kept.append(sent)
+    return " ".join(kept).strip().strip('"').strip()
+
+
+def _is_stage_direction(text: str) -> bool:
+    """'[Priya remains quiet.]' or '[Silence]': the model narrating instead of
+    speaking. Treated as no reply; the native-audio route does this sometimes."""
+    t = (text or "").strip()
+    return bool(t) and t.startswith(("[", "(", "*")) and t.endswith(("]", ")", "*")) and len(t) < 80
 
 
 def _norm_speech(text: str) -> str:
@@ -337,6 +436,12 @@ async def _await_transcript(buf: List[str], grace: float,
 from .llm import provenance, redact_key
 from .group_room import GroupRoom
 from .voice.realtime import RealtimeVoiceSession, SilenceDetector
+# The per-family answers origin/main reached for by model name. They read
+# REALTIME_FAMILIES now (see server/voice/realtime.py), so the room, the runner
+# and the bridge all get the same answer from the same table.
+from .voice.realtime import (accepts_text_items, autofire_wait_for_model,
+                             is_openai_realtime, member_tools_allowed,
+                             relays_colleagues_as_text)
 # The module, not just the names, because REALTIME_MODEL is what selects every
 # piece of per-family behaviour below and it has to be readable at call time
 # rather than frozen into this module at import.
@@ -640,6 +745,26 @@ class RealtimeVoiceSessionRunner:
         self._rebuild_for_replay = False
         self.room: Optional[GroupRoom] = None
         self._pumps: List[asyncio.Task] = []
+        self._member_states: Dict[str, _MemberState] = {}
+        self._speech_started_at = 0.0
+        self._barged = False
+        # Held replies are flushed to the client faster than real time, so the
+        # server can finish a turn seconds before the participant has heard
+        # it. This clock tracks when audio already sent will finish playing,
+        # which is what "heard" has to mean for interruptions.
+        self._play_cursor = 0.0
+        self._last_played: Optional[dict] = None   # {agent_id, start, end, text}
+        self._turns_without_transcript = 0
+        self._scribe_pump: Optional[asyncio.Task] = None
+        # (agent_id, line) for each finished line the room relayed to the
+        # OTHER members as text (GroupRoom.tell). _strip_context_echo checks a
+        # reply against these, so it has to be able to leave out the speaker's
+        # own: a flat list of strings stripped a character's line to nothing
+        # whenever the gateway answered one turn twice with the same words,
+        # which is precisely the doubled reply second_reply_split exists to
+        # record. The room never tells a member its own line (exclude=), so
+        # neither does this check.
+        self._recent_told: List[tuple] = []
         self._floor = asyncio.Lock()
         # Set when the room's scribe pump ends under a live encounter. The
         # scribe is the ONLY participant transcript channel in a room, so past
@@ -700,6 +825,16 @@ class RealtimeVoiceSessionRunner:
             # you clarify what you mean?", four times in one turn. Said once
             # here, for rooms only: what a member hears that is not the
             # participant is a colleague, and confusion is never voiced.
+            #
+            # The second paragraph is origin/main's (cabc1dd, df1ab83) and is
+            # about the OTHER way a colleague reaches a member: as a
+            # parenthesised context note from GroupRoom.tell, on the families
+            # whose row says relay_colleagues_as_text. Both halves are needed
+            # now, because after this merge a room uses BOTH channels — audio
+            # on plain flash, text on native-audio and gpt — and a member must
+            # handle a colleague correctly whichever way it arrives.
+            # _strip_context_echo is the second line of defence for the route
+            # that parrots the note anyway.
             room_rule = (
                 "\n\nThe other people in this room are audible to you. A voice "
                 "that is not the person running the meeting is one of them, not "
@@ -707,8 +842,16 @@ class RealtimeVoiceSessionRunner:
                 "or did not catch something, never ask anyone to clarify what they "
                 "mean, and never apologise for mishearing: answer the last thing "
                 "that was actually said to you, or stay quiet."
+                "\n\nYou will sometimes receive notes in parentheses telling you "
+                "what a colleague just said. They are context only. Never read "
+                "them out and never narrate what a colleague said (no 'Casey just "
+                "said...'): respond as someone who heard it, in your own words. "
+                "If the participant addresses someone else by name, stay silent "
+                "and let them answer. Do not repeat or rephrase what another "
+                "person just said, and do not answer every turn: leave room for "
+                "quieter colleagues."
             )
-        return base + self._scene_note + opening + room_rule
+        return base + _LANGUAGE_RULE + self._scene_note + opening + room_rule
 
     # ── the framing line, on a family that cannot be steered after connect ──
     def _steering_is_inert(self, model: Optional[str] = None) -> bool:
@@ -1331,6 +1474,12 @@ class RealtimeVoiceSessionRunner:
             agents,
             instructions_for=lambda a: self._instructions_for(a),
             voice_for=lambda a: self._voice_for(a),
+            # Offered, not imposed: GroupRoom._member_tools drops it on a
+            # family whose row says member_tools=False (native-audio, which
+            # calls end_conversation constantly and turns every call into an
+            # empty turn -- origin/main 5a45420). On every other route the
+            # tool stays, which is where our END_SEGMENT_TOOL wiring was
+            # measured working.
             tools=[END_SEGMENT_TOOL],
         )
         try:
@@ -1358,6 +1507,7 @@ class RealtimeVoiceSessionRunner:
         )
         # One pump per character, so a reply is attributed to whoever produced
         # it rather than to whoever happens to hold a shared session.
+        self._member_states = {a.id: _MemberState() for a in agents}
         for a in agents:
             rt = room.session_for(a.id)
             if rt is not None:
@@ -1593,6 +1743,18 @@ class RealtimeVoiceSessionRunner:
         for t in self._pumps:
             t.cancel()
         self._pumps = []
+        if self.room is not None and os.getenv("RT_DEBUG"):
+            # Raw bridge events per member, for diagnosing route behaviour.
+            try:
+                sdir = self.session.store.dir
+                for aid, rt in list(self.room.sessions.items()) + [("scribe", self.room.scribe)]:
+                    if rt is None or not rt.debug_log:
+                        continue
+                    with open(sdir / f"raw_{aid}.jsonl", "w", encoding="utf-8") as fh:
+                        for ts, et, raw in rt.debug_log:
+                            fh.write(json.dumps({"t": round(ts, 3), "type": et, "raw": raw}) + "\n")
+            except Exception:  # noqa: BLE001
+                pass
         if self.room is not None:
             await self.room.close()
             self.room = None
@@ -1714,11 +1876,21 @@ class RealtimeVoiceSessionRunner:
         )
 
     async def _pump_member(self, agent, rt) -> None:
-        """Relay one character's events, fully self-contained.
+        """Relay one character's events, holding replies until the floor is decided.
 
-        Group pumps must not share turn state: the shared announce/finalize
-        machinery attributed one speaker's words to another and merged three
-        replies into a single labelled turn. Each pump tracks its own turn.
+        The bridge fires its own reply on EVERY member session after the
+        participant's speech + silence, before the director has chosen who
+        speaks. The old pump discarded those and then asked the chosen member
+        for a fresh reply with commit + response.create. That second request
+        raced the first: glued text ("We do haveNo there's nothing..."), empty
+        replies from a commit of padding silence, and members left wedged
+        mid-response (Jordan cut at 1.2 s and mute for the rest of the scene).
+
+        Now each pump HOLDS its member's auto-fired reply (audio + text) in
+        memory. When the director grants that member the floor, the held reply
+        is played from the start, no second generation. Members not granted
+        the floor have their held reply dropped once it completes (or after a
+        short grace period so a slow routing decision can still adopt it).
         """
         buf: List[str] = []
         # Per-member state kept mutable so the finalize task (spawned below) and
@@ -1763,9 +1935,21 @@ class RealtimeVoiceSessionRunner:
         # participant is talking, and the runner's VAD is the only thing that
         # knows. Members share the one microphone, so they share the one hook.
         rt.participant_speaking = lambda: bool(self.vad.active_within())
+        # origin/main's per-member hold state, kept ALONGSIDE ours rather than
+        # instead of it. Ours is the pump; this object is what her grant path
+        # (_grant / adopt_member / _cancel_stale_holds) and her playback clock
+        # read, and it is written from the branches below. Without it those
+        # three would be dead code that never fires and the native-audio route
+        # would lose the stale-hold cancel, which is the difference between a
+        # member answering the next turn and never answering again.
+        st = self._member_states.get(agent.id)
+        if st is None:
+            st = _MemberState()
+            self._member_states[agent.id] = st
         try:
             async for ev in rt.events():
                 etype = ev["type"]
+                has_floor = self.room is not None and self.room.speaking == agent.id
 
                 # The bridge fires its own response after speech-plus-silence,
                 # commit or not, on every session at once. Only the character
@@ -1800,6 +1984,12 @@ class RealtimeVoiceSessionRunner:
                 # the room for the full turn timeout.
                 if state["suppressing"] and has_floor:
                     state["suppressing"] = False
+                    # Ours is about to splice this hold in itself (below), so
+                    # the mirror is spent. Left at "holding" it would be
+                    # adopted a second time by the next _grant and the
+                    # participant would hear the opening words twice.
+                    st.drop("adopted_by_pump")
+                    st.mode = "live"
                     if etype not in ("agent_audio", "agent_transcript_delta",
                                      "agent_transcript"):
                         # The floor arrived on the way OUT of this reply — its
@@ -1858,6 +2048,7 @@ class RealtimeVoiceSessionRunner:
                             held_audio, agent_id=agent.id)
                         state["audio_bytes"] = (state.get("audio_bytes", 0)
                                                 + len(held_audio))
+                        self._advance_play_cursor(agent.id, st, held_audio)
                         await self._send_bytes(held_audio)
                         if self.room:
                             await self.room.hear(held_audio, exclude=agent.id)
@@ -1866,10 +2057,29 @@ class RealtimeVoiceSessionRunner:
                             segment=self.segment,
                             audio_ms=len(held_audio) // 32)
 
+                if (etype == "response_done" and state["suppressing"]
+                        and st.mode == "holding"):
+                    # The suppressed reply finished before the floor reached
+                    # it. origin/main keeps it for HELD_REPLY_TTL so a slow
+                    # routing decision can still play it instead of paying for
+                    # a second generation; adopt_member is what reads this.
+                    st.mode = "held_done"
+                    st.done_at = time.time()
+                    self.session.store.event(
+                        "held_reply_available", agent_id=agent.id,
+                        held_seconds=round(st.held_seconds(), 1))
+
                 if etype in ("agent_audio", "agent_transcript_delta",
                              "agent_transcript") and not has_floor:
                     if not state["suppressing"]:
                         state["suppressing"] = True
+                        # The same moment, in origin/main's vocabulary: this
+                        # member is HOLDING a reply nobody asked for. _grant
+                        # and _cancel_stale_holds read that, and
+                        # hold_started_at is what tells them whether the reply
+                        # is an answer to the participant's current utterance
+                        # or a stale reaction to a colleague.
+                        st.begin_hold(ev.get("response_id"))
                         self.session.store.event(
                             "unsolicited_response_suppressed", agent_id=agent.id
                         )
@@ -1893,6 +2103,20 @@ class RealtimeVoiceSessionRunner:
                         # The voice of the held words, for the same reason and
                         # under the same cap in seconds (HELD_AUDIO_MAX_S).
                         state["held_audio"] += ev["pcm"]
+                    # And the same chunks into the hold, ordered, for the case
+                    # ours cannot serve: a suppressed reply that FINISHES before
+                    # the floor reaches it. Ours splices a head into a reply
+                    # still in flight; origin/main replays a completed one
+                    # (adopt_member's held_done path) rather than paying the
+                    # gateway for a second generation. Capped with ours so the
+                    # hold cannot outgrow it.
+                    if st.mode == "holding" and len(st.held) < 800:
+                        if (etype == "agent_audio"
+                                and st.held_seconds() < HELD_AUDIO_MAX_S):
+                            st.hold(ev)
+                        elif etype != "agent_audio":
+                            st.hold({"type": "agent_transcript_delta",
+                                     "text": ev["text"]})
                     continue
 
                 if etype == "agent_audio":
@@ -1911,6 +2135,7 @@ class RealtimeVoiceSessionRunner:
                         })
                     self.session.store.append_assistant_audio(ev["pcm"], agent_id=agent.id)
                     state["audio_bytes"] = state.get("audio_bytes", 0) + len(ev["pcm"])
+                    self._advance_play_cursor(agent.id, st, ev["pcm"])
                     await self._send_bytes(ev["pcm"])
                     if self.room:
                         await self.room.hear(ev["pcm"], exclude=agent.id)
@@ -2068,6 +2293,22 @@ class RealtimeVoiceSessionRunner:
                     # Member sessions hear the other characters too, so their
                     # input transcription mixes agent speech into the "user"
                     # channel. The scribe pump owns the participant transcript.
+                    #
+                    # EXCEPT on a route where colleagues arrive as TEXT: there a
+                    # member hears only the participant, so its transcription is
+                    # a clean second source and the scribe is no longer the only
+                    # channel that can hear a turn. That is origin/main's rule
+                    # (it gated on accepts_text_items, which on the merged table
+                    # is true of every family; relay_colleagues_as_text is the
+                    # column that actually means "colleagues arrive as text",
+                    # and it is the same set of routes she measured). Restored
+                    # 2026-09-15: the merge had kept her near-duplicate filter
+                    # in _record_user_turn while dropping the second source it
+                    # exists to reconcile, which left the filter with nothing to
+                    # do but delete real speech.
+                    if relays_colleagues_as_text(rt.model):
+                        await self._record_user_turn(
+                            ev["text"], garbled=bool(ev.get("garbled")))
                     continue
 
                 elif etype == "response_done":
@@ -2197,10 +2438,20 @@ class RealtimeVoiceSessionRunner:
                     )
 
                 elif etype == "tool_call":
-                    # END_SEGMENT_TOOL is on every room session; an actor ending
-                    # a group conversation must advance the encounter, not be
-                    # dropped. Advance off-pump so _close_room cancelling this
-                    # very pump cannot interrupt the advance mid-flight.
+                    # END_SEGMENT_TOOL is on every room session whose family row
+                    # allows member tools — which is every family EXCEPT
+                    # native-audio, the one production runs (origin/main
+                    # 5a45420: that route called end_conversation constantly and
+                    # each call was an empty turn, so member_tools=False there
+                    # and GroupRoom._member_tools hands those members nothing).
+                    # This branch is therefore unreachable on the deployed
+                    # route, and "an actor ending a group conversation advances
+                    # the encounter" is not true there; the loss is recorded in
+                    # REALTIME_FAMILIES and docs/migration-plan.md. Where the
+                    # tool IS wired, an actor ending a group conversation must
+                    # advance the encounter, not be dropped. Advance off-pump so
+                    # _close_room cancelling this very pump cannot interrupt the
+                    # advance mid-flight.
                     self.session.store.event(
                         "tool_call", name=ev.get("name"), segment=self.segment,
                         agent_id=agent.id,
@@ -2338,6 +2589,158 @@ class RealtimeVoiceSessionRunner:
                 "voice_error", detail=f"advance_from_tool: {exc}",
                 severity="error",
             )
+
+    def _advance_play_cursor(self, agent_id: str, st, pcm: bytes) -> None:
+        """THE SERVER-SIDE PLAYBACK CLOCK (origin/main 169310c).
+
+        The gateway delivers a reply many times faster than real time, so
+        "sent" and "heard" are different quantities and the gap is most of a
+        turn. This is the only thing in the runner that knows where the
+        PARTICIPANT is in the audio: `_play_cursor` is the wall-clock moment
+        the last byte handed to the page will finish playing, advanced by the
+        real duration of every chunk relayed (16 kHz mono PCM16 = 32000
+        bytes/s).
+
+        It has no counterpart in ours and answers a question ours could not:
+        when the participant interrupts after the server-side turn is already
+        over, how much of that line did they actually hear? See the
+        playback_cut branch in _client_to_model, and _heard_seconds.
+
+        It does NOT truncate the recorded text. Ours deliberately records the
+        model's whole line and flags a shortfall (agent_audio_short) so a rater
+        can tell a truncated delivery from a bad one; heard_seconds/heard_text
+        sit BESIDE the full text rather than replacing it.
+        """
+        if not pcm:
+            return
+        now = time.time()
+        start = max(now, self._play_cursor)
+        if st is not None:
+            if st.play_start is None:
+                st.play_start = start
+            st.relayed_bytes += len(pcm)
+        self._play_cursor = start + len(pcm) / 32000.0
+        if st is not None:
+            st.play_end = self._play_cursor
+        self._last_played = {
+            "agent_id": agent_id,
+            "start": st.play_start if st is not None else start,
+            "end": self._play_cursor,
+            "text": "".join(st.text) if st is not None and st.text else
+                    (self._last_played or {}).get("text", ""),
+        }
+
+    async def _announce(self, agent, st) -> None:
+        st.announced = True
+        st.relayed_bytes = 0
+        st.text = []
+        st.play_start = None
+        st.play_end = None
+        await self._send({
+            "type": "assistant_started", "agent_id": agent.id, "agent_name": agent.name,
+        })
+
+    async def _relay(self, agent, st, ev) -> None:
+        if ev["type"] == "agent_audio":
+            pcm = ev["pcm"]
+            st.relayed_bytes += len(pcm)
+            now = time.time()
+            start = max(now, self._play_cursor)
+            if st.play_start is None:
+                st.play_start = start
+            self._play_cursor = start + len(pcm) / 32000.0
+            st.play_end = self._play_cursor
+            self.session.store.append_assistant_audio(pcm, agent_id=agent.id)
+            await self._send_bytes(pcm)
+            if self.room:
+                await self.room.hear(pcm, exclude=agent.id)
+        else:
+            st.text.append(ev["text"])
+            await self._send({
+                "type": "assistant_text_delta", "text": ev["text"], "agent_id": agent.id,
+            })
+
+    async def _flush_held(self, agent, st) -> None:
+        """The member was granted the floor: play what it already said."""
+        held = st.take_held()
+        st.mode = "live"
+        await self._announce(agent, st)
+        self.session.store.event(
+            "held_reply_adopted", agent_id=agent.id,
+            held_seconds=round(len(b"".join(c for k, c in held if k == "audio")) / 32000, 1),
+        )
+        for kind, chunk in held:
+            await self._relay(agent, st, {"type": "agent_audio", "pcm": chunk} if kind == "audio"
+                              else {"type": "agent_transcript_delta", "text": chunk})
+
+    async def adopt_member(self, agent_id: str) -> bool:
+        """Grant path: adopt a held or completed reply if there is one."""
+        st = self._member_states.get(agent_id)
+        agent = next((a for a in self._resolve_agents() if a.id == agent_id), None)
+        if st is None or agent is None:
+            return False
+        if st.mode in ("holding", "held_done") and st.hold_started_at < self._speech_started_at:
+            # Began before the participant's current utterance: it is a
+            # reaction to a colleague's audio, not an answer to the question.
+            st.drop("stale")
+            if st.mode == "holding":
+                st.mode = "discarding"
+            self.session.store.event("stale_held_reply_dropped", agent_id=agent_id)
+            return False
+        if st.mode == "holding":
+            await self._flush_held(agent, st)
+            return True
+        if st.mode == "held_done":
+            if time.time() - st.done_at > float(os.getenv("HELD_REPLY_TTL", "12")):
+                st.drop("stale")
+                self.session.store.event("unsolicited_response_suppressed", agent_id=agent_id)
+                return False
+            await self._flush_held(agent, st)
+            await self._finish_live(agent, st)
+            st.mode = "idle"
+            return True
+        return False
+
+    async def _finish_live(self, agent, st) -> None:
+        # Transcript deltas can trail the last audio chunk slightly.
+        grace = time.time() + 2.5
+        while not st.text and st.announced and time.time() < grace:
+            await asyncio.sleep(0.15)
+        text = "".join(st.text).strip()
+        st.text = []
+        st.announced = False
+        self._last_played = {
+            "agent_id": agent.id, "start": st.play_start, "end": st.play_end, "text": text,
+        }
+        await self._finalize_member(agent, text)
+
+    def _heard_seconds(self, st) -> float:
+        """How much of this turn's audio the participant has actually heard."""
+        if st.play_start is None:
+            return 0.0
+        end = st.play_end if st.play_end is not None else st.play_start
+        return max(0.0, min(end, time.time()) - st.play_start)
+
+    async def _finish_interrupted(self, agent, st) -> None:
+        """Close a turn the participant cut off, keeping only what was heard.
+
+        Text streams well ahead of audio, so the buffer usually holds the whole
+        sentence while only its first seconds were played. Keep roughly the
+        words that fit in the relayed audio (about 2.5 words/second), so the
+        record does not credit the character with lines nobody heard.
+        """
+        text = "".join(st.text).strip()
+        heard_s = self._heard_seconds(st)
+        words = text.split()
+        keep = max(1, int(heard_s * 2.5)) if words else 0
+        if keep < len(words):
+            text = " ".join(words[:keep]) + "…"
+        st.text = []
+        st.announced = False
+        self.session.store.event(
+            "assistant_interrupted", agent_id=agent.id, heard_seconds=round(heard_s, 1),
+        )
+        await self._finalize_member(agent, text, interrupted=True)
 
     async def _pump_scribe(self, rt) -> None:
         """Relay the scribe's participant transcripts; swallow everything else.
@@ -2480,6 +2883,20 @@ class RealtimeVoiceSessionRunner:
                                retried: bool = False) -> None:
         """Close one character's turn in a group room."""
         text = _clean_agent_text(text)
+        # origin/main df1ab83, and taken unconditionally: both are cheap, both
+        # only fire on text, and both are the visible symptom of the deployed
+        # route. _strip_context_echo removes a colleague note the model parroted
+        # back ("[Jordan says]: It's fine." in front of the actual reply);
+        # _is_stage_direction catches "[Priya remains quiet.]", which is the
+        # model narrating instead of speaking and is recorded as no reply
+        # rather than as a line the participant heard.
+        text = _strip_context_echo(
+            text, [line for aid, line in self._recent_told
+                   if aid != agent.id])
+        if _is_stage_direction(text):
+            self.session.store.event("stage_direction_output",
+                                     agent_id=agent.id, text=text)
+            text = ""
         await self._finalize_member_inner(agent, text, interrupted=interrupted,
                                           audio_bytes=audio_bytes,
                                           audio_unterminated=audio_unterminated,
@@ -2603,6 +3020,11 @@ class RealtimeVoiceSessionRunner:
         if direction is not None and direction is self._pending_direction:
             self._pending_direction = None
         delivered_ms = turn_audio.audio_ms(audio_bytes)
+        # The playback clock's idea of what is currently in the participant's
+        # ears. Written here because this is where the whole line is finally
+        # known; the cursor itself was advanced chunk by chunk as it was sent.
+        if (self._last_played or {}).get("agent_id") == agent.id:
+            self._last_played["text"] = text
         self.session.store.event(
             "assistant_turn", agent_id=agent.id, text=text,
             segment=self.segment, transcript_missing=not text,
@@ -2616,6 +3038,21 @@ class RealtimeVoiceSessionRunner:
         if retried:
             self._note_retry_outcome(agent.id, text, delivered_ms,
                                      interrupted, audio_unterminated)
+        # origin/main ce8cdf4/df1ab83: tell the members that are NOT fanned this
+        # character's audio what it just said, now that the line is finished.
+        # GroupRoom.tell is itself gated on the family row, so on plain flash
+        # (where colleagues are still fanned as audio) this is a no-op and the
+        # measurement our fan-out counters were taken on is unchanged.
+        # _recent_told is what _strip_context_echo checks a reply against.
+        if self.room is not None and text:
+            self._recent_told = (self._recent_told + [(agent.id, text)])[-6:]
+            try:
+                await self.room.tell(agent.name, text, exclude=agent.id)
+            except Exception:  # noqa: BLE001 - a dead member must not eat a turn
+                pass
+        st = self._member_states.get(agent.id)
+        if st is not None and st.mode in ("live", "held_done", "discarding"):
+            st.drop("turn_finalized")
         await self._send({"type": "assistant_done", "agent_id": agent.id})
         # Measure the idle window from the end of this reply, not the
         # participant's last utterance, so the watchdog does not probe the
@@ -2629,6 +3066,23 @@ class RealtimeVoiceSessionRunner:
 
     def agent_order(self) -> List[str]:
         return [a.id for a in self._resolve_agents()]
+
+    def _second_transcript_source(self) -> bool:
+        """True when more than one session can transcribe the participant.
+
+        Only in a ROOM, and only on a family whose members are told what a
+        colleague said in text instead of being fanned its audio: there a
+        member's input holds the participant and nobody else, so _pump_member
+        forwards its transcripts as a clean second source (origin/main's rule).
+        Everywhere else — every 1:1 encounter, and every room on plain flash —
+        the scribe is the only channel and two transcripts of one utterance
+        cannot happen. The near-duplicate filter in _record_user_turn is gated
+        on this; see the comment there for what it did without it.
+        """
+        if self.room is None:
+            return False
+        model = getattr(self.rt, "model", "") or realtime_model()
+        return relays_colleagues_as_text(model)
 
     async def _record_user_turn(self, text: str, *, garbled: bool = False) -> None:
         """Record one participant utterance, once, as said.
@@ -2698,6 +3152,35 @@ class RealtimeVoiceSessionRunner:
                 channel="voice", script_mismatch=_script_mismatch(text),
             )
             return
+        # Several sessions can transcribe the same utterance with slightly
+        # different wording (the scribe plus a member on a route where
+        # colleagues arrive as text, so the member hears only the participant):
+        # within a short window, a near-match is the same turn. origin/main's
+        # rule, kept whole — 60% of the shorter line's words, 5 s.
+        #
+        # TWO things about where it sits, both fixed on 2026-09-15.
+        #
+        # It is AFTER the echo guard now, not before. A line that is both an
+        # echo of a character and a near-match of the last participant turn is
+        # an echo: `echo_dropped` names the character it matched and is what a
+        # retranscribe pass adjudicates, while `user_transcript_duplicate_dropped`
+        # says only "we have seen this". Running the looser test first relabelled
+        # the more specific finding as the vaguer one.
+        #
+        # And it only runs where a second transcriber EXISTS. It ran on every
+        # family, and on plain flash — the route every measurement in this file
+        # was taken on — _pump_member throws its members' user transcripts away,
+        # so the scribe is the only channel and nothing can produce a duplicate.
+        # All the rule could do there was delete real speech: probed live,
+        # "yes" then "yes exactly" 0.2 s later, and "I think the deadline
+        # slipped" then "...slipped a lot", were both dropped on plain flash.
+        # A participant who builds on their own sentence does exactly that.
+        if self._second_transcript_source() and norm and self._last_user_norm \
+                and now - self._last_user_at < 5:
+            a, b = set(norm.split()), set(self._last_user_norm.split())
+            if a and b and len(a & b) / min(len(a), len(b)) >= 0.6:
+                self.session.store.event("user_transcript_duplicate_dropped", text=text)
+                return
         self._last_user_norm, self._last_user_at = norm, now
         self._last_user_text = text
         self._user_utterances += 1
@@ -3242,7 +3725,18 @@ class RealtimeVoiceSessionRunner:
             # which _brief_next_beat writes, rather than no beat at
             # all.
             await self._brief_next_beat(probing=False)
-            deadline = time.time() + float(os.getenv("AUTOFIRE_WAIT", "1.5"))
+            # Per family, not one number. This line read the raw env with a
+            # 1.5 s default until 2026-09-15, which was the right bar for the
+            # model every 1:1 measurement above was taken on and the wrong one
+            # for the model production runs: the native-audio route fires its
+            # own reply ~3.3 s after silence (docs/migration-plan.md), so a
+            # 1.5 s wait expired ~1.8 s early on EVERY 1:1 turn and the commit
+            # below landed on top of a reply that was still coming — the exact
+            # double-reply this wait exists to prevent, on S1 and S2, i.e. the
+            # whole one-to-one arm. AUTOFIRE_WAIT still overrides, because that
+            # env knob is what this default was; see autofire_wait_for_model.
+            # The group twin of this wait (_grant) was already family-aware.
+            deadline = time.time() + autofire_wait_for_model(self.rt.model)
             while time.time() < deadline and not self.rt.autofire_active:
                 await asyncio.sleep(0.05)
             if self.rt.autofire_active:
@@ -3284,6 +3778,23 @@ class RealtimeVoiceSessionRunner:
                     self._last_activity = time.time()
                 if mark == "speech_started":
                     await self._send({"type": "speech_started"})
+                    # The clock every held reply is judged against: a reply
+                    # that BEGAN before this moment is a reaction to a
+                    # colleague, not an answer to what the participant is
+                    # saying now (adopt_member / _cancel_stale_holds read it).
+                    self._speech_started_at = time.time()
+                    self._barged = False
+                    if self.room is not None:
+                        # STALE-HOLD CANCEL (origin/main 6917d5b), taken as-is
+                        # and with no counterpart in ours. On the native-audio
+                        # route a member whose response is still active when
+                        # the participant speaks NEVER answers the new turn:
+                        # the speech is absorbed into the running response and
+                        # the fallback request comes back empty. Cancelling at
+                        # the bridge frees the model for the participant's
+                        # turn. It is the difference between a member answering
+                        # the next question and never answering again.
+                        await self._cancel_stale_holds()
                 # Cutting a character off is a SEPARATE decision from opening
                 # the participant's turn, and it is taken on a separate,
                 # stricter signal (see SilenceDetector.barge_in).
@@ -3319,6 +3830,41 @@ class RealtimeVoiceSessionRunner:
                 # until it had had 900 ms of unbroken quiet.
                 barged = self.vad.barge_in and not self._was_barging
                 self._was_barging = self.vad.barge_in
+                if barged and self.room is not None and not self.room.speaking \
+                        and time.time() < self._play_cursor:
+                    # THE TURN IS OVER ON THE SERVER AND NOT IN THE ROOM
+                    # (origin/main 169310c). Nobody holds the floor, so the two
+                    # branches below have nothing to cancel -- but the page is
+                    # still playing audio this runner sent minutes of wall
+                    # clock ago in seconds of stream time, and the participant
+                    # is talking over it. Without this the interruption is
+                    # invisible: no event, no truncation, and a rater reads a
+                    # participant reply to a line they were still hearing.
+                    #
+                    # The record gets heard_seconds / heard_text BESIDE the
+                    # full line, never instead of it: ours deliberately keeps
+                    # the model's whole reply and flags the shortfall, so a
+                    # rater can tell a truncated DELIVERY from a bad reply.
+                    self._barged = True
+                    lp = self._last_played or {}
+                    heard = 0.0
+                    if lp.get("start") is not None:
+                        heard = max(0.0, time.time() - lp["start"])
+                    total = (lp.get("end") or 0) - (lp.get("start") or 0)
+                    words = (lp.get("text") or "").split()
+                    heard_words = (len(words) if total <= 0
+                                   else min(len(words),
+                                            int(len(words) * heard / total)))
+                    self.session.store.event(
+                        "playback_cut", agent_id=lp.get("agent_id"),
+                        segment=self.segment,
+                        heard_seconds=round(heard, 1),
+                        total_seconds=round(total, 1),
+                        heard_text=" ".join(words[:heard_words])
+                                   + ("\u2026" if heard_words < len(words) else ""),
+                    )
+                    self._play_cursor = time.time()
+                    await self._send({"type": "assistant_interrupted"})
                 if barged:
                     if self.room is not None and self.room.speaking:
                         # A real meeting yields to an interjection: stop the
@@ -3382,6 +3928,22 @@ class RealtimeVoiceSessionRunner:
                             # There is no turn to write, but the floor still
                             # has to come back or the room goes quiet.
                             self._response_done.set()
+                        # What the participant had actually heard of the line
+                        # they cut off, from the playback clock. Recorded
+                        # beside the turn, not in place of it.
+                        cut_st = self._member_states.get(speaking_id)
+                        if cut_st is not None and cut_st.play_start is not None:
+                            self.session.store.event(
+                                "playback_cut", agent_id=speaking_id,
+                                segment=self.segment,
+                                heard_seconds=round(
+                                    self._heard_seconds(cut_st), 1),
+                                total_seconds=round(
+                                    (cut_st.play_end or cut_st.play_start)
+                                    - cut_st.play_start, 1),
+                            )
+                        self._barged = True
+                        self._play_cursor = time.time()
                         await self._send({"type": "assistant_interrupted"})
                     elif self._speaking:
                         # Barge-in: stop the agent's remaining audio, but RECORD
@@ -4786,6 +5348,61 @@ class RealtimeVoiceSessionRunner:
             self.session.store.event("group_turn_timeout", agent_id=agent.id)
             self.rt.clear_response_state()
 
+    async def _cancel_stale_holds(self) -> None:
+        """The participant started a new utterance: every reply a non-floor
+        member is still generating is a reaction to a colleague, now stale.
+
+        Cancel it at the bridge rather than just dropping it. On the
+        native-audio route a member whose response is still active when the
+        participant speaks never fires a reply to the new turn: the speech is
+        absorbed into the running response and the fallback request comes
+        back empty. Cancelling frees the model for the participant's turn.
+        """
+        for aid, st in self._member_states.items():
+            if self.room is None or self.room.speaking == aid:
+                continue
+            if st.mode == "holding":
+                st.drop("participant_speaking")
+                st.mode = "discarding"
+                rt = self.room.session_for(aid)
+                if rt is not None:
+                    try:
+                        await rt.cancel_response()
+                    except Exception:  # noqa: BLE001
+                        pass
+                self.session.store.event("hold_cancelled_participant_speaking", agent_id=aid)
+            elif st.mode == "held_done":
+                st.drop("participant_speaking")
+
+    async def _grant(self, agent_id: str):
+        """Give a character the floor, preferring the reply it already made.
+
+        Sets the floor, adopts a held/finished auto-fired reply if there is
+        one, waits briefly for one to begin if not, and only then asks the
+        bridge for a fresh reply (the old commit + create path).
+        """
+        if self.room is None:
+            return None
+        self.room.speaking = agent_id
+        if await self.adopt_member(agent_id):
+            return self.room.session_for(agent_id)
+        rt = self.room.session_for(agent_id)
+        wait = autofire_wait_for_model(rt.model if rt else "")
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            st = self._member_states.get(agent_id)
+            if st is not None and st.mode in ("holding", "live"):
+                if st.hold_started_at >= self._speech_started_at or st.mode == "live":
+                    if st.mode == "holding":
+                        await self.adopt_member(agent_id)
+                    return self.room.session_for(agent_id)
+            if rt is not None and rt.autofire_active and time.time() - rt._last_output_at < 10:
+                # response.created arrived; its first audio is on the way.
+                deadline = max(deadline, time.time() + 1.0)
+            await asyncio.sleep(0.05)
+        self.session.store.event("fresh_reply_requested", agent_id=agent_id)
+        return await self.room.give_floor(agent_id)
+
     async def _run_group_turn(self) -> None:  # noqa: C901
         """One participant turn in a group room: the director picks who speaks
         and in what order, then each character takes the floor in turn. The
@@ -4836,6 +5453,37 @@ class RealtimeVoiceSessionRunner:
             # This turn has the transcript it will route on (or has given up
             # waiting): a later turn_ended is a new turn.
             self._group_turn_waiting = False
+
+            # SCRIBE WATCHDOG (origin/main 169310c). The third way a scribe
+            # dies, after the two GroupRoom already knows about: the socket is
+            # fine, _went_deaf sees nothing, and it has simply stopped emitting
+            # transcripts — seen after about six turns on native-audio. Two
+            # consecutive participant turns with no transcript from anywhere is
+            # the symptom, and reopen_scribe is the repair, the same repair
+            # _went_deaf reaches for. Without a participant channel the
+            # encounter records a perfect agent transcript and not one word the
+            # participant said, which is the exact failure the scribe-commit
+            # round existed to close.
+            if fresh:
+                self._turns_without_transcript = 0
+            else:
+                self._turns_without_transcript += 1
+                if (self._turns_without_transcript >= 2
+                        and self.room is not None
+                        and self.room.scribe is not None):
+                    self._turns_without_transcript = 0
+                    try:
+                        new_scribe = await self.room.reopen_scribe()
+                        if self._scribe_pump is not None:
+                            self._scribe_pump.cancel()
+                        self._scribe_pump = asyncio.ensure_future(
+                            self._pump_scribe(new_scribe))
+                        self._pumps.append(self._scribe_pump)
+                        self.session.store.event("scribe_reconnected")
+                    except Exception as exc:  # noqa: BLE001
+                        self.session.store.event(
+                            "scribe_reconnect_failed",
+                            message=redact_key(str(exc)))
 
             named_early = self._named_in(fresh)
             first = named_early
@@ -4894,11 +5542,23 @@ class RealtimeVoiceSessionRunner:
                     routed_seq = candidates
                     routed_intents = collapsed_intents
                     # Anti-dominance: absent a direct address, prefer a
-                    # candidate who did not just speak.
+                    # candidate who did not just speak. If the director's only
+                    # candidate is the character who just spoke, do not let
+                    # them answer again: rotate to the next member instead
+                    # (in production the director handed Dan four of five
+                    # unnamed turns this way).
                     first = next(
-                        (c for c in candidates if c != self._last_group_speaker),
-                        candidates[0] if candidates else None,
+                        (c for c in candidates if c != self._last_group_speaker), None,
                     )
+                    if first is None and candidates:
+                        if self._last_group_speaker in order and len(order) > 1:
+                            nxt = (order.index(self._last_group_speaker) + 1) % len(order)
+                            first = order[nxt]
+                            self.session.store.event(
+                                "dominance_rotated", from_agent=candidates[0], to_agent=first,
+                            )
+                        else:
+                            first = candidates[0]
                 except Exception as exc:  # noqa: BLE001
                     # route() contains its own gateway failures and degrades to
                     # _fallback, so reaching here means the call itself broke.
@@ -5048,7 +5708,12 @@ class RealtimeVoiceSessionRunner:
                 )
 
             self._response_done.clear()
-            granted = await room.give_floor(first)
+            # _grant (origin/main) first: it plays a reply this member has
+            # ALREADY made rather than asking for a second one, and falls
+            # through to room.give_floor when there is nothing to adopt.
+            # Every failure path below is ours and is unchanged: _grant
+            # returns give_floor's own None when the grant fails.
+            granted = await self._grant(first)
             if granted is None:
                 # A failed grant means nobody was asked to speak, so there is
                 # nothing to wait for. Falling through to the wait below spent
@@ -5095,6 +5760,8 @@ class RealtimeVoiceSessionRunner:
                 return
             try:
                 await asyncio.wait_for(self._response_done.wait(), timeout=45)
+                if self.room is not None and self.room.speaking == first:
+                    self.room.speaking = None
             except asyncio.TimeoutError:
                 if self._closed or self.room is not room:
                     return
@@ -5227,10 +5894,12 @@ class RealtimeVoiceSessionRunner:
                     if self._closed or self.room is not room:
                         return
                 self._response_done.clear()
-                if await room.give_floor(aid) is None:
+                if await self._grant(aid) is None:
                     self._drop_undelivered_intent(aid, "floor_grant_failed")
                 try:
                     await asyncio.wait_for(self._response_done.wait(), timeout=45)
+                    if self.room is not None and self.room.speaking == aid:
+                        self.room.speaking = None
                 except asyncio.TimeoutError:
                     self.session.store.event("group_turn_timeout", agent_id=aid)
                 if self._closed or self.room is not room:
@@ -5279,15 +5948,21 @@ class RealtimeVoiceSessionRunner:
         floor from whoever should have spoken."""
         if not text:
             return None
+        # Whole tokens (ours) with last-position-wins (origin/main). Either
+        # alone is wrong: a raw substring test made 'Dan' fire on 'abundant',
+        # and first-match routed "Sorry Alex, but Jordan, how are you?" to Alex
+        # when people address the target LAST.
         tokens = _norm_speech(text).split()
+        best_at, best_id = -1, None
         for a in self._resolve_agents():
             name_tokens = _norm_speech(a.name).split()
             if not name_tokens:
                 continue
             n = len(name_tokens)
-            if any(tokens[i:i + n] == name_tokens for i in range(len(tokens) - n + 1)):
-                return a.id
-        return None
+            for i in range(len(tokens) - n + 1):
+                if tokens[i:i + n] == name_tokens and i > best_at:
+                    best_at, best_id = i, a.id
+        return best_id
 
     # ── director ───────────────────────────────────────────────────────────
     async def _steer(self) -> None:

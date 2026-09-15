@@ -357,7 +357,11 @@ def test_it_is_cast_exactly_as_both_siblings_are(monkeypatch, model, sib):
 
 
 def test_both_families_are_named_and_the_legacy_scalar_agrees():
-    rosters = {name: set(caps.voices) for name, caps in rt_mod.REALTIME_FAMILIES.items()}
+    # The casting COLUMNS, not the row names: the native-audio row shares
+    # the gemini-live roster and therefore its column
+    # (realtime.casting_families). Adding it did not add a column.
+    rosters = {caps.casting_key: set(caps.voices)
+               for caps in rt_mod.REALTIME_FAMILIES.values()}
     for aid, a in spec()["agents"].items():
         mapping = a["realtime_voice"]
         assert set(mapping) == set(rosters), f"{aid} is cast for {sorted(mapping)}"

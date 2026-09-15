@@ -380,6 +380,80 @@ yet; do it by hand, confirm each of the three, and write down what was removed.
 
 ---
 
+## Which scenarios a participant gets
+
+Phase 1 uses variant A only: every study run is S1A, S2A, S3A, S4A in a
+counterbalanced order (shuffled per participant). This is the code default
+(`DEFAULT_RUN_VARIANT=A`); set it to `B` to pin the other form or `random`
+for a per-construct coin flip. An explicit `variant=` on an internal test
+link still overrides it, and the RCT's second attempt always flips forms.
+
+Transcription is hinted to English on every route (`TRANSCRIPTION_LANG=en`;
+blank to disable) and the actors are told to speak English regardless of
+what they think they heard.
+
+> **What A-only does to the S1/Teamwork rule.** `FORM_EXCLUSIONS` in
+> `server/runs.py` bars **S1A from any run that also contains Teamwork** — the
+> two overlap on grounded content (1,631 shared groundings against 77 for the
+> alternative), which is a discriminant-validity problem, and the rule exists
+> to keep them apart. That rule has ONE documented escape hatch: a form the
+> **caller pinned** is honoured as asked and the run is stamped `"form was
+> pinned by the caller; exclusion not applied"`. `DEFAULT_RUN_VARIANT=A` pins
+> S1A on **every run**, so the escape hatch is taken on every run and the
+> exclusion is, in practice, **off for the whole of Phase 1**. Nothing errors
+> and nothing looks wrong: the runs record the exclusion as deliberately not
+> applied, which is exactly what the stamp is for. An operator reading this
+> page must not have to discover it by counting pairings in the data.
+>
+> This is a study-design question, not an ops setting, and it is **for the PI**:
+> either Phase 1 accepts the S1A + Teamwork pairing and says so in the analysis
+> plan, or `DEFAULT_RUN_VARIANT=random` restores the per-construct draw (and
+> with it the three-forms-per-construct bank and the held-back reserve form)
+> and the exclusion starts applying again. Both mechanisms exist in the merged
+> code; the default is A.
+
+## The base URL also forwards participants (second route in)
+
+**This is not the link this page tells you to paste.** The links to paste are
+in [The participant URL](#the-participant-url-qualtrics--app--qualtrics)
+below — three of them, one per arm. This section documents a second way in
+that now works, and the choice between them is a study-design choice.
+
+The base URL forwards a visitor to the study entry when an id is in the query,
+so this is a whole, working link on its own:
+
+```
+https://rf.ai-ready-workforce.ai.cornell.edu/?participantId=${e://Field/participantId}&qid=${e://Field/ResponseID}
+```
+
+`participantId` is the Survey Flow embedded field set from the CloudResearch
+Connect URL; `ResponseID` is Qualtrics' own id for that response. The app
+stores both on the run, so `python -m server.qualtrics join` can match each
+survey response to its four encounters. A participant who reopens the link
+lands back in the same run at the encounter they were on. The bare base URL
+with **no** parameters still goes to the researcher landing page and is still
+key-checked.
+
+Two things to know before choosing it:
+
+- **It selects `/start`, the unrestricted run** — four constructs, one
+  encounter each. The three links below assign the participant to an **arm**
+  (`/start/one-to-one` draws Conflict Management and Influence;
+  `/start/group` draws Inspirational Leadership and Teamwork). A wave run off
+  the base URL is therefore a **different design** from a wave run off the arm
+  links, not a different spelling of the same one. **The PI picks**; this page
+  does not.
+- **`&qid=` is as mandatory here as it is there.** The forward carries the
+  query through unchanged, so a base-URL link missing `${e://Field/ResponseID}`
+  fails in exactly the way the warning below describes: no consent record, and
+  the voice socket closes 4403.
+
+The forward runs *before* the researcher-key check, which is the point of it —
+a participant arriving on the base URL used to hit that check. It does not
+weaken the door: the forwarded request goes through `entry_params` and the
+link-probe filter like any other, so a scanner or a link unfurler fetching the
+base URL is shown the entry check page and **mints no run**.
+
 ## Before every deploy: is anyone mid-encounter?
 
 A rollout starts a new task and retires the old one about two minutes later,
@@ -638,6 +712,43 @@ print('\n'.join(e['id'] for e in json.load(sys.stdin)))" | while read SID; do
   echo "pulled $SID"
 done
 ```
+
+## How many sessions / participants (durable, survives redeploys)
+
+CloudWatch keeps every voice session start. From the terminal (a few minutes
+for a 7-day window):
+
+> `python`, not `python3`: an activated venv provides `python` on all three
+> platforms, and `python3` does not exist on a Windows checkout — which is
+> where half of this project's operators are. `python3` is reserved on this
+> page for creating the virtualenv on macOS/Linux, paired with `py -3.12` for
+> Windows, and tests/test_deploy_portability.py enforces that. (The line below
+> is otherwise exactly as it arrived on origin/main 23d98a3.)
+
+```bash
+DAYS=7; START=$(( ($(date +%s) - DAYS*86400) * 1000 )); aws logs filter-log-events --log-group-name /ecs/relational-fluency/agent --start-time $START --filter-pattern '"/ws/participant/voice" "[accepted]"' --query 'events[*].[timestamp,message]' --output json | python -c "
+import json,sys,re,datetime,collections
+ev=json.load(sys.stdin); rows=[]
+for ts,msg in ev:
+    m=re.search(r'scenario=(\w+)&participant_id=([\w\-]+)', msg)
+    if m: rows.append((datetime.datetime.fromtimestamp(ts/1000).strftime('%a %b %d'), m.group(1), m.group(2)))
+print('voice sessions:', len(rows), '| distinct participants:', len({p for _,_,p in rows}))
+print('per day:', dict(collections.Counter(d for d,_,_ in rows)))
+print('per scenario:', dict(collections.Counter(s for _,s,_ in rows)))"
+```
+
+Or in the console, CloudWatch Logs Insights on `/ecs/relational-fluency/agent`:
+
+```
+fields @timestamp, @message
+| filter @message like "/ws/participant/voice" and @message like "[accepted]"
+| parse @message /scenario=(?<scenario>\w+)&participant_id=(?<pid>[\w-]+)/
+| stats count() as sessions, count_distinct(pid) as participants by bin(1d)
+```
+
+Simulator runs (`server` verification) count like people here. Real study
+participants are the `cohort=study` runs in `/api/runs` once the Qualtrics
+link is live.
 
 ## Reading the steering trail
 
@@ -1021,10 +1132,16 @@ https://rf.ai-ready-workforce.ai.cornell.edu/rate/start?token=${e://Field/RaterT
   can tell "a field I am not using" from "a field that is missing".
 - `${e://Field/participantId}` is Qualtrics piped text. If your survey spells
   the field differently, change the text **inside** the braces and leave `pid=`
-  alone: `pid`, `participant_id` and `PROLIFIC_PID` are the query-parameter
-  spellings the app accepts (`entry_params` in `server/app.py`), and
-  `participantId` is not among them — it belongs in the field reference, not in
-  the URL parameter. Same for `RaterToken` in the rater survey.
+  alone. The query-parameter spellings the app accepts are `pid`,
+  `participant_id`, `participantId` and `PROLIFIC_PID` (`entry_params` in
+  `server/app.py`). Same for `RaterToken` in the rater survey.
+  > **Changed 2026-09-15.** This bullet used to say `participantId` "is not
+  > among them". It is now — it was added to `entry_params` in the same change
+  > that made the base URL forward participants (see
+  > [the section above](#the-base-url-also-forwards-participants-second-route-in)),
+  > because that forward puts `participantId` in the query. `pid=` is still the
+  > spelling to paste in these three links: it is the one every other line on
+  > this page, and every worked example, uses.
 - `/start` with no arm is the full four-construct run and still works; the two
   arm links draw from different construct pools (`/start/one-to-one`: Conflict
   Management and Influence; `/start/group`: Inspirational Leadership and

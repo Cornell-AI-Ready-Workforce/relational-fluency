@@ -192,6 +192,13 @@ _PLACEHOLDER = re.compile(r"\{\s*\}")
 # The evidence, per row, is in the row.
 
 
+# The browser captures and plays 16 kHz; the gateway emits 24 kHz PCM16.
+# Defined ABOVE the capability table because a row names an input rate: the
+# native-audio route needs 24 kHz in and every other route takes this.
+CLIENT_RATE = 16000
+GATEWAY_OUTPUT_RATE = int(setting("REALTIME_OUTPUT_RATE", "24000"))
+
+
 class UnknownRealtimeModel(RuntimeError):
     """REALTIME_MODEL names a model no row in the table covers."""
 
@@ -222,6 +229,56 @@ class RealtimeCapabilities:
     # pause the gateway was told to wait through and splits it anyway. 0 means
     # the runner's VAD_SILENCE_MS stands.
     end_of_turn_silence_ms: int = 0
+
+    # ── the columns that came in from origin/main ──────────────────────────
+    #
+    # Everything below was five separate substring tests on the model name on
+    # that branch (input_rate_for_model, autofire_wait_for_model,
+    # accepts_text_items, is_openai_realtime, and an `if "native-audio" in
+    # model` in give_floor). They are columns here for the reason the rest of
+    # this table exists: a model's behaviour should be written down in one
+    # place, and adding a model should be adding a row.
+
+    # PCM16 sample rate the bridge expects on the INPUT side. The browser
+    # always captures CLIENT_RATE; RealtimeVoiceSession.send_audio resamples
+    # when this differs. 24 kHz on native-audio is not a preference: at 16 kHz
+    # that route accepts the session and then stays silent forever — no
+    # transcription, no reply, no error (2026-09-08, after nine other config
+    # variants were tried first).
+    input_rate: int = CLIENT_RATE
+    # Seconds to let the bridge start its own reply before asking for one.
+    # ~1 s on plain flash, ~3.3 s on native-audio; asking early collides.
+    autofire_wait: float = 1.5
+    # Whether conversation.item.create with text is accepted on this route.
+    accepts_text_items: bool = True
+    # Whether a room should relay a colleague's finished line to this member as
+    # TEXT instead of fanning that colleague's audio into its input.
+    relay_colleagues_as_text: bool = False
+    # Whether give_floor hands this member the floor by injecting a text nudge
+    # and asking, instead of padding and committing its audio buffer.
+    grant_via_text_prompt: bool = False
+    # Whether a ROOM MEMBER on this route may be given tools at all.
+    member_tools: bool = True
+    # Whether `response.created` on its own is proof the bridge started a reply.
+    autofire_at_created: bool = False
+    # Whether the session dict may carry a transcription language hint.
+    transcription_language_hint: bool = True
+    # Voices from ANOTHER family that this family will play instead. The
+    # scenario bank names Gemini voices; a bank entry is not a typo, and a
+    # rejected voice takes the character brief down with it.
+    voice_aliases: dict = field(default_factory=dict, compare=False)
+    # Which family's column in a scenario's `realtime_voice` map this row casts
+    # from. Empty means "its own name". The native-audio row sets it to
+    # `gemini-live`: it has the SAME roster, so a character cast as Kore is
+    # Kore on both, and asking the bank to write a third identical column for
+    # every character in twelve scenarios would be twelve files of duplicated
+    # data with twelve chances to disagree with itself. A family that needs its
+    # own casting leaves this empty and gets its own column.
+    casting_family: str = ""
+
+    @property
+    def casting_key(self) -> str:
+        return self.casting_family or self.family
 
     @property
     def default_voice(self) -> str:
@@ -281,6 +338,125 @@ REALTIME_FAMILIES = {
         end_of_turn={"type": "server_vad", "silence_duration_ms": 1500,
                      "prefix_padding_ms": 300},
         end_of_turn_silence_ms=1500,
+        # 16 kHz straight through; this is the route the browser's own capture
+        # rate was chosen for.
+        input_rate=CLIENT_RATE,
+        # ~1 s after silence (origin/main 210fbfc, and consistent with our own
+        # give_floor measurements).
+        autofire_wait=1.5,
+        # Re-probed 2026-09-10 and 2026-09-14 on a FLAT session config: a
+        # user-role text conversation.item.create + response.create is accepted
+        # and answered, first delta 0.23 s, complete reply. The older finding
+        # that a text item closes this socket with 1006 was the 2026-08-19
+        # over-specified session config, not the item. Our audio-recovery retry
+        # (retry_response) and our group scene-open (open_scene) both ride on
+        # this being True; do not flip it without re-probing.
+        accepts_text_items=True,
+        # But colleague audio still goes in as AUDIO here. Our fan-out byte
+        # counters (_fanned_since_grant) and give_floor's `heard_something`
+        # were measured on this route with the full audio fan-out, and this is
+        # the route every one of our group measurements was taken on.
+        relay_colleagues_as_text=False,
+        # Pad-and-commit is what produces the reply here; on this route it is
+        # the COMMIT that draws the second reply, which is why give_floor waits
+        # AUTOFIRE_WAIT before it.
+        grant_via_text_prompt=False,
+        # END_SEGMENT_TOOL stays wired: measured working on this route, and it
+        # is how an actor ending a group conversation advances the encounter.
+        member_tools=True,
+        # A created that never becomes a delta does happen here, and a latched
+        # autofire_active mutes the encounter permanently. The delta is the
+        # proof on this route.
+        autofire_at_created=False,
+        # origin/main cabc1dd, verified 2026-09-08 not to mute this route. It
+        # is the fix for a transcriber that returned a Russian word and
+        # Japanese syllables from an English-speaking participant.
+        transcription_language_hint=True,
+    ),
+    "gemini-live-native-audio": RealtimeCapabilities(
+        family="gemini-live-native-audio",
+        # THE ROUTE PRODUCTION IS ACTUALLY RUNNING (image df1ab83,
+        # actor_model = nto.gemini-live-2.5-flash-native-audio). Everything in
+        # this row comes from origin/main's 2026-09-08 work on the deployed
+        # service, except where the comment says otherwise. It is a row of its
+        # own and not a variant of the gemini-live row because six of the
+        # thirteen columns differ, and because without a row of its own
+        # family_of() folds it into gemini-live and feeds it 16 kHz -- which is
+        # the documented permanent-silence failure.
+        #
+        # Voices: the same roster, inherited. The native-audio route was
+        # verified for 1:1 and group rooms on 5a45420 with the bank's Gemini
+        # voices; nothing reported a rejection.
+        voices=("Puck", "Charon", "Kore", "Fenrir", "Aoede",
+                "Leda", "Orus", "Zephyr"),
+        # Not probed separately. Carried over from the gemini-live row, whose
+        # behaviour it shares in every respect that WAS probed; the language
+        # hint below is what actually makes the transcript arrive in English.
+        needs_input_transcription=False,
+        input_transcription_model="",
+        needs_turn_detection_null=False,
+        # NOT PROBED on this route. Carried over as False from gemini-live,
+        # which is the conservative answer: False makes steering_is_real false,
+        # so the runner records that a stage direction was not acknowledged
+        # rather than claiming one was. If someone probes mid-session
+        # session.update here and it is acked and obeyed, flip it and say so.
+        honours_session_update=False,
+        # NOT PROBED on this route. Left at None -- i.e. the runner's own
+        # VAD_SILENCE_MS stands, which is the behaviour this route had in
+        # production. Setting the gemini-live row's 1500 ms window here would
+        # be asserting a probe that was not run, and on THIS family an
+        # unhonoured turn_detection is the silent-mute shape.
+        end_of_turn=None,
+        end_of_turn_silence_ms=0,
+        # 24 kHz IN, and this is not a preference. At 16 kHz the route accepts
+        # the session and then stays silent forever: no transcription, no
+        # reply, no error. Found 2026-09-08 after nine config variants;
+        # 24 kHz fixed it immediately. Output is 24 kHz too, confirmed by
+        # pitch 179 Hz vs 180 Hz.
+        input_rate=24000,
+        # Auto-fires ~3.3 s after silence here, against ~1 s on plain flash.
+        # 4.5 s is the wait that stops a grant colliding with a reply the
+        # bridge had already started.
+        #
+        # NOT PROBED ON THIS ROUTE: the three audio-recovery bars next door --
+        # RESPONSE_STALL_S (45 s), AUDIO_ABSENT_S (8 s) and REPLAY_UNANSWERED_S
+        # (4 s). Every one of them was calibrated on plain flash (190 replies,
+        # 502 closed replies, six waves) and none of that was re-run here. Two
+        # of the three are conservative on any route, so they stand as they are.
+        # The third was not: 4 s is less than the 4.5 s directly above, i.e. the
+        # replay path would have called a turn lost before this route's own
+        # reply is due. _absent_bar floors it by this column for that reason.
+        # If this route is what Phase 1 runs, these bars want re-measuring on it.
+        autofire_wait=4.5,
+        # Accepted -- and the room depends on it (see relay_colleagues_as_text
+        # and grant_via_text_prompt). Both sides agree text items work here.
+        accepts_text_items=True,
+        # Fanning a colleague's audio into a native-audio member confused its
+        # turn detection, so the room TELLS it what the colleague said instead,
+        # as a parenthesised context note. Measured on the deployed route;
+        # this is why GroupRoom.tell exists.
+        relay_colleagues_as_text=True,
+        # Pad-and-commit yields an EMPTY response here: the route has already
+        # consumed the audio with a reply of its own that was dropped. A text
+        # nudge plus request_response is the only recipe that wakes it -- the
+        # same recipe as open_scene.
+        grant_via_text_prompt=True,
+        # No tools for room members: this route calls end_conversation
+        # constantly and every call is an empty turn. END_SEGMENT_TOOL is
+        # therefore NOT available to members here, and a group segment on this
+        # route ends the way it did before the tool existed (the director's
+        # turn budget and the participant's own exit), not by an actor calling
+        # it. That is a real capability loss on the deployed route and it is
+        # recorded here rather than hidden: see the per-file record.
+        member_tools=False,
+        # It emits many empty responses, and a member still generating when the
+        # participant speaks never answers the new turn, so knowing a reply has
+        # started as early as possible is what the stale-hold cancel needs.
+        autofire_at_created=True,
+        transcription_language_hint=True,
+        # Same roster, same characters, same voices: the scenario bank's
+        # `gemini-live` casting IS this family's casting. See casting_family.
+        casting_family="gemini-live",
     ),
     "gpt-realtime": RealtimeCapabilities(
         family="gpt-realtime",
@@ -308,6 +484,40 @@ REALTIME_FAMILIES = {
         # to match and the gpt path is left exactly as it was.
         end_of_turn=None,
         end_of_turn_silence_ms=0,
+        # 16 kHz in; the bridge accepts the browser's capture rate unchanged.
+        input_rate=CLIENT_RATE,
+        autofire_wait=1.5,
+        accepts_text_items=True,
+        # Server VAD is off on this family, so fanned-in colleague audio no
+        # longer fires a reply -- but it does still land in the member's own
+        # input buffer and get committed as part of the member's turn. The room
+        # tells this family what a colleague said, in text, for the same reason
+        # it does on native-audio. This is the behaviour origin/main shipped
+        # for the fallback route (accepts_text_items gated it there).
+        relay_colleagues_as_text=True,
+        # The COMMIT starts the reply on this route; a response.create on top
+        # is rejected as an active-response conflict. give_floor commits and
+        # then clears the response state rather than asking again.
+        grant_via_text_prompt=False,
+        member_tools=True,
+        # The first audio delta can trail response.created by several seconds
+        # here, and a commit + create sent in that gap is rejected. On this
+        # route `created` is the signal.
+        autofire_at_created=True,
+        # input_audio_transcription is required here anyway
+        # (needs_input_transcription); the language rides on the same dict and
+        # asking for it is harmless (verified 2026-09-08).
+        transcription_language_hint=True,
+        # The scenario bank names Gemini voices and a bank entry is not a typo.
+        # Each maps to the nearest voice on this roster, stable per character,
+        # so a character cast as Kore is `shimmer` on every gpt run rather than
+        # a session that opens with a rejected voice and plays the gateway's
+        # stock assistant instead of the character.
+        voice_aliases={
+            "puck": "alloy", "charon": "echo", "kore": "shimmer",
+            "fenrir": "ash", "aoede": "coral", "leda": "sage",
+            "orus": "verse", "zephyr": "marin",
+        },
     ),
 }
 
@@ -340,6 +550,13 @@ def family_of(model: str) -> str:
     """
     name = (model or "").lower()
     if "gemini" in name and "live" in name:
+        # ORDER MATTERS. The native-audio sibling matches the gemini-live test
+        # too, and answering "gemini-live" for it is not a near-miss: it feeds
+        # that route 16 kHz input, which it accepts and then ignores forever --
+        # session open, no transcription, no reply, no error. The narrower test
+        # goes first.
+        if "native-audio" in name:
+            return "gemini-live-native-audio"
         return "gemini-live"
     if "realtime" in name and ("gpt" in name or "openai" in name):
         return "gpt-realtime"
@@ -371,6 +588,19 @@ def require_capabilities(model: str) -> RealtimeCapabilities:
     return caps
 
 
+def casting_families() -> tuple:
+    """The distinct columns a scenario's `realtime_voice` map has to carry.
+
+    Not the same as the set of family names: two families that share a roster
+    share a column (see RealtimeCapabilities.casting_family). This is what the
+    bank is checked against, so adding a row that shares a roster does not
+    demand a new line in every scenario file, and adding one that does NOT
+    share a roster demands it immediately.
+    """
+    return tuple(sorted({caps.casting_key
+                         for caps in REALTIME_FAMILIES.values()}))
+
+
 def voices_for(model: str) -> tuple:
     """The roster `model` will accept, in casting order."""
     return require_capabilities(model).voices
@@ -397,9 +627,195 @@ def resolve_voice(model: str, voice: str = "") -> str:
         )
     return voice
 
-# The browser captures and plays 16 kHz; the gateway emits 24 kHz PCM16.
-CLIENT_RATE = 16000
-GATEWAY_OUTPUT_RATE = int(setting("REALTIME_OUTPUT_RATE", "24000"))
+
+# -- the same table, read by the names her routes call it by ----------------
+#
+# input_rate_for_model / autofire_wait_for_model / accepts_text_items /
+# is_openai_realtime / voice_for_model came in on origin/main as five
+# independent substring tests on the model name. They are kept as names --
+# server/group_room.py and server/realtime_voice_session.py import them -- but
+# the answers now come out of REALTIME_FAMILIES above, so there is ONE place a
+# model's behaviour is written down and one place to change it. The substring
+# fallback survives only for a model the table does not cover, and is marked as
+# such: a study should not be run on a model with no row (see
+# require_capabilities), but a helper that raises in a hot path is a helper
+# callers stop calling.
+
+
+def input_rate_for_model(model: str) -> int:
+    """Sample rate the bridge expects for input audio on this model.
+
+    The native-audio Gemini route silently ignores 16 kHz input: the session
+    stays open and never transcribes or replies (found 2026-09-08 after nine
+    config variants failed; 24 kHz input fixed it immediately). The other
+    Gemini route and the OpenAI route accept 16 kHz.
+    """
+    caps = capabilities_for(model)
+    if caps is not None:
+        return caps.input_rate
+    return 24000 if "native-audio" in (model or "").lower() else CLIENT_RATE
+
+
+def autofire_wait_for_model(model: str) -> float:
+    """How long to give the bridge to start its own reply before asking.
+
+    Measured: the Gemini route fires about 1 s after silence, the native-audio
+    route about 3.3 s. Asking too early yields a second, colliding reply.
+
+    AUTOFIRE_WAIT still overrides everywhere, because that env knob is what the
+    runner's single 1.5 s default was; the per-family value is what it falls
+    back to instead of one number for every route.
+    """
+    env = os.getenv("AUTOFIRE_WAIT")
+    if env:
+        try:
+            return float(env)
+        except ValueError:
+            pass
+    caps = capabilities_for(model)
+    if caps is not None:
+        return caps.autofire_wait
+    return 4.5 if "native-audio" in (model or "").lower() else 1.5
+
+
+def accepts_text_items(model: str) -> bool:
+    """Whether conversation.item.create with text is safe on this route.
+
+    NOTE the row comments: this is True on every family in the table now. The
+    2026-08-19 finding that a text item closes the plain-Gemini socket with
+    1006 was an over-specified session config, not the item; re-probed
+    2026-09-10 and 2026-09-14 on a flat session config, a user-role text item
+    plus response.create is accepted and answered, first delta 0.23 s. Our
+    audio-recovery retry and our group scene-open both ride on that. See
+    docs/migration-plan.md.
+    """
+    caps = capabilities_for(model)
+    if caps is not None:
+        return caps.accepts_text_items
+    m = (model or "").lower()
+    return "native-audio" in m or m.startswith("gpt-")
+
+
+def relays_colleagues_as_text(model: str) -> bool:
+    """Whether a room should TELL this member what a colleague said, in text,
+    instead of fanning the colleague's audio into its input.
+
+    True on the routes measured in production with it on: native-audio, where
+    fanned-in colleague audio confused the member's turn detection, and the gpt
+    fallback, where server VAD is off and fanned audio only pollutes the
+    member's own committed turn. False on plain flash, which is the route our
+    fan-out byte counters and give_floor's `heard_something` were measured
+    against.
+    """
+    caps = capabilities_for(model)
+    if caps is not None:
+        return caps.relay_colleagues_as_text
+    return accepts_text_items(model)
+
+
+def grants_via_text_prompt(model: str) -> bool:
+    """Whether handing this member the floor means injecting a text nudge and
+    asking, rather than padding and committing its audio buffer.
+
+    True on native-audio: the route has already consumed the audio with a reply
+    of its own that was dropped, so a commit of padding yields an empty
+    response. Injecting a text item is the only recipe that wakes a session
+    which will not answer a commit -- the same recipe as open_scene.
+    """
+    caps = capabilities_for(model)
+    if caps is not None:
+        return caps.grant_via_text_prompt
+    return "native-audio" in (model or "").lower()
+
+
+def member_tools_allowed(model: str) -> bool:
+    """Whether a ROOM MEMBER on this route may be given tools.
+
+    False on native-audio: it calls end_conversation constantly and each call
+    is an empty turn (measured in production, origin/main 5a45420). True
+    elsewhere, which keeps END_SEGMENT_TOOL wired on the routes where it was
+    measured to work. The 1:1 actor is unaffected either way -- this is a
+    room-member rule.
+    """
+    caps = capabilities_for(model)
+    if caps is not None:
+        return caps.member_tools
+    return "native-audio" not in (model or "").lower()
+
+
+def autofire_visible_at_created(model: str) -> bool:
+    """Whether `response.created` alone is proof the bridge started a reply.
+
+    On the gpt route the first audio delta can trail response.created by
+    several seconds, and a commit + response.create sent in that gap is
+    rejected as an active-response conflict; there, created is the signal. On
+    plain flash our own measurement is the other way round -- the reply that
+    counts is the one that produces output -- and a created that never becomes
+    a delta would otherwise latch autofire_active and mute the encounter.
+    """
+    caps = capabilities_for(model)
+    if caps is not None:
+        return caps.autofire_at_created
+    name = (model or "").lower()
+    return not ("gemini" in name and "native-audio" not in name)
+
+
+def is_openai_realtime(model: str) -> bool:
+    caps = capabilities_for(model)
+    if caps is not None:
+        return caps.family == "gpt-realtime"
+    return (model or "").lower().startswith("gpt-")
+
+
+def transcription_language() -> str:
+    """The language hint put on every realtime session.
+
+    TRANSCRIPTION_LANG, default "en"; set it blank to send no hint at all.
+    This is not cosmetic: without it the transcriber returned a Russian word
+    and Japanese syllables from an English-speaking participant, and the
+    participant's transcript is the measurement. Verified 2026-09-08 not to
+    mute either Gemini route.
+    """
+    return os.getenv("TRANSCRIPTION_LANG", "en")
+
+
+def voice_for_model(voice: str, model: str) -> str:
+    """The voice name this model family accepts, translating across families.
+
+    The scenario bank names Gemini voices. On the gpt route those names are
+    rejected, and a rejected voice takes the whole character brief down with
+    it, so each is mapped to the nearest voice on that family's roster
+    (`voice_aliases` on the row). Stable per character, like the Gemini
+    assignment.
+
+    This is the LENIENT door, for a voice that arrived from a scenario file.
+    `resolve_voice` is the strict one: it still refuses a name that is neither
+    on the roster nor a known alias, because that is a typo or a leftover
+    ElevenLabs id and permanent silence is the worst way to find out.
+    """
+    if not voice:
+        return voice
+    caps = capabilities_for(model)
+    if caps is None:
+        return voice
+    if caps.accepts_voice(voice):
+        return voice
+    alias = caps.voice_aliases.get(voice.lower())
+    if alias:
+        return alias
+    lowered = voice.lower()
+    for known in caps.voices:
+        if known.lower() == lowered:
+            return known
+    # No alias and not on the roster: hand it back UNTRANSLATED so that
+    # connect()'s resolve_voice still refuses it by name. origin/main fell back
+    # to "alloy" here, which is right for a scenario-bank voice and wrong for a
+    # typo or a leftover ElevenLabs id -- those would then run the whole wave in
+    # a voice nobody chose, and the record would say so without anyone noticing.
+    # The bank's own names are covered by voice_aliases above; anything else is
+    # a mistake worth stopping for.
+    return voice
+
 
 # How long a reply we asked for may produce nothing at all before events()
 # declares it lost. 45 s matches the timeout the group sequencer already waits
@@ -587,7 +1003,20 @@ VAD_NOISE_MARGIN = float(setting("VAD_NOISE_MARGIN", "3.0"))
 VAD_MAX_THRESHOLD = int(setting("VAD_MAX_THRESHOLD", "2500"))
 # The separate, stricter bar a barge-in has to clear; see `barge_in` below.
 VAD_BARGE_RMS = int(setting("VAD_BARGE_RMS", "1000"))
-VAD_BARGE_MS = int(setting("VAD_BARGE_MS", "300"))
+# BARGE_IN_MS is origin/main's name for this same bar, where it stood alone at
+# a fixed 600 ms with no loudness gate beside it. It is still honoured — as the
+# fallback for VAD_BARGE_MS, so an operator who had exported it is changing the
+# sustained-speech bar and not setting an inert variable — but the shipped
+# default is 300 ms, because here the bar is one of a PAIR: a frame counts
+# towards it only once it has also cleared VAD_BARGE_RMS, and 300 ms of speech
+# that loud is a firmer signal than 600 ms of anything at all. Live, that pair
+# cancelled the speaker on 6 of 12 deliberate interjections against 2 of 9 for
+# the single bar it replaced. BARGE_IN_MS=600 with VAD_BARGE_RMS=0 puts the
+# duration back where origin/main had it and drops the extra loudness gate to
+# the ordinary speech bar, which is as close to the old rule as this detector
+# gets: the old one timed from speech_started, this one counts qualifying
+# frames and decays them.
+VAD_BARGE_MS = int(setting("VAD_BARGE_MS", setting("BARGE_IN_MS", "300")))
 # The third, LOOSEST bar: "is there anything on the microphone that could be a
 # voice?" It opens no turn and cuts nobody off; its one job is to keep the
 # audio-recovery retry (see AUDIO_RETRY_QUIET_S) from re-speaking a line on
@@ -820,7 +1249,7 @@ class RealtimeVoiceSession:
     ) -> None:
         self.instructions = instructions
         self.model = model
-        self.voice = voice
+        self.voice = voice_for_model(voice, model)
         self.tools = tools or []
         self.api_key = api_key or gateway_api_key()
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
@@ -845,6 +1274,8 @@ class RealtimeVoiceSession:
         # that commits an empty buffer, so give_floor checks this first; it
         # is zeroed when a bridge auto-fired response consumes the buffer.
         self.pending_input = 0
+        self.input_rate = input_rate_for_model(model)
+        self._in_resample_state = None
         # A response the bridge started on its own (after speech + silence),
         # as opposed to one we asked for. Tracked separately from
         # _response_active so group-room suppression behaviour is unchanged.
@@ -1063,6 +1494,28 @@ class RealtimeVoiceSession:
             session["input_audio_transcription"] = {
                 "model": caps.input_transcription_model,
             }
+        # The language hint, from origin/main cabc1dd, and the reason it is not
+        # optional here: our own live runs had the transcriber return a Russian
+        # word and Japanese syllables from an English-speaking participant, and
+        # the participant's transcript IS the measurement. Verified 2026-09-08
+        # not to mute either Gemini route -- which is the one thing the gemini
+        # row above warns about, so this is asserted on a measurement and not on
+        # a guess. TRANSCRIPTION_LANG= (blank) sends no hint at all.
+        #
+        # This is _session_payload, which builds the frame for connect AND for
+        # every update_instructions: the hint is therefore on every realtime
+        # session this server opens, which is what it has to be, and not only on
+        # the first frame of each.
+        #
+        # It rides on whatever input_audio_transcription the row already built,
+        # so the gpt route gets {"model": "whisper-1", "language": "en"} and the
+        # gemini routes get {"language": "en"} -- the shapes each was measured
+        # with.
+        lang = transcription_language()
+        if lang and caps.transcription_language_hint:
+            hint = dict(session.get("input_audio_transcription") or {})
+            hint["language"] = lang
+            session["input_audio_transcription"] = hint
         if caps.needs_turn_detection_null:
             session["turn_detection"] = None
         elif self.turn_detection is not _UNSET:
@@ -1153,10 +1606,41 @@ class RealtimeVoiceSession:
         """Append participant audio (PCM16 at CLIENT_RATE)."""
         if not pcm16:
             return
+        if self.input_rate != CLIENT_RATE:
+            # Through _ratecv, not audioop directly: audioop was removed in
+            # Python 3.13 (PEP 594) and the CI matrix runs three Pythons. The
+            # pure-Python fallback carries the same opaque state tuple.
+            pcm16, self._in_resample_state = _ratecv(
+                pcm16, CLIENT_RATE, self.input_rate, self._in_resample_state
+            )
         self.pending_input += len(pcm16)
         await self._send({
             "type": "input_audio_buffer.append",
             "audio": base64.b64encode(pcm16).decode("ascii"),
+        })
+
+    async def inject_text(self, text: str, role: str = "user") -> None:
+        """Add a text item to the conversation (no reply requested).
+
+        Used to TELL a room member what a colleague just said, in place of
+        fanning that colleague's audio into its input, on the families whose
+        row says relay_colleagues_as_text.
+
+        The sibling is `prompt_response`, which sends the same item and then
+        asks for a reply; this one deliberately does not, because a context
+        note is not a cue to speak.
+
+        origin/main's version of this docstring said the original Gemini route
+        closes the socket with 1006 on text items. That was the 2026-08-19
+        over-specified session config, not the item: re-probed 2026-09-10 and
+        2026-09-14 on a flat config, plain flash accepts a user-role text item
+        and answers it, first delta 0.23 s. See the accepts_text_items column
+        and docs/migration-plan.md.
+        """
+        await self._send({
+            "type": "conversation.item.create",
+            "item": {"type": "message", "role": role,
+                     "content": [{"type": "input_text", "text": text}]},
         })
 
     async def commit_input(self) -> None:
@@ -1280,6 +1764,32 @@ class RealtimeVoiceSession:
         return max(self._response_started_at, self._last_output_at,
                    self._audio_absent_hold)
 
+    def _absent_bar(self) -> float:
+        """The seconds of nothing that call THIS reply lost, on THIS family.
+
+        RESPONSE_STALL_S, AUDIO_ABSENT_S and REPLAY_UNANSWERED_S are all single
+        globals measured on nto.gemini-live-2.5-flash, and they stayed single
+        globals through the merge while the autofire wait beside them became a
+        per-family column -- which is how the replay bar ended up SHORTER than
+        the deployed route's own reply latency: REPLAY_UNANSWERED_S is 4.0 s and
+        the native-audio row's autofire_wait is 4.5 s, so a replayed turn there
+        was declared unanswered and its session rebuilt 0.5 s before the file
+        next door says that route starts speaking.
+
+        A reply cannot be lost before the family's own floor for producing one,
+        so the bar is floored by that. The row's value is read directly and not
+        through autofire_wait_for_model: AUTOFIRE_WAIT is an operator knob for
+        the turn-taking wait and must not silently move a recovery bar with it.
+
+        The other two bars are NOT probed on native-audio and are left where the
+        measurement put them; that is recorded in the row and in
+        docs/migration-plan.md rather than guessed at here.
+        """
+        if not self._replay_in_flight:
+            return AUDIO_ABSENT_S
+        caps = capabilities_for(self.model)
+        return max(REPLAY_UNANSWERED_S, caps.autofire_wait if caps else 0.0)
+
     def _audio_watching(self) -> bool:
         """True while the AUDIO_ABSENT_S clock is running: a reply that has
         produced something (words without voice yet, or voice that has since
@@ -1314,7 +1824,7 @@ class RealtimeVoiceSession:
         if self._participant_speaking():
             self._audio_absent_hold = time.time()
             return False
-        bar = REPLAY_UNANSWERED_S if self._replay_in_flight else AUDIO_ABSENT_S
+        bar = self._absent_bar()
         return (time.time() - self._audio_absent_since()) > bar
 
     def _audio_absent(self) -> bool:
@@ -1562,6 +2072,20 @@ class RealtimeVoiceSession:
             # pad with 300 ms of silence if an auto-fire consumed the audio.
             await self.send_audio(b"\x00" * 9600)
         await self.commit_input()
+        if is_openai_realtime(self.model):
+            # Through the bridge, the commit itself starts the reply on the
+            # OpenAI route; an explicit response.create on top is rejected
+            # (active-response conflict) and can yield a second reply.
+            self._response_active = True
+            # ...but the reply still needs a stall clock, or _response_stalled
+            # has nothing to measure from and a reply this route loses latches
+            # _response_active for the rest of the encounter. request_response
+            # sets these three on every other route; this branch returns before
+            # reaching it, so it sets them itself.
+            self._requested = True
+            self._response_started_at = time.time()
+            self._response_saw_output = False
+            return
         await self.request_response()
 
     async def cancel_response(self) -> None:
@@ -1627,7 +2151,7 @@ class RealtimeVoiceSession:
                 # ...and no less than once a second, so the hold that the
                 # participant's own talking puts on the clock is released within
                 # a second of them stopping rather than a poll interval later.
-                bar = REPLAY_UNANSWERED_S if self._replay_in_flight else AUDIO_ABSENT_S
+                bar = self._absent_bar()
                 left = bar - (time.time() - self._audio_absent_since())
                 timeout = min(timeout, 1.0, max(0.25, left + 0.01))
             elif (self._response_active and self._requested
@@ -1824,6 +2348,25 @@ class RealtimeVoiceSession:
                 if etype == "response.created":
                     # A reply the gateway is starting is not the one we cut off.
                     self._cancelled_by_us = False
+                    if (not self._response_active
+                            and autofire_visible_at_created(self.model)):
+                        # origin/main 210fbfc: on the gpt route the first audio
+                        # can trail response.created by several seconds, and a
+                        # commit + response.create sent in that gap is rejected
+                        # as an active-response conflict. So on the families
+                        # where created is the signal, mark the auto-fire here
+                        # rather than at the first delta -- and start its stall
+                        # clock, because a reply nobody asked for has no other.
+                        #
+                        # Gated per family rather than taken unconditionally:
+                        # on plain flash ours is the measurement, a created that
+                        # never becomes a delta does happen there, and a latched
+                        # autofire_active mutes the encounter for good (see
+                        # cancel_response).
+                        self.autofire_active = True
+                        self._last_output_at = time.time()
+                        if not self._response_started_at:
+                            self._response_started_at = self._last_output_at
                     if self._deferred is not None:
                         # The gateway resumed on its own behind a bare done:
                         # that is what it does after interrupting itself for
@@ -1921,7 +2464,8 @@ class RealtimeVoiceSession:
                         }
                         continue
                     if pcm:
-                        yield {"type": "agent_audio", "pcm": self._to_client_rate(pcm)}
+                        yield {"type": "agent_audio", "pcm": self._to_client_rate(pcm),
+                               "response_id": ev.get("response_id")}
 
                 elif etype in (
                     "response.output_audio_transcript.delta",
@@ -1966,7 +2510,8 @@ class RealtimeVoiceSession:
                     self._agent_buffer += delta
                     self._response_text += delta
                     yield {"type": "agent_transcript_delta", "text": delta,
-                           "first": first}
+                           "first": first,
+                           "response_id": ev.get("response_id")}
 
                 elif etype in (
                     "response.output_audio_transcript.done",

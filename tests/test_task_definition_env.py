@@ -121,6 +121,19 @@ def test_provenance_text_model_is_the_model_that_runs(task_env):
     # voice sockets close 4403, runs keep being minted, and the wave collects
     # zero encounters uniformly from the first participant onward.
     "UPSTREAM_CONSENT_VERSION",
+    # WHICH FORM EVERY PARTICIPANT GETS. server/runs.py reads this to decide
+    # whether a run pins S1A/S2A/S3A/S4A (Phase 1's design) or draws per slot
+    # from the twelve-form bank, and a pinned form takes the exclusion table's
+    # caller hatch — so this one name decides both the study design and whether
+    # FORM_EXCLUSIONS runs at all. It reached the deployed service only as a
+    # code default until 2026-09-15, while docs/OPERATIONS.md told the operator
+    # to set it.
+    "DEFAULT_RUN_VARIANT",
+    # The language every realtime session is told the conversation is in. Unset,
+    # the sessions are given no hint and the transcript is whatever each model
+    # guesses: live runs with an English-speaking participant produced a Russian
+    # word and a run of Japanese syllables before this existed.
+    "TRANSCRIPTION_LANG",
 ])
 def test_required_env_is_set(task_env, name):
     """The forward direction, and the one that actually cost records.

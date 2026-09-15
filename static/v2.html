@@ -2691,21 +2691,38 @@
 
   // Barge-in: stop everything we already scheduled so a character does not keep
   // talking over the participant after the server hands them the floor.
+  //
+  // origin/main (ce8cdf4) wrote this same function against a single global list
+  // of scheduled sources; here every turn carries its own `sources`, so the stop
+  // loop is per turn and the caption is frozen at what was actually SHOWN rather
+  // than re-cut from the text by playback progress. Two things that version did
+  // and this one had lost are back, because they are about queue state rather
+  // than about which way the caption is trimmed:
+  //
+  //   - a turn whose audio never started is DROPPED from the queue. Left in, it
+  //     is a turn tickSpeech still owns: `turn.done` with no audio is the
+  //     TTS-failed path, and it would reveal that character's whole line, in
+  //     full, after the participant had already cut them off.
+  //   - currentTurn is nulled. It is the turn incoming audio chunks and
+  //     assistant_text_final/assistant_done attach themselves to; leaving it set
+  //     across a barge-in let the tail of an interrupted reply keep extending a
+  //     turn the participant has stopped hearing.
   function stopScheduledAudio() {
-    for (const turn of speechQueue) {
+    speechQueue = speechQueue.filter(turn => {
       if (turn.sources) {
         for (const s of turn.sources.slice()) { try { s.stop(); } catch (e) {} }
         turn.sources = [];
       }
+      if (turn.startCtx == null) return false;   // never started: drop it
       // Freeze the caption at what was actually shown and mark the turn done so
       // tickSpeech stops revealing text for audio that will never play.
-      if (turn.startCtx != null) {
-        turn.fullText = turn.shown || '';
-        turn.done = true;
-        if (audioCtx) turn.endCtx = audioCtx.currentTime;
-      }
-    }
+      turn.fullText = turn.shown || '';
+      turn.done = true;
+      if (audioCtx) turn.endCtx = audioCtx.currentTime;
+      return true;
+    });
     if (audioCtx) playbackTime = audioCtx.currentTime;
+    currentTurn = null;
     assistantSpeaking = false;
     setActiveSpeaker(null);
   }

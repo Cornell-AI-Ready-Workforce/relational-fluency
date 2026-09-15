@@ -633,6 +633,26 @@ def create(
     """
     pool = _by_construct()
     rng = random.Random(seed)
+    # Phase 1 runs one form only: variant A for every construct, with the
+    # order counterbalanced. DEFAULT_RUN_VARIANT=B pins the other form;
+    # DEFAULT_RUN_VARIANT=random restores the per-construct coin flip. A
+    # variant passed explicitly (URL, second attempt) still wins.
+    variant_pin_source = "caller" if (variant or variants) else None
+    if not variant and not variants:
+        default = os.getenv("DEFAULT_RUN_VARIANT", "A").strip()
+        if default and default.lower() != "random":
+            variant = default
+            variant_pin_source = "default_run_variant"
+    # WHO PINNED IT, and why the run has to say. _apply_form_exclusions has one
+    # escape hatch -- a form "pinned by the caller" is honoured and the run is
+    # stamped "exclusion not applied" -- and DEFAULT_RUN_VARIANT reaches that
+    # hatch through the same `variant` argument a URL does. With the default at
+    # A, EVERY run pins S1A and every run containing teamwork takes the hatch,
+    # so the S1A/Teamwork exclusion is off study-wide and each run carries a
+    # sentence blaming a caller that does not exist. The mechanism is
+    # deliberate (see docs/OPERATIONS.md, "Which scenarios a participant gets")
+    # and is the PI's call, not this function's; what is NOT acceptable is a
+    # record that cannot tell the two apart afterwards. So the run says which.
 
     # Refused here, beside the unknown arm, and for the same reason: a link that
     # cannot build the run it claims to must fail where it is handed out, not
@@ -869,6 +889,10 @@ def create(
     # the run and no more. The run says which half.
     pool_record["variant_pin"] = variant_pin
     pool_record["variant_pin_unfilled"] = pin_unfilled
+    # "caller" (a URL or a second attempt asked for this letter),
+    # "default_run_variant" (nobody asked; DEFAULT_RUN_VARIANT supplied it), or
+    # None (no pin at all). See the block in create() above.
+    pool_record["variant_pin_source"] = variant_pin_source if variant_pin else None
     # The same accounting for a `variants=` pin, which names forms rather than a
     # letter. Empty on every run nobody pinned and on every pin that covered its
     # construct's slots. Non-empty means some slot the caller meant to choose

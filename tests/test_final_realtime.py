@@ -187,7 +187,17 @@ def test_a_model_the_table_does_not_cover_is_refused_rather_than_guessed():
     # Both members of each family resolve, including the ones the gateway
     # offers beside the two the study has used.
     assert family_of("gpt-realtime-2.1-mini") == "gpt-realtime"
-    assert family_of("nto.gemini-live-2.5-flash-native-audio") == "gemini-live"
+    # THE NATIVE-AUDIO SIBLING IS ITS OWN FAMILY, and this line used to assert
+    # the opposite. origin/main measured why (2026-09-08): folded into the
+    # gemini-live row it is fed 16 kHz input, which it accepts and then ignores
+    # forever -- session open, no transcription, no reply, no error. It also
+    # differs on the autofire wait, on how the floor is granted, on whether
+    # colleagues arrive as text, and on whether room members may hold tools.
+    # Six columns is a family, not a member. Production runs this route.
+    assert (family_of("nto.gemini-live-2.5-flash-native-audio")
+            == "gemini-live-native-audio")
+    # ...and the plain route is untouched by the narrower test going first.
+    assert family_of("nto.gemini-live-2.5-flash") == "gemini-live"
 
 
 # -- the session dict ------------------------------------------------------
@@ -202,13 +212,44 @@ def test_the_session_dict_is_flat_and_carries_only_what_the_family_needs():
     sent = rt._session_payload()
     assert sent["instructions"] == "be dana"
     assert sent["voice"] == "alloy"
-    assert sent["input_audio_transcription"] == {"model": "whisper-1"}
+        # {"language": "en"} rides on the same dict: TRANSCRIPTION_LANG,
+        # default "en", from origin/main cabc1dd. It is not decoration --
+        # without it the transcriber returned a Russian word and Japanese
+        # syllables from an English-speaking participant, and the
+        # participant transcript is the measurement. Verified 2026-09-08
+        # not to mute either Gemini route.
+    assert sent["input_audio_transcription"] == {"model": "whisper-1",
+                                                "language": "en"}
     assert "turn_detection" in sent and sent["turn_detection"] is None
     assert "audio" not in sent and "modalities" not in sent
 
     gem = RealtimeVoiceSession("be dana", model=GEMINI, voice="Puck",
                                api_key="test-key")
-    assert gem._session_payload() == {"instructions": "be dana", "voice": "Puck"}
+    # Still flat, still only what the row asks for -- and the language hint,
+    # which on this family is the WHOLE of input_audio_transcription (the row
+    # says the transcript arrives unasked, so no model key is sent).
+    # (No turn_detection: a bare session built by nobody in particular leaves
+    # it UNSET and sends no such key, exactly as before. The runner and the
+    # room set the family's measured window on the sessions they open.)
+    assert gem._session_payload() == {
+        "instructions": "be dana", "voice": "Puck",
+        "input_audio_transcription": {"language": "en"},
+    }
+
+    # And TRANSCRIPTION_LANG= (blank) still means "send no hint at all", which
+    # is the escape hatch if a transcriber is ever measured to mind it.
+    import os
+    old = os.environ.get("TRANSCRIPTION_LANG")
+    os.environ["TRANSCRIPTION_LANG"] = ""
+    try:
+        bare = RealtimeVoiceSession("be dana", model=GEMINI, voice="Puck",
+                                    api_key="test-key")._session_payload()
+        assert "input_audio_transcription" not in bare
+    finally:
+        if old is None:
+            os.environ.pop("TRANSCRIPTION_LANG", None)
+        else:
+            os.environ["TRANSCRIPTION_LANG"] = old
 
 
 def test_connect_sends_the_table_row_not_a_hardcoded_shape(monkeypatch):
@@ -225,7 +266,8 @@ def test_connect_sends_the_table_row_not_a_hardcoded_shape(monkeypatch):
     asyncio.run(go())
     update = gw.updates()[0]["session"]
     assert update["voice"] == "cedar"
-    assert update["input_audio_transcription"] == {"model": "whisper-1"}
+    assert update["input_audio_transcription"] == {"model": "whisper-1",
+                                                  "language": "en"}
     assert update["turn_detection"] is None
 
 

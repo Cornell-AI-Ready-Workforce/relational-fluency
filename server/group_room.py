@@ -69,7 +69,9 @@ from typing import Callable, Dict, List, Optional
 from .voice import realtime as _realtime
 from .voice.realtime import _rms as _frame_rms
 from .voice.realtime import (RealtimeVoiceSession, SilenceDetector,
-                             capabilities_for)
+                             capabilities_for, accepts_text_items,
+                             is_openai_realtime, relays_colleagues_as_text,
+                             grants_via_text_prompt, member_tools_allowed)
 
 
 def _configured_model() -> str:
@@ -100,6 +102,15 @@ SCRIBE_ID = "scribe"
 # on a session that has heard nothing — committing a genuinely empty buffer is
 # an error on gpt and produces no turn at all on Gemini.
 _SILENCE_PAD = b"\x00" * 9600
+
+# What a member is told when the floor is handed to it on a family whose row
+# says grant_via_text_prompt. Phrased as a cue and not as content: the member
+# has already HEARD the participant (or been told what a colleague said, see
+# tell()), so this only says "now, you".
+_TEXT_GRANT_NUDGE = (
+    "(The participant is waiting for you to answer what they just said. "
+    "Reply now, in character, one or two sentences.)"
+)
 
 # How long an auto-fired reply is presumed to still be in flight. The same
 # window, and the same reason, as RealtimeVoiceSession.commit_turn: while the
@@ -221,6 +232,9 @@ class GroupRoom:
         # family where it is switched off, a zero here at the end of a group
         # encounter means the participant was never transcribed at all.
         self.scribe_commits = 0
+        # How many times a scribe was replaced because it stopped transcribing
+        # while its socket was still healthy (see reopen_scribe).
+        self.scribe_reopens = 0
         # agent id -> what the last rebrief() got back from update_instructions:
         # True acked, False refused or never sent, None unknowable, or the
         # exception. gather(return_exceptions=True) used to drop all of it.
@@ -339,6 +353,15 @@ class GroupRoom:
         # whatever it chose, which is its business and not this room's.
         if self._model:
             rt.model = self._model
+            # And re-settle the voice, because RealtimeVoiceSession.__init__
+            # ran voice_for_model() against the PROCESS's model a moment ago,
+            # which is the wrong family whenever the room has one of its own.
+            # Left alone, a room on plain flash whose process is pointed at a
+            # gpt model would open every member with the gpt alias of its
+            # Gemini voice ("Puck" -> "alloy") and then die at connect() on a
+            # voice the gemini roster does not contain. `voice` here has
+            # already been checked against self.caps by _voice_for_agent.
+            rt.voice = _realtime.voice_for_model(voice, self._model)
         # The family's measured end-of-turn window, settled the same way
         # `model` is and for the same reason (see the gemini row in
         # REALTIME_FAMILIES): a lost participant's 700-1300 ms mid-thought
@@ -349,12 +372,33 @@ class GroupRoom:
             rt.turn_detection = window
         return rt
 
+    def _member_tools(self) -> list:
+        """The tools a ROOM MEMBER on this family may be given.
+
+        Empty on native-audio, and this is a real capability loss recorded
+        rather than hidden: that route calls end_conversation constantly and
+        every call is an empty turn, which is why origin/main (5a45420) took
+        the tools away from members there. So END_SEGMENT_TOOL -- our wiring
+        that lets an actor end a group conversation and advance the encounter
+        -- is NOT available on the deployed route, and a group segment there
+        ends the way it did before the tool existed: the director's turn budget
+        or the participant leaving.
+
+        Everywhere else the tools stay, because that is where END_SEGMENT_TOOL
+        was measured working. This is a per-family answer and not a global one
+        precisely so that neither side loses its behaviour.
+
+        The 1:1 actor is untouched: this is a room-member rule.
+        """
+        model = self._model or _configured_model()
+        return self._tools if member_tools_allowed(model) else []
+
     async def open(self) -> None:
         async def start(agent):
             rt = self._new_session(
                 instructions=self._instructions_for(agent),
                 voice=self._voice_for_agent(agent),
-                tools=self._tools,
+                tools=self._member_tools(),
             )
             await rt.connect(open_conversation=False)
             self.sessions[agent.id] = rt
@@ -377,8 +421,9 @@ class GroupRoom:
             # sends on the family that honours it.
             rt = self._new_session(
                 instructions=(
-                    "You are a silent transcription channel. Never speak. "
-                    "If you must respond, reply with a single space."
+                    "You are a silent transcription channel for an English "
+                    "conversation. Never speak. If you must respond, reply "
+                    "with a single space."
                 ),
                 voice=_FAMILY_DEFAULT_VOICE,
                 tools=[],
@@ -420,6 +465,60 @@ class GroupRoom:
             except Exception:  # noqa: BLE001 - reporting must not kill the turn
                 pass
 
+    async def reopen_scribe(self) -> Optional[RealtimeVoiceSession]:
+        """Replace a scribe that has stopped transcribing with a fresh session.
+
+        The SECOND way a scribe dies, and the one _went_deaf cannot see.
+        _went_deaf catches a scribe whose socket is gone: a raised send, a ws
+        that went None, a send_failures that moved. This one is alive, healthy
+        on every surface, and has simply stopped emitting transcripts -- seen
+        after about six turns on native-audio. Two detectors, one repair; the
+        runner's scribe watchdog is the trigger for this shape and _went_deaf
+        is the trigger for the other, and both land here.
+
+        Built through _new_session, NOT through RealtimeVoiceSession directly:
+        the room may be on a different model than the process, and the scribe
+        that used to be constructed here with a hardcoded "Puck" is exactly the
+        session that lost its whole brief on gpt-realtime-2.1 -- no
+        session.updated, and a transcription channel answering the participant
+        out loud. The replacement has to be the same kind of session the
+        original was, or a scribe repair becomes a scribe that talks.
+
+        The fan-out bookkeeping is reset with it. _fanned_to_scribe and
+        _scribe_heard_speech describe a buffer that no longer exists; carried
+        over, they would say the new scribe had already heard the participant
+        speak, and close_participant_turn would commit a buffer holding
+        nothing.
+        """
+        old = self.scribe
+        self.scribe = None
+        if old is not None:
+            try:
+                await old.close()
+            except Exception:  # noqa: BLE001 - the old socket is already lost
+                pass
+        rt = self._new_session(
+            instructions=(
+                "You are a silent transcription channel for an English "
+                "conversation. Never speak. If you must respond, reply "
+                "with a single space."
+            ),
+            voice=_FAMILY_DEFAULT_VOICE,
+            tools=[],
+        )
+        await rt.connect(open_conversation=False)
+        self.scribe = rt
+        self._fanned_to_scribe = 0
+        self._scribe_heard_speech = False
+        # The scribe is no longer lost: a REPAIRED channel that still
+        # reads as lost would stop _went_deaf ever reporting the next
+        # failure on it (it reports once per channel), and the record
+        # would carry one stale reason for a scribe that has since died
+        # twice more.
+        self.lost.pop(SCRIBE_ID, None)
+        self.scribe_reopens += 1
+        return rt
+
     async def hear(self, pcm: bytes, *, exclude: Optional[str] = None) -> None:
         """Everyone in the room hears this audio.
 
@@ -447,8 +546,14 @@ class GroupRoom:
         one, and the runner's boundary check that every wanted member is still
         seated fails and rebuilds the room.
         """
+        # Colleague audio (exclude set) is fanned only to members that cannot
+        # take text; the others get the line as text via tell() instead,
+        # which keeps their turn detection on the participant alone.
         targets = [
-            (aid, rt) for aid, rt in self.sessions.items() if aid != exclude
+            (aid, rt) for aid, rt in self.sessions.items()
+            if aid != exclude
+            and not (exclude is not None
+                     and relays_colleagues_as_text(getattr(rt, "model", "")))
         ]
         if exclude is None and self.scribe is not None:
             targets.append((SCRIBE_ID, self.scribe))
@@ -487,7 +592,49 @@ class GroupRoom:
                     f"{getattr(rt, 'last_send_error', '') or 'send failed'}",
                 )
 
-    # ── the floor ──────────────────────────────────────────────────────────
+    async def tell(self, speaker_name: str, text: str, *,
+                   exclude: Optional[str] = None) -> None:
+        """Give the text-relay members a colleague's FINISHED line, as text.
+
+        The other half of hear()'s family gate. Where a member's row says
+        relay_colleagues_as_text, that member is not fanned the colleague's
+        audio at all -- on native-audio the fanned audio confused its turn
+        detection, and on the gpt route, where server VAD is off, it only
+        lands in the member's own input buffer and gets committed as part of
+        the member's turn. So the room tells it instead, once, when the line is
+        complete.
+
+        A context note, explicitly not a cue to speak: inject_text adds the
+        item and asks for nothing. _strip_context_echo in the runner is the
+        second line of defence, for the route that parrots it anyway.
+
+        THE COUNTER IS NOT INCIDENTAL. give_floor asks "has this member heard
+        anything since its last turn?" (`_fanned_since_grant`) and skips the
+        autofire wait when the answer is no, because a session that has heard
+        nothing has nothing to answer -- that is the scene-open case. On a
+        relay family NOTHING is ever fanned, so without counting a tell() the
+        answer would be "no" on every single grant and every grant would take
+        the scene-open branch. A told line is something heard.
+        """
+        if not text:
+            return
+        note = (f"(Context, not for you to repeat: {speaker_name} just said "
+                f"out loud to the group: \"{text}\")")
+        targets = [
+            (aid, rt) for aid, rt in self.sessions.items()
+            if aid != exclude and relays_colleagues_as_text(
+                getattr(rt, "model", ""))
+        ]
+        results = await asyncio.gather(*(
+            rt.inject_text(note) for _, rt in targets
+        ), return_exceptions=True)
+        for (channel_id, _rt), result in zip(targets, results):
+            if not isinstance(result, BaseException):
+                self._fanned_since_grant[channel_id] = (
+                    self._fanned_since_grant.get(channel_id, 0) + len(note)
+                )
+
+    # -- the floor ----------------------------------------------------------
     @staticmethod
     def _already_answering(rt) -> bool:
         """True while the gateway is producing this member's reply on its own.
@@ -519,8 +666,16 @@ class GroupRoom:
         makes on the 1:1 path, on the same AUTOFIRE_WAIT knob, and it ends the
         instant the first delta arrives rather than spending the ceiling.
         """
+        # Per FAMILY, not one number for every route. The gateway fires about
+        # 1 s after silence on plain flash and about 3.3 s on native-audio, and
+        # a 1.5 s ceiling on the slower route is a wait that always expires --
+        # so the room asks for a second reply on top of the one already coming,
+        # which is the doubled reply this method exists to prevent.
+        # autofire_wait_for_model still reads AUTOFIRE_WAIT first, so the knob
+        # this path has always had still overrides everything.
         try:
-            limit = float(os.getenv(_ADOPT_WAIT_ENV, _ADOPT_WAIT_DEFAULT))
+            limit = _realtime.autofire_wait_for_model(
+                getattr(rt, "model", "") or "")
         except (TypeError, ValueError):
             limit = float(_ADOPT_WAIT_DEFAULT)
         deadline = time.time() + max(limit, 0.0)
@@ -797,29 +952,87 @@ class GroupRoom:
         self.speaking = agent_id
         failures_before = getattr(rt, "send_failures", 0)
         heard_something = self._fanned_since_grant.pop(agent_id, 0) > 0
+        model = getattr(rt, "model", "") or self._model or _configured_model()
         try:
-            if self._already_answering(rt) or (
+            if (self._already_answering(rt) and not grants_via_text_prompt(model)) or (
                     not self.floor_is_real and heard_something
+                    and not grants_via_text_prompt(model)
                     and await self._gateway_answers_on_its_own(rt)):
                 # This turn is already being answered. Touch nothing: on a
                 # family that answers by itself the COMMIT is what produces the
                 # second reply, so a grant that commits here has already done
                 # the damage whether or not it goes on to ask.
+                #
+                # Not on a text-grant family, though: there the reply the
+                # gateway started for itself is the one it DROPS, so waiting
+                # for it and then returning is how a member goes silent for a
+                # whole turn. That route gets the text nudge below instead,
+                # which is new content and draws a new reply.
+                #
+                # BOTH disjuncts carry that exclusion, and the first one only
+                # gained it on 2026-09-15. It did not have it, and the cost was
+                # exactly what the paragraph above describes: driven live on
+                # nto.gemini-live-2.5-flash-native-audio with a member sitting
+                # in one of the empty responses that route fires for itself
+                # (response.created, no delta, so the pump never begins a hold),
+                # a grant took 11.00 s, logged `fresh_reply_requested`, and put
+                # ZERO frames on the wire — the member was silent for the whole
+                # turn, and only a reply older than _AUTOFIRE_WINDOW_S (15 s)
+                # escaped it. origin/main documents empty responses as common on
+                # that route, and that route is what production runs, so this
+                # was not a corner case.
                 self.autofire_grants += 1
                 return rt
-            await rt.send_audio(_SILENCE_PAD)
-            # A prior reply whose response.done was lost leaves _response_active
-            # stuck True; request_response() would then silently send nothing
-            # and this character would be muted for the rest of the encounter.
-            # Cleared BEFORE the commit, so that the wait below is measuring
-            # this turn's reply and not the ghost of the last one.
-            if rt.responding:
-                rt.clear_response_state()
-            await rt.commit_input()
-            if await self._gateway_answers_on_its_own(rt):
-                self.autofire_grants += 1
-            else:
+            if grants_via_text_prompt(model):
+                # origin/main 169310c, measured on the deployed native-audio
+                # route. Pad-and-commit yields an EMPTY response here: the
+                # route has already consumed the participant's audio with a
+                # reply of its own that was dropped, so the buffer this would
+                # commit holds only the padding. It does answer a text item.
+                #
+                # This is open_scene's recipe, and deliberately the same one:
+                # a text item is new CONTENT for the model to answer, which a
+                # commit of silence is not. The two paths agree because they
+                # are the same finding on two families.
+                #
+                # A reply still latched from a lost response.done would make
+                # request_response send nothing at all, so it is cleared first,
+                # exactly as the commit path below does.
+                if rt.responding and not self._reply_evidently_started(rt):
+                    rt.clear_response_state()
+                await rt.inject_text(_TEXT_GRANT_NUDGE)
                 await rt.request_response()
+            else:
+                await rt.send_audio(_SILENCE_PAD)
+                # A prior reply whose response.done was lost leaves
+                # _response_active stuck True; request_response() would then
+                # silently send nothing and this character would be muted for
+                # the rest of the encounter. Cleared BEFORE the commit, so that
+                # the wait below is measuring this turn's reply and not the
+                # ghost of the last one.
+                if rt.responding:
+                    rt.clear_response_state()
+                await rt.commit_input()
+                if await self._gateway_answers_on_its_own(rt):
+                    self.autofire_grants += 1
+                else:
+                    # Nobody started. On the gpt route that is the case
+                    # origin/main 210fbfc is about: the COMMIT itself starts
+                    # the reply there, so a commit that produced nothing has
+                    # still left _response_active latched with no reply behind
+                    # it -- and request_response() sends nothing while that
+                    # flag is up, which mutes this member for the rest of the
+                    # encounter. Put it down, then ask.
+                    #
+                    # Deliberately NOT before the probe. Cleared there it
+                    # erases the very evidence the probe reads, so every gpt
+                    # grant asks for a second reply on top of the one the
+                    # commit already started -- which is the doubled turn this
+                    # whole path exists to prevent (measured: priya spoke twice
+                    # on every grant).
+                    if is_openai_realtime(model) and rt.responding:
+                        rt.clear_response_state()
+                    await rt.request_response()
         except Exception:  # noqa: BLE001, a dead session must not kill the turn
             self.sessions.pop(agent_id, None)
             return None

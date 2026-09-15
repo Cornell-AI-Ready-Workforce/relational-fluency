@@ -39,6 +39,51 @@ import pytest
 import server.scenarios_v3 as v3
 from server import runs as runs_mod_real
 
+
+# ---------------------------------------------------------------------------
+# WHICH STUDY DESIGN THESE TESTS ARE ABOUT
+#
+# A FEW of the tests below measure the PER-SLOT DRAW: twelve forms, two of each
+# construct's three used and the third held in reserve, FORM_EXCLUSIONS applied
+# to the completed draw. `DEFAULT_RUN_VARIANT=random` is the setting that
+# selects it, and those tests -- and only those -- carry
+# `@pytest.mark.usefixtures("per_slot_draw")`.
+#
+# The merged DEFAULT is `A` -- origin/main's Phase 1 design, which pins
+# S1A/S2A/S3A/S4A on every run. That is deliberate and it is the PI's call, not
+# this file's. A pinned run has nothing to say about the draw: _apply_form_
+# exclusions leaves a pinned slot alone BY DESIGN, so under the default the
+# exclusion never fires and the reserve is never drawn, and an assertion about
+# either would be testing a mechanism that is switched off rather than one that
+# is broken. Those are the marked tests.
+#
+# EVERYTHING ELSE RUNS ON THE SHIPPED DEFAULT, which is the point of this note.
+# The fixture was autouse in this module and four others until 2026-09-15, and
+# that pinned 270 tests onto `random` when 20 of them are about the draw:
+# stripped and re-run under the default, 15 failed and 255 passed. Entry links,
+# arms, gates and cohort integrity are not about form selection, and pinning
+# them meant the configuration Phase 1 will actually run had almost no coverage
+# in this suite at all.
+#
+# The shipped default itself, and the fact that it turns the S1A/Teamwork
+# exclusion off for the whole of Phase 1, is asserted head-on in
+# tests/test_default_run_variant.py.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def per_slot_draw(monkeypatch):
+    """Ask for the per-slot draw, for the handful of tests that are ABOUT it.
+
+    NOT autouse. It was, in all five of these modules, and that pinned 270
+    tests off the configuration Phase 1 actually runs when only 20 of them
+    need it: measured on 2026-09-15 by stripping the fixture and running the
+    five modules under the shipped default -- 15 failed, 255 passed. Tests
+    about entry links, arms, gates and cohort integrity are not about form
+    selection and now run on the default a participant will meet.
+    """
+    monkeypatch.setenv("DEFAULT_RUN_VARIANT", "random")
+
+
 ARMS = (None, "one_to_one", "group")
 RESTRICTED = ("one_to_one", "group")
 SEEDS = 200
@@ -265,6 +310,7 @@ def test_the_unrestricted_second_attempt_is_wholly_unseen(runs_mod):
 
 # --- 4. the exclusion binds on every slot ------------------------------------
 
+@pytest.mark.usefixtures("per_slot_draw")
 def test_form_exclusions_bind_on_every_slot_of_every_run_and_every_sibling(runs_mod):
     """The rule the per-slot pin must not open a side door in.
 
@@ -301,6 +347,7 @@ def test_form_exclusions_bind_on_every_slot_of_every_run_and_every_sibling(runs_
 
 # --- 5. counterbalancing ------------------------------------------------------
 
+@pytest.mark.usefixtures("per_slot_draw")
 def test_no_form_is_squeezed_out_of_the_arm_that_carries_it(runs_mod):
     """The draw's distribution, measured rather than asserted.
 
@@ -388,6 +435,7 @@ def test_no_form_is_squeezed_out_of_the_arm_that_carries_it(runs_mod):
     assert report, "nothing was measured"
 
 
+@pytest.mark.usefixtures("per_slot_draw")
 def test_the_second_attempt_reaches_every_form_it_is_allowed_to_reach(runs_mod):
     """No form of any construct may be unreachable by a second attempt.
 
@@ -649,6 +697,7 @@ def wide_bank(tmp_path, monkeypatch):
     return runs_mod_real
 
 
+@pytest.mark.usefixtures("per_slot_draw")
 def test_the_rules_hold_at_three_four_and_five_forms_per_construct(wide_bank):
     """Every claim above, re-measured on a bank no shipped spec set has.
 

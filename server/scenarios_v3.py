@@ -117,7 +117,14 @@ def _cast_voice_for(spec_id: str, agent_id: str, agent_spec: dict, caps) -> str:
     measured casting decision going missing, so it is said out loud.
     """
     mapping = _voice_map(agent_spec)
-    named = mapping.get(caps.family) or mapping.get("*") or ""
+    # `casting_key` and not `family`: a family that shares another family's
+    # voice roster shares its casting column, so the native-audio route plays a
+    # character in the same voice the plain Gemini route does rather than
+    # falling back to roster position. An explicit column under this family's
+    # own name still wins, so a row can always be cast separately later.
+    key = getattr(caps, "casting_key", caps.family)
+    named = (mapping.get(caps.family) or mapping.get(key)
+             or mapping.get("*") or "")
     if not named:
         if mapping:
             log.error(

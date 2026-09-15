@@ -262,8 +262,9 @@ def test_every_named_voice_is_on_its_family_roster():
     The gpt names were re-confirmed on the gateway on 2026-09-12: one short
     socket each for verse, coral, ash and marin, session.updated acked in
     333-1330 ms and audio returned on every one."""
-    rosters = {name: set(caps.voices)
-               for name, caps in rt_mod.REALTIME_FAMILIES.items()}
+    rosters = {caps.casting_key: set(caps.voices)
+               for caps in rt_mod.REALTIME_FAMILIES.values()}
+    columns = set(rt_mod.casting_families())
     for sid in v3.available():
         spec = v3.load_spec(sid)
         for aid, a in spec["agents"].items():
@@ -273,14 +274,26 @@ def test_every_named_voice_is_on_its_family_roster():
                 "a bare name is a name for one family and a silent recast on "
                 "the other, which is the defect this field replaced"
             )
-            assert set(mapping) == set(rosters), (
+    # Against the CASTING columns, not the row names: two families that share a
+    # voice roster share a column (realtime.casting_families). Adding the
+    # native-audio row did not add a column -- it plays the same characters in
+    # the same voices as the plain Gemini route -- and a row that needs its own
+    # voices would add one and fail here until the bank carried it.
+            assert set(mapping) == columns, (
                 f"{sid}/{aid} is cast for {sorted(mapping)}, and the table "
-                f"covers {sorted(rosters)}"
+                f"needs {sorted(columns)}"
             )
             for family, voice in mapping.items():
                 assert voice in rosters[family], (
                     f"{sid}/{aid} is cast in {voice!r} on {family}, which is "
                     "not on that family's roster"
+                )
+            # And every ROW, including one that shares a column, really does
+            # resolve to a voice its own roster accepts.
+            for caps in rt_mod.REALTIME_FAMILIES.values():
+                cast = v3._cast_voice_for(sid, aid, a, caps)
+                assert cast and caps.accepts_voice(cast), (
+                    f"{sid}/{aid} resolves to {cast!r} on {caps.family}"
                 )
 
 

@@ -29,7 +29,8 @@ from fastapi import (
     Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect,
 )
 from fastapi.responses import (
-    FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse,
+    FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response,
+    StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -799,9 +800,40 @@ def _operator_key(key: Optional[str]) -> bool:
 # --- HTML routes ---
 
 @app.get("/", response_class=HTMLResponse)
-async def landing_page(scenario: Optional[str] = None, key: Optional[str] = None):
+async def landing_page(request: Request, scenario: Optional[str] = None,
+                       key: Optional[str] = None):
     """Landing page with scenario picker popup. If a scenario is passed via
-    query (legacy v1 link), still serve the chat UI so old bookmarks work."""
+    query (legacy v1 link), still serve the chat UI so old bookmarks work.
+
+    A participant arriving from Qualtrics carries their id in the query. The
+    base URL is what gets pasted into the survey, so forward those visitors
+    to the study entry point before the researcher-key check (origin/main
+    6b504f3).
+
+    WHICH ENTRY POINT, AND WHY IT MATTERS. This forwards to `/start`, which is
+    the UNRESTRICTED arm: four constructs, one encounter each. The three links
+    docs/OPERATIONS.md tells the operator to paste are the arm links
+    (/start/one-to-one, /start/group, /rate/start), which assign a participant
+    to an arm. A participant who arrives by the base URL therefore gets a
+    DIFFERENT assignment from one who arrives by a pasted arm link. That is a
+    study-design choice and not a routing detail; it is left as origin/main
+    shipped it, and OPERATIONS.md says plainly that the PI picks.
+
+    The forwarded request goes through entry_params and the link-probe filter
+    like any other, which is the point: a scanner or an unfurler that fetches
+    the base URL is still shown the entry check page and still mints no run.
+    `participantId` is in the tuple below AND in entry_params, so the key
+    survives the hop -- without the second half, a participantId-only arrival
+    reads as "no key parameter at all" at /start and is shown the check page
+    instead of a run.
+
+    check_key stays exactly where origin/main put it: AFTER the redirect. The
+    researcher-key check is what a participant would otherwise hit, and hitting
+    it is the bug this fixes.
+    """
+    q = request.query_params
+    if any(k in q for k in ("pid", "participant_id", "participantId", "PROLIFIC_PID")):
+        return RedirectResponse(url=f"/start?{request.url.query}", status_code=307)
     check_key(key)
     if scenario:
         return (STATIC_DIR / "participant.html").read_text(encoding="utf-8")
@@ -1002,6 +1034,7 @@ def entry_params(
     key: Optional[str] = None,
     pid: Optional[str] = None,
     participant_id: Optional[str] = None,
+    participantId: Optional[str] = None,
     PROLIFIC_PID: Optional[str] = None,
     variant: Optional[str] = None,
     qid: Optional[str] = None,
@@ -1019,6 +1052,12 @@ def entry_params(
     """
     return {
         "key": key, "pid": pid, "participant_id": participant_id,
+        # The fourth spelling, from origin/main 6b504f3. The comment above this
+        # function says a fourth spelling "is added once and all three links get
+        # it"; this is that addition. It is the spelling the base-URL redirect
+        # on the landing page forwards, so /start would otherwise be handed a
+        # key it does not read.
+        "participantId": participantId,
         "PROLIFIC_PID": PROLIFIC_PID, "variant": variant, "qid": qid,
         "cohort": cohort, "request": request,
     }
@@ -1214,6 +1253,7 @@ async def _enter_study(arm: Optional[str], p: dict):
     key = p.get("key")
     pid = p.get("pid")
     participant_id = p.get("participant_id")
+    participantId = p.get("participantId")
     PROLIFIC_PID = p.get("PROLIFIC_PID")
     variant = p.get("variant")
     qid = p.get("qid")
@@ -1245,9 +1285,10 @@ async def _enter_study(arm: Optional[str], p: dict):
             # enrolment path asks a few lines below, so the two can never drift
             # into disagreeing about what counts as a key.
             _, at_the_door = runs.normalize_participant_key(
-                pid or participant_id or PROLIFIC_PID)
+                pid or participant_id or participantId or PROLIFIC_PID)
             if not any(v is not None
-                       for v in (pid, participant_id, PROLIFIC_PID)):
+                       for v in (pid, participant_id, participantId,
+                                 PROLIFIC_PID)):
                 reason = _NO_KEY_AT_ALL
             elif at_the_door != "ok":
                 reason = _KEY_UNUSABLE
@@ -1327,7 +1368,7 @@ async def _enter_study(arm: Optional[str], p: dict):
                   f"unusable ?cohort=: {e}. No run was created.")
             raise HTTPException(400, str(e))
 
-    raw_key = pid or participant_id or PROLIFIC_PID
+    raw_key = pid or participant_id or participantId or PROLIFIC_PID
     pkey, key_status = runs.normalize_participant_key(raw_key)
     if pkey is None:
         # Never turn a real participant away over the survey's broken link: they

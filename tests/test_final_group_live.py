@@ -99,6 +99,17 @@ class Session:
     def __init__(self, gateway, instructions, voice, tools):
         self.gateway = gateway
         self.caps = gateway.caps
+        # A real RealtimeVoiceSession carries the model it opened on, and the
+        # room reads it off the session (GroupRoom.tell, give_floor) rather than
+        # off itself. Without it here every family answer the room asked for
+        # fell through to the no-row fallback, so the relay routes could not be
+        # exercised at all.
+        self.model = gateway.model
+        # Text items the room put in front of this session without asking for a
+        # reply: colleague context notes (tell) and the floor nudge on a
+        # text-grant family. Kept in order, because "what reached the gateway,
+        # in what order" is the whole assertion for those two paths.
+        self.injected: list = []
         self.instructions = instructions
         # An empty voice means the family default, which is what
         # realtime.resolve_voice() settles at connect.
@@ -211,6 +222,19 @@ class Session:
             # commit holding nothing but the silence pad on Gemini: it produces
             # no turn and no reply, which is why a scene never opens there.
             self._fire(autofire=True)
+
+    async def inject_text(self, text):
+        """A text item, added without asking for a reply.
+
+        Counted as a send like any other, so a dead member's tell() or floor
+        nudge is dropped and recorded the same way its audio would be.
+        """
+        if self.ws is None:
+            return
+        if self.send_failures or self.closed:
+            self.send_failures += 1
+            return
+        self.injected.append(text)
 
     async def request_response(self):
         self.responses_requested += 1
