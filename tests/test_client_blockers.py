@@ -59,7 +59,6 @@ Run from the repo root:
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -72,14 +71,16 @@ V2 = ROOT / "static" / "v2.html"
 RESEARCHER = ROOT / "static" / "researcher.html"
 RATER = ROOT / "static" / "rater.html"
 
-# The fixture wave. DATA_DIR wins so the suite can be pointed at any wave; the
-# scratchpad path is the one this was developed against. Missing is a skip, not
-# a failure — the fixture is not part of the repository.
-FIXTURE = Path(os.environ.get("DATA_DIR") or (
-    r"C:/Users/benj9/AppData/Local/Temp/claude"
-    r"/C--Users-benj9-Downloads-relational-fluency-main--1-"
-    r"/4b640cd3-9836-4d35-8114-6f2468c17345/scratchpad/fixture"
-))
+# The fixture wave is resolved once for the whole suite, in tests/conftest.py,
+# and reached here through its `wave_encounters` fixture. What was here before
+# was `DATA_DIR or <one machine's scratchpad path, session UUID and all>`, which
+# is the pattern five sibling modules already document as fixed: on any other
+# machine the fallback is missing, so the wave-backed test below quietly stopped
+# testing anything — and with DATA_DIR pointed at a fresh temp directory it went
+# red instead, because server.storage creates DATA_DIR/sessions on import and an
+# existing-but-empty sessions/ got past the is_dir() guard. conftest resolves
+# RF_FIXTURE_DIR, RF_FIXTURE and DATA_DIR alike, and counts a directory as a
+# wave only when it holds at least one */record.json.
 
 
 # --------------------------------------------------------------------------
@@ -1054,6 +1055,24 @@ function primed(putAtMs, advanceDelayMs) {
     assert(/CODE1/.test(body), 'the code was lost on the way out');
   }
 
+  // --- a recorder that died mid-encounter is still said on the next screen --
+  // startVideoRecording's onerror writes exactly this line into videoNotice
+  // (asserted where it is written, in tests/test_browser_compat.py), and the
+  // completion overlay used to ASSIGN that variable from the upload outcome
+  // before takeVideoNotice could consume it — so on the one path where the
+  // upload succeeded and the recording was truncated anyway, the line was
+  // discarded and the participant saw the plain success screen.
+  {
+    const { b } = primed(10);
+    set(b, "videoNotice = '<p>The camera recording stopped part way through this conversation.</p>';");
+    b.ctx.onEncounterComplete();
+    await b.clock.advance(20000);
+    const body = $(b, 'nextBody').innerHTML;
+    assert(/stopped part way through/.test(body),
+      'the recorder-error notice was overwritten before any screen could show it: ' + body);
+    assert(!/<p>The camera recording[^<]*$/.test(body), 'the notice was rendered unwrapped');
+  }
+
   console.log('RELEASE OK');
 })().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
 """
@@ -1399,7 +1418,12 @@ def _run(tmp_path, harness_src, page, extra_arg=None):
     argv = [_node(), str(harness), str(page)]
     if extra_arg is not None:
         argv.append(str(extra_arg))
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=180)
+    # encoding pinned: node emits UTF-8 whatever the machine's locale is, and
+    # these pages carry characters cp1252 cannot represent. Without it a
+    # Windows contributor reads a failing harness's output as mojibake, which
+    # is the worst possible moment for the output to be unreliable.
+    proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                          timeout=180)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     return proc.stdout
 
@@ -1444,14 +1468,423 @@ def test_the_launch_card_keeps_the_session_key(tmp_path):
     assert "LAUNCH OK" in _run(tmp_path, LAUNCH_HARNESS, RESEARCHER)
 
 
-def test_the_chain_survives_the_fixture_wave(tmp_path):
-    """Every encounter in the 27-encounter wave, one credential failure each."""
-    sessions_dir = FIXTURE / "sessions"
-    if not sessions_dir.is_dir():
-        pytest.skip(f"no fixture wave at {FIXTURE}")
-    sessions = sorted(p.name for p in sessions_dir.iterdir() if p.is_dir())
-    assert sessions, "the fixture wave has no encounters"
+def test_the_chain_survives_the_fixture_wave(tmp_path, wave_encounters):
+    """Every encounter in the recorded wave, one credential failure each.
+
+    `wave_encounters` comes from tests/conftest.py: it skips with a message
+    naming the three environment variables when no wave is available, and it
+    globs */record.json rather than trusting a directory to be non-empty.
+    """
     listing = tmp_path / "sessions.json"
-    listing.write_text(json.dumps(sessions), encoding="utf-8")
+    listing.write_text(json.dumps(list(wave_encounters)), encoding="utf-8")
     out = _run(tmp_path, WAVE_HARNESS, V2, listing)
     assert "WAVE OK" in out, out
+
+
+def test_the_microphone_test_releases_the_microphone_when_it_concludes():
+    """The mic check used to stay live after it had its answer.
+
+    Reported from hands-on testing as "the test is not turning off", and that
+    is exactly what it was. Both concluding branches — `loud >= 6` setting "We
+    can hear you", and the 8-second timer setting "Nothing heard" — updated the
+    status line and returned, leaving `meterInt` polling every 50ms and the
+    getUserMedia stream open. The only teardown was reached by pressing
+    Continue or Skip, so between concluding and continuing the participant sat
+    on a page with their recording indicator lit and a meter still bouncing.
+
+    That is bad on a page nobody is recording yet, and worse on this one: the
+    consent flow is what earns the right to turn a microphone on, and this ran
+    ahead of the encounter with no way to tell it had stopped listening.
+
+    A structural read rather than a driven one, and the reason is worth stating:
+    the shared clock in DOM_STUB implements setInterval as a one-shot no-op
+    ("nothing under test polls"), so the meter loop this bug lives inside cannot
+    execute under the existing harness, and giving it a real setInterval would
+    change the clock every other harness in this file shares. What is asserted
+    here is the invariant that broke — every path that ends the test also ends
+    the listening.
+    """
+    src = V2.read_text(encoding="utf-8")
+    start = src.index("function runAudioCheck(")
+    body = src[start:src.index("\n  }", start)]
+
+    # The teardown exists, is named, and actually releases both resources.
+    assert "const stopListening = () =>" in body, \
+        "runAudioCheck no longer has a single named teardown"
+    stop = body[body.index("const stopListening"):body.index("const concludeMicTest")]
+    assert "clearInterval(meterInt)" in stop and "getTracks().forEach(t => t.stop())" in stop, \
+        "stopListening no longer stops both the meter and the microphone stream"
+
+    # Both concluding branches call it. Checked by their own status text, so
+    # this test names the two states a participant actually sees.
+    # Sliced at each branch's own closing token rather than a character
+    # count, so adding or removing a comment inside a branch cannot move
+    # the answer.
+    heard = body.index("'We can hear you'")
+    success = body[heard:body.index('meterInt = setInterval', heard)]
+    assert "concludeMicTest()" in success, "the success branch does not release the microphone"
+    silent = body.index("'Nothing heard'")
+    timeout = body[silent:body.index("}, 8000);", silent)]
+    assert "concludeMicTest()" in timeout, "the 'Nothing heard' branch does not release the microphone"
+
+    # And the handlers do not accumulate across runs. needsAudioCheck returns
+    # True whenever sessionStorage is unavailable, which is private browsing, so
+    # a second run used to add a second click handler to the same button and one
+    # press then opened two streams while only the last was tracked.
+    assert "removeEventListener('click', onMicTest)" in body, \
+        "the mic test handler is no longer removed, so a second run doubles it"
+
+
+def test_a_drop_the_server_explained_is_not_offered_as_a_reconnect():
+    """A permanent failure was presented as a transient one, forever.
+
+    Reproduced against the running server with no gateway credential: the voice
+    socket sends {"type":"session"}, then
+    {"type":"error","message":"No gateway API key (set LITELLM_API_KEY)"}, then
+    closes with no close frame. The page discarded the reason, and its close
+    handler ran the same path a wifi blip takes: "Connection lost ... click
+    Reconnect to pick up this encounter again". Reconnect met the identical condition,
+    so the participant looped -- re-granting the camera on every press, watching
+    their own face appear, and being reassured each time.
+
+    The server's own message is deliberately NOT shown. It is written for an
+    operator and names an environment variable; a participant can do nothing
+    with it. What the page keeps is only that a reason was stated, which is what
+    separates a drop worth retrying from one that will repeat.
+    """
+    src = V2.read_text(encoding="utf-8")
+
+    # The signal is recorded where the error frame is handled, and reset per
+    # attempt so a retry earns its own verdict.
+    assert "serverStatedFailure = true" in src, (
+        "the page no longer notices that the server stated a reason before the drop")
+    assert src.count("serverStatedFailure = false") >= 1, (
+        "serverStatedFailure is never reset, so one failure poisons every later attempt")
+
+    start = src.index("function onConnectionDropped(")
+    body = src[start:src.index("\n  $('dropReconnect')", start)]
+    assert "const fatal = serverStatedFailure" in body, (
+        "onConnectionDropped no longer distinguishes a stated failure from a drop")
+
+    # Both branches write the card, or a later transient drop inherits the
+    # failure's wording.
+    assert body.count("$('dropText')") >= 2, (
+        "only one branch writes the drop card, so its text can go stale")
+    # This pinned the transient branch by the phrase "Nothing is lost", which
+    # was the sentence it opened with. That sentence has since been removed as
+    # untrue — Reconnect opens a new session and the actor starts again at its
+    # first line, which is measured and is now what the card says — so the
+    # discriminator is the promise each branch actually makes: one offers a
+    # fresh run at this part, the other says the part is over. What this test is
+    # for is unchanged: the two drops must not read alike.
+    assert "start again from the beginning" in body and "could not continue" in body, (
+        "the two drops no longer say two different things")
+
+    # And the operator's message must not reach the participant. Checked at the
+    # only place it is in scope — the error-frame handler — rather than by
+    # searching the whole file for a vendor name, which a comment quoting the
+    # message would trip without anything being rendered.
+    handler = src.index("m.type === 'error'")
+    assert "m.message" not in src[handler:handler + 900], (
+        "the server's operator-facing error text is being rendered to a participant")
+
+
+def test_a_second_stated_failure_stops_offering_a_retry():
+    """"You can try once more" has to mean once.
+
+    The card offered one retry in its text and then re-offered the button on
+    every subsequent drop, so the same condition produced the same card
+    indefinitely: the wording promised a limit the code did not keep, which is
+    the defect the card was written to remove, one layer up.
+
+    The exhausted state deliberately does NOT navigate to "/". That route serves
+    landing.html, a scenario picker, and showing a study participant the whole
+    scenario bank is a worse outcome than the loop. Their real exit is the
+    survey they arrived from, which /api/run/config knows about, and which the
+    completion and withdrawal cards already use.
+    """
+    src = V2.read_text(encoding="utf-8")
+    start = src.index("function onConnectionDropped(")
+    body = src[start:src.index("function showFailureExit(", start)]
+
+    assert "fatalDrops++" in body and "fatalDrops = 0" in body, (
+        "consecutive stated failures are no longer counted, so the retry cannot be spent")
+    assert "const exhausted" in body, "there is no exhausted state"
+
+    # The retry button is withdrawn once, and restored on the paths that still
+    # offer one, or an exhausted encounter would hide it from a later drop that
+    # a reconnect would genuinely fix.
+    assert "$('dropReconnect').style.display = 'none'" in body, (
+        "the retry button survives a second failure")
+    assert body.count("$('dropReconnect').style.display = ''") >= 2, (
+        "the retry button is never restored, so one exhausted encounter disables it for good")
+
+    # The counter resets when an encounter actually completes.
+    ec = src.index("async function onEncounterComplete(")
+    assert "fatalDrops = 0" in src[ec:ec + 400], (
+        "a finished encounter does not clear the count, so an early failure follows the "
+        "participant into a later encounter that works")
+
+    # And the way out is the survey, not the scenario picker.
+    exit_fn = src[src.index("function showFailureExit("):]
+    exit_fn = exit_fn[:exit_fn.index("\n  $('dropReconnect').addEventListener")]
+    assert "/api/run/config" in exit_fn, "the exhausted card offers no way out"
+    assert "contactWho()" in exit_fn, "the exhausted card names nobody to tell"
+    assert "location.href = '/'" not in src, (
+        "a failure path sends a study participant to the scenario picker")
+
+
+def test_the_end_of_the_road_still_has_a_door():
+    """A card with no button is worse than the loop it replaced.
+
+    Reported from testing: once the retry was spent the button vanished and the
+    participant was sealed onto the scenario screen. The only exit offered was
+    the survey link, which is built from SURVEY_RETURN_URL, and that is unset on
+    every developer machine and on any deployment nobody configured. So the
+    exhausted card could render with a message and nothing to press.
+
+    The finish door is therefore unconditional and does not wait on a fetch. It
+    goes through showClosing, the same surface the "I can't continue" exit uses,
+    so someone who stops here gets what someone who stops anywhere else gets:
+    their completion code, which is what payment depends on.
+    """
+    src = V2.read_text(encoding="utf-8")
+    exit_fn = src[src.index("function showFailureExit("):]
+    exit_fn = exit_fn[:exit_fn.index("\n  $('dropReconnect').addEventListener")]
+
+    assert "function showFailureExit(exhausted)" in src, (
+        "showFailureExit can no longer tell a spent card from a retryable one")
+    assert "showFailureExit(true)" in src and "showFailureExit(false)" in src, (
+        "both call sites no longer say which state they are in")
+
+    # The door is inside the `if (exhausted)` block, ahead of both network
+    # calls, so no failed request can remove it.
+    door = exit_fn[exit_fn.index("if (exhausted)"):exit_fn.index("contactWho()")]
+    assert "showClosing(" in door, (
+        "the exhausted card has no finish button, so a participant is sealed in")
+    assert "completion_code" in door, (
+        "finishing here does not hand over the completion code, which is what payment needs")
+    assert "$('dropNote').classList.remove('show')" in door, (
+        "the drop card is not dismissed, so it sits over the closing screen")
+
+    # And the door must not be behind the return_url lookup.
+    assert door.index("showClosing(") < exit_fn.index("/api/run/config"), (
+        "the finish button is built after the survey lookup, so an unset "
+        "SURVEY_RETURN_URL or a failed fetch can still strand someone")
+
+
+LANDING = ROOT / "static" / "landing.html"
+
+
+def test_every_page_carries_the_tab_icon():
+    """One icon, and not the 334 KB one.
+
+    logo.png is 839x850 and a third of a megabyte. Pointing rel="icon" at it
+    works, and costs every visitor that download for a 16px square. favicon.png
+    is the same artwork at 64px and 4.4 KB.
+    """
+    for name in ("landing.html", "v2.html", "rater.html", "researcher.html",
+                 "director.html", "evidence.html", "participant.html"):
+        p = ROOT / "static" / name
+        if not p.exists():
+            continue
+        src = p.read_text(encoding="utf-8")
+        assert 'rel="icon"' in src, f"{name} has no tab icon"
+        assert "/static/favicon.png" in src, f"{name} points its icon somewhere unexpected"
+        assert 'rel="icon" type="image/png" href="/static/logo.png"' not in src, (
+            f"{name} uses the full-size logo as its favicon")
+    for asset in ("favicon.png", "apple-touch-icon.png"):
+        f = ROOT / "static" / asset
+        assert f.exists(), f"{asset} is missing, so every page links a 404"
+        assert f.stat().st_size < 60_000, f"{asset} is too heavy for an icon"
+
+
+def test_the_footer_never_prints_a_contact_the_consent_form_does_not_carry():
+    """The landing footer shows the logo and the study contact.
+
+    The contact comes from /api/consent's `contact:` block and nowhere else,
+    and each field is printed only when it is really filled in. The shipped
+    config carries "[FILL IN: principal investigator's name]", and a footer
+    that prints that to a visitor is worse than one that says nothing. This is
+    the rule the participant pages get from contactPhrase(), applied to the one
+    page that has no such helper.
+    """
+    src = LANDING.read_text(encoding="utf-8")
+
+    assert "footContact" in src and "loadFooterContact" in src, (
+        "the footer no longer builds its contact from the consent config")
+    assert "fetch('/api/consent'" in src, (
+        "the footer contact does not come from the consent config")
+    assert "function isFilled(" in src and "FILL IN" in src, (
+        "nothing stops a placeholder reaching a visitor")
+
+    fn = src[src.index("async function loadFooterContact("):]
+    fn = fn[:fn.index("\n  loadScenarios();")]
+    # An unfilled field shows a labelled empty slot, not the config's raw
+    # "[FILL IN: ...]" text and not silence. Silence was the first version and it
+    # made the gap invisible: the footer just looked like it had no contact by
+    # design. What must never happen is the placeholder itself reaching a
+    # visitor, or a slot that could be read as a real contact.
+    assert "function slot(" in fn, (
+        "an unfilled contact field no longer shows a slot, so the gap is invisible again")
+    assert "not set" in fn, "the empty slot does not say it is unset"
+    assert fn.count("isFilled(") == 3, (
+        "a contact field is rendered without checking it is really filled in")
+    # The participant-facing rule is the opposite one and must stay that way.
+    v2 = V2.read_text(encoding="utf-8")
+    assert "not set" not in v2, (
+        "a participant screen now shows an unset-contact slot; there a missing "
+        "contact must show nothing at all")
+
+    # Operator-supplied text, on a page anyone can load: built as text nodes,
+    # never pasted into innerHTML.
+    assert "innerHTML" not in fn, (
+        "the footer pastes config text into innerHTML")
+    assert fn.count("textContent") >= 3, (
+        "the contact fields are no longer written as text")
+
+    # And the footer still carries the logo it was asked for.
+    footer = src[src.index("<footer>"):src.index("</footer>")]
+    assert "/static/logo.png" in footer, "the footer lost the logo"
+    assert "research prototype" in footer and "Citations live in" not in footer, (
+        "the old footer text is back")
+
+
+EVIDENCE = ROOT / "static" / "evidence.html"
+
+
+def test_the_evidence_trace_is_light_and_fills_the_screen():
+    """Three things about the console an analyst reads encounters in.
+
+    It was the only page in the platform carrying a dark palette, so a
+    researcher on a dark OS opened the evidence trace onto a different ground
+    from the console they clicked out of. Every other page here is light only.
+
+    It also opened with a page title and a standfirst above a three-column tool
+    that already names the encounter in its own appbar, and sat as a 1320px card
+    on a ground, which on a 1920 display spent 600px of margin on a layout whose
+    middle column is a transcript.
+    """
+    src = EVIDENCE.read_text(encoding="utf-8")
+
+    assert "prefers-color-scheme" not in src and 'data-theme' not in src, (
+        "the evidence trace flips with the operating system again, and no other page does")
+    for other in ("landing.html", "researcher.html", "rater.html", "v2.html"):
+        assert "prefers-color-scheme" not in (ROOT / "static" / other).read_text(encoding="utf-8"), (
+            f"{other} gained a dark palette; the platform is light only by choice")
+
+    assert "<h1>Evidence trace</h1>" not in src, "the page banner is back"
+    assert 'class="subtitle"' not in src, "the standfirst is back"
+
+    assert "max-width:none" in src and "height:100vh" in src, (
+        "the console is no longer sized to the window")
+    assert "max-width:1320px" not in src, "the fixed-width card is back"
+    # In the window-sized layout the scroll panes size from the layout rather
+    # than a guessed vh, or they leave dead space at one window height and clip
+    # at another. The stacked fallback below still uses vh caps, correctly: once
+    # the page scrolls, a cap is what stops one pane owning the whole screen.
+    default_rules = src[:src.index("@media (max-width:1080px), (max-height:620px){")]
+    assert "vh;" not in default_rules.replace("100vh;", ""), (
+        "a scroll pane in the window-sized layout is back to a hard-coded "
+        "viewport fraction")
+    assert "min-height:0" in src, (
+        "the grid has no min-height:0, so its panes grow the page instead of scrolling")
+
+    # A column that cannot grow has to scroll. Without this the side panel's
+    # last rows were simply unreachable and the replay's video card painted
+    # over them.
+    assert ".col.side{border-left:1px solid var(--line);overflow-y:auto;}" in src, (
+        "the side column cannot scroll, so its content is clipped with no way to reach it")
+    assert ".panel{padding:14px 16px;flex-shrink:0;}" in src, (
+        "the side panels are squeezed to fit instead of overflowing into the scroll")
+
+    # And the window-sized console only applies where there is room for it.
+    # Below 1080px the columns stack and below ~620px tall there is no room for
+    # a transcript, a side panel and the replay at once; holding 100vh there
+    # does not make it fit, it moves the overflow somewhere with no scrollbar.
+    assert "@media (max-width:1080px), (max-height:620px){" in src, (
+        "the full-screen layout is unconditional again, so a short or narrow "
+        "window clips content it cannot scroll to")
+    fallback = src[src.index("@media (max-width:1080px), (max-height:620px){"):]
+    fallback = fallback[:fallback.index("@media (max-width:1080px){")]
+    assert "height:auto" in fallback and "overflow-y:visible" in fallback, (
+        "the fallback does not release the fixed height, so it still cannot scroll")
+
+
+def test_the_landing_page_does_not_call_the_researcher_console_a_reviewer_view():
+    """This platform has two reviewing roles, and only one of them is a rater.
+
+    A participant has the conversation, a researcher runs and monitors the
+    study, and a RATER scores the recorded encounters afterwards from their own
+    console at /rate with their own scoped token. "rater" is the word the rest of
+    the codebase uses, by a wide margin.
+
+    So the two entry points on the landing page are named for the role each one
+    belongs to, and the researcher console is not called a reviewer view: that
+    would point the reviewing word at the wrong one of two real reviewing jobs,
+    on the page a new team member reads first.
+    """
+    src = LANDING.read_text(encoding="utf-8")
+
+    assert "Conversation view" in src, "the participant entry point lost its name"
+    assert "Researcher view" in src, "the researcher entry point lost its name"
+    assert "Start a conversation" not in src, (
+        "the two entry points are no longer named as a matched pair")
+
+    # The word that would collide, in anything a visitor reads.
+    visible = re.sub(r"<!--.*?-->", "", src, flags=re.S)
+    visible = re.sub(r"<style>.*?</style>", "", visible, flags=re.S)
+    visible = re.sub(r"<script>.*?</script>", "", visible, flags=re.S)
+    assert "eviewer" not in visible, (
+        "a visible label calls something a reviewer; this platform's reviewing "
+        "role is the rater, and it has its own console")
+
+    # There is a rater door, and it must not be a published link.
+    #
+    # A rater's URL carries their own scoped token, so a public one cannot exist:
+    # an <a href> to /rate would hand every visitor a 401 and tell them nothing.
+    # The card takes a token from the person who has one and navigates from
+    # there, which is the only shape that works. What must never appear is a
+    # hardcoded rt_ token in the page, which would publish one rater's identity
+    # to everyone who views source.
+    assert 'href="/rate' not in src, (
+        "the landing page publishes a rater link; a rater URL is personal and "
+        "a bare /rate answers 401")
+    assert "location.href = '/rate?token='" in src, (
+        "the rater card no longer navigates with the token the rater supplied")
+    assert not re.search(r"rt_[A-Za-z0-9]{8,}", src), (
+        "a real rater token is hardcoded in the landing page")
+
+
+def test_an_empty_transcript_says_why_it_is_empty():
+    """A blank half-screen under a TRANSCRIPT heading reads as a broken console.
+
+    Every other panel in that column already explains itself: the file list and
+    the score panel both print "No session selected." The transcript printed
+    nothing, so a researcher who opened the page and picked nothing, or who
+    started the server without DATA_DIR and therefore had nothing to pick, got a
+    heading over a void and no way to tell those two apart.
+
+    They need different sentences, because they have different fixes: one is
+    "choose from the list", the other is "the server is pointed at an empty
+    directory".
+    """
+    src = RESEARCHER.read_text(encoding="utf-8")
+
+    assert "function showTranscriptPlaceholder(" in src, (
+        "the transcript no longer explains an empty state")
+    fn = src[src.index("function showTranscriptPlaceholder("):]
+    fn = fn[:fn.index("\n  function setRightPanel(")]
+
+    assert "No session selected" in fn and "No sessions found" in fn, (
+        "the two empty states are collapsed into one message, so 'pick one' and "
+        "'this directory is empty' look the same")
+    assert "DATA_DIR" in fn, (
+        "the empty-directory case does not name the thing that fixes it")
+    assert "sessionsCache.length" in fn, (
+        "the placeholder no longer distinguishes the two cases")
+
+    # It has to be painted on load and after the first list arrives, or the page
+    # shows the wrong one of the two sentences until something else repaints.
+    assert src.count("showTranscriptPlaceholder()") >= 3, (
+        "the placeholder is not painted on every path that clears the transcript")

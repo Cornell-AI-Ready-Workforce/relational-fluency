@@ -56,6 +56,27 @@ What each part is a regression test for:
 9. **The dwell timer does not credit another tab.** The anti-skim gate, and the
    `seconds` the console posts as evidence for it, both counted time the rater
    spent away.
+10. **An encounter with no camera is not reported as a lost recording.** The
+   participant page POSTed the video-uploaded confirm endpoint when there was no
+   recorder at all, and that endpoint's event means the opposite: "this was
+   recorded and could not be stored". Every denied or busy camera became an
+   encounter the rating console refuses to rate, plus a storage fault reported
+   against a bucket that lost nothing. The reasons it does report are encoded so
+   the server's own filter keeps them.
+11. **A silent <audio> element is detected.** The fallback existed for a WebKit
+   that will not sound a WebAudio MediaStream through an element, and the only
+   signal read was `paused` — which such an element does not set.
+12. **The rating console's playback survives a long sitting.** It used to be a
+   presigned S3 GET minted for an hour, so an hour into a queue every remaining
+   encounter began reading as "this one has no video" — and the machinery that
+   chased that (a pre-emptive expiry swap, a re-mint on the error path, a rate
+   limit and a Retry button) was a one-way latch that consumed the error path
+   with it. The URL is this application's own route now, addressed by
+   assignment id: it does not age, so the guarantee is kept by nothing at all
+   happening, which is what part 12 asserts. Alongside it, the failures that
+   were never about expiry: the seek probe disabled click-to-seek for every
+   encounter in the wave, the stuck-load watchdog fired on any iPad, and the
+   no-audio note fired on Safari.
 
 Run from the repo root:
 
@@ -64,6 +85,7 @@ Run from the repo root:
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -397,9 +419,22 @@ function makeMedia(cfg, clock) {
     this.srcObject = null;
     this.paused = true;
     const self = this;
+    let startedAt = null;
+    // A real <audio> playing a live MediaStream advances currentTime whether or
+    // not the stream carries sound. `silentElement` is the WebKit case the page
+    // cares about and the reason this property exists here at all: the element
+    // accepts the srcObject, reports itself playing, and makes nothing audible
+    // — so `paused` is false and the clock never moves.
+    Object.defineProperty(this, 'currentTime', {
+      get() {
+        if (startedAt == null) return 0;
+        return cfg.silentElement ? 0 : (clock.now() - startedAt) / 1000;
+      },
+    });
     this.play = () => {
       if (cfg.playRejects) { const e = new Error('play refused'); e.name = 'NotAllowedError'; return Promise.reject(e); }
       self.paused = false;
+      startedAt = clock.now();
       return Promise.resolve();
     };
     this.pause = () => { self.paused = true; };
@@ -623,6 +658,48 @@ const transcript = (b) =>
       'agent audio is still routed only through an element that will not play it');
   }
 
+  // --- 2b. an element that reports itself playing and makes no sound -------
+  // The case startCapture's own comment names — WebKit will not always make a
+  // WebAudio MediaStream audible through an <audio> — and the one the probe
+  // could not see: such an element is not paused, so `paused === false` said
+  // everything was fine while the participant heard nothing for a whole paid
+  // encounter. The element's clock is the signal that separates them.
+  {
+    const b = boot({ silentElement: true });
+    await b.ctx.startCapture();
+    await b.clock.advance(10);
+    const ctx = b.run('audioCtx');
+    b.ctx.playPcmChunk(new ArrayBuffer(320));
+    assert.strictEqual(b.run('playElUsable'), true,
+      'the fallback fired before the probe had waited: one slow first chunk would cost the ' +
+      'echo canceller for the rest of the encounter');
+    await b.clock.advance(2000);
+    assert.strictEqual(b.run('playElUsable'), false,
+      'an element that reports itself playing and makes no sound was never noticed: the ' +
+      'participant hears silence for the whole encounter while the captions scroll');
+    b.ctx.playPcmChunk(new ArrayBuffer(320));
+    const later = b.media.edges.map(e => e[0]).filter(n => n.__kind === 'bufsrc').pop();
+    const targets = b.media.edges.filter(e => e[0] === later).map(e => e[1]);
+    assert(targets.indexOf(ctx.destination) >= 0,
+      'later chunks are still routed only through the element that will not sound them');
+    assert(/would not play the conversation audio/.test(transcript(b)),
+      'the switch happened silently, so nobody can tell this encounter from a good one: ' +
+      transcript(b));
+  }
+
+  // ...and an engine whose element really is playing must NOT be switched: the
+  // fallback costs Chrome's echo-canceller reference, which is a real cost.
+  {
+    const b = boot({});
+    await b.ctx.startCapture();
+    await b.clock.advance(10);
+    b.ctx.playPcmChunk(new ArrayBuffer(320));
+    await b.clock.advance(2000);
+    assert.strictEqual(b.run('playElUsable'), true,
+      'a healthy element was abandoned, and with it the echo canceller: agent speech now ' +
+      'bleeds back through the open mic and is transcribed as the participant');
+  }
+
   // --- and where the element DOES play, the echo-canceller path is kept ----
   {
     const b = boot({});
@@ -663,14 +740,55 @@ const transcript = (b) =>
       'the participant consented to being filmed and was not told they were not: ' + transcript(b));
     assert.strictEqual(b.run('cameraFailReason'), name,
       'the camera error was swallowed, so nothing downstream can say which it was');
-    // And the absence is reported, or it is invisible to server/video.py.
-    b.run("sessionId = 's_test'; participantId = 'p_test';");
+    // And the absence is reported AS an absence. A plain confirm means the
+    // opposite — server/app.py writes a video_uploaded event with status
+    // "failed" and server/rater_packet.py reads that as "this encounter WAS
+    // recorded and could not be stored, do not rate it" — so a page that
+    // reports a denied camera on that path turns every one of them into a paid
+    // encounter no rater may score, plus a storage fault against a bucket that
+    // lost nothing. `?no_camera=` is the parameter that says which fact this
+    // is; the Python side drives the real route with the URL built here.
+    b.run("sessionId = 's_1772460300_44c9a2'; participantId = 'p_1772460300_4327ae';");
     b.ctx.finishVideoRecording();
-    const beacon = b.beacons.find(u => u.indexOf('no_camera') >= 0);
-    assert(beacon, 'an encounter with no camera generated no event at all: it cannot be told ' +
-      'apart from one whose recording was made and lost');
-    assert(beacon.indexOf('no_camera%3A' + name) >= 0 || beacon.indexOf('no_camera:' + name) >= 0,
+    const beacon = b.beacons.find(u => u.indexOf('/video-uploaded') >= 0);
+    assert(beacon, 'an encounter with no camera generated no report at all, so nothing ' +
+      'downstream can say why it has no video');
+    assert(/[?&]no_camera=/.test(beacon),
+      'the absence was reported on the path that means "recorded and lost": ' + beacon);
+    assert(!/client_error=/.test(beacon), 'and it carried a client_error too: ' + beacon);
+    assert(beacon.indexOf('no_camera=' + name) >= 0,
       'the beacon did not carry which failure it was: ' + beacon);
+    console.log('NOCAMERA_BEACON ' + beacon);
+  }
+
+  // --- 4b. a recorder that ran, collected bytes, and died ------------------
+  // The other half of that distinction, and the half the confirm event is for:
+  // this encounter WAS captured, the bytes die with the page because the
+  // recorder never reached the stop that builds the blob, and Phase 2 has to be
+  // able to tell it from an encounter nobody pointed a camera at.
+  {
+    const b = boot({});
+    await b.ctx.startCapture();
+    b.run("sessionId = 's_1772460300_44c9a2'; participantId = 'p_1772460300_4327ae';");
+    const rec = b.media.recorders[0];
+    assert(rec, 'no recorder was constructed for a working camera');
+    rec.ondataavailable({ data: { size: 4096 } });          // two seconds of video
+    rec.onerror({ error: { name: 'NotSupportedError' } });
+    rec.state = 'inactive';                                  // what a real engine does next
+    b.ctx.finishVideoRecording();
+    const beacon = b.beacons.find(u => u.indexOf('/video-uploaded') >= 0);
+    assert(beacon, 'a recording that was made and then dropped left no trace at all');
+    assert(!/no_camera=/.test(beacon),
+      'a recording that WAS made was reported as an encounter that had no camera: ' + beacon);
+    const hint = decodeURIComponent((/client_error=([^&]*)/.exec(beacon) || [])[1] || '');
+    // The separator matters: server/app.py keeps client_error only when it
+    // matches [A-Za-z0-9_.-], so a colon here is a reason nobody ever reads.
+    assert.strictEqual(hint, 'recorder_error.NotSupportedError',
+      'the reason will not survive the server filter: ' + hint);
+    assert(/stopped part way through/.test(b.run('videoNotice')),
+      'the participant is told in the transcript but not on the screen that follows: ' +
+      b.run('videoNotice'));
+    console.log('LOST_BEACON ' + beacon);
   }
 
   // --- 5. a browser that cannot record video at all ------------------------
@@ -721,6 +839,22 @@ const transcript = (b) =>
     await b.clock.advance(3000);
     assert(/paused this page/.test(transcript(b)) || /connection dropped/i.test(transcript(b)),
       'an interruption that never resolved was never mentioned: ' + transcript(b));
+  }
+
+  // --- 9. every reason this page can report, as the page encodes it --------
+  // Printed rather than asserted here: the grammar these have to satisfy
+  // belongs to server/app.py, so the Python side reads the filter out of the
+  // server and applies it to exactly these strings.
+  {
+    const b = boot({});
+    const reasons = [
+      'recorder_error:NotSupportedError', 'recorder_failed:NotSupportedError',
+      'recorder_lost', 'track_ended', 'no_supported_mime', 'NotAllowedError',
+      'NotReadableError', 'put_http_403', 'presign_http_503', 'timeout', 'network',
+      'confirm_no_object', 'confirm_http_500', 'unexpected',
+      'recorder_error:' + 'LongEngineSuppliedName'.repeat(4),
+    ];
+    console.log('TOKENS ' + JSON.stringify(reasons.map(r => b.ctx.clientErrorToken(r))));
   }
 
   console.log('CAPTURE OK');
@@ -855,16 +989,32 @@ async function attempt(cfg) {
 """
 
 
-RATER_HARNESS = r"""/* The rating console: a recording this browser cannot play, the open-ended
-   boxes across a sitting, and the dwell timer across a tab switch. */
+RATER_HARNESS = r"""/* The rating console: a recording this browser cannot play, the playback that
+   has to last a whole sitting, the open-ended boxes across that sitting, and
+   the dwell timer across a tab switch. */
 'use strict';
 const assert = require('assert');
 const { bootPage } = require('./stub.js');
 
 const PAGE = process.argv[2];
 const ITEMS = [1, 2, 3].map(i => ({ id: 'i' + i, text: 'item ' + i }));
-const OK_MEDIA = { video_url: 'https://s3.invalid/webcam.webm', video_available: true,
-                   video_status: 'ok', expires_in: 3600, note: null };
+// Real minted assignment ids (raters.py: as_ plus twelve hex), because the
+// playback URL is built from one and asserting the URL's shape is worth
+// nothing if the id in it is a shape the server never issues.
+const A1 = 'as_4c9a2f10b3d7';
+const A2 = 'as_1d0be47a92c5';
+// The media block the packet builder emits today: this application's own
+// route, addressed by ASSIGNMENT id, and expires_in null on every branch.
+// Both halves of that are the same fix. The URL used to be a presigned S3 GET
+// whose object key is encounters/{session_id}/webcam.webm — a bearer
+// credential for the study bucket, carrying the encounter's start time to the
+// second, left in the rater's network tab and browser history — and it aged
+// out an hour into a sitting, which is what all the re-minting machinery
+// deleted from rater.html was for. An application route needs neither.
+const okMedia = (aid) => ({ video_url: '/api/rater/video/' + aid, video_available: true,
+                            video_status: 'ok', upload_error: null,
+                            expires_in: null, note: null });
+const OK_MEDIA = okMedia(A1);
 
 function boot() {
   const b = bootPage(PAGE, {}, {
@@ -889,9 +1039,9 @@ async function open(b, packet) {
   // open_ended. Nobody got an error at either end.
   {
     const b = boot();
-    await open(b, { assignment_id: 'a_1', status: 'submitted', items: ITEMS, media: OK_MEDIA });
+    await open(b, { assignment_id: A1, status: 'submitted', items: ITEMS, media: OK_MEDIA });
     assert.strictEqual($(b, 'obBetter').disabled, true, 'a submitted rating stayed editable');
-    await open(b, { assignment_id: 'a_2', status: 'assigned', items: ITEMS, media: OK_MEDIA });
+    await open(b, { assignment_id: A2, status: 'assigned', items: ITEMS, media: okMedia(A2) });
     assert.strictEqual($(b, 'obBetter').disabled, false,
       '"What could the participant have done better?" is still dead on the second encounter');
     assert.strictEqual($(b, 'obNotable').disabled, false,
@@ -901,61 +1051,290 @@ async function open(b, packet) {
   }
 
   // --- a recording this browser cannot decode -----------------------------
+  // The console used to give the first error the benefit of the doubt and
+  // re-mint the link before blocking, because the commonest cause of an error
+  // here was a presigned URL that had aged out. It cannot be that any more —
+  // an application route does not expire — so the two causes left are a
+  // container this engine cannot decode and a transfer that failed, and
+  // neither is fixed by asking the API for the same URL again. Block on the
+  // first error and say which failure it was.
   {
     const b = boot();
-    await open(b, { assignment_id: 'a_1', status: 'assigned', items: ITEMS, media: OK_MEDIA });
+    await open(b, { assignment_id: A1, status: 'assigned', items: ITEMS, media: OK_MEDIA });
     const v = $(b, 'vid');
+    const before = b.net.countOf('/api/rater/packet/');
     v.error = { code: 4 };               // MEDIA_ERR_SRC_NOT_SUPPORTED
-    v.fire('error');                     // first failure: re-mint the link and retry
-    await b.clock.flush();
-    assert.strictEqual($(b, 'submitBtn').disabled, false,
-      'one error blocked the rating before the cheap, recoverable cause was tried');
-    v.fire('error');                     // the fresh URL fails the same way
+    v.fire('error');
     await b.clock.flush();
     assert.strictEqual($(b, 'submitBtn').disabled, true,
       'an undecodable recording was rated around: this produces a gold label made without ' +
       'the artefact and indistinguishable from a good one');
+    assert.strictEqual(b.net.countOf('/api/rater/packet/'), before,
+      'the console went back to the API for a fresh playback link. The URL is a stable ' +
+      'application route, so a re-fetch returns the same URL: it buys a delay and a second ' +
+      'identical failure, and it is the machinery whose deletion closed the leak');
     assert(/cannot be played in this browser/i.test($(b, 'videoSlot').innerHTML),
       'the rater was shown a black box with no explanation: ' + $(b, 'videoSlot').innerHTML);
+    assert(/decode/i.test($(b, 'videoSlot').innerHTML),
+      'a decode failure and a transfer failure were reported in the same words, so the ' +
+      'rater cannot tell the study team which one to chase: ' + $(b, 'videoSlot').innerHTML);
     assert(/Chrome/.test($(b, 'videoSlot').innerHTML),
       'the rater was told it failed but not what to do about it');
+    assert(/Try again/.test($(b, 'videoSlot').innerHTML),
+      'blocking on the FIRST error is only safe while the rater keeps a way to test the ' +
+      'claim; without one a single dropped transfer ends the encounter');
     assert(/Do not rate/i.test($(b, 'submitMsg').textContent),
       'a rater silently blocked from submitting is worse than one told to switch browsers: ' +
       $(b, 'submitMsg').textContent);
   }
 
-  // --- an expired playback link is re-minted, not reported as no video ----
-  {
+  // --- a sitting long enough to have outlived two links ------------------
+  // What the re-mint, the pre-emptive expiry swap and their re-arming timer
+  // were all defending: a rater who works through a queue for an afternoon
+  // does not lose playback partway. The old link was minted for an hour, so an
+  // hour in, every remaining encounter began reading as "this one has no
+  // video" unless something noticed and re-fetched the packet in time.
+  //
+  // Under an application route the guarantee is the same and the mechanism is
+  // nothing: the URL does not change, no timer is armed against it, and no
+  // request is made to keep it alive. That is asserted here as the absence it
+  // is — because "nothing re-fetches" is indistinguishable from "the console
+  // stopped watching" unless the recording is also shown still working at the
+  // end of the sitting.
+  //
+  // Driven on both duration behaviours the wave contains, since which one an
+  // engine has decides how much of the player is live to begin with: Chrome
+  // and Firefox resolve a duration for a cue-less WebM when asked, Safari's
+  // fragmented MP4 never does.
+  for (const engine of [
+    { what: 'an engine that resolves the duration', duration: 421, seekable: true },
+    { what: 'an engine that never resolves one', duration: Infinity, seekable: false },
+  ]) {
     const b = boot();
-    await open(b, { assignment_id: 'a_1', status: 'assigned', items: ITEMS, media: OK_MEDIA });
-    const before = b.net.countOf('/api/rater/packet/');
+    await open(b, { assignment_id: A1, status: 'assigned', items: ITEMS,
+                    media: OK_MEDIA, duration_s: 421 });
     const v = $(b, 'vid');
-    v.error = { code: 2 };               // MEDIA_ERR_NETWORK, which is what a 403 looks like
-    v.fire('error');
-    await b.clock.flush();
-    assert(b.net.countOf('/api/rater/packet/') > before,
-      'nothing re-fetched the packet after the presigned URL aged out, so an hour into a ' +
-      'sitting every encounter reads as "this one has no video"');
+    const src = String(v.src);
+    // The URL itself, before anything is driven through it. A rater reads this
+    // out of their own network tab and their browser keeps it in history.
+    assert(src.indexOf('/api/rater/video/' + A1) === 0,
+      'the player is not pointed at this application: ' + src);
+    assert(!/^https?:/i.test(src) && !/X-Amz|Signature=|amazonaws/i.test(src),
+      'a presigned bucket URL is back in the page: it is a bearer credential for the ' +
+      'study bucket, and its object key names the session: ' + src);
+    // ...and the one identifier in it is the rater's own handle, not the
+    // encounter's. A session id carries the start time to the second, which is
+    // enough to tell that two packets belong to one participant.
+    assert(!/s_\d{10}/.test(src), 'the playback URL carries a session id: ' + src);
+
+    v.duration = engine.duration;
+    v.readyState = 3; v.networkState = 2;      // loaded and playing
+    v.fire('loadedmetadata');
+    v.fire('canplay');
+    await b.clock.advance(9000);               // let the duration probe settle
+    assert.strictEqual(b.run('videoSeekable'), engine.seekable,
+      'the console misread ' + engine.what + ' before the sitting even started');
+    const fetches = b.net.countOf('/api/rater/packet/');
+    // A rebuilt player is counted by its handlers, not by identity: renderVideo
+    // registers this listener afresh every time it runs, so a silent re-render
+    // shows up here. In a real browser one restarts the download and drops the
+    // rater back to the start of a recording they were part way through.
+    const handlers = (v.listeners.error || []).length;
+    assert(handlers > 0, 'the player was built with no error handler at all');
+
+    // Two hours: twice the life of the link this replaces, and longer than any
+    // rater sits in one go.
+    await b.clock.advance(2 * 3600 * 1000);
+
+    assert.strictEqual(b.net.countOf('/api/rater/packet/'), fetches,
+      'something still re-fetches the packet on a timer for ' + engine.what + '. Nothing ' +
+      'about this URL ages, so a refresh can only hand back what the page already has');
+    assert.strictEqual((v.listeners.error || []).length, handlers,
+      'the player was torn down and rebuilt under the rater mid-sitting');
+    assert.strictEqual(String(v.src), src,
+      'the playback URL changed during the sitting: ' + v.src);
     assert.strictEqual($(b, 'submitBtn').disabled, false,
-      'a link that had merely expired blocked the rating');
+      'two hours in, ' + engine.what + ' had the rating blocked: this is the failure the ' +
+      'expiry machinery existed to prevent and it must not come back by another route');
+    assert(!/cannot be played|No video for this encounter/i.test($(b, 'videoSlot').innerHTML),
+      'the recording was reported as unplayable after nothing happened to it: ' +
+      $(b, 'videoSlot').innerHTML);
+    assert.strictEqual(b.run('videoSeekable'), engine.seekable,
+      'the seek promise was quietly changed under the rater during the sitting');
+
+    // And it still plays at the end of it, driven through the console's own
+    // control rather than by reading state: on the engine that can seek, the
+    // scrubber still moves the player; on the one that cannot, the console is
+    // still saying so instead of leaving a dead affordance.
+    if (engine.seekable) {
+      const scrub = $(b, 'vidScrub');
+      assert.strictEqual(scrub.disabled, false, 'the scrubber was disabled by the sitting');
+      scrub.value = '120';
+      scrub.fire('input');
+      assert.strictEqual(v.currentTime, 120,
+        'the player would not move two hours into the sitting: ' + v.currentTime);
+    } else {
+      assert(/no duration index/i.test($(b, 'seekHint').textContent || ''),
+        'the console promised click-to-seek on a file that cannot honour it: ' +
+        $(b, 'seekHint').textContent);
+    }
   }
 
-  // --- a recording with no duration index cannot be seeked ----------------
+  // --- a recording whose duration the engine can work out stays seekable --
+  // Every recording in the wave is raw MediaRecorder output with no duration in
+  // its header, so `duration === Infinity` at loadedmetadata is the normal case,
+  // not a broken file. Deciding on that reading alone turned click-to-seek —
+  // the console's primary workflow — off for every encounter on every browser.
   {
     const b = boot();
-    await open(b, { assignment_id: 'a_1', status: 'assigned', items: ITEMS, media: OK_MEDIA });
+    await open(b, { assignment_id: A1, status: 'assigned', items: ITEMS, media: OK_MEDIA });
     const v = $(b, 'vid');
-    v.duration = Infinity;               // raw MediaRecorder output, which is all of them
+    v.duration = Infinity;
     v.fire('loadedmetadata');
+    assert(v.currentTime > 1e100,
+      'nothing asked the engine to resolve the duration, so the answer can only be no: ' + v.currentTime);
+    assert.strictEqual(b.run('videoSeekable'), true, 'seeking was disabled before the probe answered');
+    v.duration = 421;                    // what Chrome and Firefox then report
+    v.fire('durationchange');
+    assert.strictEqual(b.run('videoSeekable'), true,
+      'click-to-seek was turned off for a file this browser can seek after all');
+    assert.strictEqual(v.currentTime, 0, 'the probe left the player parked past the end of the file');
+    assert(!/no duration index/.test($(b, 'seekHint').textContent || ''),
+      'the hint withdrew a promise the file can keep: ' + $(b, 'seekHint').textContent);
+  }
+
+  // --- and one it cannot is still said out loud ---------------------------
+  {
+    const b = boot();
+    await open(b, { assignment_id: A1, status: 'assigned', items: ITEMS, media: OK_MEDIA });
+    const v = $(b, 'vid');
+    v.duration = Infinity;
+    v.fire('loadedmetadata');            // and no durationchange ever comes
+    await b.clock.advance(9000);
+    assert.strictEqual(b.run('videoSeekable'), false, 'a dead affordance was left in place');
     assert(/does not\s+work reliably|no duration index/i.test($(b, 'seekHint').textContent),
       'the console still promises click-to-seek on a file that cannot honour it: ' +
       $(b, 'seekHint').textContent);
   }
 
+  // --- a blocked recording keeps a way back -------------------------------
+  // A transfer that failed once is the recoverable case that used to be caught
+  // by the re-mint, so the Try again button is now the WHOLE of the recovery
+  // and has to lift the block on its own. It rebuilds the player from the same
+  // URL and makes no request: there is no fresh link to fetch.
+  {
+    const b = boot();
+    await open(b, { assignment_id: A1, status: 'assigned', items: ITEMS, media: OK_MEDIA });
+    const v = $(b, 'vid');
+    v.error = { code: 2 };               // MEDIA_ERR_NETWORK: the transfer dropped
+    v.fire('error'); await b.clock.flush();
+    assert.strictEqual($(b, 'submitBtn').disabled, true, 'the unplayable recording was not blocked');
+    assert(/Try again/.test($(b, 'videoSlot').innerHTML),
+      'the rater is told not to rate this encounter and given no way to test that claim: ' +
+      $(b, 'videoSlot').innerHTML);
+    const before = b.net.countOf('/api/rater/packet/');
+    $(b, 'videoRetry').fire('click');
+    await b.clock.flush();
+    assert.strictEqual($(b, 'submitBtn').disabled, false,
+      'a recording that plays on the second attempt stayed blocked for the rest of the sitting');
+    assert(/<video/.test($(b, 'videoSlot').innerHTML), 'the player was never rebuilt');
+    assert.strictEqual(b.net.countOf('/api/rater/packet/'), before,
+      'Try again went back to the API. Nothing it could return differs from what the page ' +
+      'already holds, and a recovery that needs the network fails exactly when it is needed');
+  }
+
+  // --- a note is a note, however many times it is shown --------------------
+  // #playNote is one of the few nodes that survives a re-render, and the Retry
+  // button that used to hang off it was bound with a fresh listener on EVERY
+  // call: three notes in a sitting meant one click fired three re-mints of the
+  // playback link, against a rate limit, on the page whose link had just
+  // failed. The button is gone with the link — the one recovery that blocks is
+  // videoUnplayable's, tested above — so what is pinned here is that nothing
+  // accumulates on the surviving node: a note replaces the last note and never
+  // becomes a control.
+  {
+    const b = boot();
+    await open(b, { assignment_id: A1, status: 'assigned', items: ITEMS, media: OK_MEDIA });
+    const before = b.net.countOf('/api/rater/packet/');
+    b.ctx.showPlayNote('first');
+    b.ctx.showPlayNote('second');
+    b.ctx.showPlayNote('third');
+    const note = $(b, 'playNote');
+    assert(/third/.test(note.innerHTML) && !/first|second/.test(note.innerHTML),
+      'the notes stacked instead of replacing one another: ' + note.innerHTML);
+    assert.strictEqual((note.listeners.click || []).length, 0,
+      'a click handler is bound to the note again. It is bound per call on a node that ' +
+      'outlives the call, which is how one click became one action per note ever shown');
+    note.fire('click', { target: { id: 'playRetry' } });
+    await b.clock.flush();
+    assert.strictEqual(b.net.countOf('/api/rater/packet/'), before,
+      'clicking a note reached the network');
+    assert.strictEqual($(b, 'submitBtn').disabled, false, 'a note blocked the rating');
+  }
+
+  // --- an element that has not been asked to load yet is not a failure ----
+  // iOS Safari ignores preload entirely and fetches nothing until a gesture, so
+  // readyState sits at HAVE_NOTHING on a perfectly good recording. A watchdog
+  // reading readyState alone told every iPad rater their video had failed — on
+  // the engine it was added for.
+  {
+    const b = boot();
+    await open(b, { assignment_id: A1, status: 'assigned', items: ITEMS, media: OK_MEDIA });
+    const v = $(b, 'vid');
+    v.readyState = 0; v.networkState = 1;      // NETWORK_IDLE: not fetching at all
+    await b.clock.advance(30000);
+    assert(!/has not loaded/.test($(b, 'playNote').innerHTML || ''),
+      'a deferred load was reported as a failed one: ' + $(b, 'playNote').innerHTML);
+  }
+
+  // --- but a load that really is stuck is still said out loud -------------
+  {
+    const b = boot();
+    await open(b, { assignment_id: A1, status: 'assigned', items: ITEMS, media: OK_MEDIA });
+    const v = $(b, 'vid');
+    v.readyState = 0; v.networkState = 2;      // NETWORK_LOADING, and nothing to show for it
+    await b.clock.advance(30000);
+    assert(/has not loaded/.test($(b, 'playNote').innerHTML || ''),
+      'a stuck load said nothing and left the rater watching a dead control bar');
+  }
+
+  // --- the audio-track check waits for the track list ---------------------
+  // Safari implements audioTracks and can report an empty list until it has
+  // data, so asking at loadedmetadata told a healthy Safari rater their
+  // recording was silent and sent them to Chrome.
+  {
+    const b = boot();
+    await open(b, { assignment_id: A1, status: 'assigned', items: ITEMS, media: OK_MEDIA });
+    const v = $(b, 'vid');
+    v.audioTracks = { length: 0 };
+    v.readyState = 1;                          // HAVE_METADATA: no data yet
+    v.fire('loadedmetadata');
+    v.fire('loadeddata');
+    assert(!/no audio track/.test($(b, 'playNote').innerHTML || ''),
+      'the console read the track list before the engine had filled it: ' + $(b, 'playNote').innerHTML);
+    v.audioTracks = { length: 1 };
+    v.readyState = 3;
+    v.fire('canplay');
+    assert(!/no audio track/.test($(b, 'playNote').innerHTML || ''),
+      'a recording with an audio track was reported as silent');
+  }
+
+  // --- and a container that really has none is still reported -------------
+  {
+    const b = boot();
+    await open(b, { assignment_id: A1, status: 'assigned', items: ITEMS, media: OK_MEDIA });
+    const v = $(b, 'vid');
+    v.audioTracks = { length: 0 };
+    v.readyState = 3;
+    v.fire('canplay');
+    assert(/no audio track/.test($(b, 'playNote').innerHTML || ''),
+      'a silent container is the one failure that slips past every gate, and it said nothing');
+  }
+
   // --- the dwell timer must not credit time spent in another tab ----------
   {
     const b = boot();
-    await open(b, { assignment_id: 'a_1', status: 'assigned', items: ITEMS, media: OK_MEDIA });
+    await open(b, { assignment_id: A1, status: 'assigned', items: ITEMS, media: OK_MEDIA });
     // performance.now() must be non-zero when the accumulator is seeded: the
     // page uses `lastTick` truthiness as its "we are not currently visible"
     // marker, which is the whole of the fix under test.
@@ -1058,6 +1437,20 @@ function boot() {
   assert.strictEqual(b.dom.document.getElementById('reconnectRow').style.display, 'flex',
     'the only way back to a live session is still a full page reload mid-encounter');
 
+  // --- and the offer belongs to the session it was made about -------------
+  // connect() returns early for a session that is not active — no socket, and
+  // therefore nothing that hides this row. So switching from a session whose
+  // socket had dropped to a closed one left "The live connection to this
+  // session ended. [Reconnect]" on screen over a transcript from a different
+  // encounter, offering to reconnect a session that ended hours ago.
+  b.run("sessionsCache = [{ id: 's_1', status: 'active', title: 't', turn_count: 0 }," +
+        "                 { id: 's_2', status: 'closed', title: 't2', turn_count: 0 }];");
+  b.ctx.connect('s_2');
+  await b.clock.flush();
+  assert.strictEqual(b.dom.document.getElementById('reconnectRow').style.display, 'none',
+    'the reconnect offer for the previous session is still on screen, describing a session ' +
+    'the researcher is no longer looking at');
+
   console.log('RESEARCHER OK');
 })().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
 """
@@ -1074,8 +1467,13 @@ def _run(tmp_path, harness_src, page):
     (tmp_path / "stub.js").write_text(STUB_JS, encoding="utf-8")
     harness = tmp_path / "harness.js"
     harness.write_text(harness_src, encoding="utf-8")
+    # encoding pinned rather than left to the machine's locale: node emits UTF-8
+    # everywhere, these pages contain characters cp1252 cannot represent, and a
+    # harness failure decoded through the wrong codec reaches a Windows
+    # contributor as mojibake at exactly the moment they need to read it.
     proc = subprocess.run([_node(), str(harness), str(page)],
-                          capture_output=True, text=True, timeout=180)
+                          capture_output=True, text=True, encoding="utf-8",
+                          timeout=180)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     return proc.stdout
 
@@ -1085,6 +1483,137 @@ def test_capture_survives_engines_that_refuse_what_chrome_allows(tmp_path):
     refused AudioBuffer rate, the camera that is missing or busy, the recorder
     that will not start, the camera lost mid-encounter and the parked context."""
     assert "CAPTURE OK" in _run(tmp_path, CAPTURE_HARNESS, V2)
+
+
+def _beacon(out: str, marker: str) -> str:
+    """The last URL the harness printed under `marker`.
+
+    Last, not first: the camera block runs once per failure name, and the one
+    this test names its expected reason after is the one it ended on.
+    """
+    lines = [ln for ln in out.splitlines() if ln.startswith(marker + " ")]
+    assert lines, f"the harness printed no {marker}:\n{out}"
+    return lines[-1][len(marker) + 1:].strip()
+
+
+def test_what_the_page_reports_about_a_camera_is_what_the_server_records(tmp_path, monkeypatch):
+    """The two halves of one contract, joined: the URLs the page actually builds
+    are POSTed to the route that actually exists.
+
+    This is the join that was missing. The page composed
+    `client_error=no_camera:<reason>` and the test asserted only that the beacon
+    said so — while the route's own filter rejected the colon and dropped the
+    reason, and the event it wrote said the encounter WAS recorded and the
+    recording was lost, which blocks the rating outright. Both sides passed
+    their own tests and the pair was wrong.
+
+    No AWS call: the absence branch must not touch S3 at all, so the stub client
+    raises the real NoCredentialsError if anything asks it anything.
+    """
+    out = _run(tmp_path, CAPTURE_HARNESS, V2)
+    absence_url = _beacon(out, "NOCAMERA_BEACON")
+    lost_url = _beacon(out, "LOST_BEACON")
+
+    pytest.importorskip("fastapi")
+    from botocore.exceptions import NoCredentialsError
+    from fastapi.testclient import TestClient
+    from server import app as appmod
+    from server import video
+
+    session_id, owner = "s_1772460300_44c9a2", "p_1772460300_4327ae"
+    root = tmp_path / "sessions"
+    sdir = root / session_id
+    sdir.mkdir(parents=True)
+    (sdir / "manifest.json").write_text(
+        json.dumps({"session_id": session_id, "participant_id": owner,
+                    "scenario": "conflict", "status": "closed"}), encoding="utf-8")
+    (sdir / "events.jsonl").write_text("", encoding="utf-8")
+
+    class NoCredentials:
+        def __getattr__(self, _name):
+            def call(*a, **kw):
+                raise NoCredentialsError()
+            return call
+
+    monkeypatch.setattr(appmod, "SESSIONS_DIR", root)
+    monkeypatch.setattr(video, "SESSIONS_DIR", root)
+    monkeypatch.setattr(video, "_s3", NoCredentials())
+    if appmod.ALLOWED_HOSTS and "testserver" not in appmod.ALLOWED_HOSTS:
+        monkeypatch.setattr(appmod, "ALLOWED_HOSTS", list(appmod.ALLOWED_HOSTS) + ["testserver"])
+    client = TestClient(appmod.app, raise_server_exceptions=False)
+
+    def written():
+        return [json.loads(ln) for ln
+                in (sdir / "events.jsonl").read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+    # 1. the encounter that never had a camera
+    res = client.post(absence_url)
+    assert res.status_code == 200, f"{absence_url} -> {res.status_code} {res.text}"
+    assert res.json().get("status") == "absent", res.text
+    kinds = [e.get("type") for e in written()]
+    assert "video_uploaded" not in kinds, (
+        "the page's own no-camera report is recorded as a recording that was made and lost, "
+        "which is the one state the rating console refuses to rate")
+    absent = [e for e in written() if e.get("type") == "video_absent"]
+    assert len(absent) == 1, kinds
+    assert absent[0].get("reason") == "NotReadableError", (
+        f"the reason the camera never ran did not survive the round trip: {absent[0]}")
+
+    # 2. and the recording that was made and then dropped
+    res = client.post(lost_url)
+    assert res.status_code in (200, 503), res.text
+    uploaded = [e for e in written() if e.get("type") == "video_uploaded"]
+    assert len(uploaded) == 1 and uploaded[0].get("status") == "failed", written()
+    assert uploaded[0].get("client_error") == "recorder_error.NotSupportedError", (
+        "the reason a recorder died was dropped by the route's token filter: "
+        f"{uploaded[0]}")
+
+
+def _server_client_error_filter() -> tuple[str, int]:
+    """The grammar server/app.py applies to `client_error`, read from the server.
+
+    Read rather than restated so this cannot drift into agreeing with a rule the
+    server stopped applying. Both shapes the route has used are accepted: the
+    named constants it uses now, and the inline literals it used before.
+    """
+    src = _src(ROOT / "server" / "app.py")
+    grammar = (re.search(r'_CLIENT_TOKEN_RE\s*=\s*re\.compile\(r"([^"]+)"\)', src)
+               or re.search(r'fullmatch\(r"([^"]+)", hint\)', src))
+    cap = (re.search(r"_CLIENT_TOKEN_MAX\s*=\s*(\d+)", src)
+           or re.search(r"len\(hint\) <= (\d+)", src))
+    assert grammar and cap, (
+        "server/app.py no longer filters client_error in a shape this test can read; "
+        "re-read the confirm route before trusting this assertion")
+    return grammar.group(1), int(cap.group(1))
+
+
+def test_every_reason_the_page_reports_survives_the_servers_filter(tmp_path):
+    """The client's diagnosis is worth nothing if the server drops it.
+
+    `client_error` is the one field that lets anyone tell a recorder that died
+    from an upload that broke, and server/app.py keeps it only when it matches a
+    short bare token — no colon, 40 characters or fewer — and says nothing when
+    it does not. Every reason the page built for a recorder fault carried a
+    colon ('recorder_error:NotSupportedError'), so the whole set was being
+    discarded by a filter nobody had read.
+
+    The grammar is read out of the server rather than restated here, so this
+    fails if either side moves and the two stop agreeing.
+    """
+    out = _run(tmp_path, CAPTURE_HARNESS, V2)
+    line = next((ln for ln in out.splitlines() if ln.startswith("TOKENS ")), None)
+    assert line, f"the harness printed no tokens:\n{out}"
+    tokens = json.loads(line[len("TOKENS "):])
+    assert tokens, "no reasons were checked"
+
+    pattern, limit = _server_client_error_filter()
+
+    for token in tokens:
+        assert token, "a reason encoded to nothing at all"
+        assert len(token) <= limit, f"{token!r} is longer than the server's {limit}-char cap"
+        assert re.fullmatch(pattern, token), (
+            f"the confirm route would silently drop {token!r}, and with it the only field "
+            f"that tells a lost recording apart from a camera that never ran")
 
 
 def test_the_recording_outlives_its_own_teardown(tmp_path):
@@ -1101,8 +1630,17 @@ def test_a_capture_failure_says_which_failure_it_was(tmp_path):
 
 def test_the_rating_console_across_browsers_and_across_a_sitting(tmp_path):
     """The two console CRITICALs (the permanently disabled open-ended boxes and
-    the silent undecodable recording), plus the expiring playback link, the
-    unseekable container and the dwell timer that credited another tab."""
+    the silent undecodable recording), plus playback that has to last a whole
+    sitting, the unseekable container and the dwell timer that credited another
+    tab.
+
+    The sitting is the part that changed shape rather than going away. It was
+    pinned as "the expiring playback link is re-minted in time"; the link no
+    longer expires, so the same guarantee — a rater working a queue for an
+    afternoon does not lose playback partway — is pinned as the absence it now
+    is: a URL that does not change, nothing armed against it, no request made
+    to keep it alive, and the recording still playing two hours in.
+    """
     assert "RATER COMPAT OK" in _run(tmp_path, RATER_HARNESS, RATER)
 
 

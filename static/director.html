@@ -1,5 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
+<link rel="icon" type="image/png" href="/static/favicon.png" />
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
 <!-- Without this a phone or tablet lays the page out at a fixed ~980px and
      scales it down, so the 820px breakpoint below never fires and a researcher
      on a half-screen or tablet gets a shrunken two-column layout instead of the
@@ -201,7 +203,18 @@ function render(rec) {
   document.getElementById('detail').innerHTML = `
     <div class="meta">
       <span><b>${esc(rec.scenario || '—')}</b>${spec ? ` · ${esc(spec.title)}` : ''}</span>
-      ${spec ? `<span>${esc(spec.construct.replace(/_/g, ' '))} · variant <b>${esc(spec.variant)}</b> · pair <b>${esc(spec.parallel_form || '—')}</b></span>` : ''}
+      ${/* "other forms", plural, and ALL of them. This said "pair" and rendered
+            the spec's `parallel_form` scalar, which is provenance — the one
+            sibling a form was written to match — not routing. With three forms
+            per construct that named one sibling and hid the other, on the
+            surface a researcher reads mid-run to see what a retest would draw
+            from. The list comes from scenarios_v3.parallel_forms(), which is
+            the routing authority; the scalar is the fallback for a payload
+            written before the field existed. */''}
+      ${spec ? `<span>${esc(spec.construct.replace(/_/g, ' '))} · variant <b>${esc(spec.variant)}</b> · other forms <b>${
+        esc((spec.parallel_forms && spec.parallel_forms.length
+             ? spec.parallel_forms
+             : [spec.parallel_form].filter(Boolean)).join(', ') || '—')}</b></span>` : ''}
       <span>participant <b>${esc(rec.participant_id || '—')}</b></span>
       <span>turns <b>${c.participant_turns || 0}</b> / <b>${c.agent_turns || 0}</b></span>
       <span>directions <b>${c.stage_directions || 0}</b></span>

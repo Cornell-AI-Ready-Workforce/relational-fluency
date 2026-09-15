@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<link rel="icon" type="image/png" href="/static/favicon.png" />
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
 <title>Conversation</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
@@ -153,7 +155,7 @@
       if (!res.ok) throw new Error('server returned ' + res.status);
       cfg = await res.json();
     } catch (e) {
-      appendMsg('meta', 'Could not load the consent form — please reload to try again.');
+      appendMsg('meta', 'Could not load the consent form, please reload to try again.');
       return false;
     }
     $('consentTitle').textContent = cfg.title || 'Consent';
