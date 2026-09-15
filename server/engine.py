@@ -29,6 +29,55 @@ DEFAULT_MODEL = setting("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite")
 DEFAULT_MAX_TOKENS = 400
 
 
+# ── The one place the universal speech rules live ─────────────────────────────
+#
+# What is true of EVERY character in EVERY scenario is said here, once, and
+# nowhere else in the assembly. It used to be said up to six times in a single
+# prompt with a different number each time: twice here (one rule in each mode
+# branch), again in the realtime session's VOICE block, again in the persona's
+# verbosity fragment, and twice more from the scenario layer.
+#
+# Measured on the gateway, same S1A/Sam brief, same three participant turns:
+# the full stack produced 27/37/26-word turns; the tight rule ALONE produced
+# 11/24/25; no rule at all produced 29/51/53. Six rules bought what one rule
+# would have bought, and the tightest of the six was violated on every
+# substantive turn. The cost of the duplication was not clutter, it was the
+# cap not being obeyed.
+#
+# Stated tight, and stated LAST: on nto.gemini-live-2.5-flash a mid-session
+# session.update is never acknowledged — three frames sent, zero acked, probed
+# on the real gateway — so the opening prompt is the whole of the instruction
+# and position in it is the only emphasis available.
+#
+# Deliberately a SUBSET of what the scenario briefs still say ("one to three
+# sentences per turn"), not a rival count: a turn of one or two sentences
+# satisfies both, so the assembly does not fight briefs it does not own while
+# the tighter bound is the one stated last.
+SPEECH_RULES = (
+    "You are speaking out loud, not writing. Keep every turn short: one or two "
+    "sentences, about twenty-five words. Make one point, then stop and let the "
+    "other person talk. Use plain, everyday words, no jargon and no elaborate "
+    "metaphors. Say only the words you speak: no name or speaker label in front "
+    "of them, no quotation marks around them, and nothing that describes what "
+    "you are doing or thinking. Everyone here is speaking English."
+)
+
+# Group mode adds only who-holds-the-floor. It says nothing about how long a
+# turn is — that is SPEECH_RULES's job in both modes, and a second length rule
+# here is exactly what the measurement above cost.
+#
+# The floor rules read like clutter and are not: without "let them answer" a
+# four-person room answers every participant turn four times over, and without
+# "do not repeat what someone else just said" the quiet character's one fact
+# gets restated by a louder one before the participant can retrieve it.
+MEETING_RULES = (
+    "Several people are in this room and others will speak after you. Do not "
+    "repeat, rephrase, or summarise what someone else has just said. Do not "
+    "answer every turn: when someone else is addressed by name, stay quiet and "
+    "let them answer, and leave room for the people who have said less."
+)
+
+
 class AgentEngine:
     """One agent's view of an ongoing multi-party conversation."""
 
@@ -72,6 +121,17 @@ class AgentEngine:
         *,
         group: Optional[bool] = None,
     ) -> str:
+        # The layers, in the order they are laid down, each one said ONCE:
+        #   1. the scene            — the situation, from the scenario
+        #   2. the character brief  — who this person is, from the scenario file
+        #   3. the persona knobs    — how this person comes across, when a knob
+        #                             is off its neutral setting (see persona.py)
+        #   4. what has changed     — branches and the researcher's live notes
+        #   5. how anyone speaks    — SPEECH_RULES, the universal block
+        #   6. this moment only     — the director note, last, so it wins
+        # Nothing belongs in two of them. A rule that is true of every
+        # character goes in 5; a rule that is true of THIS character goes in
+        # the scenario file, which this module does not own and does not fight.
         parts: List[str] = []
         if self.scenario.scene:
             parts.append("## Scene")
@@ -80,13 +140,22 @@ class AgentEngine:
         parts.append(f"You are **{self.agent.name}** in this conversation.")
         parts.append("")
         parts.append(self.agent.system_prompt)
-        parts.append("")
-        parts.append("## Tone and manner")
-        parts.extend(f"- {f}" for f in self.persona.tone_fragments())
+        tone = self.persona.tone_fragments()
+        if tone:
+            # Emitted only when a knob is actually off neutral. The heading used
+            # to stand over five neutral sentences in every prompt ever built.
+            parts.append("")
+            parts.append("## Tone and manner")
+            parts.extend(f"- {f}" for f in tone)
         incivility = self.persona.incivility_fragments()
         if incivility:
             parts.append("")
-            parts.append("## Incivility behaviors (active, research dial)")
+            # NOT "Incivility behaviors (active, research dial)". That heading
+            # told the actor, in its own brief, that it was an experimental
+            # manipulation — and it rendered only when a knob was up, i.e. only
+            # in the incivility arm, the one arm where an actor stepping outside
+            # the fiction costs the most.
+            parts.append("## How you come across in this conversation")
             parts.extend(f"- {f}" for f in incivility)
         if triggered_branches:
             parts.append("")
@@ -98,10 +167,6 @@ class AgentEngine:
             parts.append("## Live direction from the researcher")
             for note in self.live_notes:
                 parts.append(f"- {note}")
-        if director_intent:
-            parts.append("")
-            parts.append("## Director note for this turn only")
-            parts.append(f"- {director_intent}")
         parts.append("")
         # Group vs. single guidance must match the interaction actually in
         # progress, not the whole-scenario flag: a scenario is stamped
@@ -111,22 +176,18 @@ class AgentEngine:
         # interaction's mode via `group`; fall back to scenario.mode only when it
         # is not supplied (e.g. the text-chat path).
         is_group_mode = (self.scenario.mode == "group") if group is None else group
+        parts.append(SPEECH_RULES)
         if is_group_mode:
-            parts.append(
-                "You are in a multi-party voice conversation. Keep it SHORT, usually "
-                "one sentence, two at most. This is real speech, so be brief and to the "
-                "point; do not give little speeches. Use plain, everyday language, no "
-                "jargon, no buzzwords, no elaborate metaphors. Others may speak after "
-                "you. Do not narrate, summarize, or restate what others said.\n"
-                "Output ONLY the words you say out loud. Do NOT begin with your own name, "
-                "initials, or a 'Name:' speaker label, your name is shown separately. "
-                "No stage directions, no quotation marks around your line."
-            )
-        else:
-            parts.append(
-                "Speak as if in a real-time voice conversation. Keep replies natural-length "
-                "for speech, not chat-text bullets. Do not narrate or describe what you are doing."
-            )
+            parts.append(MEETING_RULES)
+        if director_intent:
+            # Last, deliberately. A note about THIS moment has to arrive late
+            # enough to win against the standing rules above it, and on the
+            # configured realtime model the opening prompt is the only place it
+            # can arrive at all. The voice path appends its own note after this
+            # whole string for the same reason; see
+            # realtime_voice_session._director_note.
+            parts.append("")
+            parts.append(f"RIGHT NOW: {director_intent}")
         return "\n".join(parts)
 
     # --- Message-view construction ---

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import inspect
 import re
 import hashlib
 import json
@@ -25,6 +26,80 @@ import time
 from typing import TYPE_CHECKING, List, Optional
 
 from .director import Director, DIRECTOR_MAX_SPEAKERS
+
+
+#: A sentence boundary the transcript stream ran together: a full stop,
+#: question mark or exclamation mark with NO space after it, sitting between a
+#: lower-case letter and a capital one.
+#:
+#: Both sides of that sandwich are load-bearing, because a full stop with no
+#: space after it is usually NOT a sentence boundary:
+#:
+#:   "3.5", "1,200.00"   digit before       -> not matched
+#:   "U.S.A"             capital before     -> not matched
+#:   "example.com/R"     lower-case after the dot -> not matched
+#:   "no.then"           lower-case after   -> not matched. A missing capital
+#:                       says the transcriber did not think this was a sentence
+#:                       boundary either, and inserting a space would assert
+#:                       something this function does not know.
+#:
+#: Deliberately conservative in that direction: a missed seam is a blemish in a
+#: caption, while a space pushed into a number or a URL is a transcript that
+#: says something the character did not.
+_RUN_ON_SEAM = re.compile(r"(?<=[a-z])([.!?])(?=[A-Z])")
+
+
+def _space_sentence_seams(text: str) -> str:
+    """Put the space back where the transcript stream ran two sentences together.
+
+    OBSERVED in the cleanest measured encounter — a quiet microphone, no
+    barge-in, nothing else wrong with the turn:
+
+        "The cleanest thing is I walk the client through it.I got the deck
+         done last night"
+
+    The agent's audio is fine; the caption is what is wrong. A turn's
+    transcript arrives in chunks that are joined with no separator — correctly,
+    because a chunk boundary usually falls mid-word — and when the bridge
+    re-sends a fragment it can begin a chunk at a sentence boundary, which is
+    where the space goes missing.
+
+    _clean_agent_text's repeat pass does not catch this one and is right not
+    to: the tail here is a PARAPHRASE of an earlier sentence rather than a copy
+    of it, so dropping it would delete something the character said.
+
+    Cosmetic for the participant, who has already heard the line. Not cosmetic
+    for the rater, who reads these transcripts as the record of the encounter,
+    nor for anyone coding them afterwards.
+    """
+    return _RUN_ON_SEAM.sub(r"\1 ", text or "")
+
+
+def _resume_seam(buf: List[str], ev: dict) -> str:
+    """The delta's text, with a space in front of it where a reply RESUMED.
+
+    Transcript chunks within one reply are joined with nothing between them,
+    correctly: a chunk boundary usually falls mid-word. The bridge marks the
+    opening chunk of a reply as `first` (after a response.created, a cancel,
+    a commit or a retry). When such a chunk lands in a buffer that already
+    holds text, the boundary is not a chunk boundary but the seam between a
+    reply the participant cut off and the gateway's continuation of it —
+    cancel is inert on Gemini, so the continuation streams on into the same
+    turn — and joining across it is how "Is the handoff fixed or notIt needed
+    to be said" reached the record. _space_sentence_seams cannot repair that
+    one: it only knows a seam by the punctuation at it.
+
+    Only at those boundaries, and only when both sides need it: a buffer that
+    already ends in whitespace, or a chunk that begins with one or with
+    punctuation, is left exactly as delivered.
+    """
+    text = ev.get("text") or ""
+    if not (ev.get("first") and buf and text):
+        return text
+    tail = "".join(buf[-2:])
+    if not tail or tail[-1].isspace() or not (text[0].isalnum() or text[0] in "\"'("):
+        return text
+    return " " + text
 
 
 def _clean_agent_text(text: str) -> str:
@@ -36,8 +111,14 @@ def _clean_agent_text(text: str) -> str:
     read this text, so drop the copy. Comparison ignores case and
     punctuation, since the two copies often differ by a comma; a character
     genuinely repeating themselves in different words is left alone.
+
+    The seam repair runs FIRST, and the order matters in both directions. The
+    whole-turn double above is detected on a seam with or without a space at
+    it, so spacing first cannot hide a repeat; and the trailing-fragment pass
+    splits on sentence boundaries, which is a split a run-on seam defeats — the
+    two halves arrive as one part and the repeat is never seen.
     """
-    t = (text or "").strip()
+    t = _space_sentence_seams(text or "").strip()
     n = len(t)
     if n < 20:
         return t
@@ -137,6 +218,25 @@ def _is_echo(user_norm: str, agent_norm: str) -> bool:
     return covered / len(uw) >= 0.85 and covered / len(aw) >= 0.85
 
 
+# How much of a lost line has to come back in the retried one for the retry
+# to count as having RECOVERED it (see _note_retry_outcome). On the retries
+# that fired live, a genuine re-speak scores 0.8-1.0 and a line that answers
+# the nudge instead ("I said understood", "I didn't say anything") 0.3-0.5.
+RETRY_RECOVERED_OVERLAP = 0.6
+
+_WORD_CHARS = re.compile(r"[a-z0-9']+")
+
+
+def _word_overlap(lost: str, got: str) -> Optional[float]:
+    """Share of the distinct words of `lost` that appear in `got`; None when
+    `lost` has no words to look for."""
+    want = set(_WORD_CHARS.findall((lost or "").lower()))
+    if not want:
+        return None
+    have = set(_WORD_CHARS.findall((got or "").lower()))
+    return round(len(want & have) / len(want), 3)
+
+
 async def _await_transcript(buf: List[str], grace: float,
                             poll: float = 0.15,
                             stop=None, settled=None) -> None:
@@ -226,9 +326,24 @@ async def _await_transcript(buf: List[str], grace: float,
         elif snapshot and time.time() - last_change >= quiet:
             return
         await asyncio.sleep(poll)
-from .llm import provenance
+# redact_key goes on every gateway-derived string that leaves this process. Two
+# live-gateway exceptions carry the credential verbatim: a 401 body that echoes
+# back the key it was sent, and a key pasted wrapped across two lines, which the
+# header parser rejects by quoting the whole Authorization value into its
+# message. Everything written below is permanent or public — events.jsonl ships
+# whole in the per-session download.zip and is mirrored to CloudWatch, and the
+# participant's socket is outside this process entirely — so a bare str(exc)
+# here puts a live credential into the IRB record. See llm.redact_key.
+from .llm import provenance, redact_key
 from .group_room import GroupRoom
 from .voice.realtime import RealtimeVoiceSession, SilenceDetector
+# The module, not just the names, because REALTIME_MODEL is what selects every
+# piece of per-family behaviour below and it has to be readable at call time
+# rather than frozen into this module at import.
+from .voice import realtime as _realtime
+# The one check that can tell a line the participant HEARD from a line the
+# record merely says was spoken. See server/voice/turn_audio.py.
+from .voice import turn_audio
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -236,17 +351,101 @@ if TYPE_CHECKING:
     from .session import Session
 
 
-# Gemini Live voice names, assigned per segment so consecutive characters do
-# not sound like the same person.
-GEMINI_VOICES = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
+# ── the voice a realtime session may be given ──────────────────────────────
+#
+# There used to be one field, `voice_id`, shared by the v1 ElevenLabs cascade
+# and the realtime path, and that is how a group scenario's ElevenLabs id
+# ("9BWtsMINqrJLrRacOk9x", see scenarios/g1..g5) came to be sent as the voice of
+# a speech-to-speech session. It is not a harmless mismatch. A voice the model
+# does not know takes the WHOLE session.update down with it, and the session
+# then runs on whatever persona the gateway starts with. Probed against the
+# Cornell gateway on 2026-09-10, one socket per case:
+#
+#   gpt-realtime-2.1          voice="9BWtsMINqrJLrRacOk9x"
+#       -> error invalid_value on session.audio.output.voice, and NO
+#          session.updated: the character brief never landed, so the actor
+#          answers the participant as a stock assistant.
+#   nto.gemini-live-2.5-flash  voice="9BWtsMINqrJLrRacOk9x"
+#       -> no error frame at all, and still NO session.updated. The same loss,
+#          with nothing on the wire to notice it by.
+#
+# The same probe with voice="Puck" acked on Gemini and was refused by gpt, and
+# with voice="alloy" acked on gpt and not on Gemini: the rosters are disjoint,
+# so a voice is only ever correct with respect to a model. Hence a roster, and
+# hence membership of it — not the shape of the string — is what decides
+# whether a scenario's voice may be used. An ElevenLabs id is in neither
+# roster, so it cannot reach a session.
+#
+# The rosters themselves are NOT repeated here. Per-model behaviour lives in
+# one named table — REALTIME_FAMILIES in server/voice/realtime.py — so that
+# somebody choosing REALTIME_MODEL can read what that choice implies in a
+# single place, with the evidence for each claim beside it. The two functions
+# below are this module's only door onto that table, and the runner asks no
+# other question about which model it is on.
 
+
+# THE UNANSWERED LINE. The participant's own audio since the last transcript
+# the gateway returned, kept so it can be put in front of the model again
+# when the gateway drops a turn — a create it ignored (reply_missing), or
+# the line in flight when the gateway died under the encounter. Measured
+# live (2026-09-14, second hesitant round): every 1:1 encounter past ~90 s
+# hit a gateway that went silent for good and dropped the socket 22-38 s
+# later; the participant's last line ("Okay." / "Sure, I'll look at it
+# later") was never transcribed, never answered, and the page told them to
+# say it again. Bounded in seconds of raw audio; the replay itself is
+# compacted (silences collapsed, see _replay_speech) and capped shorter.
+REPLAY_KEEP_S = float(os.getenv("REPLAY_KEEP_S", "45"))
+REPLAY_MAX_S = float(os.getenv("REPLAY_MAX_S", "30"))
+REPLAY_PAUSE_MS = int(os.getenv("REPLAY_PAUSE_MS", "600"))
+REPLAY_MIN_SPEECH_MS = int(os.getenv("REPLAY_MIN_SPEECH_MS", "300"))
+# How much of a room member's reply is held back while it is being suppressed
+# for lack of the floor, so that a floor grant arriving mid-reply can relay
+# the line from its first word rather than from wherever the grant landed.
+HELD_AUDIO_MAX_S = float(os.getenv("HELD_AUDIO_MAX_S", "20"))
+
+
+def realtime_model() -> str:
+    """The model every RealtimeVoiceSession in this process will open on.
+
+    Read off the bridge module at call time rather than off a live session: the
+    voice for a character has to be resolved BEFORE the session that will carry
+    it exists, and a half-built session's `model` is not an answer.
+    """
+    return getattr(_realtime, "MODEL", "") or ""
+
+
+def realtime_voices(model: Optional[str] = None) -> List[str]:
+    """The voices `model` accepts, in the order characters are cast into them.
+
+    Empty for a model the table does not cover, so that a character resolves to
+    no voice at all and the refusal happens where it can say something useful —
+    require_capabilities, at connect, naming the model and the table it is
+    missing from — rather than here, inside a turn, as a KeyError.
+    """
+    caps = _realtime.capabilities_for(model or realtime_model())
+    return list(caps.voices) if caps is not None else []
+
+# The actor holds this tool and its brief at the same time, and the brief says
+# "Do not wrap it up early, and never end it yourself unless told to." The old
+# description invited exactly what the brief forbids — "reached its natural end,
+# the matter has been addressed" — so the actor was handed both rules and
+# neither won reliably. Under-calling stalls a segment until the pacing gate
+# moves it; over-calling truncates a scored interaction the moment the argument
+# feels settled, which is routinely several beats before the beats are spent.
+# Both failures are silent in the record.
+#
+# So the two are made to say ONE thing: the only event that ends a segment is
+# the other person ending it — which is what "unless told to" means in
+# practice, so the tool no longer contradicts the brief. The description names
+# the three temptations it must refuse rather than leaving them to inference.
 END_SEGMENT_TOOL = {
     "type": "function",
     "name": "end_conversation",
     "description": (
-        "Call this once this conversation has reached its natural end, the "
-        "matter has been addressed, or the participant has clearly finished. "
-        "Do not mention the tool."
+        "Call this only when the other person has ended the conversation: they "
+        "have said goodbye, said they are done, or walked away. Never call it "
+        "because the matter feels resolved, because there is a pause, or "
+        "because you have nothing more to add. Do not mention the tool."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
@@ -278,6 +477,44 @@ class RealtimeVoiceSessionRunner:
         self.agent_id = self.agent.id
         self.rt: Optional[RealtimeVoiceSession] = None
         self.vad = SilenceDetector()
+        # The runner's own end-of-turn silence is raised to the family's
+        # measured window (REALTIME_FAMILIES, the gemini row): with the gateway
+        # told to wait 1500 ms through a lost participant's mid-thought pause
+        # and the runner still committing at 900 ms, the runner was the thing
+        # that split the turn — "I need more context. [900 ms] What do you
+        # mean?" committed as two turns, answered twice. The env floor
+        # VAD_SILENCE_MS still applies where it is the larger; the gpt row
+        # asks for nothing and keeps the runner's own bar.
+        # ms of sub-bar audio still to hear before a 1:1 turn end the VAD has
+        # marked is acted on; None when no turn end is being held. See
+        # _end_of_turn_confirm_ms and the turn_ended branch of _client_to_model.
+        self._turn_end_pending_ms: Optional[float] = None
+        # True from a room turn being spawned until it has the participant's
+        # transcript to route on. A second turn_ended inside that window (the
+        # runner's bar firing inside a mid-thought pause, then again at the
+        # real end) must not spawn a second routing of the same turn.
+        self._group_turn_waiting = False
+        # Edge-latch on the VAD's barge-in gate: one cancellation per stretch of
+        # participant speech, not one per frame of it. See _client_to_model.
+        self._was_barging = False
+        # The interaction's `opening:` framing, folded into the CONNECT-TIME
+        # brief on a family whose row says a mid-session session.update is
+        # inert (see _fold_opening). Cleared once the actor has spoken under
+        # it. `_opening_agent` scopes it to one member of a room.
+        self._opening_note = ""
+        self._opening_agent: Optional[str] = None
+        # How many 1:1 gateway sessions this encounter has rebuilt after the
+        # GATEWAY closed one (see _reconnect_after_gateway_close).
+        self._reconnects = 0
+        # Participant utterances recorded so far, numbered on the frame the
+        # page gets so two fragments of one thought are two numbered lines.
+        self._user_utterances = 0
+        # Audio actually RELAYED to the participant for the 1:1 turn now
+        # speaking. Counted at the point of delivery, because that is the only
+        # place the question "did they hear this line?" has an answer — the
+        # transcript is whole whatever happens, and so is the assistant WAV.
+        # See server/voice/turn_audio.py.
+        self._turn_audio_bytes = 0
         self._closed = False
         self._agent_text: List[str] = []
         # The buffer of a 1:1 turn that has had its response.done but whose
@@ -305,6 +542,20 @@ class RealtimeVoiceSessionRunner:
         # survived (a discarded corrupt audio chunk). Every one of them is still
         # recorded; see _pump's error branch.
         self._transient_error_notified = False
+        # The console's half of that same restraint, which it did not have:
+        # (source, message) -> the frame already sent for this burst and how
+        # many identical ones have been counted since. Source alone ("model",
+        # "room:<id>", "scribe") is not the key, because two DIFFERENT faults
+        # on one stream are not repeats of each other. The first goes out at
+        # once, the total goes out when the burst ends. See
+        # _encounter_event_soon and _flush_console_repeats.
+        self._console_repeats: dict = {}
+        # Every console frame dispatched off a pump, held for as long as it
+        # takes to send. Session.spawn_auto_steer keeps its tasks in a set for
+        # the same reason: the loop holds only a weak reference to a bare
+        # ensure_future handle, and a frame collected mid-send is a failure
+        # report that vanished with nothing to say it ever existed.
+        self._console_tasks: set = set()
         # Scene note for a session carried across an interaction boundary (see
         # _continuation_note). Held here rather than concatenated onto the one
         # re-brief at the boundary, because nothing speaks at a boundary: the
@@ -330,6 +581,12 @@ class RealtimeVoiceSessionRunner:
         self._last_group_speaker: Optional[str] = None
         self._turn_index = 0
         self._pending_direction: Optional[dict] = None
+        # (agent_id, field, value) for every scenario voice this model cannot
+        # speak, so _note_unusable_voice says it once and not once per switch.
+        self._unusable_voices: set = set()
+        # Latch for the once-per-encounter console line about an actor whose
+        # stage directions are going out unacknowledged. See _deliver_brief.
+        self._unacked_reported = False
         # Every in-flight group-turn task. A fast second participant turn can
         # spawn a new _run_group_turn while a prior one still holds self._floor,
         # so an interaction switch must cancel ALL of them, not just the most
@@ -370,6 +627,17 @@ class RealtimeVoiceSessionRunner:
         # member's turn, empty its buffer and release the floor from outside
         # the pump that owns them.
         self._member_turns: dict = {}
+        # The line each character's in-flight retry is standing in for; see
+        # _retry_reply and _note_retry_outcome.
+        self._retry_lost: dict = {}
+        # The participant's audio since the gateway last returned a
+        # transcript, 1:1 only (see REPLAY_KEEP_S and _replay_speech). Cleared
+        # by every user_transcript, at a character switch, and after a replay.
+        self._replay_pcm = bytearray()
+        # Set when the 1:1 pump has closed a socket ITSELF because the gateway
+        # ignored a request and its retry: _reconnect_after_gateway_close then
+        # rebuilds despite the close being ours, and replays the line.
+        self._rebuild_for_replay = False
         self.room: Optional[GroupRoom] = None
         self._pumps: List[asyncio.Task] = []
         self._floor = asyncio.Lock()
@@ -383,6 +651,7 @@ class RealtimeVoiceSessionRunner:
         # the steering trail then records a stage direction that was withdrawn
         # before it could govern anything.
         self._brief_lock = asyncio.Lock()
+        self._watch_store_for_swallowed_failures()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
     def _instructions(self, director_note: str = "") -> str:
@@ -397,22 +666,15 @@ class RealtimeVoiceSessionRunner:
             self.session.triggered_branches, director_note or None,
             group=self.is_group(),
         )
-        voice_rules = (
-            "\n\nVOICE: You are in a live spoken conversation. Keep every turn "
-            "SHORT: one or two spoken sentences, at most about 25 words, then "
-            "stop and let others respond. Make one point per turn, never a "
-            "list of points. Never monologue. Never read out JSON, markdown, "
-            "or stage directions. The participant speaks English; reply in "
-            "English."
-        )
-        if self.is_group():
-            voice_rules += (
-                "\nMEETING: Several people share this room. If the participant "
-                "addresses someone else by name, stay silent and let them "
-                "answer. Do not repeat or rephrase what another person just "
-                "said, and do not answer every turn: leave room for quieter "
-                "colleagues."
-            )
+        # No VOICE block and no MEETING block are built here any more. They were
+        # a second copy of rules engine.py was already emitting — a tighter
+        # length cap than the mode line above it, a floor rule already in the
+        # group branch — and the two copies disagreed. Both now live in
+        # engine.SPEECH_RULES / engine.MEETING_RULES, which this call has
+        # already placed at the end of `base`, so what the actor reads last
+        # about how to speak is one rule and not three. See the comment on
+        # SPEECH_RULES for what the duplication was measured to cost.
+        #
         # The continuation note rides on EVERY brief while it stands, not just
         # the one issued at the interaction boundary. Attached only at the
         # boundary it never reached the actor: no one speaks there, and the
@@ -423,7 +685,210 @@ class RealtimeVoiceSessionRunner:
         # still open "the deflection ladder" with a fresh greeting. Appended
         # last so a DIRECTOR NOTE, which the briefs add after this, still has
         # the final word.
-        return base + voice_rules + self._scene_note
+        opening = ""
+        note = getattr(self, "_opening_note", "")
+        if note and getattr(self, "_opening_agent", None) in (None, self.agent_id):
+            opening = note
+        room_rule = ""
+        if self.is_group():
+            # Every member's input carries the other characters' fanned-out
+            # audio labelled "user" (see GroupRoom.hear). Measured live
+            # (2026-09-14, S3C, Noor): a member granted the floor right after
+            # another character's line answered THAT line as if it were an
+            # unintelligible participant — the model's stock "I'm sorry, but I
+            # don't think that's quite right based on what I'm hearing. Could
+            # you clarify what you mean?", four times in one turn. Said once
+            # here, for rooms only: what a member hears that is not the
+            # participant is a colleague, and confusion is never voiced.
+            room_rule = (
+                "\n\nThe other people in this room are audible to you. A voice "
+                "that is not the person running the meeting is one of them, not "
+                "something you must answer. Never say that you did not understand "
+                "or did not catch something, never ask anyone to clarify what they "
+                "mean, and never apologise for mishearing: answer the last thing "
+                "that was actually said to you, or stay quiet."
+            )
+        return base + self._scene_note + opening + room_rule
+
+    # ── the framing line, on a family that cannot be steered after connect ──
+    def _steering_is_inert(self, model: Optional[str] = None) -> bool:
+        """True on a family whose row says a mid-session session.update is
+        not honoured — the configured nto.gemini-live-2.5-flash. On such a
+        family the ONLY brief the actor ever reads is the one sent at
+        connect, so anything that has to reach it goes there or nowhere."""
+        caps = _realtime.capabilities_for(model or realtime_model())
+        return caps is not None and not caps.honours_session_update
+
+    def _opening_direction(self, opening: str) -> str:
+        """The direction that makes a room's lead open the scene; see
+        _open_group_scene for why it names the part to be spoken."""
+        return (
+            # No sentence count here: SPEECH_RULES, three lines above this
+            # note in the same prompt, already sets the length of a turn.
+            # A second count in the moment-note is how the prompt grew six
+            # of them.
+            "You speak first and open the scene, in character. Here is "
+            "where the scene is found — "
+            f"{opening} — if that quotes a line of dialogue, say that "
+            "line; otherwise begin from that situation in your own words. "
+            "Never read the description out, and never narrate or describe "
+            "the scene or your own actions: speak only what your character "
+            "says to the people in the room."
+        )
+
+    def _first_reply_note(self, opening: str, agent_name: str = "") -> str:
+        """The 1:1 framing, as a standing note for the actor's FIRST reply.
+
+        In a 1:1 the participant speaks first, so the interaction's `opening:`
+        is not a line the character delivers unprompted — it is what their
+        first reply carries, whatever the participant opened with. Live, with
+        a lost participant ("Hello." / "Good morning." / "What? Hello."), an
+        actor with no framing answered in content-free fragments ("The
+        pack." / "The numbers.") because it had nothing to converse ABOUT;
+        the scene existed on the situation card and nowhere in the room.
+        """
+        # Two shapes of `opening:` in the bank, and the note has to cover
+        # both: S2's are lines the character says ("The pack went out this
+        # morning..."); S1's are a quoted line plus a third-person stage note
+        # ("Next morning you and Drew reach the coffee machine together,
+        # speak, or not."). Live, an actor handed the S1 shape read the stage
+        # note out loud as its first reply, so the note names which part is
+        # to be spoken and forbids narrating the rest, exactly as the group
+        # direction does.
+        if self._opening_is_stage_note(opening, agent_name):
+            # S1's second interactions ("Next morning you and Drew reach the
+            # coffee machine together, speak, or not." / "You run into Sam by
+            # the elevators...") describe the character in the THIRD PERSON
+            # and quote nothing. Handed the general note below, the live
+            # actor read the description out as its first line ("Drew: Next
+            # morning you and Drew reach the coffee machine together, speak,
+            # or not.") — measured 2026-09-14, S1B hesitant run, first Drew
+            # turn. So a note that names the actor and quotes no dialogue is
+            # never put in guillemets, never offered as something to say, and
+            # the first reply is sent to the brief's own opening move instead.
+            return (
+                "\n\nFIRST REPLY, for you alone — never say any of this out loud:\n"
+                "The other person speaks first. Whatever they open with — a "
+                "greeting, a false start, half a sentence, or not much at all — "
+                "your FIRST reply is your own opening move, the one your brief "
+                "describes under how you behave, said in the first person as "
+                "yourself. Where the scene is found, for you only and not to be "
+                f"spoken: {opening} That is a stage note about you, written in "
+                "the third person; it is not a line, so never read it out, never "
+                "narrate it, never describe the scene or your own actions — "
+                "speak only what your character says to the person in front of "
+                "you, then hand the floor back to them. That belongs to your "
+                "first reply ONLY. Their very first utterance is the only first "
+                "one: when they greet you again, say \"what?\", \"hello?\" or "
+                "\"what about it?\", that is NOT a new start — the scene is "
+                "already open and you have already made your opening move, so "
+                "never make it again in any form, not those words and not a "
+                "paraphrase. From your second reply on: answer the thing they "
+                "actually said, in one plain sentence, and if they gave you "
+                "nothing to answer, ask them one question about it — a "
+                "different question each time."
+            )
+        return (
+            "\n\nFIRST REPLY, for you alone — never say any of this out loud:\n"
+            "The other person speaks first. Whatever they open with — a "
+            "greeting, a false start, half a sentence, or not much at all — "
+            f"your FIRST reply is where this scene is found: «{opening}». If "
+            "that quotes a line of dialogue, say that line, in your own words "
+            "if you like; where it describes the situation instead, begin "
+            "from that situation as yourself — never read the description "
+            "out, and never narrate or describe the scene or your own "
+            "actions: speak only what your character says to the person in "
+            "front of you. Then hand the floor back to them. That belongs to "
+            "your first reply ONLY. Their very first utterance is the only "
+            "first one: when they greet you again, say \"what?\", \"hello?\" "
+            "or \"what about it?\", that is NOT a new start — the scene is "
+            "already open and you have already said where you stand, so never "
+            "say it again in any form, not those words and not a paraphrase. "
+            "From your second reply on: answer the thing they actually said, "
+            "in one plain sentence, and if they gave you nothing to answer, "
+            "ask them one question about what they came in to say — a "
+            "different question each time."
+        )
+
+    @staticmethod
+    def _opening_is_stage_note(opening: str, agent_name: str = "") -> bool:
+        """True for an `opening:` that is a description OF the actor rather
+        than a line BY the actor: it names the character in the third person
+        and quotes no dialogue. Mel's "Saw Drew's message last night..." names
+        Drew, not Mel, and is her line; "Next morning you and Drew reach the
+        coffee machine together" names Drew and is a stage note."""
+        if not agent_name:
+            return False
+        if re.search(r'["“”«»]', opening):
+            return False
+        return re.search(r"\b" + re.escape(agent_name) + r"\b", opening) is not None
+
+    def _fold_opening(self, agent, *, group: bool) -> Optional[bool]:
+        """Put the current interaction's `opening:` where this family will
+        actually read it, and write down which way it went.
+
+        Returns True when the framing was folded into the connect-time brief
+        (the actor's session must be built AFTER this call), False when the
+        family honours mid-session updates and the existing path carries it
+        (the t1 beat's cue in 1:1, the opening stage direction in a room),
+        None when the interaction has no `opening:` at all.
+
+        Recorded as `opening_framing` either way, because the two routes are
+        not equally trustworthy and an analyst reading the record has to be
+        able to tell which one this encounter's first line came through.
+        """
+        opening = str(self._interaction().get("opening") or "").strip()
+        if not opening:
+            return None
+        model = realtime_model()
+        folded = self._steering_is_inert(model)
+        if folded:
+            self._opening_note = (self._director_note(self._opening_direction(opening))
+                                  if group else self._first_reply_note(
+                                      opening, getattr(agent, "name", "") or ""))
+            self._opening_agent = agent.id
+        else:
+            self._opening_note = ""
+            self._opening_agent = None
+        self.session.store.event(
+            "opening_framing", agent_id=agent.id, interaction=self._interaction_id(),
+            segment=self.segment, mode="group" if group else "one_to_one",
+            via="connect_brief" if folded else (
+                "stage_direction" if group else "trigger_cue"),
+            model=model, honours_session_update=not folded,
+        )
+        return folded
+
+    def _end_of_turn_confirm_ms(self) -> int:
+        """How much MORE quiet than its own bar the runner must hear before a
+        1:1 turn end is real on the sockets it is feeding now.
+
+        The family's measured gateway window (REALTIME_FAMILIES, the gemini
+        row: 1500 ms) less the runner's own VAD_SILENCE_MS (900). Zero on a
+        family that asks for no window (gpt: server VAD off, the runner's bar
+        is the only turn close, unchanged). Read off the room where there is
+        one, or the live 1:1 session, and only then off the process default —
+        a room can be opened on a model the process is not on.
+        """
+        model = None
+        room = getattr(self, "room", None)
+        if room is not None:
+            model = getattr(room, "model", None)
+        elif getattr(self, "rt", None) is not None:
+            model = getattr(self.rt, "model", None)
+        floor = _realtime.end_of_turn_silence_ms_for(model or realtime_model())
+        return max(0, int(floor or 0) - int(self.vad.silence_ms))
+
+    def _new_session(self, *, instructions: str, voice: str) -> RealtimeVoiceSession:
+        """One 1:1 session, with the family's measured end-of-turn window on
+        it (see REALTIME_FAMILIES and RealtimeVoiceSession.turn_detection)."""
+        rt = RealtimeVoiceSession(
+            instructions=instructions, voice=voice, tools=[END_SEGMENT_TOOL],
+        )
+        window = _realtime.end_of_turn_for(getattr(rt, "model", realtime_model()))
+        if window is not None:
+            rt.turn_detection = window
+        return rt
 
     def is_group(self) -> bool:
         """Group only while the *current* interaction puts several characters in
@@ -525,16 +990,143 @@ class RealtimeVoiceSessionRunner:
             return trig
         return None
 
+    def _director_note(self, direction: str) -> str:
+        """Wrap a stage direction the one way every path in this file wraps it.
+
+        Five call sites used to carry their own copy of the same f-string, so
+        the wording could only ever be improved in four of them.
+
+        What the wording has to do: be read, not spoken. The old
+        "(follow precisely, never mention)" put the actor in the posture of
+        executing a script it must conceal, which is a different mental posture
+        from being a person with a grievance — and it read as production
+        vocabulary handed to someone standing by an elevator. "Never say it out
+        loud" is the part that was load-bearing; keep that and drop the cloak.
+
+        The "DIRECTOR NOTE" marker itself stays: it is the token the runner's
+        own tests look for to prove a beat was briefed, and the steering log a
+        rater reads is keyed to the text that follows it.
+        """
+        return f"\n\nDIRECTOR NOTE, for you alone — never say any of this out loud:\n{direction}"
+
     def _trigger_instruction(self, trigger: dict, *, probing: bool) -> str:
         """Turn a planted trigger into a stage direction for the actor. The cue
         is what should happen next; on_silence is the probe that keeps a silent
-        participant from turning into missing data."""
+        participant from turning into missing data.
+
+        Written in the SECOND person, and it names the actor. The old wording —
+        "Bring about this beat now" over a cue like "Sam defends: 'I did most of
+        the legwork anyway'" — handed Sam a note about Sam in the third person,
+        twenty lines under a brief that forbids both referring to himself in the
+        third person and reading stage directions aloud. The beat still fired in
+        most samples, but the actor was resolving that contradiction on the one
+        turn the whole encounter is scored on. "beat" and "director note" are
+        craft vocabulary besides, handed to someone standing by a lift.
+
+        The wrapper has to read correctly around a cue written either way —
+        "Sam defends: '...'" or "Defend yourself before you have thought about
+        it" — because the cues live in the scenario bank and are not this file's
+        to rewrite. "Your next move, as <name>" frames both as this character's
+        own action without touching a word of the cue itself, which must reach
+        the actor verbatim: it IS the measurement.
+
+        "the participant" is gone from the probe for the same reason it is going
+        everywhere else in the brief: it is the clinical noun for a research
+        subject, and it was sitting in the sentence that asks the actor to be a
+        person who has noticed the other one has stopped talking.
+
+        The PROBE now uses that SAME framing, and that is the whole of the fix
+        below. It used to say "say this now", which assumed `on_silence` was
+        always a quoted line. It was, once. S1 and S2 still write theirs as
+        speakable lines in the character's own register — deliberately, and
+        pinned, so that every participant who freezes at a beat meets the same
+        sentence and what differs between them is their answer and not the
+        prompt. The naturalness round then rewrote S3's and S4's probes into
+        DESCRIBED MOVES — "Read the silence as agreement and say that is the
+        running order then", "They have not answered ... take it as the answer,
+        dryly" — and "say this now: <description of a move>" is an instruction
+        to speak the description.
+
+        Measured on the gateway against the bank as it stood then, one synthetic
+        silent participant throughout, 136 described-move turns per family:
+        nto.gemini-live-2.5-flash leaked nothing (it re-reads the note as a move
+        unprompted); gpt-realtime-2.1 spoke the note back at the person in the
+        room on 10 of 136, three of them unarguable — "They haven't answered."
+        opening a turn in the third person about the participant standing there
+        (S3B t1), "You've said nothing, so I'm not filling the silence" (S3A
+        t2), "the silence makes it worse" (S3A t3). Latent on the configured
+        model, live on the family the study moves to if it wants mid-session
+        steering that works.
+
+        The obvious repair — tell the actor to branch, "if that is a line say
+        it, if it describes a move make it" — was tried FIRST and is the wrong
+        answer, which is worth recording because it looks right. Three branching
+        wordings all closed the leak (0/24 on both families) and all bought it
+        by making the actor deliberate about the note instead of acting on it:
+        recall of the pinned S1/S2 wording fell from 0.86/0.90 (gemini/gpt) to
+        0.44/0.66, and 8 of 36 quoted-line probes were abandoned mid-turn for a
+        generic re-opening of the scene — a probe that fires precisely because
+        there is no other signal, producing no signal. Asking an actor to
+        classify its own direction costs more than the classification is worth.
+
+        "Your next move, as <name>, now, in your own words" is what the probe
+        says instead, because it never names a mode of delivery to get wrong: a
+        line is a thing this character says next, a described move is a thing
+        this character does next, and both are its next move. It needs no branch
+        and asks the actor to decide nothing. It is also the formula the
+        naturalness round drove 3,051 actor turns through on the cue path for
+        zero spoken stage directions, so the probe is no longer the one path in
+        this file still guessing at which style the bank was written in.
+
+        PARALLEL-FORM EQUIVALENCE is what decided it, measured rather than
+        argued: 272 probe turns per wording over every on_silence in the bank,
+        both families, both forms of every pair driven with identical
+        participant input. Under "say this now", S1A's probes were delivered
+        less faithfully than its twin S1B's by 0.115 of pinned-wording recall,
+        95% CI [-0.197, -0.033] — a gap excluding zero, between two forms that
+        are supposed to be interchangeable, in a quantity nobody reading the
+        ESCI scores afterwards could recover. Under this wording the gap is
+        +0.045, CI [-0.156, +0.292], spanning zero. S2A/S2B spans zero under
+        both.
+
+        The cost, stated because it is real and one-sided: on
+        nto.gemini-live-2.5-flash, recall of S1/S2's pinned lines falls 0.926
+        [0.874, 0.971] -> 0.807 [0.724, 0.882], while on gpt-realtime-2.1 it
+        rises 0.962 -> 0.981. Some standardisation of the probe's wording is
+        being traded on the configured model for a form asymmetry that is a
+        confound rather than noise. That is the right way round: S1A's own
+        header already permits paraphrase and pins substance, not words, and a
+        difference between forms is the one kind of variance the design cannot
+        absorb.
+
+        What is NOT claimed: that this alone closed the leak on the current
+        bank. S3's owner fixed it from the other side in the same round, by
+        rewriting S3's probes as "that ..." complements that cannot be spoken as
+        they stand, and against today's bank neither wording leaks unarguably.
+        S4's probes are still plain imperative described moves ("Take the
+        silence for agreement and say you will send it round tonight"), so they
+        are covered by this wrapper and not by that convention — and the content
+        fix holds only while the wrapper keeps saying "say this now", which is
+        the coupling that produced the bug. Both fixes standing is the point.
+        One borderline case survives on both wordings, S4A t4 on gpt (1-2 of
+        32), where the move performed in character and the words describing it
+        coincide: "Silence is agreement. I'll send the schedule around tonight."
+        Its twin S4B t4 produces 0 of 32, so that residue is a content-side
+        asymmetry and belongs to S4A.
+
+        The two clauses that are NOT the cue's are load-bearing and stay. "They
+        have gone quiet" is why this beat is firing at all, and "then stop and
+        let them answer" is the floor returning: a probe carries that beat's own
+        move and never the next beat's work.
+        """
+        name = getattr(self.agent, "name", "") or "you"
         if probing and trigger.get("on_silence"):
             return (
-                f"The participant has not engaged. Probe now, in character, with the "
-                f"substance of: {trigger['on_silence']}"
+                f"They have gone quiet. Your next move, as {name}, now, in "
+                f"your own words, then stop and let them answer: "
+                f"{trigger['on_silence']}"
             )
-        return f"Bring about this beat now, in your own words: {trigger['cue']}"
+        return f"Your next move, as {name}, now, in your own words: {trigger['cue']}"
 
     def _fire_trigger(self, trigger: dict, *, probing: bool) -> str:
         self._fired.append(trigger["id"])
@@ -556,11 +1148,65 @@ class RealtimeVoiceSessionRunner:
     def _voice(self) -> str:
         """Each character keeps one voice for the whole encounter, so a
         participant hears the same person across interactions."""
-        explicit = getattr(self.agent, "voice_id", None) or getattr(self.agent, "realtime_voice", None)
-        if explicit:
-            return explicit
-        idx = next((i for i, a in enumerate(self.cast) if a.id == self.agent_id), 0)
-        return GEMINI_VOICES[idx % len(GEMINI_VOICES)]
+        return self._voice_of(self.agent)
+
+    def _voice_of(self, agent) -> str:
+        """The realtime voice for one character.
+
+        `realtime_voice` is the realtime path's own field and is asked for
+        first. `voice_id` is the v1 cascade's field and is still worth asking:
+        the v3 loader writes Gemini voice names into it (scenarios_v3._VOICES),
+        so honouring it keeps every v3 scenario sounding as its author cast it.
+        But it is ALSO where the group scenarios keep their ElevenLabs ids, and
+        one of those silently costs the session its persona (see the roster
+        comment at the top of this module). So neither field is trusted for
+        being the right field: a value is used when the running model offers
+        that voice, and otherwise the character falls back to its position in
+        the roster, exactly as an uncast character always has.
+
+        The fallback is not silent. A scenario that named a voice this model
+        cannot speak is a casting decision that did not survive the run, and a
+        rater listening for two distinguishable characters should be able to
+        find out why they sound alike.
+        """
+        pool = realtime_voices()
+        if not pool:
+            # A model the capability table does not cover. Naming no voice is
+            # the only safe answer: connect() refuses this model by name a
+            # moment later, and until it does, an invented voice is the one
+            # thing that could turn a loud refusal into a silent session.
+            return ""
+        for field in ("realtime_voice", "voice_id"):
+            named = getattr(agent, field, None)
+            if not named:
+                continue
+            if named in pool:
+                return named
+            self._note_unusable_voice(agent, field, named)
+        idx = next((i for i, a in enumerate(self.cast) if a.id == agent.id), 0)
+        return pool[idx % len(pool)]
+
+    def _note_unusable_voice(self, agent, field: str, named: str) -> None:
+        """Record once that a scenario's voice cannot be used on this model.
+
+        Once, because _voice_of is called on every character switch and on
+        every member of a room, and a line per call would bury the fact it is
+        reporting. The value itself is written: an analyst reading this needs
+        to see that it is an ElevenLabs id rather than a misspelt Gemini name,
+        because those are different repairs to the scenario file.
+        """
+        key = (agent.id, field, named)
+        if key in self._unusable_voices:
+            return
+        self._unusable_voices.add(key)
+        self.session.store.event(
+            "realtime_voice_unusable",
+            agent_id=agent.id,
+            field=field,
+            value=named,
+            model=realtime_model(),
+            offered=realtime_voices(),
+        )
 
     async def _advance_segment(self) -> bool:
         """Move to the next beat. Within a one_to_one_series that means the next
@@ -675,6 +1321,12 @@ class RealtimeVoiceSessionRunner:
         """
         await self._close_room()
         agents = self._resolve_agents()
+        # The scene's framing goes into the LEAD's connect-time brief on a
+        # family that will read no brief after it (see _fold_opening). It has
+        # to happen before the room builds its sessions, because
+        # `instructions_for` is read at connect and never again there.
+        if agents:
+            self._fold_opening(agents[0], group=True)
         room = GroupRoom(
             agents,
             instructions_for=lambda a: self._instructions_for(a),
@@ -691,7 +1343,10 @@ class RealtimeVoiceSessionRunner:
             self.session.store.event(
                 "voice_error", where="open_room",
                 interaction=self._interaction_id(),
-                agents=[a.id for a in agents], message=str(exc),
+                agents=[a.id for a in agents], message=redact_key(str(exc)),
+            )
+            await self._encounter_event(
+                "voice_error", detail=f"open_room: {exc}", severity="error",
             )
             raise
         self.room = room
@@ -762,23 +1417,31 @@ class RealtimeVoiceSessionRunner:
             # the encounter — a turn a rater has to score. So the direction
             # names which part is to be spoken and forbids describing the scene
             # aloud, rather than trusting one wording to cover both kinds.
-            direction = (
-                "You speak first and open the scene, in character, in one or "
-                "two spoken sentences. Here is where the scene is found — "
-                f"{opening} — if that quotes a line of dialogue, say that "
-                "line; otherwise begin from that situation in your own words. "
-                "Never read the description out, and never narrate or describe "
-                "the scene or your own actions: speak only what your character "
-                "says to the people in the room."
-            )
-            instructions = self._instructions_for(lead) + (
-                f"\n\nDIRECTOR NOTE (follow precisely, never mention): {direction}"
-            )
-            await rt.update_instructions(instructions)
+            direction = self._opening_direction(opening)
+            # Two routes, and the record says which. On a family that honours a
+            # mid-session session.update the direction goes out now, as the
+            # brief the lead speaks under, and the floor is a pad+commit+create
+            # like any other grant. On the configured Gemini family that update
+            # is inert AND a commit of pure silence draws no frame at all (5/5
+            # rooms yesterday: the opener was never spoken, `empty_response`,
+            # and the unanswered create left `responding` latched so the next
+            # grant was skipped as "already answering"). There the direction
+            # was folded into the lead's CONNECT brief by _open_room, and the
+            # lead is made to speak by a user text item + response.create,
+            # which drew a full in-character opening 4/4 on the same sessions.
+            folded = (bool(self._opening_note)
+                      and self._opening_agent == lead.id)
+            if folded:
+                instructions = self._instructions_for(lead)
+                acked = None
+            else:
+                instructions = self._instructions_for(lead) + self._director_note(direction)
+                acked = await self._deliver_brief(rt, instructions)
             # The opening line is a director instruction like any other, so it
             # belongs in the steering log; it fires no planted trigger, hence
             # the null trigger_id.
             self._pending_direction = {
+                "acked": acked,
                 "turn": self._turn_index,
                 "segment": self.segment,
                 "interaction": self._interaction_id(),
@@ -790,13 +1453,18 @@ class RealtimeVoiceSessionRunner:
                 "esci": [],
                 "probing": False,
                 "opening": True,
+                "via": "connect_brief" if folded else "session_update",
                 "instructions_sha256": hashlib.sha256(instructions.encode()).hexdigest()[:16],
                 "director_model": (self.director.model if getattr(self, "director", None)
                                    else provenance()["text_model"]),
             }
             self.session.store.event("stage_direction", **self._pending_direction)
             self._response_done.clear()
-            granted = await room.give_floor(lead.id)
+            if folded and hasattr(room, "open_scene"):
+                granted = await room.open_scene(
+                    lead.id, prompt=getattr(_realtime, "SCENE_OPEN_PROMPT", ""))
+            else:
+                granted = await room.give_floor(lead.id)
             if granted is None:
                 # give_floor drops a member whose commit failed but leaves
                 # `speaking` pointing at it; clear it, or every other member's
@@ -842,7 +1510,10 @@ class RealtimeVoiceSessionRunner:
         exc = task.exception()
         if exc is not None:
             self.session.store.event(
-                "voice_error", where="pump", message=str(exc)
+                "voice_error", where="pump", message=redact_key(str(exc))
+            )
+            self._encounter_event_soon(
+                "voice_error", detail=f"pump: {exc}", severity="error"
             )
 
     def _respawn_member_pumps(self) -> None:
@@ -883,12 +1554,19 @@ class RealtimeVoiceSessionRunner:
 
     def _on_group_turn_done(self, task: asyncio.Task) -> None:
         self._group_turn_tasks.discard(task)
+        # However this turn ended, it is no longer waiting for a transcript:
+        # the next turn_ended is a new turn. (_run_group_turn clears this
+        # itself once it has routed; this covers a turn that never got there.)
+        self._group_turn_waiting = False
         if task.cancelled():
             return
         exc = task.exception()
         if exc is not None:
             self.session.store.event(
-                "voice_error", where="group_turn", message=str(exc)
+                "voice_error", where="group_turn", message=redact_key(str(exc))
+            )
+            self._encounter_event_soon(
+                "voice_error", detail=f"group_turn: {exc}", severity="error"
             )
 
     def _cancel_group_turns(self) -> None:
@@ -927,11 +1605,113 @@ class RealtimeVoiceSessionRunner:
             self.agent, self.agent_id = prev, prev.id
 
     def _voice_for(self, agent) -> str:
-        prev, self.agent, self.agent_id = self.agent, agent, agent.id
-        try:
-            return self._voice()
-        finally:
-            self.agent, self.agent_id = prev, prev.id
+        return self._voice_of(agent)
+
+    def _member_voice(self, agent) -> Optional[str]:
+        """The voice a room member is actually speaking with.
+
+        Off the live session where there is one, because that is the only place
+        that knows what the gateway was given; resolved the same way it was
+        chosen otherwise, for a member whose session has already gone.
+        """
+        rt = self.room.session_for(agent.id) if self.room is not None else None
+        return getattr(rt, "voice", None) or self._voice_of(agent)
+
+    # ── did the brief actually arrive? ─────────────────────────────────────
+    async def _deliver_brief(self, rt, instructions: str) -> Optional[bool]:
+        """Send a brief and answer whether the PLATFORM said it arrived.
+
+        Every director path in this file — a planted beat, the opening of a
+        group scene, a character switch, the steering re-brief — reaches the
+        actor by one route: a mid-session session.update carrying the persona
+        with the stage direction appended to it. The record was written when
+        that send returned, which is to say when the bytes left this process,
+        and that is not the same claim at all.
+
+        On the Cornell gateway, probed 2026-09-10: gpt-realtime-2.1 answers a
+        mid-session session.update with a session.updated frame, twice out of
+        two. nto.gemini-live-2.5-flash answers the session.update sent at
+        connect and answers nothing after it — three mid-session frames, zero
+        acknowledgements, no error. So on the model the study is configured for
+        today, every stage direction this file writes down as delivered was
+        delivered to a socket and to nothing beyond it.
+
+        Which is why the answer here has three values and not two. True is the
+        platform acknowledging the update. False is the platform declining to,
+        having been asked — a direction the actor demonstrably did not receive.
+        None is this bridge being unable to tell, which is not the same as
+        either and must not be recorded as one; an analyst reading a steering
+        log has to be able to separate a direction that landed from one that
+        did not, and neither from one nobody checked.
+
+        The ack itself belongs to the bridge, not to the runner, so it is read
+        off whatever the bridge offers: a truthy/falsey return from
+        update_instructions, or a `last_update_acked` attribute beside it. A
+        bridge with neither yields None, which is the honest answer for it.
+        """
+        ack = await rt.update_instructions(instructions)
+        if not isinstance(ack, bool):
+            ack = getattr(rt, "last_update_acked", None)
+        if not isinstance(ack, bool):
+            return None
+        if ack is False:
+            await self._report_unacked_steering()
+        return ack
+
+    async def _report_unacked_steering(
+        self, *, agent_id: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> None:
+        """Date, once, the moment this actor stopped receiving its directions.
+
+        Once per encounter: on a model that acknowledges no mid-session update
+        this is every direction, and a row per turn would bury the one fact it
+        is there to carry. That fact is worth carrying because the encounter
+        looks entirely healthy from every other angle — the actor talks, the
+        participant is heard, the steering panel moves — while the planted
+        beats that make the encounter scoreable are not reaching the actor and
+        the session is being spent for nothing.
+
+        Written to the record only. This belongs on the researcher's live
+        channel as well, and _encounter_event is right there, but a kind with
+        no label in static/researcher.html reaches a watching researcher as a
+        raw event name — which two tests in test_final_console.py exist to
+        prevent, from both sides. Adding `steer_unacked` to ENC_EVENT_LABEL is
+        the other half of this, in a file this change does not own.
+
+        WHICH MODEL, AND WHICH ACTOR. Both are arguments now, defaulting to
+        what this method already assumed. The default answer — the runner's
+        current character, and the model the PROCESS is on — is the right one
+        on the 1:1 path and only there. A room is opened on ITS model, which
+        need not be the process default (that is the whole of GroupRoom's
+        `model=`), and the actor a direction failed to reach is a named member
+        rather than whoever the runner happens to be pointing at between turns.
+        A row that named the wrong model here would be the most misleading line
+        in the file: it is the one an analyst reads to find out which family
+        the encounter was unsteered on.
+        """
+        if self._unacked_reported:
+            return
+        self._unacked_reported = True
+        model = model or realtime_model()
+        self.session.store.event(
+            "steer_unacked", agent_id=agent_id or self.agent_id,
+            segment=self.segment, model=model,
+        )
+        # And onto the researcher's live strip, which is the half the docstring
+        # above said was missing. The record alone is not enough for this one:
+        # every other symptom of an unsteered encounter is invisible while it
+        # runs — the audio is fine, the transcript is fine, the planted beats
+        # are all logged as fired — so a researcher watching has nothing else
+        # that could tell them the encounter they are collecting is worthless.
+        # severity "error" rather than "warn" because there is no degraded
+        # version of this: the independent variable is either reaching the actor
+        # or it is not.
+        self._encounter_event_soon(
+            "steer_unacked", agent_id=agent_id or self.agent_id,
+            severity="error",
+            detail=f"{model} did not acknowledge the stage direction",
+        )
 
     async def _pump_member(self, agent, rt) -> None:
         """Relay one character's events, fully self-contained.
@@ -967,12 +1747,22 @@ class RealtimeVoiceSessionRunner:
         # stop waiting instead of inferring completeness from a second of
         # silence. Replaced with a fresh Event at each announce, because the one
         # the previous finalize is holding must not be set by this reply's line.
+        #
+        # `held` is the transcript of a reply that was being suppressed when it
+        # gained the floor — the head of a line whose body the participant is
+        # about to hear. See the suppression branch below.
         state = {"announced": False, "suppressing": False, "barged_in": False,
-                 "finalized": False, "settled": asyncio.Event()}
+                 "finalized": False, "settled": asyncio.Event(), "held": [],
+                 "audio_bytes": 0, "held_audio": bytearray()}
+        held_audio_cap = int(HELD_AUDIO_MAX_S * _realtime.CLIENT_RATE) * 2
         # Published for the duration of this pump so the barge-in path can
         # reach this member's open turn; dropped in the finally so a dead
         # pump's buffer is never finalized.
         self._member_turns[agent.id] = (buf, state)
+        # See _pump_events: the bridge's audio-absent clock is held while the
+        # participant is talking, and the runner's VAD is the only thing that
+        # knows. Members share the one microphone, so they share the one hook.
+        rt.participant_speaking = lambda: bool(self.vad.active_within())
         try:
             async for ev in rt.events():
                 etype = ev["type"]
@@ -982,7 +1772,26 @@ class RealtimeVoiceSessionRunner:
                 # holding the floor may be heard; unsolicited responses are
                 # cancelled and their events discarded, or the room becomes
                 # three people talking over each other.
-                has_floor = self.room is None or self.room.speaking == agent.id
+                #
+                # `state["announced"]` counts as holding the floor, and that is
+                # a fix, not a shortcut. `announced` is set on the first frame of
+                # this reply that was RELAYED — so it can only be True for a
+                # reply that had the floor when it started and that the
+                # participant is, at this instant, listening to. Suppressing such
+                # a reply because the floor moved underneath it does not stop
+                # the character being heard: it amputates the tail of a sentence
+                # already half-spoken, mid-word, and then drops the rest of the
+                # text so the record does not even show what was lost. Measured
+                # live on this branch: 2 of 19 relayed group turns, one of them
+                # written to the record as "I just want to". The floor moves
+                # between turns, so the overlap this allows is bounded by the
+                # reply that was already playing, and the one path that MUST
+                # still be able to cut a character off mid-sentence — the
+                # participant interrupting — does not come through here at all
+                # (see _client_to_model, which cancels the speaker directly).
+                has_floor = (self.room is None
+                             or self.room.speaking == agent.id
+                             or state["announced"])
 
                 # If this agent gained the floor mid-response, stop suppressing:
                 # the rest of the response is legitimately theirs to relay, and
@@ -991,6 +1800,71 @@ class RealtimeVoiceSessionRunner:
                 # the room for the full turn timeout.
                 if state["suppressing"] and has_floor:
                     state["suppressing"] = False
+                    if etype not in ("agent_audio", "agent_transcript_delta",
+                                     "agent_transcript"):
+                        # The floor arrived on the way OUT of this reply — its
+                        # response_done, or an error. Nothing more of it will be
+                        # relayed, so there is no turn for the held words to
+                        # belong to, and announcing one here would put a line
+                        # the participant never heard into the transcript.
+                        state["held"] = []
+                    # The head of this line, spoken before the floor reached it.
+                    # It used to be dropped, and the turn was then written with
+                    # text="" and transcript_missing True while 1.5 s of the
+                    # character's voice played — a flag that tells a rater "the
+                    # audio played and its text was lost" hung on a line the
+                    # runner was holding all along. Measured live: g3
+                    # s_1789350511_879452 at t=66.98. Put it back at the front of
+                    # the turn, and on the participant's screen, in the same
+                    # order it was said.
+                    held = "".join(state["held"])
+                    state["held"] = []
+                    held_audio = bytes(state["held_audio"])
+                    state["held_audio"] = bytearray()
+                    if etype not in ("agent_audio", "agent_transcript_delta",
+                                     "agent_transcript"):
+                        held_audio = b""
+                    if held or held_audio:
+                        if not state["announced"]:
+                            state["announced"] = True
+                            state["barged_in"] = False
+                            state["finalized"] = False
+                            state["settled"] = asyncio.Event()
+                            await self._send({
+                                "type": "assistant_started",
+                                "agent_id": agent.id,
+                                "agent_name": agent.name,
+                            })
+                    if held:
+                        buf.append(held)
+                        await self._send({
+                            "type": "assistant_text_delta",
+                            "text": held,
+                            "agent_id": agent.id,
+                        })
+                    if held_audio:
+                        # THE HALF-SECOND OF BEX (measured live 2026-09-14,
+                        # S3C): the gateway delivers a reply many times faster
+                        # than real time, so by the time the director's grant
+                        # reached a member whose reply had auto-started, most
+                        # of its audio had already gone past this pump and
+                        # been thrown away — 13.0 s came from the gateway,
+                        # 0.5 s reached the page (agent_audio_short, delivered
+                        # fraction 0.051), under a 29-word caption. The head
+                        # of the line is held now, like its words, and put out
+                        # first, so the participant hears the sentence the
+                        # caption shows.
+                        self.session.store.append_assistant_audio(
+                            held_audio, agent_id=agent.id)
+                        state["audio_bytes"] = (state.get("audio_bytes", 0)
+                                                + len(held_audio))
+                        await self._send_bytes(held_audio)
+                        if self.room:
+                            await self.room.hear(held_audio, exclude=agent.id)
+                        self.session.store.event(
+                            "held_audio_relayed", agent_id=agent.id,
+                            segment=self.segment,
+                            audio_ms=len(held_audio) // 32)
 
                 if etype in ("agent_audio", "agent_transcript_delta",
                              "agent_transcript") and not has_floor:
@@ -1004,6 +1878,21 @@ class RealtimeVoiceSessionRunner:
                             await rt.cancel_response()
                         except Exception:  # noqa: BLE001
                             pass
+                    # Kept, not relayed: if the floor reaches this reply before
+                    # it ends, this is the only copy of its opening words. The
+                    # cap is there because a suppressed reply can run for as long
+                    # as the gateway wants to talk, and an unbounded list on a
+                    # per-member pump is a leak with a 45-minute encounter to
+                    # grow in.
+                    if etype in ("agent_transcript_delta", "agent_transcript"):
+                        if etype == "agent_transcript":
+                            state["held"] = [ev["text"]]
+                        elif len(state["held"]) < 400:
+                            state["held"].append(ev["text"])
+                    elif len(state["held_audio"]) < held_audio_cap:
+                        # The voice of the held words, for the same reason and
+                        # under the same cap in seconds (HELD_AUDIO_MAX_S).
+                        state["held_audio"] += ev["pcm"]
                     continue
 
                 if etype == "agent_audio":
@@ -1021,11 +1910,33 @@ class RealtimeVoiceSessionRunner:
                             "agent_name": agent.name,
                         })
                     self.session.store.append_assistant_audio(ev["pcm"], agent_id=agent.id)
+                    state["audio_bytes"] = state.get("audio_bytes", 0) + len(ev["pcm"])
                     await self._send_bytes(ev["pcm"])
                     if self.room:
                         await self.room.hear(ev["pcm"], exclude=agent.id)
 
                 elif etype == "agent_transcript_delta":
+                    if ev.get("first") and state["finalized"] and buf:
+                        # THE DOUBLED CAPTION (measured live 2026-09-14, S3C,
+                        # Rafa): the gateway answered one participant turn
+                        # twice, 1.5 s apart — the reply it auto-fired and the
+                        # one the floor grant's commit drew — and the second
+                        # reply's opening chunk landed while the first was
+                        # still being written, so it was read as the first
+                        # one's late transcript and appended to it: the page
+                        # showed the line twice in one bubble, then an empty
+                        # bubble under the second reply's audio. The bridge
+                        # marks a reply's opening chunk (`first`); one that
+                        # opens on a buffer a finalize already owns is a new
+                        # reply, and gets a buffer and a turn of its own. The
+                        # finalize keeps the list it was handed.
+                        buf = []
+                        self._member_turns[agent.id] = (buf, state)
+                        state["finalized"] = False
+                        state["announced"] = False
+                        self.session.store.event(
+                            "second_reply_split", agent_id=agent.id,
+                            segment=self.segment)
                     if not state["announced"] and not buf:
                         # An EMPTY buffer is what makes this delta the start of
                         # a NEW reply rather than the closing one's transcript
@@ -1061,12 +1972,25 @@ class RealtimeVoiceSessionRunner:
                             "agent_id": agent.id,
                             "agent_name": agent.name,
                         })
-                    buf.append(ev["text"])
+                    text = _resume_seam(buf, ev)
+                    buf.append(text)
                     await self._send({
                         "type": "assistant_text_delta",
-                        "text": ev["text"],
+                        "text": text,
                         "agent_id": agent.id,
                     })
+
+                elif etype == "reply_missing":
+                    # This member was asked to speak (a floor grant, the scene
+                    # open) and the gateway never began the reply. See the 1:1
+                    # branch in _pump_events. The floor is released when the
+                    # turn is NOT re-asked for, so the room's 45 s wait is
+                    # never spent on a reply that is known not to be coming.
+                    holds = self.room is None or self.room.speaking == agent.id
+                    retried = await self._reply_missing(
+                        rt, agent.id, ev, has_floor=holds)
+                    if holds and not retried:
+                        self._response_done.set()
 
                 elif etype == "agent_transcript":
                     # The gateway's own end-of-transcript event, carrying the
@@ -1120,6 +2044,13 @@ class RealtimeVoiceSessionRunner:
                             "agent_name": agent.name,
                         })
                     buf[:] = [ev["text"]]
+                    if state["announced"]:
+                        # The line as the gateway says it was spoken, to the
+                        # page as well as the record; see the 1:1 branch.
+                        await self._send({
+                            "type": "assistant_text_final",
+                            "text": ev["text"], "agent_id": agent.id,
+                        })
                     # The gateway has declared this reply's transcript complete,
                     # so a finalize already grace-waiting on it can stop now
                     # instead of inferring the same thing from a second of
@@ -1128,6 +2059,11 @@ class RealtimeVoiceSessionRunner:
                     # signal. See _await_transcript.
                     state["settled"].set()
 
+                elif etype == "transcript_restreamed":
+                    self.session.store.event(
+                        "transcript_restreamed", agent_id=agent.id,
+                        segment=self.segment)
+
                 elif etype == "user_transcript":
                     # Member sessions hear the other characters too, so their
                     # input transcription mixes agent speech into the "user"
@@ -1135,9 +2071,40 @@ class RealtimeVoiceSessionRunner:
                     continue
 
                 elif etype == "response_done":
+                    # A reply boundary, which is the burst boundary for this
+                    # member's console frames too: whatever went wrong during
+                    # the reply is now a finished thing with a total, and the
+                    # next reply's first fault is news again. Before any of the
+                    # early continues below, because every one of them still
+                    # ends this reply.
+                    self._flush_console_repeats(f"room:{agent.id}")
+                    if ev.get("stale"):
+                        # A late done for a reply this pump has already closed
+                        # out (see _pump's stale branch). It may clear a latch
+                        # held on that reply; it never finalises, retries, or
+                        # ends the reply now streaming.
+                        if state["suppressing"]:
+                            state["suppressing"] = False
+                            buf.clear()
+                            state["held"] = []
+                            state["held_audio"] = bytearray()
+                        elif state["barged_in"]:
+                            state["barged_in"] = False
+                            if self.room is None or self.room.speaking == agent.id:
+                                self._response_done.set()
+                        elif state["finalized"]:
+                            state["finalized"] = False
+                            if self.room is None or self.room.speaking == agent.id:
+                                self._response_done.set()
+                        continue
                     if state["suppressing"]:
                         state["suppressing"] = False
                         buf.clear()
+                        # This reply ended while still suppressed, so its held
+                        # opening words belong to nothing and must not be
+                        # prepended to whatever this character says next.
+                        state["held"] = []
+                        state["held_audio"] = bytearray()
                         continue
                     if state["barged_in"]:
                         # The participant talked over this reply and
@@ -1175,6 +2142,29 @@ class RealtimeVoiceSessionRunner:
                         if self.room is None or self.room.speaking == agent.id:
                             self._response_done.set()
                         continue
+                    if ev.get("retry_reason") and state["announced"]:
+                        # The gateway lost this member's voice. One retry, and
+                        # only for the character who still holds the floor at
+                        # this instant: `room.speaking` is read here, strictly,
+                        # not the `announced` leniency has_floor allows above.
+                        # That leniency lets a reply the participant is already
+                        # hearing finish; a retry is a NEW response.create, and
+                        # issued to a member the director has moved on from it
+                        # would talk over whoever holds the floor now. A reply
+                        # the participant barged in on never reaches here: the
+                        # bridge withholds retry_reason for one it was told to
+                        # cancel, and `barged_in` was swallowed above.
+                        if await self._retry_reply(
+                                rt, agent.id, ev,
+                                has_floor=(self.room is None
+                                           or self.room.speaking == agent.id)):
+                            # The turn stays open on the page and in this pump
+                            # (`announced` is left up); its text and audio start
+                            # over, exactly as the 1:1 path does.
+                            buf.clear()
+                            state["audio_bytes"] = 0
+                            state["held"] = []
+                            continue
                     # Finalise OFF the pump: the gateway can deliver transcript
                     # deltas after response.done, and sleeping here would stop
                     # the async-for that fills buf. The task shares buf/state and
@@ -1182,6 +2172,8 @@ class RealtimeVoiceSessionRunner:
                     announced_now = state["announced"]
                     state["announced"] = False
                     state["finalized"] = True
+                    audio_now = state.get("audio_bytes", 0)
+                    state["audio_bytes"] = 0
                     # Tracked like the 1:1 finalizes, so run()'s teardown can
                     # wait for a turn that is still settling instead of closing
                     # the store out from under it and dropping the last line of
@@ -1197,6 +2189,10 @@ class RealtimeVoiceSessionRunner:
                             # transcript that a dead session will never send.
                             interrupted=bool(ev.get("interrupted")),
                             settled=state["settled"],
+                            audio_bytes=audio_now,
+                            audio_unterminated=bool(
+                                ev.get("audio_unterminated")),
+                            retried=bool(ev.get("retried")),
                         )
                     )
 
@@ -1223,8 +2219,19 @@ class RealtimeVoiceSessionRunner:
                     continue
 
                 elif etype == "error":
+                    # Recorded per occurrence, reported to the console per
+                    # burst, and never awaited here: this loop relays this
+                    # character's audio to the participant a few lines above,
+                    # so a researcher socket awaited here would sit on the
+                    # participant's audio path once per member of the room.
                     self.session.store.event(
-                        "voice_error", where=f"room:{agent.id}", message=ev["message"]
+                        "voice_error", where=f"room:{agent.id}",
+                        message=redact_key(ev["message"]),
+                    )
+                    self._voice_error_soon(
+                        source=f"room:{agent.id}", gateway_text=ev["message"],
+                        transient=bool(ev.get("transient")),
+                        agent_id=agent.id,
                     )
         except asyncio.CancelledError:
             return
@@ -1236,10 +2243,16 @@ class RealtimeVoiceSessionRunner:
             if self._member_turns.get(agent.id) is not None and \
                     self._member_turns[agent.id][0] is buf:
                 del self._member_turns[agent.id]
+            # A burst still being counted when this pump ends must not die with
+            # it. The stream that was failing is exactly the one whose total a
+            # researcher never got to see otherwise.
+            self._flush_console_repeats(f"room:{agent.id}")
 
     async def _finalize_member_async(self, agent, buf: List[str], announced: bool,
                                      *, interrupted: bool = False,
-                                     settled=None) -> None:
+                                     settled=None, audio_bytes: int = 0,
+                                     audio_unterminated: bool = False,
+                                     retried: bool = False) -> None:
         """Grace-wait for a member's transcript, then close the turn.
 
         Runs as its own task so the pump's async-for keeps advancing and can
@@ -1306,7 +2319,10 @@ class RealtimeVoiceSessionRunner:
             if self.room is None or self.room.speaking == agent.id:
                 self._response_done.set()
             return
-        await self._finalize_member(agent, text, interrupted=interrupted)
+        await self._finalize_member(agent, text, interrupted=interrupted,
+                                    audio_bytes=audio_bytes,
+                                    audio_unterminated=audio_unterminated,
+                                    retried=retried)
 
     async def _advance_from_tool(self) -> None:
         """Advance the encounter from a room member's end_conversation call."""
@@ -1315,7 +2331,12 @@ class RealtimeVoiceSessionRunner:
                 await self._send({"type": "encounter_complete"})
         except Exception as exc:  # noqa: BLE001
             self.session.store.event(
-                "voice_error", where="advance_from_tool", message=str(exc)
+                "voice_error", where="advance_from_tool",
+                message=redact_key(str(exc)),
+            )
+            await self._encounter_event(
+                "voice_error", detail=f"advance_from_tool: {exc}",
+                severity="error",
             )
 
     async def _pump_scribe(self, rt) -> None:
@@ -1339,27 +2360,87 @@ class RealtimeVoiceSessionRunner:
         the record from asserting words nobody spoke.
         """
         cancelled = False
+        # True from the moment this reply has been told to stop until its
+        # response_done. See the cancel branch below.
+        stopping = False
         try:
             async for ev in rt.events():
                 etype = ev.get("type")
                 if etype == "user_transcript":
-                    await self._record_user_turn(ev["text"])
+                    await self._record_user_turn(
+                        ev["text"], garbled=bool(ev.get("garbled")))
                 elif etype in ("agent_audio", "agent_transcript_delta",
                                "agent_transcript"):
-                    try:
-                        await rt.cancel_response()
-                    except Exception:  # noqa: BLE001
-                        pass
+                    # Discarded either way — the `elif` is what keeps the scribe
+                    # out of the participant's ears. The cancel is only there to
+                    # stop the gateway generating the rest of a reply nobody
+                    # will hear, so it is sent while there is a reply to stop
+                    # and not once per frame of one.
+                    #
+                    # Unguarded this was a no-op for as long as nothing ever
+                    # closed the scribe's buffer: a channel that is never
+                    # committed is never answered, so there was nothing to
+                    # cancel and nothing to see. Now that the participant's turn
+                    # IS closed here (see _client_to_model), the scribe answers
+                    # every turn, and one cancel per transcript frame put four
+                    # or five `response_cancel_not_active` errors per
+                    # participant turn into events.jsonl and onto the
+                    # researcher console — 16 of them across three turns,
+                    # measured on gpt-realtime-2.1 — which is a real channel's
+                    # error stream filled with noise from a channel that is
+                    # working correctly.
+                    #
+                    # Two conditions, because the session's own flag is not
+                    # enough on its own. `responding` is down for a whole-line
+                    # `agent_transcript` that lands after response.done — there
+                    # is genuinely no reply left to cancel there — but it comes
+                    # straight back UP on the next delta, because events() sets
+                    # it on every response delta, auto-fired or asked for,
+                    # before the event is yielded. A cancelled reply keeps
+                    # delivering deltas on BOTH families (44 more were measured
+                    # after one cancel on Gemini; on gpt-realtime the tail is
+                    # shorter but real), so the flag alone still sent a cancel
+                    # per delta and still drew two or three errors per turn.
+                    # `stopping` is therefore a per-reply latch, cleared at
+                    # response_done below, exactly as _pump_member's
+                    # `suppressing` latch is: one cancel per reply, and the
+                    # rest of that reply is simply dropped on the floor, which
+                    # is all the pump was ever relying on.
+                    if rt.responding and not stopping:
+                        stopping = True
+                        try:
+                            await rt.cancel_response()
+                        except Exception:  # noqa: BLE001
+                            pass
                 elif etype == "response_done":
                     rt.clear_response_state()
+                    # Reply boundary: this reply is over, so the next one is
+                    # allowed its own single cancel. A latch that outlived its
+                    # response would leave the scribe generating a whole reply
+                    # unchecked.
+                    stopping = False
+                    # Reply boundary: close out any burst of console frames the
+                    # scribe's stream was producing, the same way the other two
+                    # pumps do.
+                    self._flush_console_repeats("scribe")
                 elif etype == "error":
+                    # Per-occurrence in the record, per-burst on the console,
+                    # and dispatched rather than awaited — the participant's
+                    # transcript is relayed from this same loop.
                     self.session.store.event(
-                        "voice_error", where="scribe", message=ev["message"]
+                        "voice_error", where="scribe",
+                        message=redact_key(ev["message"]),
+                    )
+                    self._voice_error_soon(
+                        source="scribe", gateway_text=ev["message"],
+                        transient=bool(ev.get("transient")),
                     )
         except asyncio.CancelledError:
             cancelled = True
             return
         finally:
+            # Whatever the stream was doing when it ended, the count goes out.
+            self._flush_console_repeats("scribe")
             # A cancel is _close_room tearing the room down deliberately, which
             # is not a lost channel; anything else is the socket going away
             # under a live encounter, which is.
@@ -1369,19 +2450,46 @@ class RealtimeVoiceSessionRunner:
                     "scribe_pump_ended", segment=self.segment,
                     interaction=self._interaction_id(),
                 )
+                # The participant is still audible to nobody but the WAV from
+                # here on, and on the console their transcript simply stops. A
+                # researcher who sees this can end the encounter; one who does
+                # not watches a participant apparently fall silent for the rest
+                # of it, which is a rateable ESCI behaviour.
+                #
+                # Dispatched, not awaited, so that it queues BEHIND the burst
+                # total the flush above just dispatched. Awaiting it here put
+                # the channel's death on the strip above the count of the
+                # errors that killed the channel — researcher.html renders in
+                # arrival order and the two frames share a `t`, so nothing
+                # downstream could put them back in the order they happened.
+                self._encounter_event_soon(
+                    "scribe_pump_ended",
+                    detail="the room's participant transcription channel ended; "
+                           "no participant turns will be recorded from here",
+                    severity="error",
+                )
                 await self._send({
                     "type": "error",
                     "message": "The transcription channel was lost.",
                 })
 
     async def _finalize_member(self, agent, text: str,
-                               *, interrupted: bool = False) -> None:
+                               *, interrupted: bool = False,
+                               audio_bytes: int = 0,
+                               audio_unterminated: bool = False,
+                               retried: bool = False) -> None:
         """Close one character's turn in a group room."""
         text = _clean_agent_text(text)
-        await self._finalize_member_inner(agent, text, interrupted=interrupted)
+        await self._finalize_member_inner(agent, text, interrupted=interrupted,
+                                          audio_bytes=audio_bytes,
+                                          audio_unterminated=audio_unterminated,
+                                          retried=retried)
 
     async def _finalize_member_inner(self, agent, text: str,
-                                     *, interrupted: bool = False) -> None:
+                                     *, interrupted: bool = False,
+                                     audio_bytes: int = 0,
+                                     audio_unterminated: bool = False,
+                                     retried: bool = False) -> None:
         """Close one character's turn in a group room.
 
         This was lost in a refactor once, and the symptom was total: every pump
@@ -1391,6 +2499,7 @@ class RealtimeVoiceSessionRunner:
         `interrupted` marks a turn the participant talked over, exactly as
         _finalize_turn marks it in a 1:1 encounter.
         """
+        text, retry_head = self._retry_head_if_empty(agent.id, text, retried)
         # Read the slot ONCE. It used to be read here for the `opening` test and
         # again below for the pairing, with an await between, so a brief that
         # landed in between paired this line with somebody else's direction.
@@ -1424,8 +2533,12 @@ class RealtimeVoiceSessionRunner:
         if not (direction or {}).get("opening"):
             self._turns_this_interaction += 1
         # The actor has now spoken under the continuation note, which says "do
-        # not greet again" — a one-off instruction, not a standing one.
+        # not greet again" — a one-off instruction, not a standing one. The
+        # lead's folded opening (see _fold_opening) is spent the same way.
         self._scene_note = ""
+        if self._opening_agent == agent.id:
+            self._opening_note = ""
+            self._opening_agent = None
 
         if text:
             self.session.append_agent(agent.id, text)
@@ -1441,15 +2554,41 @@ class RealtimeVoiceSessionRunner:
             self.session.store.event(
                 "transcript_missing", agent_id=agent.id, segment=self.segment
             )
+            # The transcript broadcast above is inside `if text`, so a turn
+            # that produced no text used to put nothing on the researcher's
+            # screen at all: the character just went quiet, which reads as them
+            # choosing not to speak rather than as the transcript being lost.
+            # Say which it is while the encounter can still be stopped.
+            await self._encounter_event(
+                "transcript_missing", agent_id=agent.id,
+                detail="the character spoke and no transcript arrived",
+            )
         # Once the scribe is gone there is no participant channel, and repeating
         # the last utterance it managed to hear would make the record assert
         # that the participant said a specific sentence immediately before turns
         # they said nothing before. Say the channel was lost instead.
         self.session.store.event(
             "steering_pair",
+            # Where this turn happened, stated on the TURN.
+            #
+            # It used to be carried only inside `direction`, and encounter_record
+            # still reads it from there, so an actor turn that ran without a
+            # stage direction arrived in the record with segment and interaction
+            # both null. That is not a rare turn: an interaction's beats are
+            # finite, and every turn after the last one is spent runs unsteered,
+            # so the tail of every interaction loses its attribution — reliably,
+            # and in the half of the record a rater reads by segment. Which
+            # interaction a line belongs to is a fact about when it was spoken,
+            # not about whether anyone was directing at the time.
+            segment=self.segment,
+            interaction=self._interaction_id(),
             direction=direction,
             actor={"agent_id": agent.id, "text": text,
-                   "voice": getattr(agent, "voice_id", None),
+                   # What the session was actually speaking with, not the
+                   # scenario's `voice_id` — which on a group scenario is an
+                   # ElevenLabs id that never reached the gateway, so the record
+                   # named a voice the participant certainly did not hear.
+                   "voice": self._member_voice(agent),
                    "transcript_missing": not text,
                    # Recording the turn is only half of it: a barge-in turn is
                    # a fragment of what the actor was briefed to say, and a
@@ -1463,11 +2602,20 @@ class RealtimeVoiceSessionRunner:
         # belonging to a character who has not spoken yet keeps waiting for them.
         if direction is not None and direction is self._pending_direction:
             self._pending_direction = None
+        delivered_ms = turn_audio.audio_ms(audio_bytes)
         self.session.store.event(
             "assistant_turn", agent_id=agent.id, text=text,
             segment=self.segment, transcript_missing=not text,
-            interrupted=interrupted,
+            interrupted=interrupted, retry_head=retry_head,
+            # See _finalize_turn, and server/voice/turn_audio.py.
+            audio_ms=delivered_ms,
         )
+        if not interrupted:
+            self._note_audio_shortfall(agent.id, text, delivered_ms,
+                                       audio_unterminated)
+        if retried:
+            self._note_retry_outcome(agent.id, text, delivered_ms,
+                                     interrupted, audio_unterminated)
         await self._send({"type": "assistant_done", "agent_id": agent.id})
         # Measure the idle window from the end of this reply, not the
         # participant's last utterance, so the watchdog does not probe the
@@ -1482,8 +2630,21 @@ class RealtimeVoiceSessionRunner:
     def agent_order(self) -> List[str]:
         return [a.id for a in self._resolve_agents()]
 
-    async def _record_user_turn(self, text: str) -> None:
+    async def _record_user_turn(self, text: str, *, garbled: bool = False) -> None:
+        """Record one participant utterance, once, as said.
+
+        `garbled` is the bridge saying the transcriber dropped part of this
+        line (its "{}" placeholder; see voice/realtime.py). A line that was
+        NOTHING but placeholders arrives with empty text: the participant
+        spoke and none of it was transcribed, which the record says as
+        `user_turn_untranscribed` rather than saying nothing at all.
+        """
         if not text:
+            if garbled:
+                self.session.store.event(
+                    "user_turn_untranscribed", channel="voice",
+                    segment=self.segment,
+                )
             return
         now = time.time()
         norm = _norm_speech(text)
@@ -1539,16 +2700,21 @@ class RealtimeVoiceSessionRunner:
             return
         self._last_user_norm, self._last_user_at = norm, now
         self._last_user_text = text
+        self._user_utterances += 1
         self.session.append_user(text)
         unclear = _script_mismatch(text)
         self.session.store.event(
-            "user_turn", text=text, channel="voice", script_mismatch=unclear
+            "user_turn", text=text, channel="voice", script_mismatch=unclear,
+            utterance=self._user_utterances, garbled=garbled,
         )
         # The research record keeps the raw text (retranscribe repairs it
         # offline); the participant only sees a neutral caption, since a line
-        # of foreign script reads as "the app is broken".
+        # of foreign script reads as "the app is broken". `utterance` numbers
+        # the line, so a page that consolidates captions can tell a second
+        # utterance from the continuation of one.
         await self._send({
             "type": "user_transcript", "text": text, "final": True, "unclear": unclear,
+            "utterance": self._user_utterances, "garbled": garbled,
         })
         await self.session.broadcast(
             {"type": "transcript", "role": "user", "text": text}
@@ -1585,10 +2751,13 @@ class RealtimeVoiceSessionRunner:
         """
         old = self.rt
         self._switching = True
-        new_rt = RealtimeVoiceSession(
+        # A fresh scene: its framing goes into this connect brief on a family
+        # that reads no other (see _fold_opening). Before the instructions are
+        # built, or the note is not in them.
+        self._fold_opening(agent, group=False)
+        new_rt = self._new_session(
             instructions=self._instructions_for(agent),
             voice=self._voice_for(agent),
-            tools=[END_SEGMENT_TOOL],
         )
         try:
             await new_rt.connect()
@@ -1600,7 +2769,11 @@ class RealtimeVoiceSessionRunner:
             await new_rt.close()
             self.session.store.event(
                 "voice_error", where="switch_character",
-                agent_id=agent.id, message=str(exc),
+                agent_id=agent.id, message=redact_key(str(exc)),
+            )
+            await self._encounter_event(
+                "voice_error", agent_id=agent.id,
+                detail=f"switch_character: {exc}", severity="error",
             )
             return None
         self.session.store.event(
@@ -1762,13 +2935,19 @@ class RealtimeVoiceSessionRunner:
                     # this wire, so a steer landing at the same moment cannot
                     # replace the scene note with an unnoted brief.
                     async with self._brief_lock:
-                        await new_rt.update_instructions(
-                            self._instructions_for(agent)
+                        acked = await self._deliver_brief(
+                            new_rt, self._instructions_for(agent)
                         )
+                    # `acked` here is the load-bearing one for a continued
+                    # session: this re-brief is what tells the actor it is now
+                    # in interaction 2 and must not greet again. Unacknowledged,
+                    # the character carries on under interaction 1's brief while
+                    # the record has already moved on, which is a segment
+                    # boundary the transcript will not agree with.
                     self.session.store.event(
                         "realtime_session_continued",
                         agent_id=agent.id, agent_name=agent.name,
-                        interaction=self._interaction_id(),
+                        interaction=self._interaction_id(), acked=acked,
                     )
             # Everything above worked, so the runner may now BE this character:
             # there is a connected session behind the name. Done inside the try,
@@ -1779,6 +2958,9 @@ class RealtimeVoiceSessionRunner:
             self.vad.reset()
             self._speaking = False
             self._agent_text = []
+            # A line said to the previous character is not replayed to this
+            # one.
+            self._replay_pcm.clear()
             # The previous character's settling window ends with the character:
             # nothing arriving on the NEW session can belong to a turn the old
             # one was still finishing. The finalize task keeps the list it was
@@ -1802,7 +2984,11 @@ class RealtimeVoiceSessionRunner:
             self.session.store.event(
                 "voice_error", where="enter",
                 interaction=self._interaction_id(),
-                wanted=agent.id, kept=prev_id, message=str(failure),
+                wanted=agent.id, kept=prev_id, message=redact_key(str(failure)),
+            )
+            await self._encounter_event(
+                "voice_error", agent_id=agent.id,
+                detail=f"enter: {failure}", severity="error",
             )
             self.session.store.event(
                 "segment_start_aborted",
@@ -1859,10 +3045,12 @@ class RealtimeVoiceSessionRunner:
                 await self._open_room()
                 self.rt = self.room.session_for(self.agent_id) or None
             else:
-                self.rt = RealtimeVoiceSession(
+                # The first interaction's framing, into the one brief the
+                # configured family will ever read (see _fold_opening).
+                self._fold_opening(self.agent, group=False)
+                self.rt = self._new_session(
                     instructions=self._instructions(),
                     voice=self._voice(),
-                    tools=[END_SEGMENT_TOOL],
                 )
                 await self.rt.connect()
             await self._announce_opening()
@@ -1873,8 +3061,16 @@ class RealtimeVoiceSessionRunner:
                 self._spawn_group_turn(self._open_group_scene())
             # Record what served this encounter, the audit trail has to say
             # which gateway and which models produced the data.
+            # The roster this encounter's voices were chosen from, on the
+            # record beside the model that dictated it. An analyst asking why
+            # two characters sounded alike, or why one never spoke, is asking
+            # about the interaction between a scenario's casting and a model's
+            # roster, and that is not reconstructable after the fact from the
+            # model name alone once the table has moved on.
             self.session.store.event(
-                "realtime_session_started", model=self.rt.model, **provenance()
+                "realtime_session_started", model=self.rt.model,
+                voices_offered=realtime_voices(),
+                **provenance()
             )
             # FIRST_COMPLETED + cancel, not gather: the watchdog loops on
             # _closed and _client_to_model's return paths do not set it, so a
@@ -1928,8 +3124,138 @@ class RealtimeVoiceSessionRunner:
             await self._close_room()
             if self.rt:
                 await self.rt.close()
+            # And the console frames still in flight, for the same reason. They
+            # leave as tasks so a researcher's socket can never sit on the
+            # participant's audio path — but a task that was only SCHEDULED is
+            # not a frame that was sent, and run() returning takes the loop out
+            # from under it. The frames spawned last are the burst total and
+            # the terminal error that ended the encounter: the two a researcher
+            # most needs, silently lost at any console round trip worth the
+            # name. Placed after the teardown above, because the room pumps
+            # flush their bursts as they are cancelled. Bounded, and by less
+            # than the finalize wait, so a console that has stopped reading
+            # cannot hold the encounter open either.
+            if self._console_tasks:
+                try:
+                    await asyncio.wait(list(self._console_tasks), timeout=2.0)
+                except asyncio.CancelledError:
+                    cancelled_while_waiting = True
             if cancelled_while_waiting:
                 raise asyncio.CancelledError
+
+    async def _on_turn_ended(self) -> None:
+        """The participant's turn is over: route a room, or brief and commit a
+        1:1 reply. This is the block that used to sit under `turn_ended` in
+        _client_to_model, unchanged; what changed is WHEN it runs on the family
+        whose gateway window is longer than the runner's own bar (see
+        _end_of_turn_confirm_ms)."""
+        self._turn_started_at = time.time()
+        if self.is_group() and self.room is not None:
+            # Close the participant's turn on the room's
+            # transcription channel FIRST, and await it.
+            #
+            # The scribe is the only participant channel a room has
+            # — _pump_member throws its own user_transcript events
+            # away on purpose, because a member's input buffer also
+            # carries the other characters' fanned-out audio and the
+            # bridge labels all of it "user" — and a buffer is only
+            # transcribed when it is committed. give_floor commits
+            # the member it is granting and nobody else, so on a
+            # family whose own turn detection is switched off
+            # (`floor_is_real`; see server/voice/realtime.py's
+            # REALTIME_FAMILIES row for gpt-realtime) NOTHING closed
+            # the scribe's buffer and the participant was never
+            # transcribed at all. Measured on gpt-realtime-2.1
+            # against api.ai.it.cornell.edu on a real S4A room, with
+            # three synthetic participant utterances: five
+            # assistant_turns, 2.18 MB of participant audio in
+            # user_audio.wav, and participant_turns = 0 in the
+            # record — characters answering somebody who, on paper,
+            # said nothing. The participant's speech is the
+            # dependent variable, so that encounter cannot be rated.
+            #
+            # THIS is the moment, and it is the only one the runner
+            # has. The room is handed audio and never told when the
+            # talking stopped; `turn_ended` is where the runner
+            # knows, and it is the same mark that spawns the group
+            # turn below. give_floor is the wrong place twice over:
+            # it runs after routing, so the transcript would land a
+            # turn late, and it does not run at all on a turn the
+            # director answers with silence. close_participant_turn
+            # is idempotent per turn (it zeroes its own byte counter
+            # before committing) and refuses a buffer this room put
+            # nothing in, so a doubled or empty commit — a
+            # duplicated or fabricated participant turn, which is
+            # worse than a missing one — cannot come out of here.
+            #
+            # Awaited rather than dispatched, because _run_group_turn
+            # spends up to ROUTE_TRANSCRIPT_WAIT waiting for exactly
+            # this transcript before it routes, and _named_in reads
+            # it to see whether the participant addressed somebody
+            # by name. One await here and the director routes on the
+            # turn it is routing rather than on the previous one.
+            #
+            # A no-op on the configured Gemini family, by its own
+            # first line: that gateway's turn detection closes the
+            # participant's buffer itself, so the room commits
+            # nothing, pays for nothing, and the path that works
+            # today is not touched.
+            await self.room.close_participant_turn()
+            # Tracked (see _spawn_group_turn) so an interaction
+            # switch can cancel whichever turn holds self._floor.
+            #
+            # Not twice for one turn. On the configured family the
+            # runner's bar fires inside a lost participant's
+            # mid-thought pause and again at the real end; the
+            # first spawn is still waiting for the transcript the
+            # gateway will only send at the real end, and routes
+            # on it. A second routing of the same words is a
+            # second speaker granted for one participant turn.
+            if self._group_turn_waiting:
+                self.session.store.event(
+                    "turn_end_withdrawn", agent_id=self.agent_id,
+                    segment=self.segment, group=True,
+                )
+            else:
+                self._group_turn_waiting = True
+                self._spawn_group_turn(self._run_group_turn())
+        else:
+            # Brief first, then decide whether to commit. The bridge
+            # auto-fires a reply after speech + silence, usually
+            # within a second of our own turn detection, and
+            # committing on top of that yields two replies, both
+            # spoken and both transcribed — so the commit is what
+            # the wait below guards, and only the commit.
+            #
+            # An earlier revision waited BEFORE briefing, so that a
+            # beat could not be recorded as fired when the reply was
+            # already in flight. That was wrong, and measurably so:
+            # over five turns of S1A interaction 2 with the bridge
+            # auto-firing, it fired 0 of 3 planted beats where the
+            # previous behaviour fired 3, and because _maybe_advance
+            # returns early while a beat remains it also disarmed
+            # the auto-advance for every 1:1 form. update_instructions
+            # is a persistent session.update, not a per-response
+            # one, so a brief issued during an auto-fired reply is
+            # not lost — it governs the NEXT reply. The honest
+            # record of that is a beat marked as applying late,
+            # which _brief_next_beat writes, rather than no beat at
+            # all.
+            await self._brief_next_beat(probing=False)
+            deadline = time.time() + float(os.getenv("AUTOFIRE_WAIT", "1.5"))
+            while time.time() < deadline and not self.rt.autofire_active:
+                await asyncio.sleep(0.05)
+            if self.rt.autofire_active:
+                self.session.store.event(
+                    "autofire_adopted", agent_id=self.agent_id,
+                    # The direction just issued reaches the actor one
+                    # reply late. Recorded so a rater comparing a
+                    # direction to the line it produced can see that
+                    # this one governed the following turn.
+                    direction_applies_next_turn=bool(self._pending_direction),
+                )
+            else:
+                await self.rt.commit_turn()
 
     # ── participant -> model ───────────────────────────────────────────────
     async def _client_to_model(self) -> None:
@@ -1958,6 +3284,42 @@ class RealtimeVoiceSessionRunner:
                     self._last_activity = time.time()
                 if mark == "speech_started":
                     await self._send({"type": "speech_started"})
+                # Cutting a character off is a SEPARATE decision from opening
+                # the participant's turn, and it is taken on a separate,
+                # stricter signal (see SilenceDetector.barge_in).
+                #
+                # It used to be taken here, on `speech_started` itself, and that
+                # is the mechanism behind the report that "some of the dialogue
+                # would sound really good then get cut off early". A
+                # `speech_started` cancels the reply and tells the page
+                # `assistant_interrupted`, and the page's handler stops every
+                # audio buffer it has already scheduled — which, because the
+                # gateway delivers a reply many times faster than real time, is
+                # most of the reply. Measured on this branch: 87% and 65% of two
+                # turns' delivered audio thrown away unheard, 79% across every
+                # interrupted turn, with NOTHING on the participant's mic but
+                # keyboard noise. The server transcript and the WAV are complete
+                # for those turns, which is why nothing server-side and no test
+                # ever saw it.
+                #
+                # `barge_in` is True only for speech that is both loud enough to
+                # stand clear of this room's own noise floor and sustained
+                # enough not to be a click, a breath or a chair. Offline on 60 s
+                # of each bed, false cut-offs went 230 -> 0 (fan at RMS 600),
+                # 30 -> 0 (typing), 15 -> 0 (breathing), 13 -> 0 (the page's own
+                # playback bleeding into the mic). A real interjection still
+                # lands, in 0.42-0.9 s of synthetic speech against 0.38-0.46 s
+                # for the shipped gate: one beat later, and the beat is paid in
+                # the safe direction — the character talks a moment longer
+                # rather than the participant losing the rest of a sentence.
+                # Live, against the same gateway, that cost did not show up at
+                # all: 6 of 12 deliberate interjections cancelled the speaker
+                # after, against 2 of 9 before, because the shipped detector
+                # latched on the room's own noise and then could not fire again
+                # until it had had 900 ms of unbroken quiet.
+                barged = self.vad.barge_in and not self._was_barging
+                self._was_barging = self.vad.barge_in
+                if barged:
                     if self.room is not None and self.room.speaking:
                         # A real meeting yields to an interjection: stop the
                         # current speaker's stream so the participant is not
@@ -2000,10 +3362,18 @@ class RealtimeVoiceSessionRunner:
                             # a second time.
                             state["announced"] = False
                             state["barged_in"] = True
+                            audio_now = state.get("audio_bytes", 0)
+                            state["audio_bytes"] = 0
                             self._spawn_finalize(
                                 self._finalize_member_async(
                                     agent, buf, announced_now, interrupted=True,
                                     settled=state.get("settled"),
+                                    audio_bytes=audio_now,
+                                    # A barge-in on a reply being re-asked
+                                    # for: the retry's outcome is written
+                                    # (not recovered) rather than never.
+                                    retried=bool(getattr(
+                                        speaker, "_retry_in_flight", False)),
                                 )
                             )
                         else:
@@ -2045,6 +3415,11 @@ class RealtimeVoiceSessionRunner:
                             self.agent_id, self.agent, self.rt,
                             buf, self._take_direction(),
                             interrupted=True, stop=stop, settled=settled,
+                            audio_bytes=self._take_turn_audio(),
+                            # See the group branch above: a retry the
+                            # participant talked over still gets its outcome.
+                            retried=bool(getattr(self.rt, "_retry_in_flight",
+                                                 False)),
                         ))
                         await self._send({"type": "assistant_interrupted"})
 
@@ -2052,54 +3427,50 @@ class RealtimeVoiceSessionRunner:
                     await self.room.hear(pcm)
                 else:
                     await self.rt.send_audio(pcm)
+                    self._keep_for_replay(pcm)
 
                 if mark == "turn_ended":
-                    self._turn_started_at = time.time()
-                    if self.is_group() and self.room is not None:
-                        # Tracked (see _spawn_group_turn) so an interaction
-                        # switch can cancel whichever turn holds self._floor.
-                        self._spawn_group_turn(self._run_group_turn())
+                    confirm = self._end_of_turn_confirm_ms()
+                    if confirm > 0 and not (self.is_group() and self.room is not None):
+                        # THE PAUSE SPLIT, 1:1. The runner's bar (900 ms) fired
+                        # inside a lost participant's 700-1300 ms mid-thought
+                        # pause, and the commit that followed handed the
+                        # gateway half a thought ("I need more context." /
+                        # "What do you mean?", answered twice). The family's
+                        # gateway window is 1500 ms (measured honoured), so the
+                        # turn end is HELD until that much quiet has actually
+                        # been heard: `confirm` more ms of sub-bar audio, counted
+                        # in audio time like the detector itself. Speech that
+                        # resumes inside it withdraws the end — nothing briefed,
+                        # nothing committed — and the turn goes on. The VAD's
+                        # own marks are untouched, so the barge-in gate, the
+                        # "your turn" cue and the room path keep their timing.
+                        self._turn_end_pending_ms = float(confirm)
                     else:
-                        # Brief first, then decide whether to commit. The bridge
-                        # auto-fires a reply after speech + silence, usually
-                        # within a second of our own turn detection, and
-                        # committing on top of that yields two replies, both
-                        # spoken and both transcribed — so the commit is what
-                        # the wait below guards, and only the commit.
-                        #
-                        # An earlier revision waited BEFORE briefing, so that a
-                        # beat could not be recorded as fired when the reply was
-                        # already in flight. That was wrong, and measurably so:
-                        # over five turns of S1A interaction 2 with the bridge
-                        # auto-firing, it fired 0 of 3 planted beats where the
-                        # previous behaviour fired 3, and because _maybe_advance
-                        # returns early while a beat remains it also disarmed
-                        # the auto-advance for every 1:1 form. update_instructions
-                        # is a persistent session.update, not a per-response
-                        # one, so a brief issued during an auto-fired reply is
-                        # not lost — it governs the NEXT reply. The honest
-                        # record of that is a beat marked as applying late,
-                        # which _brief_next_beat writes, rather than no beat at
-                        # all.
-                        await self._brief_next_beat(probing=False)
-                        deadline = time.time() + float(os.getenv("AUTOFIRE_WAIT", "1.5"))
-                        while time.time() < deadline and not self.rt.autofire_active:
-                            await asyncio.sleep(0.05)
-                        if self.rt.autofire_active:
-                            self.session.store.event(
-                                "autofire_adopted", agent_id=self.agent_id,
-                                # The direction just issued reaches the actor one
-                                # reply late. Recorded so a rater comparing a
-                                # direction to the line it produced can see that
-                                # this one governed the following turn.
-                                direction_applies_next_turn=bool(self._pending_direction),
-                            )
-                        else:
-                            await self.rt.commit_turn()
+                        await self._on_turn_ended()
+                elif self._turn_end_pending_ms is not None:
+                    if mark == "speech_started" or self.vad.speaking:
+                        self._turn_end_pending_ms = None
+                        self.session.store.event(
+                            "turn_end_withdrawn", agent_id=self.agent_id,
+                            segment=self.segment,
+                            confirm_ms=self._end_of_turn_confirm_ms(),
+                        )
+                    elif _realtime._rms(pcm) < self.vad.effective_threshold():
+                        self._turn_end_pending_ms -= len(pcm) / 2 / self.vad.rate * 1000.0
+                        if self._turn_end_pending_ms <= 0:
+                            self._turn_end_pending_ms = None
+                            await self._on_turn_ended()
         except WebSocketDisconnect:
             return
         except Exception as exc:  # noqa: BLE001, surfaced in the session log
-            self.session.store.event("voice_error", where="client_to_model", message=str(exc))
+            self.session.store.event(
+                "voice_error", where="client_to_model",
+                message=redact_key(str(exc)),
+            )
+            await self._encounter_event(
+                "voice_error", detail=f"client_to_model: {exc}", severity="error",
+            )
 
     # ── model -> participant ───────────────────────────────────────────────
     async def _model_to_client(self) -> None:
@@ -2140,6 +3511,12 @@ class RealtimeVoiceSessionRunner:
                         "voice_error", where="model_to_client",
                         message="realtime session never reconnected",
                     )
+                    await self._encounter_event(
+                        "voice_error", agent_id=self.agent_id,
+                        detail="model_to_client: realtime session never "
+                               "reconnected; the encounter is ending",
+                        severity="error",
+                    )
                     # Tell the participant before going. Returning here ends
                     # run()'s asyncio.wait cleanly, with no exception for
                     # app.py's handler to turn into an error frame and no
@@ -2156,11 +3533,32 @@ class RealtimeVoiceSessionRunner:
                 continue
             not_ready_since = None
             await self._pump(rt)
-            if not self._switching:
-                return
-            self._switching = False
+            if self._switching:
+                self._switching = False
+                continue
+            if await self._reconnect_after_gateway_close(rt):
+                continue
+            return
 
     async def _pump(self, rt) -> None:
+        """Relay one realtime session to the participant until its stream ends.
+
+        A thin wrapper so the console's coalescing survives every way this pump
+        can end — the generator finishing, the tool_call branch returning, and
+        above all _model_to_client or run()'s teardown cancelling it. A burst of
+        gateway errors still being counted when the stream dies must not die
+        with it: the stream that was failing is precisely the one whose total
+        the researcher never got to see.
+        """
+        try:
+            await self._pump_events(rt)
+        finally:
+            self._flush_console_repeats("model")
+
+    async def _pump_events(self, rt) -> None:
+        # The bridge's audio-absent clock is held while the participant is
+        # talking (see voice/realtime.py AUDIO_ABSENT_S); this is how it knows.
+        rt.participant_speaking = lambda: bool(self.vad.active_within())
         async for ev in rt.events():
             etype = ev["type"]
 
@@ -2186,6 +3584,7 @@ class RealtimeVoiceSessionRunner:
                         segment=self.segment, text="".join(late),
                     )
                 self.session.store.append_assistant_audio(ev["pcm"], agent_id=self.agent_id)
+                self._turn_audio_bytes += len(ev["pcm"])
                 await self._send_bytes(ev["pcm"])
 
             elif etype == "agent_transcript_delta":
@@ -2200,12 +3599,20 @@ class RealtimeVoiceSessionRunner:
                 # _transcript_target — such a delta is parked provisionally and
                 # the agent_audio branch above decides which turn it belongs to.
                 target = await self._transcript_target()
-                target.append(ev["text"])
+                text = _resume_seam(target, ev)
+                target.append(text)
                 await self._send({
                     "type": "assistant_text_delta",
-                    "text": ev["text"],
+                    "text": text,
                     "agent_id": self.agent_id,
                 })
+
+            elif etype == "reply_missing":
+                # A reply this runner asked for and the gateway never began
+                # (see voice/realtime.py REQUEST_UNANSWERED_S). No turn is open,
+                # so nothing is finalised; the participant is otherwise sitting
+                # in dead air with a character that has "stopped hearing" them.
+                await self._reply_missing(rt, self.agent_id, ev, has_floor=True)
 
             elif etype == "agent_transcript":
                 # The gateway's own end-of-transcript event carries the WHOLE
@@ -2216,6 +3623,17 @@ class RealtimeVoiceSessionRunner:
                 # fragment.
                 target = await self._transcript_target(whole_line=True)
                 target[:] = [ev["text"]]
+                if target is self._agent_text:
+                    # The page has the deltas; this is the line the gateway
+                    # itself says was spoken, and the record keeps this one.
+                    # Hand the page the same line, so a caption built from
+                    # deltas the gateway then re-sent (see the bridge's
+                    # transcript_restreamed) or garbled at a seam shows what
+                    # the record shows.
+                    await self._send({
+                        "type": "assistant_text_final",
+                        "text": ev["text"], "agent_id": self.agent_id,
+                    })
                 # This event IS the end of the transcript stream, so say so on
                 # whichever turn owns the buffer it just landed in. A finalize
                 # already waiting on that turn can stop now instead of inferring
@@ -2230,7 +3648,20 @@ class RealtimeVoiceSessionRunner:
                 # Gemini Live transcribes the participant for us, no separate
                 # STT service. _record_user_turn forwards it to the client and
                 # researcher views, and drops duplicates and playback echo.
-                await self._record_user_turn(ev["text"])
+                # The gateway has heard the participant up to here, so there
+                # is nothing to replay (see REPLAY_KEEP_S).
+                self._replay_pcm.clear()
+                await self._record_user_turn(
+                    ev["text"], garbled=bool(ev.get("garbled")))
+
+            elif etype == "transcript_restreamed":
+                # The gateway sent this reply's transcript a second time inside
+                # the same response; the bridge swallowed the repeat. On the
+                # record so a doubled caption, if one ever reappears, can be
+                # told from a doubled line.
+                self.session.store.event(
+                    "transcript_restreamed", agent_id=self.agent_id,
+                    segment=self.segment)
 
             elif etype == "response_done":
                 # A reply boundary, and the one that fires even when EVERY audio
@@ -2239,6 +3670,21 @@ class RealtimeVoiceSessionRunner:
                 # makes the transient-error notice above "one per reply" rather
                 # than one per encounter.
                 self._transient_error_notified = False
+                # The console frame is latched per reply for the same reason and
+                # on the same boundary, so the two surfaces agree about what a
+                # reply's worth of corrupt audio was. This flush is what sends
+                # the total; without it the count would be carried into the next
+                # reply and reported against the wrong one.
+                self._flush_console_repeats("model")
+                if ev.get("stale"):
+                    # The done of a reply the bridge had already closed out -
+                    # cancelled at a barge-in, or ended by a watchdog - arriving
+                    # late under its own id (see RealtimeVoiceSession
+                    # ._response_created_id). It is not a boundary of whatever
+                    # is streaming now: measured live, treated as one it ended
+                    # a healthy reply's turn mid-stream and then had that reply
+                    # judged truncated and re-spoken.
+                    continue
                 # Do not finalise here. The gateway can deliver transcript
                 # events AFTER response.done, so reading the buffer now yields
                 # an empty turn, audio with no text, which is unscoreable.
@@ -2251,6 +3697,21 @@ class RealtimeVoiceSessionRunner:
                     # runner has already closed (a barge-in finalises early).
                     # Without this the duplicate would wait out the whole grace
                     # on a fresh, empty buffer and log a phantom turn.
+                    continue
+                if ev.get("retry_reason") and await self._retry_reply(
+                        rt, self.agent_id, ev):
+                    # The gateway lost this reply's voice and has been asked
+                    # for it again (see _retry_reply). The turn stays OPEN:
+                    # `_speaking` is left up so the fresh reply's deltas and
+                    # audio land in this same turn rather than opening a second
+                    # assistant_started on the page, and its buffer and byte
+                    # count start over so the record holds the line that was
+                    # actually heard, not the abandoned head glued onto it. The
+                    # pending stage direction is untouched; it pairs with the
+                    # turn, whichever attempt delivers it.
+                    self._agent_text = []
+                    self._turn_audio_bytes = 0
+                    self._agent_line_settled = False
                     continue
                 self._speaking = False
                 # The buffer and the pending direction go WITH the turn, and
@@ -2275,6 +3736,14 @@ class RealtimeVoiceSessionRunner:
                     # grace to 1 s, which is the whole budget worth spending on
                     # a transcript that a dead session will never send.
                     interrupted=bool(ev.get("interrupted")),
+                    audio_bytes=self._take_turn_audio(),
+                    # Whether the GATEWAY closed this reply's audio stream or
+                    # simply stopped sending; see voice/realtime.py. Carried so
+                    # a short turn can say which side of the gateway lost it.
+                    audio_unterminated=bool(ev.get("audio_unterminated")),
+                    # Whether this reply was the turn's one retry, so the record
+                    # can say whether the second attempt was heard whole.
+                    retried=bool(ev.get("retried")),
                 ))
 
             elif etype == "tool_call":
@@ -2288,7 +3757,21 @@ class RealtimeVoiceSessionRunner:
             elif etype == "error":
                 # Every error is recorded, always: the per-occurrence row is how
                 # an analyst sees how much audio a bad stream cost.
-                self.session.store.event("voice_error", where="model", message=ev["message"])
+                self.session.store.event(
+                    "voice_error", where="model", message=redact_key(ev["message"])
+                )
+                # The console gets one frame per BURST, not one per chunk, and
+                # gets it without this loop ever awaiting a researcher socket:
+                # agent_audio is relayed from the same async-for a few branches
+                # up, so an awaited console send here would let a researcher
+                # whose browser has stopped reading backpressure the
+                # participant's audio. That could not happen before the console
+                # existed and must not become possible because of it.
+                self._voice_error_soon(
+                    source="model", gateway_text=ev["message"],
+                    transient=bool(ev.get("transient")),
+                    agent_id=self.agent_id,
+                )
                 if ev.get("transient"):
                     # A fault the session survived — a discarded audio chunk,
                     # not a lost turn (see voice/realtime.py). Audio deltas
@@ -2302,7 +3785,94 @@ class RealtimeVoiceSessionRunner:
                     if self._transient_error_notified:
                         continue
                     self._transient_error_notified = True
-                await self._send({"type": "error", "message": ev["message"]})
+                # The gateway's own words go to the participant's browser, so
+                # this is the one error string in the runner that leaves the
+                # building verbatim; a 401 body that echoes the credential back
+                # would otherwise be handed to a publicly recruited stranger.
+                #
+                # As `error` unless the bridge marked the fault `recoverable`
+                # — a stall or a cut-off reply the encounter goes on past, or
+                # a socket the gateway closed, which _model_to_client rebuilds
+                # (and says `error` itself only when it cannot). Those used to
+                # go out as `error` too, and the page reads ANY `error` frame
+                # as "the server stated a failure": the next socket drop,
+                # whatever its cause, is then the fatal kind, and the SECOND
+                # fatal drop hides the Reconnect button. That is the
+                # "connection lost and I couldn't retry": one 47 s gateway
+                # stall earlier in the encounter had already spent the
+                # participant's retry. A notice frame carries the same text
+                # for a page that wants it and asserts nothing about whether
+                # the encounter can continue. A fault with no such mark (a
+                # refused key, a corrupt chunk) still reaches the participant
+                # as it always did.
+                await self._send({
+                    "type": "voice_notice" if ev.get("recoverable") else "error",
+                    "message": redact_key(ev["message"]),
+                    "transient": bool(ev.get("transient")),
+                })
+                if (ev.get("retry_unanswered") and self.room is None
+                        and not self._closed and rt is self.rt):
+                    # The gateway ignored a request and then its retry. On
+                    # every live measurement that socket is dead and the
+                    # gateway drops it 22-38 s later with no close frame;
+                    # waiting for that is dead air, and everything the
+                    # participant says into it is lost. Close it now and let
+                    # _model_to_client rebuild the session as this character —
+                    # marked, because a close of our own is otherwise the
+                    # deliberate kind it must not rebuild after — and replay
+                    # the unanswered line into the new one.
+                    self._rebuild_for_replay = True
+                    self.session.store.event(
+                        "gateway_socket_abandoned", agent_id=self.agent_id,
+                        segment=self.segment, waited_s=ev.get("waited_s"),
+                        replay_ms=len(self._replay_pcm) // 32,
+                    )
+                    await rt.close()
+                    return
+
+    def _keep_for_replay(self, pcm: bytes) -> None:
+        """Hold the participant's 1:1 audio for a possible replay, bounded to
+        the last REPLAY_KEEP_S seconds (see REPLAY_KEEP_S)."""
+        self._replay_pcm += pcm
+        cap = int(REPLAY_KEEP_S * self.vad.rate) * 2
+        if len(self._replay_pcm) > cap:
+            del self._replay_pcm[:len(self._replay_pcm) - cap]
+
+    def _replay_speech(self) -> bytes:
+        """The held participant audio, compacted for replay: leading quiet
+        dropped, every run of quiet inside it cut to REPLAY_PAUSE_MS, the
+        whole capped to the last REPLAY_MAX_S seconds. Empty when it holds
+        less than REPLAY_MIN_SPEECH_MS of anything voice-like, so a stretch of
+        room tone is never put in front of the model as a turn.
+
+        Voice-like is the VAD's own hint bar (SilenceDetector.hint_threshold),
+        the one that fires on a soft voice, so a quiet speaker's line is
+        replayed and not trimmed away as silence."""
+        pcm = bytes(self._replay_pcm)
+        frame = int(self.vad.rate * 0.02) * 2
+        if not pcm or frame <= 0:
+            return b""
+        bar = self.vad.hint_threshold()
+        keep_quiet = max(1, REPLAY_PAUSE_MS // 20)
+        out = bytearray()
+        quiet_run = 0
+        speech_ms = 0
+        leading = True
+        for i in range(0, len(pcm) - frame + 1, frame):
+            f = pcm[i:i + frame]
+            if _realtime._rms(f) >= bar:
+                leading = False
+                quiet_run = 0
+                speech_ms += 20
+                out += f
+            elif not leading:
+                quiet_run += 1
+                if quiet_run <= keep_quiet:
+                    out += f
+        if speech_ms < REPLAY_MIN_SPEECH_MS:
+            return b""
+        cap = int(REPLAY_MAX_S * self.vad.rate) * 2
+        return bytes(out[-cap:])
 
     async def _handle_client_command(self, raw: str) -> None:
         """Control messages from the participant UI."""
@@ -2382,13 +3952,18 @@ class RealtimeVoiceSessionRunner:
         exc = task.exception()
         if exc is not None:
             self.session.store.event(
-                "voice_error", where="finalize_turn", message=str(exc)
+                "voice_error", where="finalize_turn", message=redact_key(str(exc))
+            )
+            self._encounter_event_soon(
+                "voice_error", detail=f"finalize_turn: {exc}", severity="error"
             )
 
     async def _finalize_turn(self, agent_id: str, agent, rt,
                              buf: List[str], direction: Optional[dict],
                              *, interrupted: bool = False, stop=None,
-                             settled=None) -> None:
+                             settled=None, audio_bytes: int = 0,
+                             audio_unterminated: bool = False,
+                             retried: bool = False) -> None:
         """Close out an agent turn once its transcript has settled.
 
         response.done can arrive before the transcript events that belong to the
@@ -2452,10 +4027,15 @@ class RealtimeVoiceSessionRunner:
 
             text = _clean_agent_text("".join(buf))
             buf.clear()
+            text, retry_head = self._retry_head_if_empty(agent_id, text, retried)
             # See _instructions: the note is spent once the actor has spoken
             # under it, and the _steer() re-brief in this method's finally is
-            # the first brief that should go out without it.
+            # the first brief that should go out without it. The framing note
+            # (_fold_opening) is a first-reply note and is spent the same way.
             self._scene_note = ""
+            if self._opening_agent in (None, agent_id):
+                self._opening_note = ""
+                self._opening_agent = None
             # Measure the idle window from the end of the agent's reply, not the
             # participant's last utterance, so the watchdog does not probe the
             # instant the agent stops talking.
@@ -2480,6 +4060,13 @@ class RealtimeVoiceSessionRunner:
                 self.session.store.event(
                     "transcript_missing", agent_id=agent_id, segment=self.segment
                 )
+                # Same gap as the room's finalizer: the transcript broadcast is
+                # in the `if text` arm, so a silent turn reached the console as
+                # nothing whatsoever. Silence has to be legible as a fault.
+                await self._encounter_event(
+                    "transcript_missing", agent_id=agent_id,
+                    detail="the character spoke and no transcript arrived",
+                )
 
             # A direction belongs to the character it was written for. In 1:1
             # that is normally the speaker, but a refused character switch or a
@@ -2498,6 +4085,9 @@ class RealtimeVoiceSessionRunner:
                 direction = None
             self.session.store.event(
                 "steering_pair",
+                # The 1:1 half of the same gap; see _finalize_member_inner.
+                segment=self.segment,
+                interaction=self._interaction_id(),
                 direction=direction,
                 actor={
                     "agent_id": agent_id,
@@ -2517,11 +4107,23 @@ class RealtimeVoiceSessionRunner:
                 round(time.time() - self._turn_started_at, 3)
                 if self._turn_started_at else None
             )
+            delivered_ms = turn_audio.audio_ms(audio_bytes)
             self.session.store.event(
                 "assistant_turn", agent_id=agent_id, text=text,
                 latency_s=latency, segment=self.segment, transcript_missing=missing,
-                interrupted=interrupted,
+                interrupted=interrupted, retry_head=retry_head,
+                # How much of this line the participant was actually SENT. See
+                # server/voice/turn_audio.py: without it, a turn delivered as
+                # half a sentence is indistinguishable in every channel this
+                # study records from one delivered whole.
+                audio_ms=delivered_ms,
             )
+            if not interrupted:
+                self._note_audio_shortfall(agent_id, text, delivered_ms,
+                                           audio_unterminated)
+            if retried:
+                self._note_retry_outcome(agent_id, text, delivered_ms,
+                                         interrupted, audio_unterminated)
             await self._send({"type": "assistant_done", "agent_id": agent_id})
         finally:
             # This turn has stopped settling, so any transcript arriving from
@@ -2552,6 +4154,18 @@ class RealtimeVoiceSessionRunner:
             if not self._closed and not self.is_group():
                 await self._steer()
                 await self._maybe_advance()
+
+    def _take_turn_audio(self) -> int:
+        """Detach the byte count of the audio this closing 1:1 turn delivered.
+
+        Taken at the same instant as the buffer and for the same reason: the
+        next reply's first chunk can arrive while this turn is still settling,
+        and a counter read at the end of the grace would be that reply's.
+        Separate from _take_turn_buffer only because that method's three-value
+        return is a shape the tests already hold.
+        """
+        n, self._turn_audio_bytes = self._turn_audio_bytes, 0
+        return n
 
     def _take_turn_buffer(self):
         """Detach the closing 1:1 turn's transcript buffer and its settling gates.
@@ -2671,6 +4285,7 @@ class RealtimeVoiceSessionRunner:
         # transcript is complete, or the first grace wait of this turn would
         # return on the PREVIOUS turn's end-of-transcript event.
         self._agent_text = []
+        self._turn_audio_bytes = 0
         self._agent_line_settled = False
         await self._send({
             "type": "assistant_started",
@@ -2712,11 +4327,9 @@ class RealtimeVoiceSessionRunner:
             if trigger is None:
                 return
             direction = self._trigger_instruction(trigger, probing=probing)
-            instructions = self._instructions() + (
-                f"\n\nDIRECTOR NOTE (follow precisely, never mention): {direction}"
-            )
+            instructions = self._instructions() + self._director_note(direction)
             try:
-                await self.rt.update_instructions(instructions)
+                acked = await self._deliver_brief(self.rt, instructions)
             except Exception as exc:  # noqa: BLE001
                 self.session.store.event(
                     "trigger_brief_failed",
@@ -2726,11 +4339,17 @@ class RealtimeVoiceSessionRunner:
                     index=self._trigger_idx,
                     agent_id=self.agent_id,
                     probing=probing,
-                    message=str(exc),
+                    message=redact_key(str(exc)),
+                )
+                await self._encounter_event(
+                    "trigger_brief_failed", agent_id=self.agent_id,
+                    detail=f"beat {trigger['id']} was never briefed: {exc}",
+                    severity="error",
                 )
                 return
             self._fire_trigger(trigger, probing=probing)
             self._pending_direction = {
+                "acked": acked,
                 "turn": self._turn_index,
                 "segment": self.segment,
                 "interaction": self._interaction_id(),
@@ -2797,11 +4416,9 @@ class RealtimeVoiceSessionRunner:
             if trigger is None:
                 return
             direction = self._trigger_instruction(trigger, probing=probing)
-            instructions = self._instructions() + (
-                f"\n\nDIRECTOR NOTE (follow precisely, never mention): {direction}"
-            )
+            instructions = self._instructions() + self._director_note(direction)
             try:
-                await rt.update_instructions(instructions)
+                acked = await self._deliver_brief(rt, instructions)
             except Exception as exc:  # noqa: BLE001
                 self.session.store.event(
                     "trigger_brief_failed",
@@ -2811,11 +4428,17 @@ class RealtimeVoiceSessionRunner:
                     index=self._trigger_idx,
                     agent_id=agent_id,
                     probing=probing,
-                    message=str(exc),
+                    message=redact_key(str(exc)),
+                )
+                await self._encounter_event(
+                    "trigger_brief_failed", agent_id=agent_id,
+                    detail=f"beat {trigger['id']} was never briefed: {exc}",
+                    severity="error",
                 )
                 return
             self._fire_trigger(trigger, probing=probing)
             self._pending_direction = {
+                "acked": acked,
                 "turn": self._turn_index,
                 "segment": self.segment,
                 "interaction": self._interaction_id(),
@@ -2833,6 +4456,131 @@ class RealtimeVoiceSessionRunner:
             self.session.store.event("stage_direction", **self._pending_direction)
         finally:
             self.agent, self.agent_id = prev_agent, prev_id
+
+    async def _direct_member(self, agent_id: str,
+                             intent: str) -> Optional[bool]:
+        """Carry the director's per-turn direction to one room member.
+
+        THE GAP THIS FILLS. The director composes a one-line intent per
+        speaker, every turn, for exactly this. In a room nothing carried it:
+        _run_group_turn read `agent_id` out of each routed entry and dropped
+        the rest, and `_speak_as` — the one function in this file that ever
+        appended an intent to a brief — has no callers, which is why
+        server/director.py's own docstring says the direction "existed in
+        exactly one place, a local variable, for the length of one turn". The
+        beat and persona re-briefs (_brief_member, rebrief) were already going
+        out over the route that works; the per-turn intent was not going out at
+        all. So this is deliberately not a new mechanism: it is the same
+        session.update, through the same _deliver_brief, with the same
+        three-valued honesty about whether it arrived.
+
+        WHAT IT DOES ON THE CONFIGURED MODEL: nothing on the wire. `intent` is
+        asked of the ROOM first, because the room is what knows which model its
+        sessions were actually opened on, and on a family whose row says a
+        mid-session session.update is not honoured (nto.gemini-live-2.5-flash:
+        three frames, zero acks, an actor that went on ignoring the direction)
+        this sends no frame at all. That is the close_participant_turn pattern
+        and it is here for the same reason — an encounter on the configured
+        model must cost exactly what it cost before this change, and the one
+        thing worse than a direction that does not arrive is a session.update
+        landing on a member mid-reply, which on that family is how a character
+        goes silent for the rest of the encounter.
+
+        Not sending is not the same as not reporting, and the difference is the
+        whole value of the row. The direction is written to the record either
+        way, carrying `delivered` — whether a frame was even attempted — beside
+        the `acked` every brief already carries, and a family that cannot carry
+        one goes through _report_unacked_steering, so the researcher's strip
+        says this encounter is unsteered while it is still running. A silent
+        skip would have made the configured model look identical to a model
+        that delivers.
+
+        Returns the ack (True/False/None) the way _deliver_brief does, or False
+        where the family cannot carry a direction at all.
+        """
+        room = self.room
+        if room is None or not intent:
+            return None
+        rt = room.session_for(agent_id)
+        agent = next(
+            (a for a in self._resolve_agents() if a.id == agent_id), None
+        )
+        if rt is None or agent is None:
+            return None
+        # Built in the member's own context (_instructions_for swaps the
+        # runner's current character for the length of the call), so the
+        # direction rides on that character's persona and not on whoever the
+        # runner happens to be pointing at.
+        instructions = self._instructions_for(agent) + self._director_note(intent)
+        row = {
+            "turn": self._turn_index,
+            "segment": self.segment,
+            "interaction": self._interaction_id(),
+            "agent_id": agent_id,
+            "agent_name": agent.name,
+            "voice": getattr(rt, "voice", None),
+            "stage_direction": intent,
+            # No planted beat was spent for this: a per-turn intent is the
+            # director's own reading of the turn, and an ESCI-scored beat is
+            # not. Written as null rather than omitted so the two are
+            # distinguishable in the record instead of merely different lengths.
+            "trigger_id": None,
+            "esci": [],
+            "probing": False,
+            "source": "director_intent",
+            "instructions_sha256": hashlib.sha256(
+                instructions.encode()).hexdigest()[:16],
+            "director_model": (self.director.model if getattr(self, "director", None)
+                               else provenance()["text_model"]),
+        }
+        if not room.steering_is_real:
+            self.session.store.event(
+                "stage_direction", acked=False, delivered=False, **row
+            )
+            await self._report_unacked_steering(
+                agent_id=agent_id, model=room.model,
+            )
+            return False
+        try:
+            acked = await self._deliver_brief(rt, instructions)
+        except Exception as exc:  # noqa: BLE001 - a dead member must not kill the turn
+            # The same shape _brief_member uses for a brief that raised: the
+            # direction did not land, and the turn goes on without it rather
+            # than the room losing the speaker.
+            self.session.store.event(
+                "director_intent_failed", agent_id=agent_id,
+                segment=self.segment, interaction=self._interaction_id(),
+                intent=intent, message=redact_key(str(exc)),
+            )
+            return None
+        # Paired with the turn this produces, exactly as a beat's direction is:
+        # _finalize_member reads _pending_direction and writes the steering
+        # pair, which is how a rater sees the line next to what was asked for.
+        self._pending_direction = dict(row, acked=acked, delivered=True)
+        self.session.store.event("stage_direction", **self._pending_direction)
+        return acked
+
+    def _drop_undelivered_intent(self, agent_id: str, reason: str) -> None:
+        """Retract a per-turn direction whose speaker never got the floor.
+
+        The same discipline the planted beats already have. A direction left
+        pending is paired by _finalize_member with whichever turn finalises
+        next, so a grant that failed after the brief went out would attach this
+        turn's note to somebody else's line — and a rater comparing a direction
+        to the reply it produced would be reading a pairing that never
+        happened. Only ever drops a direction this method's own path put there:
+        `source` is what tells a per-turn intent from a beat, and a beat has
+        its own retraction beside its trigger_undelivered row.
+        """
+        pending = self._pending_direction or {}
+        if pending.get("source") != "director_intent":
+            return
+        self._pending_direction = None
+        self.session.store.event(
+            "director_intent_undelivered", agent_id=agent_id,
+            segment=self.segment, interaction=self._interaction_id(),
+            intent=pending.get("stage_direction"), reason=reason,
+        )
 
     async def _silence_watchdog(self) -> None:
         """If the participant says nothing for a while, prompt the actor to
@@ -2953,6 +4701,15 @@ class RealtimeVoiceSessionRunner:
                         probing=True,
                         reason="floor_grant_failed",
                     )
+                    # A scored beat the participant never faced. Coverage is
+                    # what decides whether this encounter is usable, so the
+                    # researcher hears about it now rather than at analysis.
+                    await self._encounter_event(
+                        "trigger_undelivered", agent_id=speaker,
+                        detail=f"probe beat {self._fired[-1] if self._fired else '?'} "
+                               "was briefed and never spoken (floor_grant_failed)",
+                        severity="error",
+                    )
                     self._trigger_idx = spent_idx
                     del self._fired[spent_fired:]
                     # The direction was never spoken, so it must not be left
@@ -2978,18 +4735,20 @@ class RealtimeVoiceSessionRunner:
         their own voice, then wait for their reply to finish."""
         self.agent = agent
         self.agent_id = agent.id
-        self.rt.voice = getattr(agent, "realtime_voice", None) or GEMINI_VOICES[
-            self.cast.index(agent) % len(GEMINI_VOICES)
-        ]
+        # Through the same resolver as every other voice on this path, so a
+        # character does not change voice between the room and this sequencer
+        # and so this is not a third place an ElevenLabs id could get in.
+        self.rt.voice = self._voice_of(agent)
         instructions = self._instructions()
         if intent:
-            instructions += f"\n\nDIRECTOR NOTE (follow precisely, never mention): {intent}"
-        await self.rt.update_instructions(instructions)
+            instructions += self._director_note(intent)
+        acked = await self._deliver_brief(self.rt, instructions)
 
         # The steering log is part of the study record: what the director told
         # this actor, verbatim, before it spoke. Logged even when there is no
         # direction, so an unsteered turn is distinguishable from a lost one.
         self._pending_direction = {
+            "acked": acked,
             "turn": self._turn_index,
             "segment": self.segment,
             "interaction": self._interaction_id(),
@@ -3074,6 +4833,9 @@ class RealtimeVoiceSessionRunner:
             if self._closed or self.room is not room:
                 return
             fresh = self._last_user_text if self._last_user_text != before else ""
+            # This turn has the transcript it will route on (or has given up
+            # waiting): a later turn_ended is a new turn.
+            self._group_turn_waiting = False
 
             named_early = self._named_in(fresh)
             first = named_early
@@ -3082,14 +4844,38 @@ class RealtimeVoiceSessionRunner:
             # instead of being re-decided by a second route() call. None when the
             # participant addressed someone directly (no director call was made).
             routed_seq = None
+            # The per-speaker direction that came back with each of those ids,
+            # positionally aligned with routed_seq. Held rather than dropped:
+            # delivering it is the whole of _direct_member below.
+            routed_intents: List[Optional[str]] = []
+            # Set when the director produced no decision for this turn — the
+            # gateway 401'd, timed out, or answered without a tool block — and
+            # Director._fallback handed back cast[0] instead. That is not a
+            # routing decision and must not be written as one: cast[0] is the
+            # dominant character in every group spec, so a flaky gateway
+            # recorded as judgement shows up in the analysis as inflated
+            # dominance rather than as an outage, and group scenarios are half
+            # the study. The entry carries its own reason and detail; keep them.
+            route_fallback: Optional[dict] = None
             if first is None:
                 try:
                     routed = await self.director.route(
                         self.session.shared_history, fresh
                     )
+                    route_fallback = next(
+                        (r for r in routed if r.get("fallback")), None
+                    )
+                    # The direction travels WITH the speaker from here on, as a
+                    # pair. It used to be dropped on this very line — `routed`
+                    # entries are {agent_id, intent?} and this read agent_id and
+                    # nothing else, which is why server/director.py's own
+                    # docstring says the intent "existed in exactly one place, a
+                    # local variable, for the length of one turn". A dict keyed
+                    # by agent id would not do: the director returns ORDERED
+                    # sequences, and [A, B, A] is two different directions for A.
                     candidates = [
-                        r.get("agent_id") for r in routed
-                        if r.get("agent_id") in room.sessions
+                        (r.get("agent_id"), r.get("intent"))
+                        for r in routed if r.get("agent_id") in room.sessions
                     ]
                     # The director only dedupes CONSECUTIVE speakers against its
                     # static cast, but room.sessions can shrink mid-encounter (a
@@ -3099,11 +4885,14 @@ class RealtimeVoiceSessionRunner:
                     # so one agent is never handed the floor twice in a row, while
                     # a genuine [A, B, A] rebuttal (separated by B) is preserved.
                     collapsed = []
-                    for c in candidates:
+                    collapsed_intents = []
+                    for c, c_intent in candidates:
                         if not collapsed or collapsed[-1] != c:
                             collapsed.append(c)
+                            collapsed_intents.append(c_intent)
                     candidates = collapsed
                     routed_seq = candidates
+                    routed_intents = collapsed_intents
                     # Anti-dominance: absent a direct address, prefer a
                     # candidate who did not just speak.
                     first = next(
@@ -3111,7 +4900,22 @@ class RealtimeVoiceSessionRunner:
                         candidates[0] if candidates else None,
                     )
                 except Exception as exc:  # noqa: BLE001
-                    self.session.store.event("director_error", message=str(exc))
+                    # route() contains its own gateway failures and degrades to
+                    # _fallback, so reaching here means the call itself broke.
+                    # Either way no decision was made, which is what the
+                    # director_route line below has to say.
+                    self.session.store.event(
+                        "director_error", message=redact_key(str(exc))
+                    )
+                    route_fallback = {
+                        "reason": "director_route_raised",
+                        # Scrubbed where the gateway's words are captured, not
+                        # only where they are written. This dict outlives the
+                        # handler and is read again 200 lines below, so holding
+                        # a raw 401 body in it leaves the record one new sink
+                        # away from carrying a live credential.
+                        "detail": redact_key(str(exc)),
+                    }
             if self._closed or self.room is not room:
                 return
             if first is None:
@@ -3144,6 +4948,20 @@ class RealtimeVoiceSessionRunner:
                     "speaker_unavailable", wanted=wanted_speaker,
                     reassigned_to=first, segment=self.segment,
                 )
+
+            # The direction the director wrote for whoever is actually about to
+            # speak, and only theirs. Looked up by identity rather than by
+            # position, because `first` is not always routed_seq[0]: the
+            # anti-dominance filter above skips a candidate who just spoke, and
+            # the availability check can hand the turn to someone else again. A
+            # reassigned speaker who was ALSO routed keeps their own direction
+            # and never inherits the missing character's — the same rule the
+            # planted beats have had since _trigger_agent, for the same reason:
+            # a note written for Dan, performed by Priya, is a direction the
+            # instrument never actually staged, recorded as though it had been.
+            first_intent = None
+            if routed_seq and first in routed_seq:
+                first_intent = routed_intents[routed_seq.index(first)]
 
             # Group mode has no per-turn re-brief otherwise, so its planted
             # (scored) triggers would never fire. Fold the next beat into the
@@ -3184,6 +5002,15 @@ class RealtimeVoiceSessionRunner:
                     routed_to=first,
                     reason="beat_belongs_to_another_character",
                 )
+                # Deferring is correct, but a beat that keeps deferring because
+                # its character never gets the floor is an interaction quietly
+                # running out of scored moments, and only the console can catch
+                # that while there is still time to advance the encounter.
+                await self._encounter_event(
+                    "trigger_deferred", agent_id=owner,
+                    detail=f"beat {pending['id']} belongs to {owner}; "
+                           f"this turn routed to {first}",
+                )
             else:
                 # _brief_member SPENDS the beat: it writes trigger_fired,
                 # appends to _fired and advances _trigger_idx. The grant below
@@ -3193,6 +5020,32 @@ class RealtimeVoiceSessionRunner:
                 await self._brief_member(first)
             if self._closed or self.room is not room:
                 return
+
+            # The director's own direction for this turn, delivered to the one
+            # character it was written for. Nothing carried it before: this
+            # method read agent_id out of each routed entry and dropped the
+            # rest, and _speak_as — the only function that ever delivered an
+            # intent — has no callers, so in a room the direction was composed,
+            # validated, recorded and never spoken to anybody.
+            #
+            # Second to the planted beat, never alongside it. A beat is the
+            # scored independent variable and it arrives by this same route, so
+            # a turn that has just briefed one is a turn whose actor has already
+            # been told what to do; appending a second DIRECTOR NOTE would put
+            # two directions in one brief and leave a rater unable to say which
+            # one the reply answered, and the second session.update would also
+            # replace the first (a brief is whole-session, not a patch), so the
+            # beat would be the one lost. `_trigger_idx` moving is _brief_member
+            # spending a beat, and it is the only reliable sign of it — the
+            # deferral branch above leaves it where it was.
+            if first_intent and self._trigger_idx == spent_idx:
+                await self._direct_member(first, first_intent)
+            elif first_intent:
+                self.session.store.event(
+                    "director_intent_yielded", agent_id=first,
+                    segment=self.segment, interaction=self._interaction_id(),
+                    intent=first_intent, reason="planted_beat_briefed",
+                )
 
             self._response_done.clear()
             granted = await room.give_floor(first)
@@ -3227,11 +5080,18 @@ class RealtimeVoiceSessionRunner:
                         probing=False,
                         reason="floor_grant_failed",
                     )
+                    await self._encounter_event(
+                        "trigger_undelivered", agent_id=first,
+                        detail=f"beat {self._fired[-1] if self._fired else '?'} "
+                               "was briefed and never spoken (floor_grant_failed)",
+                        severity="error",
+                    )
                     self._trigger_idx = spent_idx
                     del self._fired[spent_fired:]
                     # The direction was never spoken, so it must not be left
                     # pending and paired with whichever turn finalises next.
                     self._pending_direction = None
+                self._drop_undelivered_intent(first, "floor_grant_failed")
                 return
             try:
                 await asyncio.wait_for(self._response_done.wait(), timeout=45)
@@ -3260,10 +5120,19 @@ class RealtimeVoiceSessionRunner:
                 fresh = self._last_user_text
             named = self._named_in(fresh)
             followups = []
+            # One direction per follow-up, positionally aligned with it, so a
+            # speaker taken out of the sequence takes their own note with them
+            # and never somebody else's. Every branch below fills both lists or
+            # neither.
+            followup_intents: List[Optional[str]] = []
             if named and named != first:
                 # A name spoken THIS turn is a direct address and overrides the
-                # director's planned sequence.
+                # director's planned sequence — and with it the direction the
+                # director wrote for the speaker it displaced. Nothing was ever
+                # written for this one, so they take the floor undirected rather
+                # than inheriting a note meant for another character.
                 followups.append(named)
+                followup_intents.append(None)
             elif routed_seq is not None:
                 # Honour the director's ORDERED sequence from the first route()
                 # call (e.g. [A, B, A]) instead of discarding it and re-deciding
@@ -3273,6 +5142,11 @@ class RealtimeVoiceSessionRunner:
                 # director's own max sequence length.
                 idx = routed_seq.index(first) if first in routed_seq else -1
                 followups = routed_seq[idx + 1:][: DIRECTOR_MAX_SPEAKERS - 1]
+                # Sliced identically, off the list built beside routed_seq, so
+                # the pairing survives an [A, B, A] sequence where the same
+                # character is routed twice with two different directions.
+                followup_intents = routed_intents[idx + 1:][
+                    : DIRECTOR_MAX_SPEAKERS - 1]
             else:
                 # Direct-address opener: no director sequence was produced, so ask
                 # for a single follow-up to keep the room responsive.
@@ -3281,28 +5155,80 @@ class RealtimeVoiceSessionRunner:
                         self.session.shared_history, fresh
                     )
                 except Exception as exc:  # noqa: BLE001, never break the room
-                    self.session.store.event("director_error", message=str(exc))
+                    self.session.store.event(
+                        "director_error", message=redact_key(str(exc))
+                    )
                     routed = []
-                followups = [
-                    r.get("agent_id") for r in routed
+                    route_fallback = route_fallback or {
+                        "reason": "director_route_raised",
+                        "detail": redact_key(str(exc)),
+                    }
+                else:
+                    # `or`, not a plain assignment. This branch is also reached
+                    # after the FIRST route() call raised and left `first` to
+                    # the rotation above, and a second call that happens to
+                    # succeed does not retroactively make that rotated speaker
+                    # a director decision. Overwriting here would clear the
+                    # flag and write exactly the false record this carries.
+                    route_fallback = route_fallback or next(
+                        (r for r in routed if r.get("fallback")), None
+                    )
+                served = [
+                    (r.get("agent_id"), r.get("intent")) for r in routed
                     if r.get("agent_id") in room.sessions
                     and r.get("agent_id") != first
                 ][:1]
+                followups = [aid for aid, _ in served]
+                followup_intents = [intent for _, intent in served]
             if self._closed or self.room is not room:
                 return
 
+            # `fallback` is the difference between "the director chose these
+            # speakers" and "the director was unreachable and the room played
+            # cast[0] anyway". Both used to be written as the former, so an
+            # encounter whose director was dead throughout read in the record
+            # exactly like a steered one, and the truth was only recoverable by
+            # joining director_error on timestamp — a join nothing in this repo
+            # performs. Director._fallback already tags its entry for exactly
+            # this; carry the tag rather than dropping it.
             self.session.store.event(
-                "director_route", speakers=[first] + followups, addressed=named
+                "director_route", speakers=[first] + followups, addressed=named,
+                fallback=route_fallback is not None,
+                fallback_reason=(route_fallback or {}).get("reason"),
+                fallback_detail=redact_key(
+                    str((route_fallback or {}).get("detail") or "")
+                ) or None,
             )
-            for aid in followups:
+            if route_fallback is not None:
+                await self._encounter_event(
+                    "director_fallback", agent_id=first,
+                    detail=f"{route_fallback.get('reason')}: "
+                           f"{route_fallback.get('detail')}; "
+                           f"the room played {first} without a routing decision",
+                    severity="error",
+                )
+            for aid, intent in zip(followups, followup_intents):
                 if self._closed or self.room is not room or self.vad.speaking:
                     if self.vad.speaking:
                         self.session.store.event(
                             "followup_yielded", agent_id=aid,
                         )
                     break
+                # Directed immediately before the grant and never mid-reply:
+                # the previous speaker's response_done is what this loop has
+                # just waited for, and a follow-up on a family where the floor
+                # is real has produced nothing of its own in the meantime. That
+                # is the same ordering _brief_member and give_floor already
+                # rely on, and the room refuses to carry a direction at all on
+                # the family where a session.update can land mid-response and
+                # mute a member (GroupRoom.steering_is_real).
+                if intent:
+                    await self._direct_member(aid, intent)
+                    if self._closed or self.room is not room:
+                        return
                 self._response_done.clear()
-                await room.give_floor(aid)
+                if await room.give_floor(aid) is None:
+                    self._drop_undelivered_intent(aid, "floor_grant_failed")
                 try:
                     await asyncio.wait_for(self._response_done.wait(), timeout=45)
                 except asyncio.TimeoutError:
@@ -3337,7 +5263,12 @@ class RealtimeVoiceSessionRunner:
             raise
         except Exception as exc:  # noqa: BLE001
             self.session.store.event(
-                "voice_error", where="group_maybe_advance", message=str(exc)
+                "voice_error", where="group_maybe_advance",
+                message=redact_key(str(exc)),
+            )
+            await self._encounter_event(
+                "voice_error", detail=f"group_maybe_advance: {exc}",
+                severity="error",
             )
 
     def _named_in(self, text: str) -> Optional[str]:
@@ -3421,26 +5352,712 @@ class RealtimeVoiceSessionRunner:
                     "steer_deferred", agent_id=self.agent_id,
                     segment=self.segment, reason="response_in_flight",
                 )
+                # The steering panel shows the shift as made; only this says it
+                # has not reached the actor yet. A researcher who has just moved
+                # a gear and is watching for the effect otherwise reads the next
+                # unchanged turn as the shift having no effect.
+                await self._encounter_event(
+                    "steer_deferred", agent_id=self.agent_id,
+                    detail="a reply was in flight, so this turn's gear shifts "
+                           "were not delivered; the next brief carries them",
+                )
                 return
             instructions = self._instructions()
             if self._pending_direction:
                 # A direction that has not been performed yet must survive its
                 # own steering pass, or the beat is briefed and then silently
                 # un-briefed before the actor ever speaks it.
-                instructions += (
-                    "\n\nDIRECTOR NOTE (follow precisely, never mention): "
-                    + str(self._pending_direction.get("stage_direction") or "")
+                instructions += self._director_note(
+                    str(self._pending_direction.get("stage_direction") or "")
                 )
-            await self.rt.update_instructions(instructions)
+            acked = await self._deliver_brief(self.rt, instructions)
             # The other half of steer_deferred. Those shifts went out as
             # delivered=None because nothing could know yet; this says they
-            # landed, so the two outcomes of a 1:1 review are both stated and an
-            # analyst never has to read delivery out of an absence.
+            # were issued rather than held back, so the two outcomes of a 1:1
+            # review are both stated and an analyst never has to read delivery
+            # out of an absence.
+            #
+            # Issued, not received. This event used to be the whole answer, and
+            # it was written the instant the send returned — so on a model that
+            # acknowledges no mid-session update, which is the model the study
+            # is configured for, it asserted a delivery the platform never
+            # confirmed. `acked` is what separates the two: True the gateway
+            # said so, False it declined to, None this bridge cannot tell. See
+            # _deliver_brief.
             self.session.store.event(
                 "steer_delivered", agent_id=self.agent_id,
-                segment=self.segment,
+                segment=self.segment, acked=acked,
                 shifts=len(self.session.steering_log) - before,
             )
+
+    # ── the researcher's live failure channel ──────────────────────────────
+    def _event_t(self) -> Optional[float]:
+        """Seconds into the encounter, on the clock events.jsonl already uses.
+
+        The console lines a researcher reads mid-encounter and the rows an
+        analyst reads afterwards have to be joinable, and the only shared
+        timebase is the store's own started_at. None when there is no store
+        clock to read rather than a second, unrelated origin."""
+        started = getattr(self.session.store, "started_at", None)
+        if not started:
+            return None
+        return round(time.time() - started, 3)
+
+    async def _encounter_event(self, kind: str, *, agent_id: Optional[str] = None,
+                               detail: Optional[str] = None,
+                               severity: str = "warn") -> None:
+        """Put one mid-encounter failure in front of the watching researcher.
+
+        Until this existed the live channel carried state, transcript and
+        steering only, so an encounter whose director was dead, whose steering
+        errored every turn and whose planted beats were briefed and never spoken
+        looked exactly like a healthy one for the full 7-12 minutes — the one
+        window in which a researcher can still intervene in something
+        unrepeatable. Every failure was written to events.jsonl and broadcast to
+        nobody.
+
+        `kind` is the events.jsonl event type wherever the failure has one, so
+        the console and the record name the same thing. `detail` is
+        gateway-derived and therefore goes out redacted: this frame leaves the
+        process for a browser exactly as the participant's error frames do.
+        """
+        try:
+            await self.session.broadcast({
+                "type": "encounter_event",
+                "kind": kind,
+                "t": self._event_t(),
+                "agent_id": agent_id,
+                "detail": redact_key(detail) if detail else None,
+                "severity": severity,
+            })
+        except Exception:  # noqa: BLE001
+            # Reporting a fault must never become one. broadcast() already drops
+            # sockets that have gone away; anything that gets past it belongs to
+            # the console, and these calls sit inside the runner's error paths,
+            # where raising would cost the encounter the failure was about.
+            pass
+
+    def _note_audio_shortfall(self, agent_id: str, text: str,
+                              delivered_ms: int,
+                              unterminated: bool = False) -> None:
+        """Say so when a turn's audio was too short for its own words.
+
+        This is the instrument that was missing, and its absence is why the
+        clearest failure in this system was reported by a person wearing
+        headphones rather than by anything the platform writes down. A reply
+        whose audio stream the gateway abandons mid-cadence — measured at 21 of
+        191 live replies on nto.gemini-live-2.5-flash through this gateway, and
+        4 of 11 in the worst single encounter — arrives with a COMPLETE
+        transcript and 0.4-0.9 s of voice for 7 to 13 words. Every channel this
+        study records says that turn was fine: the text is whole, the WAV holds
+        exactly what was sent, the event trail has no error in it. The only
+        thing that can see the fault is this comparison, between a turn's own
+        text and its own delivered audio, and nothing was making it.
+
+        Recorded per turn, because the shape matters more than any single
+        instance: one short turn is a glitch, and a third of an encounter's
+        turns arriving half-spoken is an encounter that should not be paid for
+        or rated. server/voice/turn_audio.scan_events reads exactly these turns
+        back out of events.jsonl for whoever is deciding that.
+
+        It is NOT sent to the researcher's live console, and that is a gap
+        rather than a decision: the console's strip has a two-way contract with
+        static/researcher.html's ENC_EVENT_LABEL map (every kind the server can
+        emit needs a label, and every label needs an emitter — both halves are
+        enforced by tests/test_final_console.py), and that map was outside the
+        change that added this. Adding `agent_audio_short: 'this line was only
+        half spoken'` there and an _encounter_event_soon call here is all it
+        takes, and it is worth doing: a researcher watching an encounter fill up
+        with these is watching an encounter not worth paying for.
+
+        Not raised for interrupted turns (the caller filters those): a
+        participant talking over a character is the behaviour two of the
+        scenarios exist to score.
+        """
+        bad = turn_audio.shortfall(text, delivered_ms)
+        if not bad:
+            return
+        self.session.store.event(
+            "agent_audio_short", agent_id=agent_id, segment=self.segment,
+            audio_ms=bad["audio_ms"], expected_ms=bad["expected_ms"],
+            words=bad["words"], delivered_fraction=bad["delivered_fraction"],
+            text=text,
+            # True: the gateway stopped sending this reply's audio without ever
+            # closing the stream, which is a fault upstream of this process and
+            # cannot be repaired here. False: everything the gateway sent was
+            # relayed, and the shortfall is ours to explain.
+            gateway_abandoned_audio=unterminated,
+        )
+
+    async def _retry_reply(self, rt, agent_id: str, ev: dict, *,
+                           has_floor: bool = True) -> bool:
+        """Ask the gateway for a lost reply again, once, or write down why not.
+
+        `ev` is the bridge's response_done carrying `retry_reason`: "truncated"
+        (the audio stream stopped short of the reply's own transcript and was
+        never closed) or "absent" (the words came and no voice followed for
+        AUDIO_ABSENT_S). See server/voice/realtime.py for both detectors and
+        for the recipe the retry sends. This method owns the three refusals the
+        bridge cannot make, because their facts live here:
+
+          * the floor. In a room a retry is a fresh response.create, and it
+            goes only to the character who holds `room.speaking` at this
+            instant; if the director moved the floor while the reply was dying,
+            the retry is dropped rather than spoken over whoever has it now.
+          * the participant. If they are talking when the verdict lands, a
+            retry would commit whatever they have said so far as a turn and
+            answer it; the reply is finalised as cut off instead, which is what
+            their talking over it means anyway.
+          * the budget. `retryable` is the bridge's per-turn counter; a second
+            failure on the same turn is finalised as truncated by the existing
+            detection and the encounter moves on.
+
+        A reply the participant barged in on never arrives here with a reason at
+        all — the bridge withholds it for a reply it was told to cancel — so a
+        line they chose to cut off is never re-spoken at them.
+
+        Every outcome is recorded: `audio_retry` when the gateway was asked
+        again, `audio_retry_suppressed` with `why` when it was not. Both carry
+        the abandoned reply's own numbers and text, so a wave can be checked for
+        how often this happened and what was lost (tools/encounter_health.py).
+        The page is told with `assistant_retry`, which replaces the broken
+        reply's audio and caption rather than appending to them — deliberately
+        not `assistant_interrupted`, whose handler freezes the caption at what
+        was shown, which is the wrong record of a line about to be re-spoken.
+        """
+        reason = ev.get("retry_reason")
+        if not reason:
+            return False
+        fields = dict(agent_id=agent_id, segment=self.segment, reason=reason,
+                      words=ev.get("words"), audio_ms=ev.get("audio_ms"),
+                      text=ev.get("text"))
+        if ev.get("waited_s") is not None:
+            fields["waited_s"] = ev.get("waited_s")
+        why = None
+        if not ev.get("retryable"):
+            # The bridge's own refusal, and it says why: the turn's one retry
+            # is spent, the reply is a runaway, or the verdict was overtaken
+            # while it was held (the participant was heard, the gateway
+            # resumed by itself, a new turn or a barge-in). See
+            # voice/realtime.py AUDIO_RETRY_QUIET_S.
+            why = ev.get("not_retryable_why") or "already_retried"
+        elif self._closed:
+            why = "closing"
+        elif not has_floor:
+            why = "floor_moved"
+        elif self.vad.active_within():
+            # `speaking` alone has holes a retry fell through live: it comes
+            # up 250 ms after a voice starts and drops for 0.3-0.5 s inside an
+            # utterance. The hint (any voice-like frame in the last second)
+            # is the guard; see SilenceDetector.active_within.
+            why = "participant_speaking"
+        elif not await self._ask_again(rt, self._retry_nudge_for(ev.get("text"))):
+            why = "bridge_refused"
+        if why is not None:
+            self.session.store.event("audio_retry_suppressed", why=why, **fields)
+            return False
+        # The prompt the model was given in place of the participant's voice,
+        # on the record: the line that follows answers it, not the participant.
+        self.session.store.event(
+            "audio_retry", nudge=getattr(_realtime, "AUDIO_RETRY_NUDGE", None),
+            **fields)
+        # Kept until the retried turn closes, so the outcome can say whether
+        # what came back was THIS line again or merely a line.
+        self._retry_lost[agent_id] = {"text": ev.get("text") or "",
+                                      "words": ev.get("words") or 0,
+                                      "reason": reason, "at": time.time()}
+        await self._send({"type": "assistant_retry", "agent_id": agent_id})
+        return True
+
+    @staticmethod
+    async def _ask_again(rt, nudge: Optional[str]) -> bool:
+        """rt.retry_response with the quoted-line nudge where the bridge takes
+        one; the bare call where it does not (a bridge built before the nudge
+        was a parameter, or a test's fake of one)."""
+        default = getattr(_realtime, "AUDIO_RETRY_NUDGE", None)
+        try:
+            takes_nudge = "nudge" in inspect.signature(rt.retry_response).parameters
+        except (TypeError, ValueError):
+            takes_nudge = False
+        if nudge and nudge != default and takes_nudge:
+            return bool(await rt.retry_response(nudge=nudge))
+        return bool(await rt.retry_response())
+
+    @staticmethod
+    def _retry_nudge_for(lost_text) -> Optional[str]:
+        """The prompt an audio-absent retry puts in front of the model.
+
+        The bare nudge asks for "it" again, and live the model answered with
+        a different, shorter line: Drew's "I sent it because it needs to be
+        said. It wasn't getting fixed." came back as "It's been an issue
+        twice." (2026-09-14, S1B, 5 words for 13, at 9 s). The words the
+        gateway lost the voice of are known — they are on the audio_retry
+        event — so the nudge quotes them: the retry then re-speaks the line
+        the record already holds instead of replacing it. Left bare for a
+        line too long to quote (a runaway is never re-asked anyway)."""
+        base = getattr(_realtime, "AUDIO_RETRY_NUDGE", None)
+        text = " ".join(str(lost_text or "").split())
+        if not base or not text or len(text.split()) > 60:
+            return base
+        return f"{base} You were saying: \"{text}\""
+
+    async def _reply_missing(self, rt, agent_id: str, ev: dict, *,
+                             has_floor: bool = True) -> bool:
+        """A reply that was asked for and never began. Ask once more, with a
+        prompt, or write down why not.
+
+        The bridge's `reply_missing` (see REQUEST_UNANSWERED_S) arrives after
+        ten seconds of nothing behind a commit + response.create. The three
+        refusals are _retry_reply's, for the same reasons: the floor may have
+        moved in a room, the participant may be talking (in which case they
+        are about to prompt the reply themselves), and the turn's one retry
+        may be spent. The retry is a user TEXT item (UNANSWERED_NUDGE) and a
+        response.create, the one thing measured to draw a reply out of this
+        gateway after it has ignored a create; the record carries the prompt
+        so a rater can see that the line which follows answers it.
+
+        Returns True when the gateway was asked again.
+        """
+        fields = dict(agent_id=agent_id, segment=self.segment,
+                      interaction=self._interaction_id(),
+                      waited_s=ev.get("waited_s"))
+        self.session.store.event("reply_missing", **fields)
+        why = None
+        if not ev.get("retryable"):
+            why = "already_retried"
+        elif self._closed:
+            why = "closing"
+        elif not has_floor:
+            why = "floor_moved"
+        elif self.vad.active_within():
+            why = "participant_speaking"
+        how = "nudge"
+        nudge = getattr(_realtime, "UNANSWERED_NUDGE", None)
+        if why is None:
+            # The participant's own line first: it is what the gateway failed
+            # to answer, and answered, it needs no explaining to a rater. The
+            # text nudge stays behind it for a room (no per-member replay
+            # buffer) and for a request that had no speech behind it — the
+            # scene open, a probe.
+            speech = self._replay_speech() if self.room is None else b""
+            if speech and hasattr(rt, "replay_input") and \
+                    await rt.replay_input(speech):
+                how = "replay"
+                nudge = None
+                fields["replay_ms"] = len(speech) // 32
+            elif not await rt.retry_response(nudge=nudge):
+                why = "bridge_refused"
+        self.session.store.event(
+            "reply_retry", why=why, asked=why is None, how=how,
+            nudge=nudge if why is None else None, **fields)
+        # One console line, through the channel the console already labels.
+        self._voice_error_soon(
+            source="model", agent_id=agent_id, transient=True,
+            gateway_text=(
+                f"no reply from the gateway after {ev.get('waited_s')}s; "
+                + ("asked again" if why is None else f"not asked again ({why})")),
+        )
+        return why is None
+
+    async def _reconnect_after_gateway_close(self, rt) -> bool:
+        """Rebuild a 1:1 session the GATEWAY closed under the encounter.
+
+        _pump returning with the runner neither switching character nor
+        closing means the socket ended on the other side — a gateway
+        recycling a connection, a session hitting a limit, a stall the
+        gateway gave up on. That used to end run(): the participant's socket
+        closed behind it, the page put up "connection lost", and Reconnect
+        started the part again with a stranger. Twice, and the card hides
+        the retry ("couldn't retry"). The participant's socket is fine, so
+        keep it: open a fresh session as the same character, with a scene
+        note that says the line dropped and what has been said so far, and
+        carry on in the same encounter. Bounded by RECONNECT_LIMIT per
+        encounter; past it the old ending stands, with an `error` frame that
+        the page is right to read as a stated failure.
+
+        Returns True when a session is live again behind self.rt.
+        """
+        limit = int(getattr(_realtime, "RECONNECT_LIMIT", 0) or 0)
+        for_replay, self._rebuild_for_replay = self._rebuild_for_replay, False
+        if (self._closed or self.room is not None or rt is not self.rt
+                or (getattr(rt, "_closing", False) and not for_replay)):
+            return False
+        if self._reconnects >= limit:
+            self.session.store.event(
+                "voice_error", where="reconnect", agent_id=self.agent_id,
+                message=redact_key(
+                    f"the gateway closed the session again; {limit} "
+                    "reconnect(s) already spent, ending the encounter"),
+            )
+            await self._send({
+                "type": "error",
+                "message": "The connection to the conversation was lost.",
+            })
+            return False
+        attempt = self._reconnects + 1
+        self._transitioning = True
+        try:
+            try:
+                await rt.close()
+            except Exception:  # noqa: BLE001 - it is already gone
+                pass
+            self._scene_note = self._reconnect_note()
+            new_rt = self._new_session(
+                instructions=self._instructions(), voice=self._voice(),
+            )
+            new_rt.participant_speaking = lambda: bool(self.vad.active_within())
+            try:
+                await new_rt.connect()
+            except Exception as exc:  # noqa: BLE001
+                await new_rt.close()
+                self.session.store.event(
+                    "voice_error", where="reconnect", agent_id=self.agent_id,
+                    attempt=attempt, message=redact_key(str(exc)),
+                )
+                await self._encounter_event(
+                    "voice_error", agent_id=self.agent_id, severity="error",
+                    detail=f"reconnect {attempt}: {exc}",
+                )
+                await self._send({
+                    "type": "error",
+                    "message": "The connection to the conversation was lost.",
+                })
+                return False
+            self._reconnects += 1
+            new_rt.reconnects = attempt
+            self.rt = new_rt
+            self.vad.reset()
+            self._speaking = False
+            self._agent_text = []
+            self._settling_text = None
+            self._settling_late_from = None
+            self._settling_stop = None
+            self._settling_settled = None
+        finally:
+            self._transitioning = False
+        # The line the participant was saying when the gateway went — the
+        # one the old page note told them to say again — goes into the new
+        # session before anything else, so the character answers it. Nothing
+        # is replayed when they said nothing since the gateway last heard
+        # them, and the buffer is spent either way: a fresh socket is not
+        # handed a line the old one already answered.
+        speech = self._replay_speech()
+        self._replay_pcm.clear()
+        replayed_ms = 0
+        if speech and hasattr(new_rt, "replay_input"):
+            try:
+                if await new_rt.replay_input(speech):
+                    replayed_ms = len(speech) // 32
+            except Exception as exc:  # noqa: BLE001 - the session stands
+                self.session.store.event(
+                    "voice_error", where="replay", agent_id=self.agent_id,
+                    message=redact_key(str(exc)))
+        self.session.store.event(
+            "realtime_session_reconnected", agent_id=self.agent_id,
+            agent_name=self.agent.name, attempt=attempt, segment=self.segment,
+            interaction=self._interaction_id(), for_replay=for_replay,
+            replayed_ms=replayed_ms,
+        )
+        if replayed_ms:
+            self.session.store.event(
+                "participant_turn_replayed", agent_id=self.agent_id,
+                segment=self.segment, replay_ms=replayed_ms, attempt=attempt,
+            )
+        await self._encounter_event(
+            "voice_error", agent_id=self.agent_id, severity="warn",
+            detail=f"the gateway closed the session; reconnected as "
+                   f"{self.agent.name} (attempt {attempt} of {limit})",
+        )
+        await self._send({"type": "voice_notice", "kind": "reconnected",
+                          "agent_id": self.agent_id, "attempt": attempt,
+                          "replayed": bool(replayed_ms)})
+        return True
+
+    def _reconnect_note(self) -> str:
+        """The scene note a rebuilt session opens under: the same conversation,
+        already in progress, with what has been said so far — a fresh socket
+        has heard none of it. Spent after one reply, like every scene note."""
+        note = (
+            "\n\nSCENE: The line dropped for a moment and is back. This is the "
+            "same conversation, already in progress: do not greet again, do "
+            "not restart, do not mention the drop; carry on from where it was."
+        )
+        lines = []
+        names = {a.id: a.name for a in self.cast}
+        for entry in (self.session.shared_history or [])[-8:]:
+            speaker = entry.get("speaker")
+            if speaker == "user":
+                who = "Them"
+            elif speaker == self.agent_id:
+                who = "You"
+            else:
+                # Another character's line, labelled as theirs. Every agent
+                # line used to be "You", and a session rebuilt after a room
+                # (S3C's Rafa one-on-one, live 2026-09-14) opened by saying
+                # Bex's line back as its own.
+                who = names.get(speaker, str(speaker))
+            what = str(entry.get("text") or "").strip()
+            if what:
+                lines.append(f"- {who}: {what}")
+        if lines:
+            note += " What has been said so far, most recent last:\n" + "\n".join(lines)
+        return note
+
+    def _retry_head_if_empty(self, agent_id: str, text: str, retried: bool):
+        """The text to record for a retried turn that closed with none.
+
+        A barge-in on a reply being re-asked for finalises the buffer the
+        retry emptied, so the turn was written as text="" and flagged
+        transcript_missing - the flag that tells a rater "audio played, its
+        text was lost" - although the participant had seen (and heard the
+        first beat of) the lost line. Record that line instead, marked
+        `retry_head` so it is not read as a delivery. Only for a turn with
+        nothing of its own: a retried line that arrived, however short, is
+        the turn."""
+        if text or not retried:
+            return text, False
+        head = (self._retry_lost.get(agent_id) or {}).get("text") or ""
+        return (head, True) if head else (text, False)
+
+    def _note_retry_outcome(self, agent_id: str, text: str, delivered_ms: int,
+                            interrupted: bool, unterminated: bool) -> None:
+        """Say whether a retried turn brought the lost line back.
+
+        Two questions, answered separately because they fail separately and a
+        wave-level number that conflated them overstated the fix once already:
+
+          * `delivered_whole`: the retry's audio stream was closed by the
+            gateway, was not cut off, is a plausible delivery of its own words
+            by the live detector's rule, and actually contains words and
+            audio. An empty turn is NOT whole - turn_audio.shortfall answers
+            None for no audio or under four words, and that None was being
+            read as "fine".
+          * `overlap`: the share of the lost line's words that the retried
+            line contains. The retry is prompted by a user text item, and the
+            model can answer the prompt instead of repeating itself ("I said
+            understood"; or a fresh sentence). `recovered` requires
+            RETRY_RECOVERED_OVERLAP of the lost words to be back; the number
+            itself is on the event so an analyst can set their own bar.
+        """
+        lost = self._retry_lost.pop(agent_id, None) or {}
+        lost_text = lost.get("text") or ""
+        if text == lost_text and delivered_ms == 0:
+            # The head put back by _retry_head_if_empty, not a delivery.
+            text = ""
+        words = turn_audio.word_count(text)
+        short = turn_audio.shortfall(text, delivered_ms)
+        delivered_whole = bool(words and delivered_ms > 0
+                               and not (interrupted or unterminated or short))
+        overlap = _word_overlap(lost_text, text)
+        recovered = delivered_whole and (
+            overlap is None or overlap >= RETRY_RECOVERED_OVERLAP)
+        self.session.store.event(
+            "audio_retry_outcome", agent_id=agent_id, segment=self.segment,
+            recovered=recovered, delivered_whole=delivered_whole,
+            overlap=overlap, lost_text=lost_text, lost_reason=lost.get("reason"),
+            audio_ms=delivered_ms, words=words,
+            interrupted=interrupted, gateway_abandoned_audio=unterminated,
+            text=text,
+        )
+
+    def _encounter_event_soon(self, kind: str, *,
+                              coalesce_key: Optional[str] = None,
+                              **fields) -> None:
+        """_encounter_event without awaiting the researcher's socket.
+
+        Two kinds of caller, one reason each.
+
+        Synchronous ones — a task done-callback — cannot await at all, and they
+        are where a dead pump or a dead group turn is noticed, which is
+        precisely what a researcher needs to see. Nothing is scheduled when no
+        loop is running, since the frame would then have no socket to reach and
+        ensure_future would raise into the callback and lose the store event
+        beside it.
+
+        The pumps use it for the other reason. Session.broadcast awaits
+        ws.send_json once per attached researcher socket, so awaiting a console
+        frame inside _pump's async-for — the loop that also relays agent_audio
+        to the participant — puts a researcher's browser on the participant's
+        audio path, where a console that has stopped reading its socket
+        backpressures the conversation it is watching. A researcher's console
+        must never be able to degrade a participant's encounter, so the frame
+        leaves as its own task and the pump moves straight to the next event.
+
+        `coalesce_key` names the stream a frame belongs to (one gateway, one
+        pump); the burst is that key AND the frame's own message, so two
+        different faults on one stream stay two frames. The first frame of a
+        burst goes out immediately; identical repeats are counted and reported
+        as a single frame when the burst ends
+        — see _flush_console_repeats. Audio deltas arrive every few tens of
+        milliseconds, so a corrupt stream produced one frame per chunk, and
+        researcher.html re-renders the strip on every frame and shows a
+        monotonic total: sixty discarded chunks read as sixty separate
+        failures, and app.py's ENCOUNTER_EVENT_REPLAY_LIMIT bounds only the
+        replay, never the live socket. A console a researcher learns to
+        discount is worth less than no console. The per-chunk events.jsonl rows
+        are deliberately untouched: the record keeps every occurrence, the
+        console shows the shape.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if coalesce_key is not None:
+            # The message is half the key. Keyed on the source alone, a second
+            # DIFFERENT fault on the same stream was never shown at all and was
+            # counted into a total published against the LAST message's text,
+            # under the words "N repeats were kept off the console" — a
+            # confident false statement about the data, which is the failure
+            # this console exists to catch. Distinct texts are the normal case
+            # here, not a corner: the only transient producer in the tree
+            # (voice/realtime.py's corrupt-frame branch) quotes binascii, whose
+            # message carries the failing chunk's own character count.
+            coalesce_key = (coalesce_key, fields.get("detail"))
+            burst = self._console_repeats.get(coalesce_key)
+            if burst is not None:
+                # Already reported for this burst. Count it — the total is what
+                # the closing frame carries — and send nothing.
+                burst["count"] += 1
+                burst["fields"] = fields
+                return
+            self._console_repeats[coalesce_key] = {
+                "kind": kind, "fields": fields, "count": 0,
+            }
+        self._spawn_console_frame(self._encounter_event(kind, **fields))
+
+    def _spawn_console_frame(self, coro) -> None:
+        """Dispatch one console frame as a tracked task.
+
+        Retained in a set (and self-removing on completion) exactly as
+        Session.spawn_auto_steer retains its steering tasks, and for the same
+        reason: asyncio holds only a weak reference to a task nobody keeps, so
+        a bare ensure_future can be collected before it has sent anything. On
+        this path that loses a failure report and leaves the console asserting
+        health by omission.
+        """
+        try:
+            task = asyncio.ensure_future(coro)
+        except RuntimeError:
+            # The loop is on its way out (this runs from pump finallys, which
+            # is exactly where teardown lands). Reporting a fault must never
+            # become one, and a raise here would come out of a `finally` and
+            # REPLACE the exception the pump was already carrying — hiding the
+            # real failure behind the report of a smaller one. The events.jsonl
+            # row for every occurrence is already written either way.
+            coro.close()
+            return
+        self._console_tasks.add(task)
+        task.add_done_callback(self._console_tasks.discard)
+
+    def _flush_console_repeats(self, coalesce_key: Optional[str] = None) -> None:
+        """Close a burst out with one frame naming how many repeats it stood for.
+
+        Called wherever a burst ends — a reply boundary, a pump ending, a
+        terminal error arriving behind a run of survivable ones — because
+        suppression that is never totalled is the bug class this file argues
+        against everywhere else: a recoverable fault turned into a permanent
+        silence. "discarded a corrupt audio frame (x60)" is more useful to a
+        researcher than the first frame alone, and very much more useful than
+        sixty frames; the point is to report the shape of the fault once, not
+        to hide it.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # Nothing to send it on. Keep the counts rather than dropping them,
+            # so a later flush on a live loop still reports the burst.
+            return
+        # Callers name a stream ("model", "room:<id>", "scribe"); the bursts
+        # under it are keyed by (stream, message), so one stream ending closes
+        # every distinct fault it was carrying.
+        keys = ([k for k in self._console_repeats if k[0] == coalesce_key]
+                if coalesce_key is not None
+                else list(self._console_repeats))
+        for key in keys:
+            burst = self._console_repeats.pop(key, None)
+            if burst is None or burst["count"] < 1:
+                # No repeats: the frame already sent said everything there was
+                # to say, and a second frame reporting "x1" would be the same
+                # inflation by a quieter route.
+                continue
+            fields = dict(burst["fields"])
+            total = burst["count"] + 1
+            detail = fields.get("detail") or burst["kind"]
+            fields["detail"] = (
+                f"{detail} (x{total}; {burst['count']} repeats were kept off "
+                f"the console, events.jsonl has every one)"
+            )
+            self._spawn_console_frame(
+                self._encounter_event(burst["kind"], **fields)
+            )
+
+    def _voice_error_soon(self, *, source: str, gateway_text: str,
+                          transient: bool,
+                          agent_id: Optional[str] = None) -> None:
+        """The console half of a gateway `error` frame, for all three pumps.
+
+        One helper rather than three copies because the three sit on the same
+        audio path and had already drifted: the 1:1 pump throttled its
+        PARTICIPANT notice to one per reply and still emitted a console frame
+        per chunk, while the room and scribe pumps throttled neither — and a
+        room multiplies that by every member in it.
+        """
+        if not transient:
+            # Close any open burst first, so the strip reads in the order the
+            # stream actually failed: the discarded chunks, then the fault that
+            # ended it. A terminal error is never itself coalesced. Burying one
+            # behind a run of survivable ones is exactly the failure the
+            # participant-side throttle takes care to avoid, and the console
+            # owes the researcher the same care.
+            self._flush_console_repeats(source)
+        self._encounter_event_soon(
+            "voice_error", agent_id=agent_id,
+            detail=f"{source}: {gateway_text}",
+            # A transient fault is one the session survived (a discarded audio
+            # chunk); an error that ended something costs the encounter a turn,
+            # so the two must not read the same on a console being scanned at a
+            # glance.
+            severity="warn" if transient else "error",
+            coalesce_key=source if transient else None,
+        )
+
+    def _watch_store_for_swallowed_failures(self) -> None:
+        """Tee the session store so failures written outside this file are seen.
+
+        Session.auto_steer catches its own exception and writes auto_steer_error
+        by design — a steering outage must never break a live encounter — which
+        also means _steer cannot tell a review that failed from a review that
+        found nothing to change. A steering pass that errors every turn means no
+        gears moved for the whole encounter, and that is exactly the kind of
+        quiet false success the console exists to expose, so the runner listens
+        at the store instead of guessing. Only the types below are forwarded;
+        everything else is written through untouched, and the wrapper delegates
+        unconditionally so a failure here can never cost the record an event.
+        """
+        store = self.session.store
+        original = store.event
+        # A store can only be teed once. Wrapping a wrapper would report the
+        # same steering outage twice per turn, and a console whose counts are
+        # inflated by its own plumbing is one a researcher learns to discount —
+        # which costs more than the strip is worth.
+        if getattr(original, "_rf_encounter_tee", False):
+            return
+        forwarded = {"auto_steer_error": "error"}
+
+        def tee(type_: str, **fields):
+            try:
+                severity = forwarded.get(type_)
+                if severity is not None:
+                    self._encounter_event_soon(
+                        type_, agent_id=fields.get("agent_id"),
+                        detail=fields.get("message"), severity=severity,
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+            return original(type_, **fields)
+
+        tee._rf_encounter_tee = True
+        store.event = tee
 
     # ── transport helpers ──────────────────────────────────────────────────
     async def _send(self, payload: dict) -> None:
