@@ -375,26 +375,27 @@ def outside_yaml(tmp_path):
     return path
 
 
-def test_a_traversing_scenario_id_cannot_reach_a_yaml_outside_the_directory(outside_yaml):
+def test_a_traversing_scenario_id_cannot_reach_a_yaml_outside_the_directory(
+        outside_yaml, monkeypatch):
     """?scenario= is participant-controlled, so it must not address the disk.
 
     Unvalidated it loaded any mapping with an id/title/system_prompt as a live
     encounter: an attacker-chosen brief handed to the actor, and an id that is
     not a study scenario stamped onto the recording.
     """
-    try:
-        traversal = os.path.relpath(
-            outside_yaml.with_suffix(""), scenarios.SCENARIOS_DIR
-        ).replace("\\", "/")
-    except ValueError:
-        # On Windows there is no relative path between two different drives,
-        # and pytest's tmp_path follows %TEMP%, which is routinely on a
-        # different volume from a checkout. That is a property of the machine,
-        # not of the guard — skip rather than report a red test to whoever
-        # keeps their repo on D:.
-        pytest.skip("tmp_path and the scenarios directory are on different "
-                    "drives, so there is no relative path to traverse with")
+    # Keep the allowed directory and attack target on the fixture's volume.
+    # Windows CI puts the checkout on D: and temporary files on C:, so a path
+    # relative to the real checkout cannot represent this traversal there.
+    scenario_dir = outside_yaml.parent / "scenarios"
+    scenario_dir.mkdir()
+    monkeypatch.setattr(scenarios, "SCENARIOS_DIR", scenario_dir)
+    traversal = os.path.relpath(
+        outside_yaml.with_suffix(""), scenario_dir
+    ).replace("\\", "/")
     assert ".." in traversal
+    target = scenario_dir / f"{traversal}.yaml"
+    assert target.resolve() == outside_yaml.resolve()
+    assert target.is_file()
 
     with pytest.raises(FileNotFoundError):
         scenarios.load_scenario(traversal)
