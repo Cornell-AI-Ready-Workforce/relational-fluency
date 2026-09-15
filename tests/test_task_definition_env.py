@@ -103,8 +103,37 @@ def test_provenance_text_model_is_the_model_that_runs(task_env):
     "S3_BUCKET", "AWS_REGION",
     # Listening socket, which the ALB target group health check depends on.
     "HOST", "PORT",
+    # Where the study is written. server/storage.py:57 falls back to
+    # <repo>/data, which on Fargate is the container filesystem — destroyed on
+    # the next deploy, with the EFS volume mounted and empty beside it. Live
+    # revisions 35 through 38 all shipped without this and nothing said so:
+    # /health stayed 200 while every run file, participant record, transcript,
+    # WAV and the SQLite index went to disposable disk. See
+    # tests/test_terraform_persistence.py, which pins the volume and the mount
+    # point this name has to agree with.
+    "DATA_DIR",
+    # Where a participant goes after the fourth encounter. Unset, they are not
+    # returned to Qualtrics and the survey half of their response never
+    # completes — a silently partial record rather than an error.
+    "SURVEY_RETURN_URL",
+    # Which approved consent wording the survey is showing. Unset,
+    # server/storage.py records no study consent at all: /api/consent 404s,
+    # voice sockets close 4403, runs keep being minted, and the wave collects
+    # zero encounters uniformly from the first participant onward.
+    "UPSTREAM_CONSENT_VERSION",
 ])
 def test_required_env_is_set(task_env, name):
+    """The forward direction, and the one that actually cost records.
+
+    The other tests in this file pin the reverse: a name set in the task
+    definition that no module reads. That direction is cheap to catch and cheap
+    to survive — dead configuration. The expensive direction is a name the code
+    reads and the deployment never sets, because its failure mode is a healthy
+    task quietly doing the wrong thing. DATA_DIR, SURVEY_RETURN_URL and
+    UPSTREAM_CONSENT_VERSION were all missing from the live task definition at
+    the same time, for four revisions, while every surface an operator watches
+    stayed green.
+    """
     assert name in task_env, f"{name} is not set in the ECS task definition"
 
 

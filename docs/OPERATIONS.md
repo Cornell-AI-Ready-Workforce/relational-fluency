@@ -62,36 +62,213 @@ server.<module>` generalised from one of these lines fails with a confusing
 
 ---
 
-## ⚠️ Read this before collecting anything
+## The consent version: unset, this records nothing
+
+**Check this before the first participant of every wave.** One environment
+variable on the task, `UPSTREAM_CONSENT_VERSION`, decides whether the wave
+collects anything at all.
+
+Consent is taken in Qualtrics now, before anybody reaches `/start`, so this
+platform never sees the text a participant agreed to and cannot work out which
+version it was. `server/storage.py` therefore refuses to record any study
+consent until this variable names the approved wording. Unset — or set to a
+placeholder like `[FILL IN: ...]`, which is treated as unset — here is the whole
+of what happens, measured rather than described:
+
+- `POST /api/consent` answers **503**, naming `UPSTREAM_CONSENT_VERSION` in the
+  body and `consent_version_unset` as the reason, and the participant page
+  shows the blocking card. (On the build deployed today, which predates this
+  branch, the same refusal answers **404 `no such participant record`** — the
+  record exists, the message is wrong, and it sends you looking for a missing
+  participant; the participant is fine and the configuration is not. A link
+  with no `qid` now answers **409** `no_survey_response_id` rather than the
+  same 404.)
+- The record stays `consent_given: false`, so the voice socket closes **4403**
+  the instant they try to speak.
+- `/health` answers **200**. `/start` keeps working. Runs keep being created,
+  one per arrival, each with an empty `encounters` list.
+- **Zero encounters are recorded, uniformly, from the first arrival onward.**
+  There is no partial failure and nobody gets through. The first evidence is an
+  empty dataset.
+
+**`/test` does not catch it.** An internal run is recorded under
+`internal_test` provenance, which deliberately needs no Qualtrics response and
+no upstream version, so a lab member can walk the whole study, watch four
+encounters record perfectly, and learn nothing about whether a real participant
+can consent. Only a `/start` arrival exercises this path.
+
+Check the deployed task carries it:
+
+```bash
+TD=$(aws ecs describe-services --cluster relational-fluency --services platform \
+      --query "services[0].taskDefinition" --output text)
+aws ecs describe-task-definition --task-definition "$TD" \
+  --query "taskDefinition.containerDefinitions[0].environment[?name=='UPSTREAM_CONSENT_VERSION']"
+# [] or a blank value → the wave will record nothing. Fix before recruiting.
+```
+
+```powershell
+$TD = aws ecs describe-services --cluster relational-fluency --services platform --query "services[0].taskDefinition" --output text
+aws ecs describe-task-definition --task-definition "$TD" --query "taskDefinition.containerDefinitions[0].environment[?name=='UPSTREAM_CONSENT_VERSION']"
+```
+
+**On the deployed service today this variable is not set at all**, which is why
+this section is first on the page. Revision 38's environment carries
+`API_HOST`, `APP_HOST`, `AWS_REGION`, `DIRECTOR_MODEL`, `HOST`, `LLM_BASE_URL`,
+`PORT`, `REALTIME_MODEL` and `S3_BUCKET`, and nothing else —
+`UPSTREAM_CONSENT_VERSION`, `CLAUDE_MODEL` and `SURVEY_RETURN_URL` are all
+missing. (`ANTHROPIC_API_KEY` and `SESSION_KEY` are correctly injected from
+Secrets Manager and must stay that way.)
+
+Setting it means adding it to `containerDefinitions[0].environment` and
+registering a new task-definition revision — the CLI release path, written out
+in
+[`DEPLOY-AWS.md`](DEPLOY-AWS.md#4a-the-path-in-use-register-a-task-definition-point-the-service-at-it).
+Use your survey's own consent version, not `config/consent.yaml`'s.
+
+`infra/terraform/terraform.tfvars` is where it belongs *once the Terraform path
+works again* — as `upstream_consent_version = "cornell-irb-2026-09-v3"`, where
+the variable has **no default**, so an apply that has not been told stops and
+says so rather than deploying a task that records nothing. That safety net does
+not exist on the CLI path: a hand-registered revision omitting this variable
+registers happily and deploys green. Until then the check below is the net.
+It is not a secret; commit it, the way `container_image` is committed, so the
+running wave's consent version is visible in git history. `.env.example`
+documents the same variable for a laptop or the Fly path.
+
+Then confirm on the live wave, after the first arrival: every run should have a
+`session_id` under `encounters`. Runs accumulating with nothing under them is
+this failure and no other.
+
+```bash
+curl -s "$RF/api/runs?key=$KEY" | python -c "
+import json,sys
+rows=json.load(sys.stdin)
+empty=[r['run_id'] for r in rows if not r.get('encounters')]
+print('runs:', len(rows), 'with no encounter yet:', len(empty))
+print(empty[:5])"
+```
+
+A few empty runs are ordinary — somebody opened the link and has not started
+talking yet. *Every* run empty, once people have had time to speak, is the
+consent version.
+
+---
+
+## Before fielding: the blanks in `config/consent.yaml`
+
+The consent *form* is in Qualtrics now, but `config/consent.yaml` did not stop
+mattering: the participant page still reads its `contact:` block, and that block
+is what every card naming a human being is built from — the withdrawal card, the
+decline card, the closing card, and the card a participant sees when their
+consent record cannot be confirmed. The file ships as a template with eleven
+`[FILL IN: ...]` markers in it, and **three of them are the ones a participant
+actually runs into**:
+
+| Field | What it must hold | What breaks while it is a `[FILL IN: ...]` |
+|---|---|---|
+| `contact.pi_name` | The PI's name, as the IRB protocol has it | No name on any card |
+| `contact.email` | The study contact address (validated as an address) | **No way to ask for deletion.** The withdrawal card offers the right; the address is missing |
+| `contact.irb_protocol` | The IRB protocol number | Nothing for a participant to quote to the IRB office |
+
+With all three unfilled, a participant who stops mid-study is not shown a blank
+and is not shown `[FILL IN: ...]` either — the page refuses to print a
+placeholder as somebody's contact details, and degrades to *"contact whoever
+sent you this study link, the consent form you were shown carries no contact
+details for the research team, which is a fault on our side."* That sentence is
+honest and it is still a failure: the deletion right the consent form promises
+has no address on it, and the participant has to go back through recruitment to
+exercise it. Fill all three before the first arrival.
+
+The rest of the template is checked by `server/consent_check.py`, which reports
+one combined reason at boot. All of it has to be answered before fielding:
+
+- `version` — must not be the shipped `v0.1-2026-06` and must not read as a
+  draft. It is recorded per participant as `consent_text_version`, so two waves
+  under the same unedited string cannot be told apart afterwards. (This is the
+  *local* version. It is **not** what
+  [`UPSTREAM_CONSENT_VERSION`](#the-consent-version-unset-this-records-nothing)
+  should be set to: that names the survey's wording, which is the text a
+  participant actually read.)
+- `irb_status.reviewed: true` — the human act. Nothing in the system can tell
+  approved wording from a plausible draft, so a person says so here.
+- The eight `[FILL IN: ...]` markers in `body` — the lab and institution, the
+  time commitment, what the provider may do with audio, whether recordings are
+  shown outside the team, the retention period, compensation, eligibility, and
+  what stopping means for payment. `body` must also say that live microphone
+  audio is transmitted to the model provider; the guard checks for it.
+
+**Boot says so, and boot does not stop.** A task whose consent config is still
+the template prints
+
+```
+  WARNING: config/consent.yaml is not fit to field: … Do not recruit participants until this is fixed.
+```
+
+and then serves normally — deliberately, because refusing to start would take
+out every laptop and every CI run, and no process can tell a recruiting
+deployment from a rehearsal. So the warning is one line in the log an operator
+reads after a deploy, and this page is the other place it is written down. Check
+it deliberately:
+
+```bash
+aws logs tail /ecs/relational-fluency/agent --since 10m | grep -i "not fit to field"
+# no output = the consent config passed its checks at the last boot
+```
+
+---
+
+## Read this before collecting anything
 
 **Pull any encounter you care about, and do it before the next deploy** (see
 [Getting data off the server](#getting-data-off-the-server)). That is the
 standing rule. Everything below is why it is still the rule.
 
-**Ask the running service whether `/data` is persistent — do not assume it.**
-The EFS filesystem and its `/data` mount are written in
-`infra/terraform/ecs.tf` (`aws_efs_file_system.study`, `aws_efs_access_point.study`,
-the `mountPoints` entry on the platform container), but Terraform source is not
-a running service: it protects nothing until someone runs `tofu apply`, and the
-release pinned in `infra/terraform/terraform.tfvars` was cut before those
-resources existed. Between merging the branch and applying it, the deployed task
-is still the ephemeral one. So run the check first and read the paragraph after
-it in light of the answer:
+**Today there is no persistent volume, and that is measured, not suspected.**
+Checked against the account on 12 September 2026: revisions 35, 36, 37 and 38
+of `relational-fluency-agent` all carry `volumes=[]` and no `mountPoints`, and
+**no EFS file system exists in the account** for any of them to mount. The
+image's own `ENV DATA_DIR=/data` means the app writes to `/data` regardless, so
+the path in every other command on this page is right — but with no volume
+behind it, `/data` is the container's writable layer and it goes with the task.
+
+The EFS file system, its access point and the `/data` mount *are* written in
+`infra/terraform/ecs.tf` (`aws_efs_file_system.study`,
+`aws_efs_access_point.study`, the `mountPoints` entry on the platform
+container). Terraform source is not a running service: it protects nothing
+until someone applies it, and that stack's state is not in the account's state
+bucket, so applying it is itself blocked — see
+[`DEPLOY-AWS.md`](DEPLOY-AWS.md#read-this-first-the-runbook-and-the-practice-have-diverged).
+Do not read the presence of those resources in the repository as protection.
+
+Ask the running service rather than trusting either this page or that one — it
+is one command and it is the only answer that counts:
 
 ```bash
 TD=$(aws ecs describe-services --cluster relational-fluency --services platform \
       --query "services[0].taskDefinition" --output text)
 aws ecs describe-task-definition --task-definition "$TD" \
   --query "taskDefinition.[volumes,containerDefinitions[0].mountPoints]"
-# [[],[]]                        → ephemeral task, no volume. Every deploy,
+# [[],[]]                        → what it returns today: volumes=[] and no
+#                                  mount points. Ephemeral task. Every deploy,
 #                                  crash, or task retirement destroys whatever
 #                                  was recorded since your last pull.
 # an EFS volume + a /data mount  → records survive a deploy, a crash, and task
 #                                  retirement. Nothing else changes.
 ```
 
-Once that command shows the volume and the mount, pulling data stops being a
-race against the next rollout and becomes redundancy. It does not become
+```powershell
+$TD = aws ecs describe-services --cluster relational-fluency --services platform --query "services[0].taskDefinition" --output text
+aws ecs describe-task-definition --task-definition "$TD" --query "taskDefinition.[volumes,containerDefinitions[0].mountPoints]"
+```
+
+The two outputs differ by a bracket, which is exactly why it is worth knowing
+what you are looking at: `[[],[]]` is two empty lists — no volume declared on
+the task, no mount point on the container — and anything else is a volume and a
+mount, printed in full.
+
+If one day that command shows the volume and the mount, pulling data stops being
+a race against the next rollout and becomes redundancy. It does not become
 optional, because nothing downstream of the write exists yet:
 
 - **Nothing archives to S3.** Only the webcam video goes to the study bucket
@@ -103,10 +280,103 @@ optional, because nothing downstream of the write exists yet:
 - **There is no deletion path.** No retention rule and no per-participant erase,
   so a withdrawal request under the IRB data-management plan has to be carried
   out by hand on the volume. Know that before you promise a participant one.
+  The bucket half of that request is harder than it looks: the study bucket is
+  versioned, so an ordinary delete leaves the bytes behind as a noncurrent
+  version. See [Deleting one participant's
+  recording](#deleting-one-participants-recording).
 
 ```bash
 aws s3 ls s3://relational-fluency-study-data/ --recursive | head   # video only; no session records
 ```
+
+### Which of the two places is this wave's video in?
+
+Now that AWS credentials exist, a recording can be in either of two places and
+the encounter looks identical from the outside. One event field says which.
+`via: "local"` on the `video_uploaded` event means the browser could not get a
+presigned URL and PUT the bytes to the app instead, so they are on the task's
+own disk under `sessions/<id>/webcam.webm` — which is EFS if the volume check
+above passed, and ephemeral if it did not. No `via` at all means the bytes went
+browser-direct to the bucket.
+
+`$KEY` is the researcher key set at the top of this page. `/health` withholds
+the `credentials`, `bucket`, `region` and `detail` fields from an
+unauthenticated caller, so a keyless read of the storage block will not tell you
+which of the failures below you are looking at.
+
+```bash
+curl -sS "https://rf.ai-ready-workforce.ai.cornell.edu/health?key=$KEY" \
+  | python -c "import json,sys; print(json.load(sys.stdin)['storage'])"
+aws s3 ls s3://relational-fluency-study-data/encounters/ --recursive --summarize | tail -3
+```
+
+```powershell
+curl.exe -sS "https://rf.ai-ready-workforce.ai.cornell.edu/health?key=$KEY" | python -c "import json,sys; print(json.load(sys.stdin)['storage'])"
+aws s3 ls s3://relational-fluency-study-data/encounters/ --recursive --summarize | Select-Object -Last 3
+```
+
+A wave whose `storage.ok` is true and whose object count is far below the
+encounter count has been falling back silently: check the events for `via`, and
+pull those recordings off the task before the next deploy. `storage.ok` false
+means **every** recording in that wave is on the task's disk, and the countdown
+is the next rollout.
+
+Neither state loses a recording by itself and neither is visible to a rater:
+`/api/rater/video/{assignment_id}` prefers a local file and falls back to the
+bucket, so the console plays the same recording either way. The difference is
+entirely about what survives a deploy.
+
+### The third state, which loses the recording: CORS
+
+There is a failure that produces neither of the two states above, and it is the
+one worth memorising because nothing anywhere names it.
+
+The browser PUTs the recording straight to S3, so the bucket's **CORS
+allowlist** decides whether that PUT is allowed to leave the page at all. The
+allowlist has exactly three origins
+(`infra/terraform/storage_secrets.tf`):
+
+```
+https://rf.ai-ready-workforce.ai.cornell.edu
+http://localhost:8765
+http://127.0.0.1:8765
+```
+
+`8765` is the app's default `PORT`, spelled twice because a browser treats
+`localhost` and `127.0.0.1` as different origins. **Local webcam testing works
+on port 8765 and on no other port.** Serve the app on 8000 with AWS credentials
+present and the sequence is: presigning succeeds, the browser refuses the PUT at
+its preflight, and no recording is made.
+
+What makes it expensive is how it is reported. A CORS refusal is not an HTTP
+status the page can see — the fetch simply throws — so `static/v2.html` records
+the reason as `network`. And `network` is deliberately **not** one of the
+reasons that trigger the local upload fallback (`presigningIsUnavailable`
+admits only `presign_http_5xx` and `presign_no_url`, because a `network` reason
+usually means this very server was unreachable and re-sending 45 MB to the same
+host would not end differently). So the bytes go nowhere, the fallback is not
+attempted, and no log line on either side says "CORS".
+
+Two consequences for an operator:
+
+- **Running locally: use port 8765**, or add your origin to the allowlist before
+  you test. If every local recording is "failing to upload", check the port
+  before anything else.
+- **Changing the participant-facing hostname is a bucket change too.** A new
+  origin that is not in the allowlist loses every recording in the wave, with
+  the encounters otherwise looking perfect. `via` will not tell you — there is
+  no `video_uploaded` event to carry it.
+
+### Deleting one participant's recording
+
+The bucket is **versioned**, which is right for research data and wrong for the
+sentence in the consent form that offers a participant deletion. An ordinary
+`aws s3 rm` writes a delete marker: the object stops being listed and the bytes
+stay, as a noncurrent version, indefinitely. Honouring a withdrawal takes a
+version-aware delete of the encounter's key, plus the local copy if that
+encounter fell back, plus the session directory on `/data` — which holds the
+audio and the transcript and is not in S3 at all. There is no script for this
+yet; do it by hand, confirm each of the three, and write down what was removed.
 
 ---
 
@@ -215,7 +485,10 @@ import json,sys; d=json.load(sys.stdin)
 print('study scenarios:', [x['id'] for x in d if x.get('study')])"
 ```
 
-Expect all eight: `S1A S1B S2A S2B S3A S3B S4A S4B`.
+Expect all twelve: `S1A S1B S1C S2A S2B S2C S3A S3B S3C S4A S4B S4C` — three
+parallel forms per construct. Fewer means the deployed image predates a form,
+or a spec stopped loading (a spec missing a required key is dropped silently
+by the loader; CI's `EXPECTED_V3` is what notices).
 
 ```bash
 # Direct link to one scenario, for your OWN testing. The key is only needed when
@@ -243,6 +516,74 @@ fired against the scenario's plan**, ESCI items exercised, and provenance
 A `FAIL` on *every agent turn transcribed* or a low trigger count means the
 encounter is not scoreable — an encounter that fired 2 of 4 triggers never
 reached half its scored moments.
+
+`verify_record` cannot tell you whether the *manipulation* happened. That is
+`tools/encounter_health.py`, which reads the event trail rather than any
+status field and fails an encounter whose director never answered, whose
+stage directions were never acknowledged (`steer_unacked` — every mid-encounter
+direction on the configured model, by design), or whose group room lost its
+participant-transcription channel:
+
+```bash
+python tools/encounter_health.py data/sessions/<session_id>
+python tools/encounter_health.py --all data/sessions     # exit 0 only if every encounter passes
+```
+
+### What a wave sounds like: lost audio, and the retry
+
+On `nto.gemini-live-2.5-flash` through the gateway a reply's voice can stop
+short of its own caption (about 1 reply in 9) or never start at all (before
+this build, 45 s of dead air per stall, median 47.4 s, with the participant's
+own turns refused meanwhile). The bridge now notices both and asks the gateway
+**once** more for the turn (`AUDIO_ABSENT_S` = 8 s in `server/voice/realtime.py`).
+Measured on the final wave: 4 stalls in 145 replies, all one-to-one, each now
+7.4–8.5 s of silence instead of 47; 0 retries over a talking participant;
+0 fires on `gpt-realtime-2.1`.
+
+A turn the gateway never answers at all is a **different** fault and is no
+longer left to that 45 s watchdog. Since 2026-09-14 a request with no frame
+behind it is called unanswered at `REQUEST_UNANSWERED_S` = 6 s and re-asked
+with the participant's own audio; unanswered again at `REPLAY_UNANSWERED_S`
+= 4 s, the session is rebuilt and the line replayed into it (`RECONNECT_LIMIT`
+= 2 rebuilds per encounter). From the participant's chair that is 9–22 s of
+quiet — the seven live recoveries of that day measured 9.2, 9.3, 11.8, 14.9,
+15.3, 19.2, 21.7 s, median 14.9 — and then the character answers what they
+actually said, rather than an encounter in which every later line was lost.
+Expect roughly one per 90–120 s of talking on this gateway. `RESPONSE_STALL_S`
+(45 s) now only backstops replies the runner did not request.
+
+Four things an operator needs to know about it:
+
+- **The retry is a text prompt to the model** — `(I didn't hear that - the
+  audio dropped. Could you say it again?)` — because for a reply whose *audio*
+  was lost it is the only thing measured to revive it. It never enters the
+  participant transcript
+  and is written on the `audio_retry` event, but the character's recovered
+  line answers it, and a rater will hear that: on the four live stalls the
+  re-spoken line was delivered whole every time and repeated the lost words
+  0 of 4 times. **The PI must rule on this before a wave** (it is in the
+  decision memo); until then, tell raters what `audio_retry` on a turn means.
+- **The nudge is not used where there is audio to replay.** A nudge in front
+  of a *lost line* was measured to draw an answer to the nudge rather than to
+  the participant — a dropped *"Good morning."* came back as *"You booked this
+  meeting. What's on your mind."* — so every 1:1 request is re-asked with the
+  participant's own audio instead, which needs no explaining to a rater
+  (`participant_turn_replayed` on the record). The nudge remains only for a
+  truncated reply, a group room, and a request with no speech behind it.
+- **`encounter_health` reports it per encounter** — `audio lost upstream: N
+  retried, N recovered, N delivered whole, N unrecovered` — so a wave can be
+  checked for how much of it the participant actually heard, and a gateway
+  that is failing more often than the pilot measured shows up here rather
+  than in a rater's puzzlement.
+- **Participants must wear a headset — a requirement, not advice.** With
+  loudspeakers the character's own words land inside the participant's
+  transcript and the transcriber hallucinates on the bleed, which corrupts the
+  channel the study measures; the bleed also counts as "the participant is
+  talking" and withholds a retry. The end-of-turn detector adapts to the room's
+  noise floor (a fan or keyboard clatter no longer cuts a character off — false
+  cut-offs 5 in 22 agent turns before, 0 in 19 after; genuine interjections
+  still cancel the speaker, 6 of 12 after against 2 of 9 before), but a
+  loudspeaker is not room noise.
 
 ```bash
 # What is on disk locally
@@ -310,17 +651,33 @@ research note, every stage direction above the reply it produced, and coverage
 
 ## Deploying
 
+**The runbook and the practice diverged, so read this before you copy
+anything.** This page used to end with `tofu apply`. Every live revision of
+`relational-fluency-agent` — 35, 36, 37 and the serving 38 — was registered by
+hand with the AWS CLI, the Terraform state for this stack is not in the
+account's state bucket, and `infra/terraform/versions.tf` still has its S3
+backend commented out. Run from empty state, `tofu apply` does not update the
+service: it proposes to *create* the bucket, the ECR repositories, the IAM roles
+and the certificate that already exist. `infra/terraform/terraform.tfvars` pins
+`container_image` at the tag serving participants (`cabc1dd`, with a
+`deployed:` line naming the revision it was checked against) — it has been
+**behind** before, and whenever it is, an apply that takes the file at its word
+rolls production back. The full account, and the work needed to reopen the
+Terraform path, is in
+[`DEPLOY-AWS.md`](DEPLOY-AWS.md#read-this-first-the-runbook-and-the-practice-have-diverged).
+
+Build and push is unchanged and is the same on either path:
+
 ```bash
 set -euo pipefail
 REGION=us-east-1
 SHA=$(git rev-parse --short HEAD)
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 REGISTRY=$ACCOUNT.dkr.ecr.$REGION.amazonaws.com
-REPO=$(tofu -chdir=infra/terraform output -raw ecr_repository)
+REPO=$REGISTRY/relational-fluency/platform
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin "$REGISTRY"
 docker build --platform linux/amd64 -t $REPO:$SHA .        # amd64 matters on Apple Silicon
 docker push $REPO:$SHA
-tofu -chdir=infra/terraform apply -var container_image=$REPO:$SHA
 ```
 
 Windows PowerShell — same procedure, one statement at a time (PowerShell has no
@@ -332,85 +689,178 @@ $REGION = "us-east-1"
 $SHA = git rev-parse --short HEAD
 $ACCOUNT = aws sts get-caller-identity --query Account --output text
 $REGISTRY = "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
-$REPO = tofu -chdir=infra/terraform output -raw ecr_repository
+$REPO = "$REGISTRY/relational-fluency/platform"
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
 docker build --platform linux/amd64 -t "${REPO}:${SHA}" .
 docker push "${REPO}:${SHA}"
-tofu -chdir=infra/terraform apply -var "container_image=${REPO}:${SHA}"
 ```
 
-**Three things changed here, and each one was shipping the wrong build.**
+The repository URL used to come from `tofu ... output -raw ecr_repository`,
+which needs the state this stack does not have: with no state the output is
+empty, `docker build -t :$SHA` builds an image tagged with a bare colon, and the
+push fails naming the tag rather than the missing state. Build the registry host
+from `$ACCOUNT` and `$REGION` instead — and not from `"${REPO%%/*}"`, a bash
+expansion PowerShell parses as a braced *variable name* (`REPO%%/*`), finds
+nothing for, and expands to the empty string with no error at all, so
+`docker login --password-stdin ""` fails with a message about a missing registry
+that sends the operator after AWS credentials which are fine.
 
-*No `sed -i ''`.* That is the macOS/BSD spelling. On GNU sed — every Linux box,
-and Git Bash on Windows — `-i` takes its suffix attached, so `''` is read as the
-*script*, `s|platform:...|` is read as a *filename*, and the command exits 2
-with `sed: can't read s|platform:...`, leaving `terraform.tfvars` untouched. The
-block had no `set -e`, so the next line, `tofu apply`, ran anyway and re-applied
-the tag that was already pinned. The operator has just built a new image, pushed
-it, watched an apply succeed — and participants keep hitting the previous build.
-Because tags are immutable and deploys are manual and scheduled between
-collection sessions, that is discovered, if at all, during the next wave.
-`-var container_image=` needs no text editing and behaves identically in bash,
-zsh, PowerShell and cmd.
+**Then release.** The sequence that actually ships a build —
+`describe-task-definition` into a file, strip the read-only keys, change the
+image, `register-task-definition`, `update-service` — is written out step by
+step in
+[`DEPLOY-AWS.md`](DEPLOY-AWS.md#4a-the-path-in-use-register-a-task-definition-point-the-service-at-it),
+along with which IAM permission each step needs. It is not duplicated here,
+because two copies of a release procedure diverge and this is a page about
+checking things rather than about changing them.
 
-*If the committed pin in `infra/terraform/terraform.tfvars` also has to move* —
-it is committed on purpose, per that file's own header — **edit it by hand and
-commit it** as a separate, visible step. If a scripted edit is genuinely wanted,
-use `python -c`, which is a prerequisite on all three platforms; do not
-reintroduce sed.
-
-*The registry host* comes from `$ACCOUNT` and `$REGION`, not from
-`"${REPO%%/*}"`. That bash expansion parses in PowerShell as a braced *variable
-name* — `REPO%%/*` — which does not exist, so it expands to the empty string
-with no error at all, and `docker login --password-stdin ""` fails with a
-message about a missing registry that sends the operator after their AWS
-credentials, which are fine. cmd.exe has no such construct.
-
-*`set -euo pipefail`* so a failed step can never be followed by an apply.
+*No `sed -i ''`, on either path.* That is the macOS/BSD spelling. On GNU sed —
+every Linux box, and Git Bash on Windows — `-i` takes its suffix attached, so
+`''` is read as the *script*, `s|platform:...|` is read as a *filename*, and the
+command exits 2 with `sed: can't read s|platform:...`, leaving
+`terraform.tfvars` untouched. The old block had no `set -e`, so the next line
+ran anyway and re-applied the tag that was already pinned: the operator builds a
+new image, pushes it, watches a deploy succeed — and participants keep hitting
+the previous build. Because tags are immutable and deploys are manual and
+scheduled between collection sessions, that is discovered, if at all, during the
+next wave. If the committed pin in `infra/terraform/terraform.tfvars` has to
+move — it is committed on purpose, per that file's own header — edit it by hand
+and commit it as a separate, visible step; if a scripted edit is genuinely
+wanted, use `python -c`, which is a prerequisite on all three platforms.
 
 Rollout waits for the new task to pass health checks before draining the old
-one, so an encounter in progress is not cut off — but **anything recorded on the
-old task is gone**. Pull first.
+one, so an encounter in progress is not cut off at the switch — but the old task
+is stopped 120 s later regardless, and **anything recorded on it is gone**,
+because nothing is mounted at `/data`. Pull first.
 
 ## When something is wrong
 
 | Symptom | First check |
 |---|---|
+| **"We could not confirm your consent record", or a 503 from `POST /api/consent`, or every socket closing 4403** | **`UPSTREAM_CONSENT_VERSION` on the task.** Unset or a placeholder and no study consent can be recorded at all — see [The consent version](#the-consent-version-unset-this-records-nothing). The 503 body names the variable. On the build deployed today the same failure is a 404 saying "no such participant record"; the record exists. Do not go looking for it. |
+| A 409 `no_survey_response_id` from `POST /api/consent` for one participant | Their entry link carried no usable `&qid=` — the survey's redirect is not piping `${e://Field/ResponseID}`. Fix the link; that participant re-enters — see [The participant URL](#the-participant-url-qualtrics--app--qualtrics) |
+| Runs are accumulating but the encounter count stays at zero | Same variable. `/health` is 200, `/start` works, and nothing else fails |
 | Page loads, mic "does not work" | `curl -s $RF/health` — if `gateway.ok` is false, no encounter can run |
-| WebSocket opens then closes instantly | Application logs — a server-side exception during session creation looks exactly like a dead mic |
+| WebSocket opens then closes instantly | Application logs — a server-side exception during session creation looks exactly like a dead mic (and 4403 specifically is the consent gate, one row above) |
 | 503 from the domain | Target health, then service events: usually no healthy task |
 | `No scenario: SxX` | Deployed image predates the scenario bank — check the running image tag |
 | Agent replies but no transcript | `verify_record` — look for `transcript_missing` |
 | Encounter ends after ~3 turns | `INTERACTION_MIN_TURNS` / `INTERACTION_MIN_SECONDS` on the task |
+| Every run is `cohort=unattributed` | The Qualtrics embedded field name. It is `participantId`; an unknown field pipes as the empty string and reports nothing — see [The participant URL](#the-participant-url-qualtrics--app--qualtrics) |
+| No webcam recording, no `video_uploaded` event, "network" in the client | The bucket's CORS allowlist does not name the origin the page was served from, and a CORS refusal does not reach the local fallback — see [The third state](#the-third-state-which-loses-the-recording-cors) |
+| Yesterday's encounters are gone | The task has no persistent volume and something redeployed or restarted it — see [Read this before collecting anything](#read-this-before-collecting-anything) |
+| A character goes quiet for ~8 s and then starts the line again, or its reply answers "could you say it again" | The gateway dropped that reply's audio and the bridge retried it once — `audio_retry` on the turn. Expected on the configured model at a few per 145 replies; a wave doing much worse than that is the gateway, and `python tools/encounter_health.py` will say how often — see [What a wave sounds like](#what-a-wave-sounds-like-lost-audio-and-the-retry) |
+| A character goes quiet for 45 s | A turn the gateway never answered at all; the watchdog closes it. Seen after one-word utterances. Nothing to fix on the task |
+| Characters keep stopping mid-sentence | Room noise or loudspeaker bleed being read as the participant. Headset first; the end-of-turn floor adapts to steady noise, not to the character's own voice coming back through the mic |
+| Qualtrics export fails while `whoami` succeeds | `QUALTRICS_BASE_URL` is the brand host, not the datacenter host — see [Pulling the survey responses out of Qualtrics](#pulling-the-survey-responses-out-of-qualtrics) |
 
 ---
 
-## The two URLs
+## The URLs
 
-### 1. Internal testing (bug hunting)
+There are four. The first one needs the researcher key and is the only one that
+honours `variant`; the other three go to people you are not standing next to.
+Read the warning under the first before you copy anything from this section into
+Qualtrics.
+
+> **On your own laptop there is a fifth, and it is the one you will actually
+> type.** A local checkout has no `SESSION_KEY`, so the `/test` link's `&key=` is
+> not available to you as a way of proving who you are — and a bare
+> `?pid=whatever` participant link is a **permanent dead end** on *"We could not
+> confirm your consent record"*, because it carries no `qid`. Appending
+> **`&cohort=internal`** to either arm's path is the way through: it satisfies
+> the consent-provenance check with no `qid`, skips the seven-minute encounter
+> gate and the 180-second advance floor (both are disabled for a run whose
+> cohort is `internal`), and tags the run so every study export drops it. Both
+> arms were walked end to end that way on a local checkout.
+>
+> The links themselves, written out, are in
+> [`docs/TESTING-LOCALLY.md`](TESTING-LOCALLY.md) — deliberately there and not
+> here, because a URL on *this* page is one somebody may paste into Qualtrics,
+> and a `/start` link without `&qid=` must never be one of those.
+>
+> On a **deployed** server the same suffix on a keyless link is *ignored* and a
+> `WARNING` naming it is logged, which is the backstop described below — so this
+> is a local-testing technique, not a second participant link.
+
+### 1. Internal testing and lab demos (bug hunting)
 
 ```
-https://rf.ai-ready-workforce.ai.cornell.edu/test?name=jennie&variant=A
+https://rf.ai-ready-workforce.ai.cornell.edu/test?name=jennie&variant=A&key=$KEY
 ```
 
+- **`key=` is mandatory on any deployment with `SESSION_KEY` set**, which is
+  every deployed one. This door is `check_key`-gated — GET `/test`, POST
+  `/api/consent` and the voice socket reached live audio and webcam capture in
+  three requests from anywhere on the internet before it was — so without the
+  key it answers **401** and no run is created. It is still open on a local
+  checkout with no `SESSION_KEY`, the way `/researcher` and the download routes
+  are. It is the researcher's own credential: it belongs in a link you paste
+  into your own browser, never in one that goes to Qualtrics.
 - `name` labels the run so a bug report can say whose session it was.
 - `variant=A` or `variant=B` pins all four scenarios to one form; omit for the
-  randomized mix.
+  randomized mix. A letter no form carries is refused with a 400, here as on
+  the participant links.
+- `qid=` is neither needed nor read here: an internal run is recorded under
+  `internal_test` provenance, which needs no Qualtrics response and no
+  `UPSTREAM_CONSENT_VERSION`. That is also why walking the study through this
+  door proves nothing about whether a real participant can consent — see
+  [The consent version](#the-consent-version-unset-this-records-nothing).
 - These runs are tagged `cohort=internal` and are excluded from study data by
   that tag; they can never be mistaken for a participant.
 
-### 2. The study URL (Qualtrics → app → Qualtrics)
+> **`variant=` and `cohort=` belong to this link and to no other — and since an
+> earlier round, a stray one on a participant link is no longer a disaster.**
+> Without the researcher key the server **ignores** both and prints a `WARNING`
+> naming the parameter it threw away: the participant gets the run the study
+> intends. Ignored rather than refused on purpose, because a 400 at the door
+> mid-study costs the encounter outright, and the safe reading of a stray
+> parameter on a recruited person's link is the run they should have had
+> anyway. So a copy-paste slip costs you a line in CloudWatch, not the wave.
+>
+> The residual risk is narrow and worth naming exactly, because it is the one
+> the backstop cannot cover: **copied together with `&key=`**, both are honoured
+> — you are holding the credential, so the server does what you asked. Then
+> `variant=A` pins all four encounters to one parallel form and the
+> counterbalancing is gone with every record still looking perfect, and
+> `cohort=internal` tags real participants as lab traffic that every analysis
+> filter drops. That is the reason this link, key and all, must never be the one
+> you paste into Qualtrics. Copy the participant links from the next section.
 
-Full linkage: CloudResearch key ties recruitment to the survey, the Qualtrics
-response id ties the survey response to the app run, and the completion code
-carried back ties the run to the follow-up survey.
+### 2. The three participant-facing links
 
-```
-https://rf.ai-ready-workforce.ai.cornell.edu/start?pid=${e://Field/ParticipantKey}&qid=${e://Field/ResponseID}
-```
+All three go into Qualtrics; the canonical wording, and what each parameter
+must and must not carry, is [The participant
+URL](#the-participant-url-qualtrics--app--qualtrics) below.
 
-`ResponseID` is built into Qualtrics (pipe it via embedded data); `qid` is
-stored on the run, so each run knows exactly which survey response preceded it.
+| Link | Who clicks it | Mandatory parameters |
+|---|---|---|
+| `/start/one-to-one` | A participant assigned the two-person arm | `pid=`, **`qid=`** |
+| `/start/group` | A participant assigned the group arm | `pid=`, **`qid=`** |
+| `/rate/start` | A Phase 2 rater arriving from the rater survey | `token=` |
+
+> **`&qid=` is mandatory on every `/start…` link**, arm or no arm. It carries
+> the Qualtrics `ResponseID`, which is the only evidence this platform has that
+> anybody consented at all; without a usable one the arrival is refused, the
+> voice socket closes 4403 and **the encounter is not recorded**. The full
+> wording is in [The participant
+> URL](#the-participant-url-qualtrics--app--qualtrics) below — read it before
+> you paste anything into the survey.
+>
+> `/rate/start` is the exception: its mandatory parameter is `token=`, and a
+> rater who arrives without a usable one gets a page to paste theirs into
+> rather than a refusal. `&qid=` is optional there and worth piping anyway — it
+> is carried through to the console URL, and it is the only thing joining a
+> rater's survey response to the work they then did.
+
+`/start` (no arm) still exists and still works — it is the full four-construct
+run. If the wave is fielding arms, the two arm links are what goes in the
+survey; `/start` is not a synonym for either of them and a participant who
+clicks it gets a different assignment.
+
+Full linkage: the CloudResearch key ties recruitment to the survey, the
+Qualtrics response id ties the survey response to the app run, and the
+completion code carried back ties the run to the follow-up survey.
 
 ### Joining the data afterwards
 
@@ -472,8 +922,11 @@ curl.exe -s "%RF%/api/runs?key=%KEY%&cohort=unattributed" > runs.json
 python -c "import json;rows=json.load(open('runs.json'));print('unattributed runs:',len(rows));[print(' ',r['run_id'],r.get('participant_key_status'),r.get('created_at')) for r in rows]"
 ```
 
-A non-empty result means fix the Qualtrics `ParticipantKey` piping now (see
-[The participant URL](#the-participant-url-qualtrics--app--qualtrics)). The runs
+A non-empty result means fix the Qualtrics `participantId` piping now (see
+[The participant URL](#the-participant-url-qualtrics--app--qualtrics)) — and
+the likeliest cause is the field name itself, because an embedded field
+Qualtrics does not recognise pipes as the empty string rather than as an error.
+The runs
 already recorded can only be re-joined by hand, and `/api/runs` does not carry
 the raw value — read it off the run document on the volume, where `/start`
 stored it:
@@ -490,18 +943,128 @@ identifying; often it is an empty string, and then the recruitment record and
 the recording cannot be joined at all. The server also prints a `WARNING` line
 per bad arrival, but a stdout line is not a check; this query is.
 
+## Pulling the survey responses out of Qualtrics
+
+The analysis-side half of the join: `server/qualtrics.py` exports the survey's
+responses over the API and merges them with `/api/runs`, so "who replied and
+how" is one table with the run id, completion code and encounter session ids
+attached. It runs on your own machine, against `QUALTRICS_API_TOKEN`,
+`QUALTRICS_SURVEY_ID` and `QUALTRICS_BASE_URL` in `.env`.
+
+```bash
+python -m server.qualtrics whoami     # credentials work
+python -m server.qualtrics export     # raw responses to data/qualtrics/
+python -m server.qualtrics join       # responses merged with runs
+```
+
+**The datacenter trap, and it only fires on the one call that matters.**
+`QUALTRICS_BASE_URL` must be the **datacenter** host, `https://yul1.qualtrics.com`
+— not the brand vanity host `cornell.qualtrics.com`. They are not
+interchangeable, and the difference is invisible until the export:
+
+- `cornell.qualtrics.com` answers `/whoami` and `/surveys` perfectly happily. So
+  a setup check passes and the value looks right, possibly for months.
+- The same host refuses `/export-responses` with *"This endpoint is unavailable
+  through datacenter proxying, please retry using the url of the datacenter the
+  API user belongs to: yul1.qualtrics.com"*.
+- **`whoami` reports the datacenter as `viawest`.** That name is not routable
+  and is not what belongs in `QUALTRICS_BASE_URL`. The only place the correct
+  host appears is in the refusal message above — so read the error, not the
+  field.
+
+`_raise()` in `server/qualtrics.py` exists for exactly this: httpx's own
+`raise_for_status()` renders the refusal as `Client error '400 Bad Request'`
+plus a link to the MDN page for 400, and throws the body — the part naming the
+host — away. An error that carries the answer and discards it is worse than no
+error.
+
+The token is a credential. It travels only in the `X-API-TOKEN` header, stays
+out of git, and does not belong in a shell command you paste into a chat or a
+ticket.
+
+Two things to check on the joined output before trusting it:
+
+- **The primary join is the Qualtrics `ResponseID`**, matched against each run's
+  `qualtrics_id` — which is what `&qid=` on the entry link is for. If `qid`
+  piping was working, everything joins on this and nothing else is needed.
+- **The fallback join is by participant key**, for responses collected before
+  `qid` piping existed. It looks for the key under a short list of field
+  spellings in `server/qualtrics.py`; check that your survey's field name
+  (`participantId`, per [The participant
+  URL](#the-participant-url-qualtrics--app--qualtrics)) is in that list before
+  relying on it, because a field it does not know about is not an error — the
+  response simply comes back `UNLINKED`, and a table of unlinked responses looks
+  the same whether the survey field is missing or merely unrecognised.
+
 ## The participant URL (Qualtrics → app → Qualtrics)
 
-**Put this in Qualtrics**, at the point where participants move from the WEIP
-survey to the encounters:
+**Put these in Qualtrics.** The first two go at the point where participants
+move from the WEIP survey to the encounters — whichever arm that participant is
+assigned — and the third goes in the rater survey. Copy them from here, whole.
 
 ```
-https://rf.ai-ready-workforce.ai.cornell.edu/start?pid=${e://Field/ParticipantKey}
+https://rf.ai-ready-workforce.ai.cornell.edu/start/one-to-one?pid=${e://Field/participantId}&qid=${e://Field/ResponseID}
+https://rf.ai-ready-workforce.ai.cornell.edu/start/group?pid=${e://Field/participantId}&qid=${e://Field/ResponseID}
+https://rf.ai-ready-workforce.ai.cornell.edu/rate/start?token=${e://Field/RaterToken}
 ```
 
-- `${e://Field/ParticipantKey}` is Qualtrics piped text — replace
-  `ParticipantKey` with whatever the embedded field holding the CloudResearch
-  Connect key is actually called in your survey.
+- **The field is `participantId`.** Checked against the live survey, which
+  declares three embedded data fields — `participantId`, `assignmentId` and
+  `projectId` — and pipes `participantId` and `ResponseID`. This page used to
+  say `ParticipantKey`, which the survey does not declare, and that is the
+  expensive kind of wrong: Qualtrics substitutes an unknown field with the
+  **empty string** and reports nothing, so every link works, every participant
+  is recorded, and every run lands in cohort `unattributed` with no recruitment
+  record attached to it. `assignmentId` and `projectId` are CloudResearch's own
+  identifiers; nothing in this platform reads them today, and they are named
+  here so that a person comparing this page against the survey in front of them
+  can tell "a field I am not using" from "a field that is missing".
+- `${e://Field/participantId}` is Qualtrics piped text. If your survey spells
+  the field differently, change the text **inside** the braces and leave `pid=`
+  alone: `pid`, `participant_id` and `PROLIFIC_PID` are the query-parameter
+  spellings the app accepts (`entry_params` in `server/app.py`), and
+  `participantId` is not among them — it belongs in the field reference, not in
+  the URL parameter. Same for `RaterToken` in the rater survey.
+- `/start` with no arm is the full four-construct run and still works; the two
+  arm links draw from different construct pools (`/start/one-to-one`: Conflict
+  Management and Influence; `/start/group`: Inspirational Leadership and
+  Teamwork), and each serves two of its constructs' three parallel forms,
+  holding the third back so a second attempt has material the participant has
+  not met (recorded on the run under `construct_pool`). A participant who
+  arrives at the second arm after starting the first gets a *second* run,
+  cross-linked to the first rather than resuming it.
+
+> **`&qid=` is mandatory on both `/start…` links.** It carries the Qualtrics
+> `ResponseID`, and since consent moved upstream that response id is the only
+> evidence this platform has that anybody consented at all: `server/storage.py`
+> records a study consent *only* against a usable `qid`. A link without it, or
+> one whose `${e://Field/ResponseID}` never got replaced, is refused —
+> `POST /api/consent` answers 409 `no_survey_response_id` (404 on the build
+> deployed today), the record stays unconsented, and the voice socket closes
+> 4403. **The participant is turned away and the encounter is not
+> recorded.** `ResponseID` is built into Qualtrics; pipe it via embedded data.
+>
+> **Do not append `&variant=` or `&cohort=`.** Neither is silently honoured any
+> more: on a link without the researcher key both are **ignored, and a
+> `WARNING` naming the discarded parameter is printed to the application log**,
+> so a stray one costs you a line in CloudWatch rather than the wave. That is a
+> backstop, not a licence — it only holds for a participant link. Copied from
+> the `/test` link *with* its `&key=` still attached, `variant=A` is honoured,
+> and then it pins all four encounters to one parallel form: the
+> counterbalancing is gone and every record still looks perfect. `cohort=` the
+> same way, marking real participants as lab traffic that every analysis filter
+> drops. Both are documented, above, on the `/test` link — they belong to that
+> link alone, and it is the nearest URL on this page to these ones, which is
+> exactly where a copy-paste typo comes from.
+>
+> **And do not append `&key=`** — see the warning below, which is about the
+> researcher credential and is the most expensive mistake on this page.
+
+After the first few arrivals, check the wave two ways: no `unattributed` runs
+(the `participantId` piping worked, [above](#joining-the-data-afterwards)) and
+no runs sitting with zero encounters (the `qid` piping and the consent version
+worked, [above](#the-consent-version-unset-this-records-nothing)). Both fail
+all-or-nothing, so the first three participants tell you about all hundred.
 
 > **Never put `SESSION_KEY` in the participant link.** An earlier version of this
 > page told you to append `&key=<SESSION_KEY>`. Do not. SESSION_KEY is not a
@@ -560,3 +1123,18 @@ Capture `code` in Qualtrics as proof of completion. A partial run yields
 With `survey_return_url` unset the participant still sees the completion code
 and is told to return to the survey — they are never stranded — but the
 one-click return is missing.
+
+> **Set to the Qualtrics *host* rather than a continuation link, the button is
+> worse than missing, and that is what a checkout has today.** `.env` currently
+> carries `SURVEY_RETURN_URL=https://cornell.qualtrics.com`. Measured, with
+> redirects followed: that URL ends at
+> `https://shibidp.cit.cornell.edu/idp/profile/SAML2/Redirect/SSO?execution=e1s1`,
+> HTTP 200, page title **"Cornell University Web Login"**. A CloudResearch
+> participant has no Cornell NetID, so the last button of the study drops every
+> completer on a staff SSO login page — and it takes their run id, completion
+> code and participant key there with it, on the query string.
+>
+> Two consequences: paste the survey's own **end-of-survey / continue** URL here
+> before any wave, and understand that whatever host you configure **receives
+> the run id, the completion code and the participant key**, so it must be a URL
+> it is acceptable to send those three things to.

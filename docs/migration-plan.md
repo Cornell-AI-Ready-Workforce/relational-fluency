@@ -36,7 +36,16 @@ transcript, and video.
 
 ## Gaps, in dependency order
 
-### 1. Voice layer — single-agent DONE, group mode pending
+### 1. Voice layer — single-agent DONE, group mode DONE
+
+> **Status, 2026-09-14.** Both halves of this section are closed. Group rooms
+> run on Gemini Live through `server/group_room.py` — one realtime session per
+> character, as the recommendation in 1b proposed — and the v1 cascade is gone
+> from the codebase. The text below is kept as the record of what was measured
+> on 2026-08-19 and why the design went the way it did; the current behaviour
+> of the two realtime families, and what each one does and does not honour, is
+> in `REALTIME_FAMILIES` in `server/voice/realtime.py`, and the model question
+> is the PI's (`PI-DECISION-realtime-model.md`, alongside the repository).
 
 **Single-agent encounters now run on Gemini Live** (`server/voice/realtime.py`
 + `server/realtime_voice_session.py`), verified end to end through the real
@@ -145,6 +154,16 @@ all, and no error. Tried and ruled out:
 Text conversation items are not an option either: injecting one closes the
 socket with 1006.
 
+> **No longer true, 2026-09.** With the flat session config above, a user-role
+> text `conversation.item.create` followed by `response.create` is accepted by
+> the Gemini session and answered — first delta 0.23 s later, a complete reply
+> with its audio stream closed. That is exactly what the audio-recovery retry in
+> `server/voice/realtime.py` (`retry_response`) sends to revive a reply whose
+> voice the gateway dropped, and it is the only recipe measured to do so. What
+> is still untested is whether a *stage direction* sent that way is obeyed as an
+> instruction rather than answered as a line the participant said; the 1006 was
+> almost certainly the over-specified session config, not the item itself.
+
 **Recommended next step: one realtime session per character.** Open N
 connections — one per agent, each permanently briefed as its own character with
 its own voice — and have the broker fan participant audio out to all of them
@@ -158,38 +177,47 @@ gateway quota question in the cost estimate).
 Today: 13 ad-hoc scenarios (`scenarios/*.yaml`) from earlier exploration —
 `missed_deadlines`, `credit_taken`, `hidden_profile_vendor`, etc.
 
-Target: exactly four constructs, 2–3 variations each, from
-`reddit-analysis/scenarios/S{1..4}-*.yaml`:
+Target: exactly four constructs, three parallel forms each, from
+`reddit-analysis/scenarios/S{1..4}-*.yaml`. **Done — twelve forms are
+compiled into `scenarios/v3/`:**
 
-| | Competency | Runnable default | Parallel form |
-|---|---|---|---|
-| S1 | Conflict Management | **B** — Hostile after-hours message | (A — Taken credit: excluded, see below) |
-| S2 | Influence | A — Promised raise + competing offer | B — Hybrid under an RTO mandate |
-| S3 | Inspirational Leadership | A — After resignations over pay | B — After a commission cut |
-| S4 | Teamwork | A — Planning an internal rollout | B — Preparing a client presentation |
+| | Competency | Form A | Form B | Form C |
+|---|---|---|---|---|
+| S1 | Conflict Management | Taken credit (barred beside S4, see below) | Hostile after-hours message | Blamed in front of the manager |
+| S2 | Influence | Promised raise + competing offer | Hybrid under an RTO mandate | Stopping the Monday pack |
+| S3 | Inspirational Leadership | After resignations over pay | After a commission cut | A system nobody asked for |
+| S4 | Teamwork | Planning an internal rollout | Preparing a client presentation | Writing up the outage |
 
-**S1-A is not the S1 the study runs.** Every participant does all four
-constructs and S4 always involves misattributed credit, which is also S1-A's
-situation; running both in one session bleeds the Conflict Management and
-Teamwork constructs together. The canonical spec's assignment rule
+**S1-A is not assignable beside S4.** Every full session contains S4 and S4
+always involves misattributed credit, which is also S1-A's situation; running
+both in one session bleeds the Conflict Management and Teamwork constructs
+together. The canonical spec's assignment rule
 (`reddit-analysis/scenarios/scenario-specifications.md`, "Variation assignment")
-therefore requires S1 B or C in any session containing S4 — and since every
-session contains S4, S1-A is never legally assignable to a study participant.
-The grounding data agrees: `reddit-analysis/situation-taxonomy.md` §3 calls
-blame/public humiliation (1,631 posts) "the best-attested S1 trigger — supporting
-the assignment rule that prefers S1-C (with S1-B) over S1-A", against 77 for
-credit misattribution. C is not compiled into `scenarios/v3/` yet, so B is the
-S1 form to run.
+therefore requires S1 B or C in any session containing S4. The grounding data
+agrees: `reddit-analysis/situation-taxonomy.md` §3 calls blame/public
+humiliation (1,631 posts) "the best-attested S1 trigger — supporting the
+assignment rule that prefers S1-C (with S1-B) over S1-A", against 77 for credit
+misattribution. S1C is that form, compiled; S1-A still serves the one-to-one
+arm, which carries no Teamwork.
 
 Done: the rule is machine-readable and enforced. `server/runs.py` still draws
 each construct's form independently — the draw cannot see the run as a whole —
 but `FORM_EXCLUSIONS`, a construct → forbidden-form → co-occurring-construct
 table, is applied to the completed draw inside `runs.create`, and any run that
-came up S1-A alongside an S4 form has its S1 swapped to B before it is written.
-The swap is recorded on the run document as `form_exclusions`, so an analyst can
-see which assignments were corrected rather than drawn; without that record the
-B forms would simply look over-sampled. Adding the next exclusion is a row in
-the table, not a second special case.
+came up S1-A alongside an S4 form has its S1 replaced with a permitted form
+before it is written, rotated across B and C on a digest of the draw so
+neither is over-served (measured over 2000 seeds: 50.7 / 49.3). The swap is
+recorded on the run document as `form_exclusions`, so an analyst can see which
+assignments were corrected rather than drawn. Adding the next exclusion is a
+row in the table, not a second special case.
+
+Also done, with the third forms: per-slot form selection, so an arm that gives
+a construct two of the four slots serves two different forms and holds the
+third back for a second attempt (`construct_pool` on the run document;
+`tests/test_reserve_draw.py`). The routing authority for "which forms are
+parallel" is `scenarios_v3.parallel_forms()`, derived from `construct`; the
+`parallel_form:` scalar in each spec is provenance, not routing — see
+`scenario-spec-v3.md`.
 
 The canonical specs are richer than the engine's schema — they carry
 `ai_partners[]` (named roles + behavior policies), `fixed_opening_prompt`,
@@ -212,6 +240,17 @@ directly from the browser via presigned URL.
 Bucket exists: `rf-study-data-540586745717` (us-east-1, currently empty).
 Credentials resolve through the AWS default chain — CLI profile locally, task
 role on Fargate. No access keys in env files.
+
+> **That bucket name is historical and is not the one the code uses.**
+> `infra/terraform/storage_secrets.tf` creates `relational-fluency-study-data`
+> and `server/video.py` defaults to it; the name above named an earlier,
+> hand-made bucket. Pointing an operator at it is the kind of mistake that
+> succeeds — the upload lands, in a bucket nothing else reads. The names that
+> are actually read, and where each one goes, are in `.env.example` and
+> [`DEPLOY-AWS.md`](DEPLOY-AWS.md#webcam-recordings-and-the-study-bucket).
+> "No access keys in env files" has also softened: a researcher running the
+> server on their own machine may put them in `.env`, which is gitignored and
+> never enters the image. On Fargate the sentence still holds exactly.
 
 ### 4. Participant flow → Connect/Qualtrics round trip
 

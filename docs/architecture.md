@@ -27,7 +27,7 @@ Participant browser (via CloudResearch Connect → Qualtrics)
  │                              └─► S3: audio, transcript, steering log
  └─ webcam (MediaRecorder) ── presigned upload ────────► S3 recordings
 
- S3 ─► CloudFront (signed URLs) ─► raters ─► Qualtrics (ESCI items)
+ S3 or local disk ─► web app (/api/rater/video) ─► raters ─► Qualtrics (ESCI)
                                      └─► gold labels ─► scorer + feedback models
                                                           └─► Phase-4 RCT
 ```
@@ -58,8 +58,14 @@ steering log under a single encounter id, so the modalities stay joined.
 5. Each turn, the director reads the transcript and emits one stage direction;
    the actor follows it on the next turn. Every direction is logged.
 6. Webcam video uploads browser → presigned S3 URL, never transiting app servers.
-7. Raters stream recordings via CloudFront signed URLs and score 22 ESCI items
-   in Qualtrics.
+   When this server cannot sign one — no AWS credentials, an unreachable or
+   misconfigured bucket — the browser PUTs the recording to the app instead and
+   it lands on disk beside the session. Same event, same key, same playback.
+7. Raters stream recordings from the app, at `/api/rater/video/{assignment_id}`,
+   and score 22 ESCI items in Qualtrics. Not a presigned or CloudFront-signed
+   URL: a signed media URL is a bearer credential for an IRB recording that
+   outlives the page it was issued to, it expires mid-rating, and it cannot
+   produce a frame on a machine without live AWS credentials.
 8. Ratings → reliability gates (ICC/κ) → scorer and feedback model training →
    Phase-4 RCT.
 
@@ -74,6 +80,16 @@ and barge-in (dropping queued agent audio when the participant starts speaking).
 This is the one capability the architecture slide assumes is free and is not.
 Going direct to Google would restore it, at the cost of GCP credentials and
 leaving the gateway. Exact working session config is in the migration plan.
+
+Two consequences of owning it, both measured live and both in
+`server/voice/realtime.py`: the silence threshold adapts to the room's noise
+floor (a fixed one called a fan "speech" and barged the character in on
+itself — false cut-offs 5 in 22 agent turns before, 0 in 19 after), and a reply
+whose audio the gateway drops — mid-sentence, or before it starts — is detected
+by comparing the audio delivered against the reply's own words and re-requested
+once, with a text prompt the record shows (`audio_retry`). The second is a
+recovery for an upstream fault, not a feature, and the retry prompt is a
+methods question for the PI (`PI-DECISION-realtime-model.md`).
 
 ## Key decisions
 

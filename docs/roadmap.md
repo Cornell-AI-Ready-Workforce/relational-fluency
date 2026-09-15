@@ -20,14 +20,24 @@ See [`migration-plan.md`](migration-plan.md) for detail and dependency order.
 
 - [x] Verify a speech-to-speech model through the Cornell gateway
       (`nto.gemini-live-2.5-flash`, working config recorded)
-- [ ] Replace the Deepgram → Claude → ElevenLabs cascade with Gemini Live,
-      including broker-side end-of-turn detection and barge-in
-- [ ] Compile canonical S1–S4 specs into runnable multi-agent sessions
-- [ ] Move study data to encrypted S3, one aligned record per encounter
-- [ ] Consent → WEIP handoff → counterbalanced encounters → completion code
-- [ ] Deploy to ECS/Fargate behind ALB; create `rf` / `api.rf` DNS records and
-      issue the ACM certificate (independent of app work — start early)
+- [x] Replace the Deepgram → Claude → ElevenLabs cascade with Gemini Live,
+      including broker-side end-of-turn detection and barge-in (the detector
+      now adapts to the room; group rooms run one session per character)
+- [x] Compile canonical S1–S4 specs into runnable multi-agent sessions —
+      twelve forms, three per construct, in `scenarios/v3/`
+- [ ] Move study data to encrypted S3, one aligned record per encounter (only
+      the webcam video reaches S3; session records are on the task's own disk,
+      with no persistent volume yet — `DEPLOY-AWS.md`)
+- [x] Consent → WEIP handoff → counterbalanced encounters → completion code
+      (consent is taken in Qualtrics; `UPSTREAM_CONSENT_VERSION` must name it,
+      and `SURVEY_RETURN_URL` must be the survey's continuation link)
+- [x] Deploy to ECS/Fargate behind ALB; `rf` / `api.rf` DNS records and the
+      ACM certificate exist — released by hand with the AWS CLI, Terraform
+      state not yet recovered
 - [ ] Pilot n=5–10 to tune agent difficulty and confirm 7–12 min elicits signal
+- [ ] **Decide the realtime model** (PI, then IRB): on the configured model the
+      director's mid-encounter directions never reach the character —
+      `PI-DECISION-realtime-model.md`, alongside the repository
 
 ## Phase 1 — Collect encounters
 
