@@ -206,6 +206,17 @@ def icc(matrix: Matrix) -> Dict[str, Any]:
     out["n"] = len(complete)
     out["n_subjects_dropped"] = n_given - len(complete)
 
+    # An empty table has no raters in it, so the k < 2 branch below would
+    # describe it as "fewer than two raters with any data (0)" -- true of the
+    # matrix, and read as a claim about the wave it came from, which is where a
+    # researcher starts hunting for ratings that are not missing. Say what is
+    # actually the matter instead.
+    if not given:
+        out["reason"] = (
+            "the table has no rows: no subject carries a rating here, so there "
+            "is nothing to partition"
+        )
+        return out
     if k < 2:
         out["reason"] = (
             f"fewer than two raters with any data ({k}); an intraclass "
@@ -558,45 +569,164 @@ def krippendorff_alpha(matrix: Matrix, level: str = "ordinal") -> float:
 # assembling a wave into matrices
 # --------------------------------------------------------------------------
 
+# How many candidate rater subsets the block search will hold before it gives
+# up on being exhaustive. A wave at this study's design needs a few dozen, and
+# a twelve-rater pool scoring five at a time needs about 1500; the cap exists
+# because the closure below is exponential in the pool in the worst case, and
+# this report is served from an HTTP endpoint that must not be made to sit on a
+# pathological wave for a minute.
+_BLOCK_SEARCH_MAX_CANDIDATES = 5000
+
+
 def _largest_complete_block(rows_by_subject: Dict[str, Dict[str, Number]],
                             rater_ids: List[str]
-                            ) -> Tuple[List[str], List[str]]:
-    """Choose the rater subset that yields the most complete data cells.
+                            ) -> Tuple[List[str], List[str], bool]:
+    """Largest complete rater-by-subject block: (raters, subjects, exhaustive).
 
     ICC(2,1) models a fixed panel: the same k raters scored every subject. A
     wave assigned by ``raters.assign`` with a pool larger than
     ``per_encounter`` is NOT fully crossed -- encounter 1 may be rated by
     raters A, B, C and encounter 2 by B, C, D -- and listwise deletion over the
     whole pool can leave zero complete subjects, which would report the whole
-    wave as uncomputable when there is plenty of agreement to measure.
+    wave as uncomputable when there is plenty of agreement to measure. So the
+    ICC is computed on a restriction, reported explicitly (``raters_used``,
+    ``subjects_used``) because nobody should read an ICC without knowing what
+    it was computed on.
 
-    So: greedily drop the rater whose removal most increases the number of
-    complete cells (subjects x raters), stopping when no removal helps or two
-    raters remain. The result is reported explicitly (``raters_used``,
-    ``subjects_used``) because it is a restriction of the data, not the whole
-    of it, and nobody should read an ICC without knowing what it was computed
-    on. Ties break on rater id so the same wave always yields the same block.
+    WHICH restriction is the whole problem. Maximise raters and you get the
+    pool, which is complete on nothing; maximise subjects and you get a pair.
+    The quantity worth maximising is the block's area, raters x subjects, and
+    it is NOT reachable by improving one dimension at a time: with a pool of
+    five rating three at a time, every subset of five and of four is complete
+    on zero subjects, so a hill climb that only takes improving steps sits on
+    that zero plateau and reports "not computable" over a wave with a complete
+    2 x 11 block in it. Two steps have to be taken before anything improves.
+
+    So enumerate instead, exactly, using the fact that bounds the search: if a
+    set of raters R is complete on a set of subjects S, then so is the
+    intersection of the rater sets of the subjects in S, which contains R and
+    is therefore at least as good. Every optimal block's rater set is an
+    intersection of subject rater-sets, so closing the observed rater-sets
+    under intersection enumerates a superset of the optima -- a few dozen
+    candidates for a real wave rather than 2**pool. Only blocks that ICC can
+    actually be computed on (two raters, two subjects) are eligible; a wider
+    block complete on one subject beats a 2 x 2 on area and is worth nothing.
+
+    Returns the whole pool and its complete subjects when no eligible block
+    exists at all, and a third value saying whether the enumeration ran to
+    completion -- the caller may only tell a researcher that no block exists
+    when the search actually looked everywhere. Deterministic: ties go to more
+    subjects, then more raters, then the first rater ids alphabetically.
+
+    Cost, stated because ``report`` calls this once per item and per construct
+    behind an uncached endpoint, and because "a few dozen candidates" above is
+    true of a ROTATED wave and not of every wave. A rotation gives the pool at
+    most ``len(pool)`` distinct rater sets; an allocator free to pick panels
+    gives nearly every encounter its own, and the closure then yields tens of
+    thousands of candidates. Measured on this machine, one row of a 20-rater,
+    600-encounter, 8-per-encounter wave with freely chosen panels: 597 distinct
+    sets, ~16000 candidates, 0.12s per row against 0.70s before the candidate
+    scoring moved onto rater-word intersections. Over the 22 items and four
+    constructs that is ~3s of the report's ~5s, down from ~18s of ~21s. Do not
+    read the improvement as making it free: ``GET /api/reliability`` computes
+    the report on every request by deliberate choice (app.py, api_reliability:
+    a stale reliability number is worse than a slow one), so a wave at those
+    numbers still holds a worker for about five seconds. The study's own design
+    -- pool of 5, 3 per encounter, 26 encounters -- is 0.02s for the whole
+    report and is untouched either way, which is why the on-demand choice is
+    sound as the study stands. Anyone growing the pool past twenty, or letting
+    an allocator pick panels freely, should re-measure before assuming it
+    still is.
     """
-    def complete_subjects(raters: List[str]) -> List[str]:
-        return [s for s in sorted(rows_by_subject)
-                if all(rows_by_subject[s].get(r) is not None for r in raters)]
+    raters = sorted(rater_ids)
+    subjects = sorted(rows_by_subject)
 
-    current = sorted(rater_ids)
-    best_rows = complete_subjects(current)
-    best_score = len(best_rows) * len(current)
-    while len(current) > 2:
-        candidate = None
-        for drop in current:
-            trial = [r for r in current if r != drop]
-            rowsc = complete_subjects(trial)
-            score = len(rowsc) * len(trial)
-            if score > best_score or (candidate is not None and score > candidate[0]):
-                if candidate is None or score > candidate[0]:
-                    candidate = (score, trial, rowsc)
-        if candidate is None or candidate[0] <= best_score:
+    def complete_subjects(chosen: Sequence[str]) -> List[str]:
+        return [s for s in subjects
+                if all(rows_by_subject[s].get(r) is not None for r in chosen)]
+
+    if len(raters) < 2:
+        return raters, complete_subjects(raters), True
+
+    bits = {r: 1 << i for i, r in enumerate(raters)}
+    # Two views of the same table, built in one pass. ``counts`` maps a rater
+    # set to how many subjects were scored by exactly that set, and drives the
+    # closure below. ``scored_by`` is the transpose: one integer per rater, bit
+    # j set when that rater scored subjects[j]. The second exists because the
+    # scoring step needs, for every candidate panel, the number of subjects
+    # ALL of its raters scored -- and reading that off ``counts`` means walking
+    # every distinct rater set in the wave once per candidate. That is a
+    # product of two large numbers on a wave whose panels were picked freely
+    # rather than rotated: a 20-rater, 600-encounter wave has ~600 distinct
+    # sets and the closure yields ~16000 candidates, so ~9.5 million mask
+    # tests for ONE row and ~250 million for a report of 22 items and four
+    # constructs -- 20s on /api/reliability, which nothing caches. Intersecting
+    # the raters' words instead is a handful of machine-word operations per
+    # candidate for the same answer.
+    counts: Dict[int, int] = {}
+    scored_by: Dict[int, int] = {bits[r]: 0 for r in raters}
+    for j, s in enumerate(subjects):
+        cell = rows_by_subject[s]
+        mask = 0
+        for r in raters:
+            if cell.get(r) is not None:
+                mask |= bits[r]
+                scored_by[bits[r]] |= 1 << j
+        counts[mask] = counts.get(mask, 0) + 1
+
+    # Subjects scored by fewer than two raters can be in no complete block, and
+    # intersections only ever shrink, so masks below two bits are dropped here
+    # rather than propagated through the closure.
+    seeds = sorted(m for m in counts if m.bit_count() >= 2)
+    candidates = set(seeds)
+    frontier = seeds
+    exhaustive = True
+    while frontier:
+        found: List[int] = []
+        for a in frontier:
+            for b in seeds:
+                c = a & b
+                if c.bit_count() >= 2 and c not in candidates:
+                    candidates.add(c)
+                    found.append(c)
+        # The cap is checked after a full round, never inside one: the first
+        # round is what produces every pairwise intersection, and those are the
+        # blocks a not-fully-crossed wave actually gets its ICC from. Stopping
+        # mid-round could drop the winner and leave the answer dependent on
+        # iteration order.
+        if len(candidates) > _BLOCK_SEARCH_MAX_CANDIDATES:
+            exhaustive = False
             break
-        best_score, current, best_rows = candidate[0], candidate[1], candidate[2]
-    return current, best_rows
+        frontier = sorted(found)
+
+    def n_scored_by_all(mask: int) -> int:
+        """Subjects every rater in ``mask`` scored, as a popcount.
+
+        Identical arithmetic to summing ``counts`` over every superset of
+        ``mask``, because a subject is in both counts exactly when its own
+        rater set contains ``mask``. Walking the set bits rather than all
+        ``raters`` keeps this proportional to the size of the candidate panel
+        and not to the size of the pool.
+        """
+        rest, word = mask, None
+        while rest:
+            low = rest & -rest
+            word = scored_by[low] if word is None else word & scored_by[low]
+            rest ^= low
+        return 0 if word is None else word.bit_count()
+
+    eligible = []
+    for mask in candidates:
+        n_sub = n_scored_by_all(mask)
+        if n_sub < 2:
+            continue
+        names = [r for r in raters if mask & bits[r]]
+        eligible.append((len(names) * n_sub, n_sub, len(names), names))
+    if not eligible:
+        return raters, complete_subjects(raters), exhaustive
+    eligible.sort(key=lambda e: (-e[0], -e[1], -e[2], e[3]))
+    chosen = eligible[0][3]
+    return chosen, complete_subjects(chosen), exhaustive
 
 
 def _matrix(rows_by_subject: Dict[str, Dict[str, Number]],
@@ -635,11 +765,61 @@ def _cell_block(label: str,
                   if v is not None]
     block["mean"] = _mean(all_values)
 
-    used_raters, used_subjects = _largest_complete_block(rows_by_subject, rater_ids)
-    icc_result = icc(_matrix(rows_by_subject, used_subjects, used_raters))
+    used_raters, used_subjects, searched_all = _largest_complete_block(
+        rows_by_subject, rater_ids)
+    if len(used_raters) >= 2 and len(used_subjects) >= 2:
+        icc_result = icc(_matrix(rows_by_subject, used_subjects, used_raters))
+        n_used = len(used_subjects)
+    else:
+        # No block worth restricting to. Handing icc() the empty restriction
+        # would make it describe the restriction -- zero rows, therefore zero
+        # raters -- and a reader takes "fewer than two raters with any data" as
+        # a statement about the wave and goes looking for ratings that are not
+        # missing. Hand it the whole table instead, so its counts and its
+        # reason are about the data the researcher actually has.
+        #
+        # Read the honest count BEFORE the next line widens the restriction.
+        # Up to here ``used_subjects`` is still the encounters every rater in
+        # the named panel scored; after it, it is the whole table.
+        n_named_panel_scored = len(used_subjects)
+        used_raters, used_subjects = sorted(rater_ids), subjects
+        icc_result = icc(_matrix(rows_by_subject, used_subjects, used_raters))
+        # ``subjects_used`` means the encounters the named panel ALL scored --
+        # that is what it means in the branch above and what the report's
+        # not-fully-crossed warning promises a reader it means. Two other
+        # numbers are close to hand here and both of them are false.
+        #
+        # The table's own height would print "all 6 raters, 15 of 15
+        # encounters, not computable", which reads as a wave that had every
+        # rating and failed anyway, and sends the reader looking for a data
+        # problem that is not there. And ``icc_result["n"]`` is the rows that
+        # survived listwise deletion of the matrix icc() KEPT -- icc() drops
+        # rater columns that are entirely empty before it counts, so on the
+        # systematically-N/A item this module is built to expect (items 3 and
+        # 49 in S2's dyadic setting) the count that comes back is the count
+        # belonging to whichever rater did score it. Published beside the
+        # two-name panel that is still printed in ``raters_used``, that is
+        # "rt_a and rt_b, 5 of 5 encounters" for a row those two never once
+        # scored together: a confident false statement about the data, which
+        # is the one thing this module exists to refuse.
+        n_used = n_named_panel_scored
+        if (searched_all and len(used_raters) >= 2
+                and not icc_result["computable"] and icc_result["reason"]):
+            icc_result["reason"] += (
+                ". No sub-panel rescues it either: no two of these raters both "
+                "scored two or more of the same encounters, so this row has no "
+                "complete rater-by-encounter block of any size. Krippendorff's "
+                "alpha uses every rating and is the number to read here"
+            )
     icc_result["raters_used"] = used_raters
-    icc_result["subjects_used"] = len(used_subjects)
+    icc_result["subjects_used"] = n_used
     icc_result["subjects_available"] = len(subjects)
+    # Carried per row because the cap trips per row: ``report``'s
+    # not-fully-crossed warning tells the reader the ICCs were computed on the
+    # largest block that EXISTS, and that is a guarantee only a search which
+    # ran to completion actually gave. Drop this and the warning states a
+    # guarantee the search did not make.
+    icc_result["block_search_exhaustive"] = searched_all
     block["icc"] = icc_result
 
     alpha = krippendorff_alpha_detail(
@@ -749,6 +929,13 @@ def report(cohort: Optional[str] = None, *,
 
     ``ratings`` and ``items`` override the module sources; leave them unset in
     production, where the sources are ``server.ratings`` and ``server.esci``.
+
+    Cost is dominated by the per-row block search and is worth knowing before
+    this is wired to anything impatient: the study's own design is 0.02s, and a
+    20-rater, 600-encounter wave whose panels were picked freely rather than
+    rotated is ~5s (~21s before the search was reworked). ``GET
+    /api/reliability`` computes this on every request, uncached, on purpose.
+    ``_largest_complete_block`` carries the measurements.
     """
     rating_rows, rating_source = _load_ratings(cohort, ratings)
     item_rows, item_source = _load_items(items)
@@ -917,14 +1104,55 @@ def report(cohort: Optional[str] = None, *,
             "is defined. The design calls for k >= 3."
         )
     if not fully_crossed and len(raters) >= 2:
+        # "each ICC below was computed on the largest complete block" is not
+        # true of a row that has no complete block at all -- a pool where no
+        # two raters share two encounters computes nothing, and a blanket
+        # promise here would have the reader hunting the tables for a block
+        # that was never found. The promise is conditional and the row's own
+        # reason string carries the other case.
+        #
+        # "that EXISTS in its row" is the second half of the same promise, and
+        # it is a claim about the search rather than about the data: the
+        # enumeration is exact only while it stays under its candidate cap, and
+        # a capped search returns the largest block it FOUND. This is reachable
+        # at the shipped cap, not only in a test that lowers it -- 14 raters,
+        # 56 encounters, each scored by all but one rater (a leave-one-out
+        # rotation) closes to 2**14 candidate panels, and the search returns
+        # 8 raters x 24 encounters = 192 against the true optimum of
+        # 7 x 28 = 196. Close enough to be useful, not close enough to call it
+        # the largest that exists. A statistics module that overstates its own
+        # guarantee has made the same species of false statement as a row
+        # reporting encounters nobody scored, so the guarantee is withdrawn
+        # wherever any row's search stopped early.
+        searched_every_row = all(
+            block["icc"]["block_search_exhaustive"]
+            for block in list(out["constructs"].values())
+            + list(out["items"].values())
+        )
+        block_clause = (
+            "the largest complete rater-by-encounter block that exists in its "
+            "row, and reports in raters_used/subjects_used which raters and "
+            "how many encounters that was; where no such block exists the ICC "
+            "is not computable and the row says why"
+            if searched_every_row else
+            "the largest complete rater-by-encounter block the search found in "
+            "its row -- on at least one row the candidate enumeration hit its "
+            "cap, so that block is the largest found and not provably the "
+            "largest that exists, and a larger one may be there; on sampled "
+            "capped designs the shortfall ran from 13% to more than 20% of "
+            "the block's area, one of them nearly doubling the encounters "
+            "available -- "
+            "and reports in raters_used/subjects_used which raters and how "
+            "many encounters that was; where none was found the ICC is not "
+            "computable and the row says why"
+        )
         warnings.append(
             "raters are not fully crossed with encounters (raters per "
             f"encounter {counts[0]}..{counts[-1]} out of a pool of "
             f"{len(raters)}). ICC(2,1)/ICC(2,k) assume one fixed panel scored "
-            "every encounter, so each ICC below was computed on the largest "
-            "complete rater-by-encounter block and reports which raters and "
-            "how many encounters that was. Krippendorff's alpha uses all of "
-            "the data and is the number to read when the two disagree."
+            f"every encounter, so each ICC below was computed on {block_clause}"
+            ". Krippendorff's alpha uses all of the data and is the number to "
+            "read when the two disagree."
         )
     if thin:
         warnings.append(

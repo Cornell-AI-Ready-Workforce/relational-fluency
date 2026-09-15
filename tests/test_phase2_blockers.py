@@ -17,10 +17,17 @@ Run from the repo root:
 
     python -m pytest tests
 
-Nothing here opens a socket. Presigning is a local computation and is faked in
-both directions; the AWS failure that matters to these tests is the one that
-happens before any signing, and it is reproduced by writing the event trail the
-browser and the confirm endpoint actually leave behind.
+Nothing here opens a socket, and since the media block started asking storage
+rather than reading a browser's receipt, that is enforced instead of assumed:
+video.exists() is a HEAD against the study bucket whenever an encounter has no
+local recording, which is every media test below. The sessions_root fixture puts
+a stub client in front of it. Left to itself, each of these tests signs a real
+request to the real Cornell bucket when credentials happen to be in the
+environment — and when they are not, waits out two connects to 169.254.169.254,
+the EC2 metadata service, which is unroutable anywhere but EC2. The AWS failures
+that matter here are reproduced with botocore's own exception types, and the
+upload failure that matters is reproduced by writing the event trail the browser
+and the confirm endpoint actually leave behind.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from botocore.exceptions import ClientError, NoCredentialsError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -57,6 +65,11 @@ else:
 
 SESSION_ID = "s_1772460300_44c9a2"
 
+# The minted assignment shape (server/raters.py: as_[0-9a-f]{12}). The packet's
+# playback URL is addressed to an ASSIGNMENT now rather than to an S3 object, so
+# a media test that wants the playable state has to have one.
+ASSIGNMENT_ID = "as_5f3c11a90b2d"
+
 
 # ---------------------------------------------------------------------------
 # B3 — "No webcam recording was captured" was said about lost uploads too
@@ -73,12 +86,49 @@ def _session_with_events(root: Path, *events) -> Path:
     return sdir
 
 
+class _StubS3:
+    """The study bucket, answered in this process. No socket, ever.
+
+    `objects` maps object key to byte count; anything not in it is absent.
+    head_object answers the two ways S3 really answers — a ContentLength, or a
+    404 ClientError — because video.head_video branches on botocore's own error
+    shape and reads the service's code out of `response`. A stub that raised
+    some bespoke exception would exercise a path no deployment ever takes and
+    would go on passing after head_video stopped classifying anything correctly.
+
+    `fail_with` puts a BotoCoreError in the same place instead, for the states
+    that are about AWS refusing to answer at all rather than about the object.
+    """
+
+    def __init__(self, objects=None, fail_with=None):
+        self.objects = dict(objects or {})
+        self.fail_with = fail_with
+        self.heads: list = []
+
+    def head_object(self, Bucket=None, Key=None, **kwargs):  # noqa: N803 — boto3's own kwarg names
+        self.heads.append(Key)
+        if self.fail_with is not None:
+            raise self.fail_with
+        size = self.objects.get(Key)
+        if size is None:
+            raise ClientError(
+                {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
+        return {"ContentLength": size, "ContentType": "video/webm"}
+
+
 @pytest.fixture
 def sessions_root(tmp_path, monkeypatch):
     root = tmp_path / "sessions"
     root.mkdir()
     monkeypatch.setattr(rp, "SESSIONS_DIR", root)
     monkeypatch.setattr(video, "SESSIONS_DIR", root)
+    # An empty bucket, in this process. Every _media test below is an encounter
+    # with no local recording, and _media asks video.exists(), which falls
+    # through to a HEAD against the real study bucket — so without this line
+    # each of these tests puts a signed request on the wire (or, credential-less,
+    # blocks on the EC2 metadata service twice before botocore gives up). Tests
+    # that want bytes to be there replace this with a stub that holds the key.
+    monkeypatch.setattr(video, "_client", lambda: _StubS3())
     return root
 
 
@@ -155,39 +205,137 @@ def test_an_upload_error_naming_the_session_is_not_passed_through(sessions_root)
 
 
 def test_a_successful_upload_is_still_playable(sessions_root, monkeypatch):
-    """The state that must not have been disturbed by teaching _media the others."""
+    """The state that must not have been disturbed by teaching _media the others.
+
+    Same guarantee, restated against the design that replaced presigning: an
+    encounter whose recording is really there must come back as something a
+    rater can play. What "playable" MEANS changed underneath it. It used to be
+    "a presigned S3 GET was minted", which is why this test faked the signing —
+    and the URL that came out of that was a bearer credential for the study
+    bucket, carrying encounters/{session_id}/webcam.webm through the rater's
+    address bar and into their browser history. It is now "a URL on this
+    application that this application has a route for", which is checked here
+    rather than faked, because there is nothing left to fake: no signature, no
+    expiry, no credential.
+
+    The upload event is still written because a real successful upload leaves
+    one, but nothing branches on it any more — the bytes are what decide.
+    """
     _session_with_events(sessions_root, {
         "t": None, "wall": 1772460800.0, "type": "video_uploaded",
         "key": f"encounters/{SESSION_ID}/webcam.webm", "bytes": 8_400_000,
         "status": "ok",
     })
-    # Signing is arithmetic over a request that is never sent; faked here so the
-    # test says nothing about whether this machine has credentials.
-    monkeypatch.setattr(video, "playback_url",
-                        lambda sid, seconds=3600: f"https://s3.invalid/{sid}?sig=x")
-    media = rp._media(SESSION_ID)
+    # Bytes in the bucket, not a receipt saying there are. _media asks storage
+    # now (video.exists), and an upload that succeeded is exactly an object that
+    # is there — which is the whole of the fix: a confirmation event is a claim
+    # ABOUT storage, and an encounter whose confirm leg failed used to be
+    # permanently unrateable with its recording sitting in the bucket.
+    monkeypatch.setattr(video, "_client",
+                        lambda: _StubS3({video.video_key(SESSION_ID): 8_400_000}))
+
+    media = rp._media(SESSION_ID, ASSIGNMENT_ID)
+
     assert media["video_status"] == "ok"
     assert media["video_available"] is True
-    assert media["video_url"].startswith("https://")
     assert media["note"] is None
+    assert media["video_url"] == f"/api/rater/video/{ASSIGNMENT_ID}"
+
+    # Playable, and not merely well-formed: the route the packet names has to be
+    # a route the application serves. The packet builder holds the template and
+    # app.py holds the handler, and nothing but this joins them — a rename on
+    # either side leaves every packet in the wave pointing at a 404 with the
+    # console reporting a present recording as one that would not load.
+    app_py = (REPO_ROOT / "server" / "app.py").read_text(encoding="utf-8")
+    assert f'@app.get("{rp.VIDEO_ROUTE}")' in app_py, (
+        f"no handler for {rp.VIDEO_ROUTE}; the packet's playback URL 404s")
+
+    # App-relative, so the console fetches it from whatever origin served the
+    # console — the only origin the rater's token is good against. An absolute
+    # URL would be fixed at build time and wrong the moment the same packet was
+    # opened against staging rather than a laptop.
+    assert media["video_url"].startswith("/")
+    assert "://" not in media["video_url"]
+
+    # Nothing that runs out mid-sitting. The rater has the link for as long as
+    # their token is good, so there is no deadline to count down and nothing to
+    # re-mint — which is what the two-strikes re-mint retry in the console was
+    # for, and why it could be deleted.
+    assert media["expires_in"] is None
+
+    # And the leak the route closed, asserted by value: a presigned GET's object
+    # key IS encounters/{session_id}/webcam.webm, so the one session id in the
+    # packet used to sit in a field the rater could read out of their own
+    # network tab. A session id carries the encounter's start time to the
+    # second, which is enough to tell that two packets belong to one participant.
+    blob = json.dumps(media)
+    assert SESSION_ID not in blob
+    assert SESSION_ID.split("_")[1] not in blob
+    assert "X-Amz" not in blob and "Signature" not in blob
 
 
-def test_a_video_that_cannot_be_signed_is_still_its_own_state(sessions_root, monkeypatch):
-    """A deployment fault, not a lost recording and not a missing camera."""
+@pytest.mark.parametrize("assignment_id", [
+    None, "", "   ", "as_5f3c11a90b2", "AS_5F3C11A90B2D",
+    "as_5f3c11a90b2d/../../etc", "as_5f3c11a90b2d?token=x",
+])
+def test_a_video_this_packet_cannot_address_is_still_its_own_state(
+        sessions_root, monkeypatch, assignment_id):
+    """A packet that cannot name the recording is not a packet with no recording.
+
+    The state survived the move off presigned URLs; only its cause did not. It
+    used to be "the link could not be signed" — no credentials, a wrong region —
+    and it is now "there are bytes and this packet has no assignment id to
+    address them with": a packet built outside a rating assignment, by an
+    operator inspecting an encounter, or built with an id that is not the minted
+    shape. A rater arriving through /api/rater/packet/{assignment_id} cannot
+    reach it, which is exactly why it is easy to lose, and losing it would mean
+    emitting a URL that 404s or reporting the encounter as having no camera.
+
+    What it protects has not moved an inch, and it is the B3 defect this whole
+    section exists for: "there IS a recording and this console cannot reach it"
+    must never be shown as "there is no recording", because the second sentence
+    tells the rater to go ahead and rate from the transcript with more N/As —
+    an affirmative false statement, and a rating that cannot be taken back,
+    landing in the ratings table indistinguishable from one made about a
+    participant who never turned a camera on.
+
+    Parametrised over the ways an id fails the shape check because that check is
+    also the reason the id can be interpolated into a <video> src at all: an id
+    carrying "/" or "?" would move the element's request to another route or
+    displace the token the console appends.
+    """
     _session_with_events(sessions_root, {
         "t": None, "type": "video_uploaded", "bytes": 8_400_000, "status": "ok",
     })
-    from botocore.exceptions import NoCredentialsError
+    monkeypatch.setattr(video, "_client",
+                        lambda: _StubS3({video.video_key(SESSION_ID): 8_400_000}))
 
-    def _no_creds(sid, seconds=3600):
-        raise NoCredentialsError()
+    media = rp._media(SESSION_ID, assignment_id)
 
-    monkeypatch.setattr(video, "playback_url", _no_creds)
-    media = rp._media(SESSION_ID)
     assert media["video_status"] == "unsigned"
+    # True, and it is the whole point: this is what the console reads to disable
+    # the submit. The rater is stopped and told to report it, rather than handed
+    # a transcript and left to conclude the camera was off.
     assert media["video_available"] is True
+    # No half-formed URL. A "/api/rater/video/" with nothing after it, or one
+    # with the caller's punctuation still in it, is a request aimed somewhere it
+    # was not meant to go — and the console would render a player over it and
+    # report a present recording as a broken one.
     assert media["video_url"] is None
+    assert media["expires_in"] is None
     assert "could not be issued" in media["note"]
+    # Not the absent branch's advice, which is the confusion this state exists
+    # to prevent.
+    assert "No webcam recording was captured" not in media["note"]
+    if (assignment_id or "").strip():
+        # An id was given and refused: something minted, stored or typed an
+        # assignment id that is not the minted shape, a console would show a
+        # present recording it cannot play, and nothing else in the system will
+        # notice. That is a fault, so the rating is stopped rather than made
+        # around it. (The no-id reading is an operator inspecting an encounter
+        # rather than a rater rating one, so it is deliberately not held to the
+        # same sentence — see server/rater_packet._media.)
+        assert "Do not rate it" in media["note"]
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +584,39 @@ def _boot(tmp_path, **env_overrides):
     env = dict(os.environ)
     env.pop("SESSION_KEY", None)
     env["DATA_DIR"] = str(tmp_path / "data")
+
+    # "A clean process" was not clean: the child inherited the whole ambient
+    # environment. On any machine holding real credentials — a developer's, a CI
+    # runner's — the boot these tests measured was therefore NOT a fresh clone's
+    # boot, and running pytest transmitted a live gateway key to
+    # api.ai.it.cornell.edu three times per run, because llm.preflight signs its
+    # probe with `Authorization: Bearer <key>`. It also asked the EC2 metadata
+    # service for AWS credentials twelve times, which is unroutable off EC2 and
+    # so costs two botocore timeouts each.
+    #
+    # conftest's socket guard cannot catch any of this: the guard is in-process
+    # and this is a subprocess. That is the whole reason it survived the round
+    # that added the guard.
+    #
+    # So scrub what the app looks for, and point the gateway at a closed
+    # loopback port so its probe fails instantly and locally rather than
+    # crossing the network to fail slowly. Both changes also make these tests
+    # measure the thing their names claim — a machine with nothing configured.
+    # Scrubbing happens before env_overrides, so a test that wants a credential
+    # in the child still passes one explicitly.
+    #
+    # One residual case, named rather than hidden: server/llm.py reads a .env
+    # file in PREFERENCE to the environment, so a developer whose .env sets
+    # LLM_BASE_URL outright still redirects the child. A .env copied from
+    # .env.example does not set it, which is the case this covers.
+    for name in list(env):
+        if name.startswith("AWS_") or any(
+                token in name for token in
+                ("API_KEY", "AUTH_TOKEN", "SECRET", "CREDENTIAL", "PASSWORD")):
+            env.pop(name, None)
+    env["LLM_BASE_URL"] = "http://127.0.0.1:1"
+    env["AWS_EC2_METADATA_DISABLED"] = "true"
+
     for k, v in env_overrides.items():
         if v is None:
             env.pop(k, None)
@@ -591,37 +772,47 @@ def test_every_media_state_answers_the_same_questions(sessions_root, monkeypatch
     and an analysis that crashes on the ordinary rows is an analysis that gets
     run on a filtered set instead. Every state answers every question; the
     answer is just None.
+
+    Each of the four is now produced the way the code actually produces it.
+    This test used to build 'unsigned' and 'ok' by patching video.playback_url,
+    and when _media stopped calling that it went on passing while silently
+    testing 'failed' three times over — the shape guarantee still held, but on
+    two states instead of four, and nothing said so. A state built by patching a
+    function the code under test no longer calls is not a state.
     """
     keys = {"video_url", "video_available", "video_status", "upload_error",
             "expires_in", "note"}
+    empty_bucket = _StubS3()
+    full_bucket = _StubS3({video.video_key(SESSION_ID): 8_400_000})
 
-    # absent
+    # absent — nothing in storage and no attempt on the trail.
     _session_with_events(sessions_root)
-    absent = rp._media(SESSION_ID)
+    monkeypatch.setattr(video, "_client", lambda: empty_bucket)
+    absent = rp._media(SESSION_ID, ASSIGNMENT_ID)
 
-    # failed
+    # failed — a recording was made and reported, and storage has nothing.
     _session_with_events(sessions_root, {
         "t": None, "type": "video_uploaded", "bytes": 0, "status": "failed",
         "error": "put 403",
     })
-    failed = rp._media(SESSION_ID)
+    failed = rp._media(SESSION_ID, ASSIGNMENT_ID)
 
-    # unsigned
+    # unsigned — bytes are there and this packet has no assignment to address
+    # them with. Not a signing failure any more; see the test above.
     _session_with_events(sessions_root, {
         "t": None, "type": "video_uploaded", "bytes": 8_400_000, "status": "ok",
     })
-    from botocore.exceptions import NoCredentialsError
+    monkeypatch.setattr(video, "_client", lambda: full_bucket)
+    unsigned = rp._media(SESSION_ID, None)
 
-    def _no_creds(sid, seconds=3600):
-        raise NoCredentialsError()
+    # ok — bytes, and an assignment to serve them under.
+    ok = rp._media(SESSION_ID, ASSIGNMENT_ID)
 
-    monkeypatch.setattr(video, "playback_url", _no_creds)
-    unsigned = rp._media(SESSION_ID)
-
-    # ok
-    monkeypatch.setattr(video, "playback_url",
-                        lambda sid, seconds=3600: f"https://s3.invalid/{sid}?sig=x")
-    ok = rp._media(SESSION_ID)
+    # The states really are four, which is the half of this that used to be
+    # taken on trust: three of these were 'failed' and nothing noticed.
+    assert [absent["video_status"], failed["video_status"],
+            unsigned["video_status"], ok["video_status"]] == [
+        "absent", "failed", "unsigned", "ok"]
 
     for state in (absent, failed, unsigned, ok):
         assert set(state) == keys, f"{state['video_status']} has a different shape"
@@ -630,6 +821,55 @@ def test_every_media_state_answers_the_same_questions(sessions_root, monkeypatch
     assert absent["upload_error"] is None
     assert unsigned["upload_error"] is None
     assert ok["upload_error"] is None
+    # expires_in is the same shape rule, and it is now the same answer on every
+    # branch: the app serves the bytes for as long as the rater's token is good,
+    # so no state has a deadline. The key stays because a consumer reading
+    # media["expires_in"] must not have to know which state it is holding.
+    for state in (absent, failed, unsigned, ok):
+        assert state["expires_in"] is None
+
+
+def test_an_aws_that_will_not_answer_does_not_become_no_camera(sessions_root,
+                                                               monkeypatch):
+    """The deployment fault, which outlived the signing it used to arrive as.
+
+    "The link could not be signed" was one way for a deployment to be unable to
+    show a rater a recording it holds; it went away with the signing. The
+    condition did not. A task with no credentials, a missing VPC endpoint or a
+    denied HeadObject cannot tell whether the object is there — video.head_video
+    keeps that apart from "S3 says there is no object", and video.exists()
+    collapses both to False on purpose, because one unanswerable HEAD must
+    downgrade one packet's video rather than raise through every packet in the
+    rater's queue and take the console down.
+
+    So the guarantee has to be picked up here instead, and it is the same one
+    the old test was defending: a machine that cannot reach storage must not
+    tell a rater the encounter had no camera. The event trail is the only
+    evidence left that a recording was ever made, and on this branch it is
+    believed — the packet says a recording exists, blocks the rating, and asks
+    for it to be reported.
+    """
+    _session_with_events(sessions_root, {
+        "t": None, "wall": 1772460800.0, "type": "video_uploaded",
+        "key": f"encounters/{SESSION_ID}/webcam.webm", "bytes": 8_400_000,
+        "status": "ok",
+    })
+    # Not a stubbed video.exists(): the real one, over a client that fails the
+    # way a credential-less deployment fails. NoCredentialsError is a
+    # BotoCoreError and carries no service code, which is the case head_video's
+    # classification is easiest to get wrong.
+    monkeypatch.setattr(video, "_client",
+                        lambda: _StubS3(fail_with=NoCredentialsError()))
+
+    media = rp._media(SESSION_ID, ASSIGNMENT_ID)
+
+    assert media["video_status"] == "failed"
+    assert media["video_available"] is True, (
+        "a rater is about to be handed a transcript for an encounter that has a "
+        "recording this deployment simply cannot reach")
+    assert media["video_url"] is None
+    assert "No webcam recording was captured" not in media["note"]
+    assert "WAS recorded" in media["note"]
 
 
 # --- R33: the connectivity repair now runs, and can substitute raters --------

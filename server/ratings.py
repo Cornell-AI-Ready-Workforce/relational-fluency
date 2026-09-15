@@ -47,7 +47,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from . import esci, raters
-from .storage import DATA_DIR, _add_missing_columns, _db, init_storage
+from .storage import (
+    DATA_DIR, _add_missing_columns, _db, init_storage, replace_with_retry,
+)
 
 RATINGS_DIR = DATA_DIR / "ratings"
 
@@ -170,16 +172,26 @@ def _ensure_index() -> None:
 
 
 def _write_atomic(p: Path, data: str) -> None:
-    """Temp file + os.replace, as storage and runs do.
+    """Temp file + storage.replace_with_retry, as storage, runs and raters do.
 
     A kill mid-write must not leave a truncated rating: it would be a JSON file
     that exists, indexes fine, and fails to parse at analysis time — the worst
     of the three possible outcomes.
+
+    The rename retries because a bare os.replace is not atomic on Windows, which
+    is a supported researcher platform: it raises PermissionError outright while
+    any handle is open on either side, and this directory is read by the
+    researcher console and the reliability routes while ratings are being
+    submitted into it. This is the one write in the system that costs a human
+    being their completed work — a rater has just spent twenty minutes on 22
+    ESCI items — so losing it to a millisecond of overlap is not acceptable.
+    replace_with_retry re-raises if the window never closes, so a lost write is
+    still loud rather than silent.
     """
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(data, encoding="utf-8")
-    os.replace(tmp, p)
+    replace_with_retry(tmp, p)
 
 
 # ---------- item bank version ----------

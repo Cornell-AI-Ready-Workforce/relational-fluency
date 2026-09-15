@@ -2,7 +2,8 @@
 
 Run after a session, or over a whole collection wave, to catch the failures
 that are cheap to fix on day one and impossible to fix afterwards: an encounter
-with no participant audio, a transcript missing one side, triggers that never
+with no participant audio, a transcript missing one side, a participant
+transcription channel that died before the encounter did, triggers that never
 fired, or a record that cannot say which gateway produced it.
 
     python -m server.verify_record <session_id>
@@ -50,28 +51,70 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
     checks.append((p_turns > 0, "participant transcript", f"{p_turns} turns"))
     # The live transcriber sometimes returns a participant turn in the wrong
     # script (English speech transliterated into Devanagari has been seen).
-    # Those turns are flagged in the event trail; the offline retranscription
-    # is the corrected text, so a flagged encounter needs that pass run.
-    mismatched = 0
-    ev_path = session_dir / "events.jsonl"
-    if ev_path.exists():
-        for line in ev_path.read_text(encoding="utf-8").splitlines():
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if e.get("type") == "user_turn" and e.get("script_mismatch"):
-                mismatched += 1
+    # Those turns are flagged in the event trail and the record now carries the
+    # flag through, so this counts what a reader of the record would see rather
+    # than re-walking events.jsonl for a fact the record already holds — and if
+    # the carry ever breaks again, this check goes green with it, which is the
+    # right coupling: the number reported here is the number a rater is exposed
+    # to.
+    mismatched = counts.get("script_mismatch_turns", 0)
     # A flagged encounter is repaired by the offline retranscription, which
     # writes transcript_participant_hq.json. Consult that, or the check keeps
     # failing forever after the operator has done exactly what its own message
     # told them to do — and a permanently latched FAIL is one people learn to
     # ignore, which costs more than the check is worth.
-    repaired = (session_dir / "transcript_participant_hq.json").exists()
+    #
+    # But the question is whether the repair REACHED anything, not whether a
+    # file is on disk. This used to stat the file, and passed while the
+    # corrected text reached no reader at all: every consumer rebuilds from
+    # events.jsonl, and the next encounter_record.write erased retranscribe's
+    # in-place edit of record.json. So the check now asks the BUILT record,
+    # which is what the rater packet and /api/sessions/{id}/record are made of.
+    # A file that exists and a record that carries it are different claims, and
+    # the `present` branch below names the gap between them instead of
+    # certifying a repair nobody can read.
+    #
+    # There are then three ways for the record not to carry a repair, and they
+    # are three different jobs for the operator. Reporting all of them as that
+    # plumbing gap made this a latched FAIL nobody could clear: retranscribe
+    # returns an existing cache verbatim unless --force is passed, so a cache
+    # holding an empty transcript survives every plain re-run — no HTTP call, no
+    # new text, the same red line — while the message pointed at a subsystem that
+    # was working. A permanently red check whose message names the wrong cause is
+    # worse than no check, because the operator learns to scroll past it.
+    hq = record.get("participant_transcript_hq") or {}
+    repaired = bool((hq.get("text") or "").strip())
+    # Only asked when the answer can change the line, so a clean wave does not
+    # pay a file read per encounter to be told there is nothing to read.
+    cache = _hq_cache_state(session_dir) if mismatched and not repaired else "absent"
     if not mismatched:
         script_detail = "all turns"
     elif repaired:
-        script_detail = f"{mismatched} turn(s) flagged, repaired by retranscribe"
+        script_detail = (
+            f"{mismatched} turn(s) flagged, retranscribed text carried in the record"
+        )
+    elif cache == "empty":
+        script_detail = (
+            f"{mismatched} turn(s) flagged; the re-transcription produced no "
+            "text, so nothing was repaired — re-run it with --force (a plain "
+            "re-run returns this same empty cache)"
+        )
+    elif cache == "unreadable":
+        script_detail = (
+            f"{mismatched} turn(s) flagged; transcript_participant_hq.json is "
+            "not a readable transcript (a run killed or a disk filled mid-write)"
+            " — re-run retranscribe, which regenerates a cache it cannot read"
+        )
+    elif cache == "present":
+        # A readable cache with real text in it that the built record did not
+        # pick up. Nothing produces this today; it is the canary for the seam
+        # itself breaking again, which is the failure this check was rewritten
+        # for, and it must not be folded into the two branches above.
+        script_detail = (
+            f"{mismatched} turn(s) flagged; transcript_participant_hq.json holds "
+            "a transcript but the record does not carry it — the repair reaches "
+            "no reader"
+        )
     else:
         script_detail = f"{mismatched} turn(s) in another script, run retranscribe"
     checks.append((
@@ -80,6 +123,50 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
         script_detail,
     ))
     checks.append((a_turns > 0, "agent transcript", f"{a_turns} turns"))
+
+    # --- the participant transcription channel survived the encounter ---
+    #
+    # In a group room the scribe session is the only participant transcript
+    # channel. When it dies mid-encounter the runner keeps recording perfect
+    # participant AUDIO with no transcript, so the artefact shows a run of agent
+    # turns with nobody answering — and every other check here passes, because
+    # the turns before the loss satisfy "participant transcript > 0". That is
+    # the exact failure this tool exists to catch: a recoverable fault (the WAV
+    # is intact, retranscribe can repair it) turned into a permanent silence
+    # that reads as a participant who disengaged. It can only be repaired by
+    # somebody who is told it happened.
+    channel = record.get("participant_channel") or {}
+    state = channel.get("state") or "ok"
+    if state == "ok":
+        channel_detail = "intact"
+    elif state == "restored":
+        # A later room brought a fresh scribe, so the hole is bounded — but it
+        # is still a hole, and the turns inside it are still untranscribed.
+        channel_detail = (
+            f"LOST at {channel.get('lost_at')}s, recovered at "
+            f"{channel.get('restored_at')}s "
+            f"({channel.get('untranscribed_s')}s untranscribed)"
+        )
+    elif channel.get("untranscribed_s") is None:
+        # The record could not date the end of the encounter: no re-open, no turn
+        # after the loss, and no session_end — the trail simply stops, which is
+        # what a killed process leaves behind. Saying "the last 0.0s" here (which
+        # is what a floored subtraction produced) prints reassurance about an
+        # encounter that may have run for minutes with nobody hearing the
+        # participant. An unknown has to look like an unknown.
+        channel_detail = (
+            f"LOST at {channel.get('lost_at')}s and never recovered — how much "
+            "of the encounter ran with no participant transcript cannot be "
+            "established (the event trail ends at the loss) "
+            "(user_audio.wav is intact; run retranscribe)"
+        )
+    else:
+        channel_detail = (
+            f"LOST at {channel.get('lost_at')}s and never recovered — the last "
+            f"{channel.get('untranscribed_s')}s of the encounter ran with no "
+            "participant transcript (user_audio.wav is intact; run retranscribe)"
+        )
+    checks.append((state == "ok", "participant channel", channel_detail))
 
     # --- audio: both channels, non-trivial ---
     user_wav = session_dir / "user_audio.wav"
@@ -217,6 +304,32 @@ def _net_fired(events: List[dict]) -> List[dict]:
                     del out[i]
                     break
     return out
+
+
+def _hq_cache_state(session_dir: Path) -> str:
+    """What is actually in retranscribe's output file, in one word.
+
+    "absent" — never run here. "unreadable" — the file is there and is not a
+    transcript this reader can parse (killed mid-write, or an older shape).
+    "empty" — valid, and its text is empty or whitespace: the re-transcription
+    ran and produced nothing. "present" — a real transcript.
+
+    The record cannot answer this, which is the whole point: build() collapses
+    all three failures to `participant_transcript_hq: None`, and the operator's
+    next move is different for each. "empty" in particular is the one the record
+    can never distinguish and the only one that needs --force, because
+    retranscribe.retranscribe() short-circuits on any cache it can parse.
+    """
+    path = session_dir / "transcript_participant_hq.json"
+    if not path.is_file():
+        return "absent"
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "unreadable"
+    if not isinstance(loaded, dict):
+        return "unreadable"
+    return "present" if (loaded.get("text") or "").strip() else "empty"
 
 
 def _events(session_dir: Path) -> List[dict]:

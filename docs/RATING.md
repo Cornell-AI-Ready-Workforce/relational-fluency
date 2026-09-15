@@ -78,7 +78,7 @@ encounter without either of them being able to reach it in the study data.
 | `server/ratings.py` | submitted ratings, export, Qualtrics ingest |
 | `server/rater_packet.py` | the rating code, and the blinded packet a rater is served |
 | `server/reliability.py` | ICC, quadratic weighted κ, Krippendorff's α, and the report |
-| `server/video.py` | `playback_url()` — the presigned GET the console plays |
+| `server/video.py` | where a recording's bytes come from — a local file if there is one, the study bucket if not. There is deliberately no function here that mints a presigned GET: playback is `/api/rater/video/{assignment_id}`, which streams the bytes through this server |
 | `static/rater.html` | the console, served at `/rate` |
 | `studies/study1/qualtrics/esci_items.csv` | the canonical machine-readable bank, with the ids the code uses |
 
@@ -188,8 +188,14 @@ design says k ≥ 3, and reliability with two raters is a much weaker claim.
 `seed` makes the allocation reproducible, which matters when you have to explain
 in a paper how encounters were distributed.
 
-Two things to know before you run it:
+Three things to know before you run it:
 
+- **You cannot assign work to fewer than `per_encounter` raters.** The endpoint
+  enforces it and refuses the request. So "mint myself a rater and rate
+  something" is not a way to try the console out — at `per_encounter: 3` you
+  need three registered raters before anything is assignable at all. To *look*
+  at the console, use the demo fixture's existing rater token instead; see
+  [Trying the console on the demo fixture](#trying-the-console-on-the-demo-fixture).
 - **`cohort:"study"` is doing real work.** Internal test encounters carry
   `cohort:"internal"` and must not reach a rater — they are not participants and
   they would enter the reliability report as if they were. Check the count in
@@ -307,6 +313,89 @@ What this means operationally:
 
 The supported participant matrix, and why Safari is a first-class target rather
 than an afterthought, is in the [README](../README.md#browsers).
+
+### A truncated recording now announces itself
+
+`timelineTotal()` in `static/rater.html` prefers the encounter's own `duration_s`
+over the video element's `duration`, and it is right to: raw `MediaRecorder` WebM
+carries no duration header, so `v.duration` reads `Infinity` in Chrome and
+Firefox and `0` in Safari.
+
+The case that used to go unnoticed is the one where `v.duration` **is** finite and
+much smaller. Measured on the demo fixture: `duration_s` 597.6 (9:58) against a
+served video of 5.95 s, rendering as `0:05 / 9:57` — the video's clock beside the
+encounter's — with a click on the 9:48 transcript line seeking to 5.95 s, clamped
+to the end, and nothing saying anything was wrong. A genuinely truncated upload
+rendered byte-for-byte identically, and a rater would submit believing they had
+watched the encounter.
+
+The console now reconciles the two clocks and puts a notice in front of the
+rater. Two consequences: **on the demo fixture, whose videos are ~6-second stubs,
+every encounter shows that notice** — that is the check working, not a fault; and
+on a real wave a rater who reports it is reporting something real, which should
+reach the study team before they rate.
+
+### The submit gate warns once, not forever
+
+If a rater submits in under two minutes, or without playing the recording, the
+button becomes *Submit anyway* and a second click goes through. That is the
+intent, and it now behaves that way — for one round it did not: the warning
+interpolated the live clock into its own text and then compared the *rendered
+string* to decide whether it had already been shown, so the string differed on
+every click and the gate re-armed indefinitely. `!videoPlayed` sat in the same
+branch, so a rater who never played the recording was locked out regardless of
+how long they spent.
+
+The instruction to give raters is unchanged and avoids the warning entirely:
+**play the recording, and spend more than two minutes on the encounter.**
+
+---
+
+## Trying the console on the demo fixture
+
+The synthetic demo wave (`demo-data/`, documented in its own `FIXTURE.md`) is the
+way to see the console working without a collection wave. Point `DATA_DIR` at a
+**copy** of it — never at the original — and start the server.
+
+Four things about it are not written anywhere else, and each of them reads as a
+broken console if you do not know it:
+
+- **The token in `demo-data/RATER-TOKEN.txt` belongs to Alex Rater**
+  (`rr_8810073de1e7`), which is *not* the first rater document in the directory.
+  It has 25 pending assignments and one already submitted. The other two fixture
+  raters have no usable token.
+- **A rater document never holds the token itself, only its SHA-256.** The
+  plaintext is returned once by `issue_token()` and is not recoverable from
+  anything on disk. What `raters/rr_*.json` *does* carry is a `tokens` list of
+  `{token_hash, issued_at, expires_at, revoked_at}`: `rr_8810073de1e7` (Alex)
+  has three entries, and the other two fixture raters have `"tokens": []`,
+  which is what "no usable token" means for them. So the token file is not
+  orphaned and it is not unmatchable either — it is one command:
+
+  ```bash
+  python -c "import hashlib;print(hashlib.sha256(open('demo-data/RATER-TOKEN.txt').read().strip().encode()).hexdigest())"
+  # 86982343cf6eb10c148e5358c8dda108904c417ee22b3d3b4c75c692aa6635a1
+  #   == the first token_hash in raters/rr_8810073de1e7.json
+  ```
+
+  `GET /api/rater/me?token=…` answers the same question against a running
+  server. (The hash is also mirrored into the `rater_tokens` table in SQLite,
+  which is what a sign-in actually looks up.)
+- **The fixture's videos are ~6-second, 320×240 synthetic stubs**, so every
+  encounter shows a five-second clip against a seven-to-ten-minute timeline and
+  transcript clicks past 0:06 jump to the end. See the section above.
+- **The fixture's dialogue is the instrument's own cue text, not model output.**
+  Some agent lines are stage directions read literally ("Sasha names the
+  constraint, then hands over the floor") and some are truncated mid-word. Say so
+  before showing the fixture to a colleague, or they will conclude the characters
+  read their stage directions aloud.
+
+A rater arriving on a stale or mistyped `/rate?token=…` link gets the
+plain-English sign-in page rather than the raw JSON body it used to return
+(`{"detail":"Bad or missing rater token"}`). The status is still 401, but what a
+rater sees is a page asking for their token. Send raters to **`/rate/start`**
+anyway: it is the entrance built for it, and it accepts both `token` and
+`rater_token`.
 
 ---
 

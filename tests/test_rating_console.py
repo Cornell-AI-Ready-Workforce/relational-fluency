@@ -465,7 +465,13 @@ def blind(record: dict) -> dict:
             "interrupted_turns": sum(1 for t in turns if t["interrupted"]),
             "untranscribed_turns": sum(1 for t in turns if t["transcript_missing"]),
         },
+        # The real six-key media block, in its 'absent' state. video_status and
+        # upload_error are named here because the console branches on the first
+        # and every state carries the second — a mirror that carried only the
+        # keys the old presigned block had would go on describing a packet the
+        # page can no longer be driven with.
         "media": {"video_url": None, "video_available": False,
+                  "video_status": "absent", "upload_error": None,
                   "expires_in": None, "note": "No webcam recording…"},
         "scale_note": "Rate the participant, not the other speakers…",
         "instrument_notice": "Proprietary instrument — confirm licensing before fielding.",
@@ -561,10 +567,13 @@ def test_a_speaker_change_is_visible_in_the_blinded_transcript(fixture_records):
 
 def test_the_console_video_url_cannot_come_from_record_json(fixture_records):
     # Every record.json in a real wave has "video": [] — record.json is written
-    # at session close and the browser's S3 upload lands afterwards. So the
-    # packet's video_url has to be computed from server/video.playback_url (or
-    # from the video_uploaded event), never read out of the stored record.
-    # This is a live platform defect, and the packet builder must not inherit it.
+    # at session close and the browser's upload lands afterwards. So the packet's
+    # media block has to be computed at build time (server/rater_packet._media
+    # asks video.exists() and addresses the answer to the assignment), never
+    # read out of the stored record. This is a live platform defect, and the
+    # packet builder must not inherit it: a builder that trusted record.json
+    # would report every encounter in the wave as having had no camera, which
+    # is an affirmative false statement to a rater and the exact B3 defect.
     empty = 0
     for path in fixture_records:
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -626,30 +635,121 @@ def test_console_warns_once_at_the_top_about_flagged_turns():
     assert "interrupted_turns" in html
 
 
-def test_presigning_a_playback_url_is_a_local_computation():
-    # The console plays whatever URL the packet hands it, and that URL is a
-    # presigned S3 GET. Presigning is signature arithmetic, not a request: it
-    # must work with no network and no valid credentials, which is what makes it
-    # testable at all. No AWS call is made here.
-    boto3 = pytest.importorskip("boto3")
-    from botocore.config import Config
+def test_a_recording_plays_with_no_aws_credentials_and_no_network(tmp_path,
+                                                                  monkeypatch):
+    """The console plays whatever source it is given, and that source must resolve.
 
-    session = boto3.session.Session(
-        aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-        aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-        region_name="us-east-1",
-    )
-    client = session.client("s3", config=Config(signature_version="s3v4"))
-    url = client.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": "relational-fluency-study-data",
-                "Key": "encounters/s_1772460300_44c9a2/webcam.webm"},
-        ExpiresIn=3600,
-    )
-    assert url.startswith("https://")
-    assert "X-Amz-Signature=" in url
-    assert "X-Amz-Expires=3600" in url
-    assert "encounters/s_1772460300_44c9a2/webcam.webm" in url
+    This is what the presigning test was standing in for, restated against the
+    design that replaced it. It used to sign a URL with example credentials and
+    assert an X-Amz-Signature, and the reasoning was: presigning is arithmetic,
+    so a rater's playback link can be produced with no network — which was true
+    of the LINK and false of the playback. The bytes still came from S3, so a
+    researcher on a laptop, and CI, got a video element with a URL nobody could
+    fetch. Nobody had ever watched a recording in this console.
+
+    The guarantee underneath survives and is now real: a rater must be able to
+    play the recording without AWS. It is met by the app serving the bytes and
+    preferring a local file, so the assertion is the one that could not be
+    written before — the packet reports a playable recording, and the byte path
+    hands back the actual bytes, with a client that fails the test if anything
+    reaches for the bucket at all.
+    """
+    video = pytest.importorskip("server.video")
+    rater_packet = pytest.importorskip("server.rater_packet")
+
+    session_id, assignment_id = "s_1772460300_44c9a2", "as_5f3c11a90b2d"
+    sessions = tmp_path / "sessions"
+    (sessions / session_id).mkdir(parents=True)
+    # EBML magic, so the container is read out of the bytes the way the route
+    # reads it — the wave is half WebM and half Safari MP4 under one key, and a
+    # recording served as the wrong type is a black rectangle with no error.
+    body = b"\x1a\x45\xdf\xa3" + b"webm-ish payload " * 64
+    (sessions / session_id / video.LOCAL_VIDEO_NAME).write_bytes(body)
+    # Enough of a trail for _media's other branches; none of them should be
+    # reached, because there are bytes.
+    (sessions / session_id / "events.jsonl").write_text(
+        json.dumps({"t": 0.0, "type": "session_start"}) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(video, "SESSIONS_DIR", sessions)
+    monkeypatch.setattr(rater_packet, "SESSIONS_DIR", sessions)
+
+    def _no_aws():
+        raise AssertionError(
+            "playback reached for the S3 client; a rater with no credentials "
+            "and no network must still be able to watch a local recording")
+
+    monkeypatch.setattr(video, "_client", _no_aws)
+
+    media = rater_packet._media(session_id, assignment_id)
+    assert media["video_status"] == "ok"
+    assert media["video_available"] is True
+    assert media["video_url"] == f"/api/rater/video/{assignment_id}"
+    # No signature, no expiry, no object key: the three things the presigned URL
+    # this replaced carried into the rater's browser history.
+    assert "X-Amz" not in media["video_url"]
+    assert media["expires_in"] is None
+    assert session_id not in json.dumps(media)
+
+    # And the bytes themselves, through the same call the route makes.
+    stream = video.open_stream(session_id)
+    assert stream is not None
+    assert stream.total == len(body)
+    assert b"".join(stream.chunks) == body
+    assert stream.content_type == "video/webm"
+
+    # Seeking, which is the console's primary workflow — clicking a transcript
+    # line jumps the player — and which is a Range request the app answers off
+    # the same local file.
+    tail = video.open_stream(session_id, start=10, end=19)
+    assert tail is not None
+    assert b"".join(tail.chunks) == body[10:20]
+    assert (tail.start, tail.end, tail.total) == (10, 19, len(body))
+
+
+class _StubS3:
+    """The study bucket, answered in this process. No socket, ever.
+
+    `objects` maps object key to byte count; anything not in it is absent, and
+    head_object says so with botocore's own ClientError carrying the service's
+    404 — which is what server/video.head_video classifies on. A stub raising
+    anything else would exercise a path no deployment takes.
+
+    This exists because the packet builder stopped reading a browser's upload
+    receipt and started asking storage: every build() over an encounter with no
+    local recording is a HEAD against the real Cornell study bucket, twenty-seven
+    of them for a wave, and on a machine with no credentials each one first
+    waits out two connects to the EC2 metadata service.
+    """
+
+    def __init__(self, objects=None):
+        self.objects = dict(objects or {})
+        self.heads: list = []
+
+    def head_object(self, Bucket=None, Key=None, **kwargs):  # noqa: N803 — boto3's own kwarg names
+        # Imported here rather than at the top of the file: every other test in
+        # this module reads static files and documentation and needs no AWS SDK
+        # at all, and the ones that do reach server.video already go through
+        # importorskip. A module-level botocore import would make the item bank
+        # and the licensing checks uncollectable on a machine without it.
+        from botocore.exceptions import ClientError
+
+        self.heads.append(Key)
+        size = self.objects.get(Key)
+        if size is None:
+            raise ClientError(
+                {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
+        return {"ContentLength": size, "ContentType": "video/webm"}
+
+
+def _wave_assignment_id(index: int) -> str:
+    """A minted-shape assignment id (server/raters.py: as_[0-9a-f]{12}).
+
+    The packet's playback URL is addressed to an assignment rather than to an
+    S3 object, and _video_route refuses anything that is not this shape — so a
+    builder test that passed a readable label instead would get every encounter
+    back in the unaddressable state and prove nothing about the ordinary one.
+    """
+    return f"as_{index:012x}"
 
 
 def test_the_real_packet_builder_produces_what_the_console_reads(
@@ -657,27 +757,44 @@ def test_the_real_packet_builder_produces_what_the_console_reads(
     """Exercise server/rater_packet.build against the wave, and check the seams.
 
     The mirror above says what the console needs; this says the builder produces
-    it. S3 is unreachable from here and a rating packet must not depend on a
-    round trip anyway, so both video calls are replaced: `upload_receipt` with a
-    local answer, `playback_url` with a locally-signed URL. Presigning is
-    signature arithmetic, not a request — the test above proves that separately
-    — so stubbing the receipt lookup is the only thing being faked.
+    it. The one seam faked is storage: the wave holds no webcam recordings (they
+    went browser-direct to the bucket), so a stub bucket stands in for one that
+    does. Nothing else is replaced. This used to patch `upload_receipt` and
+    `playback_url` — the two calls the media block was built on before it asked
+    storage — and after it stopped calling either, the patches went on being
+    applied to a builder that ignored them while every encounter in the wave
+    quietly signed a HEAD to the real study bucket instead.
     """
     sessions = wave_sessions
     rater_packet = pytest.importorskip("server.rater_packet")
     from server import video as video_mod
 
     monkeypatch.setattr(rater_packet, "SESSIONS_DIR", sessions, raising=False)
-    monkeypatch.setattr(video_mod, "upload_receipt", lambda sid: {"key": f"encounters/{sid}/webcam.webm", "bytes": 1024},
-                        raising=False)
-    monkeypatch.setattr(video_mod, "playback_url",
-                        lambda sid, seconds=3600: f"https://example.invalid/{sid}?X-Amz-Signature=deadbeef",
-                        raising=False)
+    # video's own copy too: exists() looks for a local recording under this
+    # before it asks the bucket, and left pointing at the application's live
+    # DATA_DIR it answers about a different directory than the packet is built
+    # from.
+    monkeypatch.setattr(video_mod, "SESSIONS_DIR", sessions, raising=False)
+    objects = {}
+    for path in fixture_records:
+        try:
+            objects[video_mod.video_key(path.parent.name)] = 8_400_000
+        except ValueError:
+            # A wave directory whose name is not a minted session id. build()
+            # refuses it below and names it; raising out of the stub's setup
+            # would report a colleague's oddly-named wave as a crash in the
+            # harness rather than as the packet it could not build.
+            continue
+    bucket = _StubS3(objects)
+    monkeypatch.setattr(video_mod, "_client", lambda: bucket)
 
     checked = 0
     for path in sorted(sessions.glob("*/record.json")):
-        packet = rater_packet.build(path.parent.name)
-        assert packet, path.parent.name
+        session_id = path.parent.name
+        assignment_id = _wave_assignment_id(checked)
+        packet = rater_packet.build(session_id, order_seed=assignment_id,
+                                    assignment_id=assignment_id)
+        assert packet, session_id
         # Everything the console dereferences on a packet.
         assert packet["rating_code"].startswith("RC-")
         assert isinstance(packet["situation"], dict)
@@ -689,10 +806,26 @@ def test_the_real_packet_builder_produces_what_the_console_reads(
             assert turn["role"] in ("participant", "agent")
             assert isinstance(turn["speaker"], str) and turn["speaker"]
             assert isinstance(turn["text"], str)
+        # The media block, which is the part that moved. Every one of these
+        # encounters has a recording in the stub bucket and none of them has one
+        # in record.json ("video": [] on all 27 — see the test above), so an
+        # 'ok' here is the builder asking storage rather than reading the record.
+        media = packet["media"]
+        assert media["video_status"] == "ok", session_id
+        assert media["video_url"] == f"/api/rater/video/{assignment_id}"
+        assert media["expires_in"] is None
         # And nothing the console must never be handed.
         blob = json.dumps(packet, ensure_ascii=False, default=str)
         for key in FORBIDDEN_PACKET_KEYS - {"encounter_id", "session_id"}:
-            assert f'"{key}"' not in blob, f"{key} leaked for {path.parent.name}"
+            assert f'"{key}"' not in blob, f"{key} leaked for {session_id}"
+        # By value, not only by key. The playback URL used to be a presigned S3
+        # GET over encounters/{session_id}/webcam.webm, so this exact assertion
+        # could not have been written: the session id was IN the packet, in the
+        # one field a rater can read out of their own network tab, and a session
+        # id carries the encounter's start time to the second.
+        assert session_id not in blob, f"the session id is back in {session_id}"
+        assert "X-Amz" not in blob and "amazonaws" not in blob, (
+            f"a storage credential reached the packet for {session_id}")
         checked += 1
     # Every encounter in the wave, whatever wave it is. The old `== 27` was a
     # count of one machine's fixture, so with DATA_DIR on an empty directory it
@@ -827,6 +960,21 @@ const answer = (name, value) => {
   assert(written.situation.includes('participant was told'), 'situation missing');
   assert(written.turns.includes('Participant'), 'transcript missing');
   assert(!/agent_id|stage_direction|trigger_id/.test(written.turns), 'blinding leak in the transcript');
+  // --- what the player is actually pointed at ------------------------------
+  // The source is this application's own route, carrying the rater's own
+  // scoped token, and it is built from the assignment id. It used to be a
+  // presigned S3 GET: a bearer credential for the study bucket, sitting in the
+  // page and in the rater's browser history, whose object key
+  // (encounters/{session_id}/webcam.webm) put the encounter's start time to the
+  // second in front of the one person the rating code exists to keep it from.
+  // A signature reappearing here is that leak reopening.
+  const src = els.vid && els.vid.src;
+  assert(/^\/api\/rater\/video\/as_[0-9a-f]{12}\?token=rt_/.test(src),
+    'the player is not pointed at the app route: ' + src);
+  assert(!/X-Amz|Signature|amazonaws|s3\./i.test(src),
+    'a storage credential reached the player: ' + src);
+  assert(!/s_\d{5,}_/.test(src), 'the session id reached the player: ' + src);
+
   const items = stub.packets[A].items;
   const radios = parseRadios(written.items);
   assert(radios.length === items.length * 6, 'expected ' + items.length * 6 + ' radios, got ' + radios.length);
@@ -907,8 +1055,8 @@ def test_the_console_runs(tmp_path, monkeypatch, wave_sessions):
     from server import video as video_mod
 
     # Three encounters chosen for what they exercise: an ordinary one, one
-    # carrying an untranscribed agent turn, and one whose webcam upload never
-    # landed. No AWS call is made — the two video seams are replaced.
+    # carrying an untranscribed agent turn, and one that has no recording at
+    # all. No AWS call is made — storage is a stub bucket in this process.
     ordinary, untranscribed, novideo = (
         "s_1772460300_44c9a2", "s_1772548516_02952d", "s_1772764657_717245")
     # These three ids belong to the reference wave. Another wave is a wave, not
@@ -920,21 +1068,33 @@ def test_the_console_runs(tmp_path, monkeypatch, wave_sessions):
         pytest.skip(f"the wave under {sessions} does not carry the reference "
                     f"encounters this harness drives: {missing}")
     monkeypatch.setattr(rater_packet, "SESSIONS_DIR", sessions, raising=False)
-    monkeypatch.setattr(
-        video_mod, "upload_receipt",
-        lambda sid: None if sid == novideo else {"key": f"encounters/{sid}/webcam.webm", "bytes": 4096},
-        raising=False)
-    monkeypatch.setattr(
-        video_mod, "playback_url",
-        lambda sid, seconds=3600: f"https://example.invalid/{sid}.webm?X-Amz-Signature=deadbeef",
-        raising=False)
+    monkeypatch.setattr(video_mod, "SESSIONS_DIR", sessions, raising=False)
+    # Storage, in this process. Two of the three encounters have a recording and
+    # the third has none, which is the state distinction the page is being
+    # driven over — and it is now decided by whether the bytes are there rather
+    # than by whether a browser's confirmation event arrived. The seams this
+    # used to replace (`upload_receipt`, `playback_url`) are not on the path any
+    # more: patching them left the page being driven with a media block that
+    # said every encounter's recording had been lost, and the harness's first
+    # submit came back "this encounter has a recording that could not be
+    # loaded" instead of the missing-answers message it asserts.
+    monkeypatch.setattr(video_mod, "_client", lambda: _StubS3({
+        video_mod.video_key(ordinary): 8_400_000,
+        video_mod.video_key(untranscribed): 6_100_000,
+    }))
 
     bank = read_bank()
     packets = {}
     for i, sid in enumerate((ordinary, untranscribed, novideo)):
-        packet = rater_packet.build(sid)
+        # The real assignment id the packet is built for, not one stapled on
+        # afterwards: it is what the playback URL is addressed to, so a packet
+        # built without it reports its recording as present-but-unaddressable
+        # and the console blocks the rating it is here to drive.
+        assignment_id = f"as_00000000000{i}"
+        packet = rater_packet.build(sid, order_seed=assignment_id,
+                                    assignment_id=assignment_id)
         assert packet, sid
-        packet["assignment_id"] = f"as_00000000000{i}"
+        packet["assignment_id"] = assignment_id
         packet["status"] = "pending"
         items = [{"id": r["item_id"], "number": int(r["item_no"]), "text": r["item_text"],
                   "construct": r["construct"], "reverse": r["reverse_scored"] == "TRUE"}
@@ -944,6 +1104,14 @@ def test_the_console_runs(tmp_path, monkeypatch, wave_sessions):
         random.Random(7 + i).shuffle(items)
         packet["items"] = items
         packets[packet["assignment_id"]] = packet
+
+    # The premise the harness below is written against, stated where it fails
+    # legibly. Two playable encounters and one with no recording is what makes
+    # the no-video branch, the unplayed-recording warning and the ordinary path
+    # all reachable in one run; a builder change that collapsed them would
+    # otherwise surface as a JavaScript assertion about a submit message.
+    assert [p["media"]["video_status"] for p in packets.values()] == [
+        "ok", "ok", "absent"]
 
     stub = {
         "me": {"rater_id": "rtr_ab12cd34", "name": "R. Okonkwo", "kind": "trained",

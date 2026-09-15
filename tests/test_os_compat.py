@@ -123,22 +123,56 @@ def test_replace_with_retry_still_raises_when_the_window_never_closes(tmp_path, 
         storage.replace_with_retry(tmp, tmp_path / "x.json", attempts=3)
 
 
+def test_a_submitted_rating_survives_the_rename_window(tmp_path, monkeypatch):
+    """The source scan below says ratings.py imports the helper; this says it
+    WORKS through the writer a rater's submission actually goes down.
+
+    A rating is 22 ESCI items a human being has just finished. On Windows the
+    researcher console and the reliability routes read RATINGS_DIR while the
+    console writes into it, so the rename can lose to an open handle — and
+    before this the rating was simply gone, with a PermissionError surfacing as
+    a failed submit on a form the rater has already emptied.
+    """
+    from server import ratings
+
+    calls = {"n": 0}
+    real = storage.os.replace
+
+    def flaky(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(32, "The process cannot access the file")
+        return real(src, dst)
+
+    monkeypatch.setattr(storage.os, "replace", flaky)
+    monkeypatch.setattr(storage.time, "sleep", lambda _s: None)
+    dest = tmp_path / "ratings" / "rg_abcdef.json"
+    ratings._write_atomic(dest, '{"rating_id": "rg_abcdef"}')
+    assert calls["n"] == 3, "the rating writer gave up on the first refusal"
+    assert json.loads(dest.read_text(encoding="utf-8"))["rating_id"] == "rg_abcdef"
+
+
 def test_no_atomic_writer_renames_without_the_retry():
     """The helper exists so every writer uses it; a bare os.replace is the bug.
 
-    ratings.py is deliberately not in this list — it belongs to another agent's
-    file set and still carries a bare os.replace at the time of writing.
+    Every module under server/ is scanned rather than a hand-kept list. The list
+    was how ratings.py — the writer that stores a rater's completed 22-item
+    submission, the one write whose loss costs a human being their work — sat
+    with a bare os.replace while this test passed, and it was excluded BY NAME
+    with a comment saying so. A named exclusion in a guard is a hole with a
+    label on it; a scan of the whole package has no holes to label, and it also
+    catches the next writer somebody adds.
     """
-    for rel in ("server/storage.py", "server/runs.py", "server/raters.py",
-                "server/encounter_record.py"):
-        src = (REPO_ROOT / rel).read_text(encoding="utf-8")
+    offenders = {}
+    for path in sorted((REPO_ROOT / "server").rglob("*.py")):
+        src = path.read_text(encoding="utf-8")
         bare = [ln for ln in src.splitlines()
                 if "os.replace(" in ln and "def replace_with_retry" not in ln]
-        if rel == "server/storage.py":
-            # The one legitimate call is inside the helper itself.
-            assert len(bare) == 1, bare
-        else:
-            assert not bare, (rel, bare)
+        if bare:
+            offenders[str(path.relative_to(REPO_ROOT)).replace("\\", "/")] = bare
+    # The one legitimate call is inside the helper itself, in storage.py.
+    assert list(offenders) == ["server/storage.py"], offenders
+    assert len(offenders["server/storage.py"]) == 1, offenders
 
 
 # ---------- SessionStore ----------
@@ -275,7 +309,16 @@ def test_a_video_key_cannot_be_minted_from_a_spelling_nothing_else_derives(
         with pytest.raises(video.NoSuchSession):
             video.presign_upload(alias)
         assert video.upload_receipt(alias) is None
-        assert video.playback_url(alias) is None
+        # The three entry points that now actually serve bytes. This line used
+        # to check playback_url, which was retired with the presigned-URL
+        # design; these replace it and are stronger, because a case-variant
+        # alias reaching any of them is what would sign a key nothing else
+        # derives — and on a case-insensitive filesystem local_path would
+        # resolve to a real directory that video_key would never name.
+        with pytest.raises(ValueError):
+            video.local_path(alias)
+        assert video.exists(alias) is False
+        assert video.open_stream(alias) is None
 
 
 # ---------- scenario ids ----------

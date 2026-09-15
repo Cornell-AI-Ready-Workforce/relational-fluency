@@ -137,9 +137,29 @@ def main(argv: List[str]) -> int:
         if res is None:
             print(f"{d.name}: skipped (no usable audio)")
             continue
+        # A run that produced no text is not a transcription, and counting it as
+        # one is how "5 transcribed" gets printed over a wave with no repaired
+        # text in it — the same false-confidence failure verify_record exists to
+        # catch, committed by the tool the operator was sent to. It also latches:
+        # retranscribe() returns any cache it can parse, so this state survives
+        # every plain re-run and only --force gets past it. Say that here, in the
+        # place the operator is looking, rather than printing "0 chars".
+        #
+        # Read defensively, because what comes back on the cache path is
+        # whatever JSON is on disk: a file written by an older build (or by
+        # hand) can be missing `duration_s`, or not be an object at all, and
+        # indexing it killed the whole --all loop at the first such session,
+        # taking every later encounter with it. One bad cache must cost one
+        # session, not the wave.
+        text = res.get("text") if isinstance(res, dict) else None
+        if not isinstance(text, str) or not text.strip():
+            print(f"{d.name}: NO USABLE TEXT — the re-transcription produced "
+                  "none; re-run this session with --force to try again")
+            continue
+        text = text.strip()
         done += 1
-        print(f"{d.name}: {res['duration_s']}s → {len(res['text'])} chars")
-        print(f"   {res['text'][:150]}")
+        print(f"{d.name}: {res.get('duration_s')}s → {len(text)} chars")
+        print(f"   {text[:150]}")
     print(f"\n{done} transcribed with {MODEL}")
     return 0
 

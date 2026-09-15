@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<link rel="icon" type="image/png" href="/static/favicon.png" />
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
 <title>Researcher</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
@@ -150,11 +152,116 @@
   .closed-banner { font-size: 12px; color: var(--muted); background: var(--surface);
                    border: 1px solid var(--line-soft); border-left: 3px solid var(--muted);
                    border-radius: 6px; padding: 8px 10px; margin-bottom: 12px; }
+
+  /* Steering log, shown on a closed session where the live controls would be. */
+  .steer-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+  .steer-head h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+                   color: var(--muted); margin: 0; font-weight: 600; }
+  .steer-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .steer-body { display: flex; flex-direction: column; gap: 8px; }
+  .steer-item { background: var(--surface); border: 1px solid var(--line-soft);
+                border-radius: 6px; padding: 8px 10px; font-size: 12px; }
+  /* A planted beat and an unprompted direction are different evidence, so they
+     are different objects: only a beat gets the accent rail. */
+  .steer-item.planted { border-left: 3px solid var(--accent); }
+  .steer-item .row { display: flex; justify-content: space-between; gap: 8px;
+                     align-items: baseline; margin-bottom: 3px; }
+  .steer-item .who { font-weight: 600; color: var(--fg); }
+  .steer-item .at { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .steer-item .trig { color: var(--accent); font-size: 11px; word-break: break-word; }
+  .steer-item .dir { color: var(--muted); line-height: 1.45; margin-top: 3px; }
+  .steer-item .esci { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .steer-item .esci span { background: var(--accent-soft); color: var(--accent-deep);
+                           font-size: 10px; padding: 1px 6px; border-radius: 999px; }
+  .steer-empty { font-size: 12px; color: var(--muted); font-style: italic; }
+  /* The door into the second view, and it is deliberately a SIBLING of
+     .steer-log rather than its last child.
+
+     It used to be the last child, and .steer-log is max-height:200px with
+     overflow-y:auto — it has to be, because the live auto-steer log it shares
+     that class with grows without limit. So on a real closed encounter
+     (s_1773142745_384dad, four directions, measured at 1500x900) the log's
+     content was 682px inside a 200px window and the link sat at offset 666 of
+     it: 482px below the fold of its own scroll box, reachable only by someone
+     who had already scrolled a list of stage directions to the very end. The
+     console's one route into the evidence trace was, on most encounters, not on
+     screen at all.
+
+     Outside that box it is always on screen. Its own bordered card also gets it
+     out of a list it otherwise read as the last line of — 12px text in the same
+     accent red .steer-item uses for trigger ids. Full-width and filled, it is
+     the only button on this panel while a session is closed. */
+  .evidence-card { margin-top: 16px; padding: 12px 13px 13px; background: var(--surface);
+                   border: 1px solid var(--line-soft); border-radius: 8px; }
+  .evidence-card h2 { margin: 0 0 6px; }
+  .evidence-what { font-size: 12px; color: var(--muted); line-height: 1.55; }
+  /* Bold the four panel names rather than the prose around them: a researcher
+     scanning this is looking for whether the thing they want is in there, and
+     the panel headings are what they will see once it opens. */
+  .evidence-what b { color: var(--fg); font-weight: 600; }
+  /* display:block and width:100% because it is an <a>, not a <button>: it has
+     to open in a new tab and carry ?session=, which a form button cannot do,
+     but nothing about it should read as a link. Everything else here matches
+     the .launch-btn on the other side of this column, which is the page's
+     existing "this is the main action" object. */
+  .evidence-btn { display: block; width: 100%; margin-top: 11px; padding: 9px 0;
+                  text-align: center; background: var(--accent); color: #ffffff;
+                  border-radius: 8px; font-size: 13px; font-weight: 600;
+                  text-decoration: none; transition: background 0.15s; }
+  .evidence-btn:hover { background: var(--accent-deep); }
+  .evidence-btn:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: 2px; }
+  /* The live failure strip. It sits in the transcript column's own flow, above
+     the messages, and sticks to the top of that column as it scrolls. Sticky
+     rather than static because appendMsg scrolls each new turn into view, so a
+     strip that only existed at the top of the column would be off screen for
+     the whole encounter — which is the exact failure it is here to prevent.
+     Sticky rather than fixed or floating because at rest it must not sit on top
+     of a message: with no events the element is display:none and the transcript
+     begins where it always did. */
+  .enc-events { position: sticky; top: 0; z-index: 2; margin-bottom: 12px;
+                background: var(--surface); border: 1px solid var(--line-soft);
+                border-left: 3px solid var(--warn); border-radius: 6px; }
+  .enc-events.sev-error { border-left-color: var(--accent); border-left-width: 5px; }
+  .enc-events-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+                     font-size: 12px; }
+  /* Colour is the third signal here, never the only one. The badge changes
+     glyph and shape, and the count line says the word "error" out loud, because
+     an amber-vs-red left border is nothing to a researcher with a red-green
+     deficiency and nothing on the projector in a lab meeting. */
+  .enc-badge { flex: none; width: 18px; height: 18px; border-radius: 4px;
+               display: inline-flex; align-items: center; justify-content: center;
+               font-weight: 700; font-size: 12px; line-height: 1;
+               background: var(--warn); color: #ffffff; }
+  .enc-events.sev-error .enc-badge { background: var(--accent); border-radius: 50%; }
+  .enc-events-count { font-weight: 600; white-space: nowrap; }
+  .enc-events-latest { color: var(--muted); flex: 1; min-width: 0;
+                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .enc-events-toggle { flex: none; padding: 3px 9px; font-size: 11px; }
+  /* Bounded and scrolling: expanding is a deliberate click, and a bad encounter
+     produces dozens of these. An unbounded list would push the transcript off
+     the screen underneath it at the moment the researcher most needs to read
+     both. */
+  .enc-events-list { max-height: 170px; overflow-y: auto; padding: 7px 10px;
+                     border-top: 1px solid var(--line-soft);
+                     display: flex; flex-direction: column; gap: 6px; }
+  .enc-event { font-size: 11px; line-height: 1.45; padding-left: 15px; position: relative; }
+  .enc-event::before { content: "\25B3"; position: absolute; left: 0; color: var(--warn); }
+  .enc-event.error::before { content: "!"; font-weight: 700; color: var(--accent); }
+  .enc-event .when { font-variant-numeric: tabular-nums; color: var(--muted); margin-right: 5px; }
+  .enc-event .what { font-weight: 600; }
+  .enc-event .detail { color: var(--muted); display: block; word-break: break-word; }
   /* macOS renders <select> popups with system styling and drops this colour
      (Safari always; Chrome's native popup menus too), so the dimming is not a
      signal anyone can rely on. The optgroup labels carry the distinction, and
      the option text now says it as well — see refreshSessions. */
   .picker option.closed { color: var(--muted); }
+  /* The cohort mark is text at the head of the option, for the same reason and
+     more so: a colour a native popup menu throws away cannot be the only thing
+     that distinguishes a demo encounter from a participant's. */
+  .keystrip { font-size: 11.5px; color: var(--muted); background: var(--surface);
+              border: 1px solid var(--line-soft); border-radius: 7px;
+              padding: 6px 9px; margin: 0 0 10px; }
+  .keystrip[hidden] { display: none !important; }
   .score { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
   .score-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px;
                 padding:10px 12px; background:var(--surface); border:1px solid var(--line-soft);
@@ -187,6 +294,12 @@
 <body>
 <div class="app">
   <div class="left">
+    <!-- Painted by the strip in the script, never by the server: a line saying
+         the key is gone, on a page that still has it in the bar, would be the
+         worse of the two failures. -->
+    <div class="keystrip" id="keyStrip" hidden>
+      Researcher key removed from the address bar. Reloading this page will need it again.
+    </div>
     <h2>Session</h2>
     <div class="picker">
       <select id="sessionPicker"><option value="">select session</option></select>
@@ -227,6 +340,20 @@
       <span>The live connection to this session ended.</span>
       <button id="reconnectBtn" class="secondary">Reconnect</button>
     </div>
+    <!-- Live failure strip: the encounter_event frames the researcher socket
+         forwards. role=status announces a new failure without moving the
+         caret, which matters because the researcher may be typing a note or
+         holding a knob when the director dies. -->
+    <div class="enc-events" id="encEvents" role="status" aria-live="polite" style="display:none">
+      <div class="enc-events-head">
+        <span class="enc-badge" id="encEventsBadge" aria-hidden="true"></span>
+        <span class="enc-events-count" id="encEventsCount"></span>
+        <span class="enc-events-latest" id="encEventsLatest"></span>
+        <button type="button" id="encEventsToggle" class="secondary enc-events-toggle"
+                aria-expanded="false" aria-controls="encEventsList">Show all</button>
+      </div>
+      <div class="enc-events-list" id="encEventsList" style="display:none"></div>
+    </div>
     <div class="msgs" id="msgs"></div>
   </div>
 
@@ -249,8 +376,53 @@
       <button id="launchBtn" class="launch-btn">Start session &nearr;</button>
       <div id="launchStatus" class="launch-status"></div>
     </div>
-    <div id="rightClosed" class="closed-banner" style="display:none">
-      This session has ended. Steering controls are disabled. You can still download artifacts on the left.
+    <!-- A closed session used to leave this whole column holding one 50px
+         sentence: 380 x 900 of nothing, on the state a researcher is in for most
+         of their time, because reviewing recorded encounters is the job. What
+         belongs here is the steering log, which is the study's independent
+         variable and was displayed nowhere on this page: which beat was planted,
+         which ESCI items it targets, and the direction the actor was actually
+         given. It is already in record.json, so this costs one fetch. -->
+    <div id="rightClosed" style="display:none">
+      <div class="closed-banner">
+        This session has ended. Steering controls are disabled. You can still
+        download artifacts on the left.
+      </div>
+      <div class="steer-log">
+        <div class="steer-head">
+          <h2>Steering log</h2>
+          <span id="steerCount" class="steer-count"></span>
+        </div>
+        <div id="steerBody" class="steer-body"></div>
+      </div>
+      <!-- What is behind this button, named panel by panel. "Evidence trace"
+           is a name the study gave itself; to anyone who has not already opened
+           /evidence it says nothing, and this button is the only route to it
+           from anywhere in the console. The sentences below are checked against
+           static/evidence.html by tests/test_final_console.py, so they cannot
+           quietly come to describe a page that no longer looks like that.
+
+           Note what is NOT claimed: the replay panel moves a playhead and a
+           timecode, it does not play the recording back. Promising playback
+           here would send a researcher to /evidence expecting to watch the
+           encounter and find a placeholder. -->
+      <div class="evidence-card" id="evidenceCard">
+        <h2>Evidence trace</h2>
+        <div class="evidence-what">
+          The whole encounter turn by turn: the participant's line, the
+          director's stage direction for that moment and the actor line it
+          produced, aligned on one row and timestamped. Beside it,
+          <b>Fidelity</b> marks every beat the scenario planted as volunteered,
+          reached only by a silence probe, or missed; <b>ESCI coverage</b> shows
+          which items those beats reached; <b>Session health</b> gives turn and
+          direction counts, which audio and video files were captured, and which
+          models ran through which gateway. <b>Replay</b> is a timeline that
+          tracks the position of any turn you click.
+        </div>
+        <a id="evidenceLink" class="evidence-btn" target="_blank" rel="noopener">
+          Open the evidence trace &nearr;
+        </a>
+      </div>
     </div>
     <div id="rightControls" style="display:none">
       <div class="auto-steer">
@@ -290,6 +462,35 @@
   const keyParam = key ? `&key=${encodeURIComponent(key)}` : '';
   const keyParamFirst = key ? `?key=${encodeURIComponent(key)}` : '';
 
+  /* The researcher key does not stay in the address bar.
+
+     This console is opened with ?key=… — every route it calls is check_key'd —
+     and it is one of the screens the demo door puts on a projector in front of
+     a lab. static/demo.html strips the key from its own URL and prints a banner
+     saying so, then linked here, and here it sat in the bar for as long as the
+     console was up. Stripping it from one page of four is not stripping it, and
+     a key on a wall in front of a room has been handed to the room.
+
+     Done here rather than in the link that opened it, so it holds for every way
+     in: the demo door, a bookmark, a pasted link, the landing page. The key
+     stays in `key` and every fetch, download and socket below still carries it;
+     what changes is that a reload needs it again, which is the correct trade
+     for a credential on a shared machine. Not stashed in localStorage for the
+     same reason — a credential that outlives the tab is one left behind.
+
+     typeof-guarded: this page is also driven headless by the harnesses in
+     tests/, which give it a location and no History. */
+  if (key) {
+    try {
+      params.delete('key');
+      const rest = params.toString();
+      if (typeof history !== 'undefined' && history.replaceState)
+        history.replaceState(null, '', location.pathname + (rest ? '?' + rest : ''));
+      const strip = document.getElementById('keyStrip');
+      if (strip) strip.hidden = false;
+    } catch (e) { /* a browser that will not rewrite the bar still gets the console */ }
+  }
+
   let ws = null;
   let currentSessionId = null;
   let currentSessionStatus = null;  // 'active' | 'closed' | null
@@ -310,6 +511,33 @@
   const $ = (id) => document.getElementById(id);
 
   let sessionsCache = [];
+  /* Which dataset a session belongs to, printed at the head of its row.
+
+     This console said nothing about cohort at all — the word was not in the
+     file — so an internal test encounter was a row in this picker rendered
+     exactly like the study's, and on a wave where it is the newest session it
+     is the FIRST row. static/demo.html told a lab that a demo "shows up in the
+     researcher console with cohort: internal"; it did not.
+
+     At the head of the option and in words, not as a colour and not as a suffix.
+     A colour is thrown away by the native popup menu on macOS (see
+     .picker option.closed above), and a suffix reads as part of the title:
+     four of the eight v3 scenarios are called "Planning an internal rollout",
+     so " · internal" appended to a title produced five rows containing the word
+     internal, four of them study data. The bracket at column one is a mark a
+     title cannot imitate.
+
+     'study' gets nothing. The absence is the common case and the marks are
+     there to be counted at a glance; marking all 26 rows of a wave would hide
+     the one that matters. A session with no cohort at all — recorded before the
+     tag existed, or started outside a run — is marked too, because it is not
+     study data either and no ?cohort= filter will return it. */
+  function cohortTag(s) {
+    const c = String((s && s.cohort) || '').toLowerCase();
+    if (c === 'study') return '';
+    return c ? `[${c.toUpperCase()}] ` : '[NO COHORT] ';
+  }
+
   let sessionsSig = null;
   // Auto-open the single active session only once, on first load. Without this,
   // the 3s poll would re-open it every few seconds and yank the researcher off
@@ -343,7 +571,7 @@
       active.forEach(s => {
         const opt = document.createElement('option');
         opt.value = s.id;
-        opt.textContent = `${s.title} · ${s.turn_count} turns · ${s.id}`;
+        opt.textContent = `${cohortTag(s)}${s.title} · ${s.turn_count} turns · ${s.id}`;
         grp.appendChild(opt);
       });
       picker.appendChild(grp);
@@ -356,7 +584,7 @@
         opt.className = 'closed';
         const dur = s.duration_s ? ` · ${s.duration_s}s` : '';
         // In the text, not only in CSS: see .picker option.closed.
-        opt.textContent = `${s.title} · closed · ${s.turn_count} turns${dur} · ${s.id}`;
+        opt.textContent = `${cohortTag(s)}${s.title} · closed · ${s.turn_count} turns${dur} · ${s.id}`;
         grp.appendChild(opt);
       });
       picker.appendChild(grp);
@@ -376,11 +604,131 @@
     autoOpenedOnce = true;
   }
 
+  /* An empty transcript has to say why it is empty.
+
+     Everything else on this column already does: the file list and the score
+     panel both print "No session selected." The transcript printed nothing at
+     all, so with no session picked the page showed a TRANSCRIPT heading over a
+     blank half-screen, which reads as a console that failed to load rather than
+     one waiting for a choice. The distinction matters most in the case that
+     looks identical from here: a server started without DATA_DIR has an empty
+     session list, so the dropdown offers nothing and the void underneath was
+     the only feedback anyone got. */
+  function showTranscriptPlaceholder() {
+    const has = sessionsCache.length > 0;
+    $('msgs').innerHTML = '';
+    const el = document.createElement('div');
+    el.className = 'files-empty';
+    el.textContent = has
+      ? 'No session selected. Pick one from the list above, or start a new session on the right.'
+      : 'No sessions found in this data directory. Start a new session on the right, '
+        + 'or restart the server with DATA_DIR pointing at a wave you have already recorded.';
+    $('msgs').appendChild(el);
+  }
+
   function setRightPanel(mode) {
     // 'empty' | 'closed' | 'active', empty shows the launch card
     $('launchCard').style.display   = mode === 'empty'  ? 'block' : 'none';
     $('rightClosed').style.display  = mode === 'closed' ? 'block' : 'none';
     $('rightControls').style.display = mode === 'active' ? 'block' : 'none';
+    if (mode === 'closed') loadSteeringLog(currentSessionId);
+  }
+
+  /* The steering log for a finished encounter.
+
+     Read from record.json rather than replayed from events, because the record
+     is the artefact analysis uses and this panel should show what an analyst
+     will see rather than a second derivation of it. A direction that fired a
+     planted beat is marked as one: the trigger id and its ESCI items are the
+     link between a line in the transcript and the thing the study is measuring,
+     and without them the log is just prose. */
+  let steerLoadedFor = null;
+  async function loadSteeringLog(sid) {
+    const body = $('steerBody');
+    const link = $('evidenceLink');
+    link.href = '/evidence' + keyParamFirst
+      + (keyParamFirst ? '&' : '?') + 'session=' + encodeURIComponent(sid || '');
+    if (!sid) { body.innerHTML = ''; $('steerCount').textContent = ''; return; }
+    if (steerLoadedFor === sid) return;   // re-entered by a refresh, not a change
+    steerLoadedFor = sid;
+    body.innerHTML = '';
+    $('steerCount').textContent = 'loading…';
+
+    let rec;
+    try {
+      const r = await fetch(`/api/encounters/${encodeURIComponent(sid)}/record${keyParamFirst}`);
+      if (!r.ok) throw new Error('http ' + r.status);
+      rec = await r.json();
+    } catch (e) {
+      // Say it failed rather than render an empty log, which reads as "this
+      // encounter was never steered" — the one conclusion a failed fetch must
+      // not be allowed to suggest.
+      $('steerCount').textContent = '';
+      const p = document.createElement('div');
+      p.className = 'steer-empty';
+      p.textContent = 'The steering log could not be loaded (' + e.message + ').';
+      body.appendChild(p);
+      return;
+    }
+    if (steerLoadedFor !== sid) return;   // a different session was picked meanwhile
+
+    const log = Array.isArray(rec.steering_log) ? rec.steering_log : [];
+    const planted = log.filter(d => d.trigger_id).length;
+    $('steerCount').textContent = log.length
+      ? `${log.length} direction${log.length === 1 ? '' : 's'} · ${planted} planted`
+      : '';
+    if (!log.length) {
+      const p = document.createElement('div');
+      p.className = 'steer-empty';
+      p.textContent = 'No stage directions were recorded for this encounter.';
+      body.appendChild(p);
+      return;
+    }
+
+    log.forEach(d => {
+      const item = document.createElement('div');
+      item.className = 'steer-item' + (d.trigger_id ? ' planted' : '');
+
+      const row = document.createElement('div');
+      row.className = 'row';
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = d.agent_name || d.agent_id || 'director';
+      const at = document.createElement('span');
+      at.className = 'at';
+      at.textContent = d.t == null ? '' : mmss(d.t);
+      row.appendChild(who); row.appendChild(at);
+      item.appendChild(row);
+
+      if (d.trigger_id) {
+        const trig = document.createElement('div');
+        trig.className = 'trig';
+        trig.textContent = d.trigger_id;
+        item.appendChild(trig);
+      }
+
+      const dir = document.createElement('div');
+      dir.className = 'dir';
+      dir.textContent = d.stage_direction || '(no direction text recorded)';
+      item.appendChild(dir);
+
+      if (Array.isArray(d.esci) && d.esci.length) {
+        const wrap = document.createElement('div');
+        wrap.className = 'esci';
+        d.esci.forEach(code => {
+          const s = document.createElement('span');
+          s.textContent = code;
+          wrap.appendChild(s);
+        });
+        item.appendChild(wrap);
+      }
+      body.appendChild(item);
+    });
+  }
+
+  function mmss(sec) {
+    const s = Math.max(0, Math.round(Number(sec) || 0));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
 
   function fmtSize(n) {
@@ -545,7 +893,7 @@
     } catch (e) {
       // Keep the previously staged gears and dropdown selection intact; the
       // launch stays disabled until a scenario actually loads.
-      $('launchStatus').textContent = 'Could not load scenario (' + e.message + '). Staged gears kept — re-select to retry.';
+      $('launchStatus').textContent = 'Could not load scenario (' + e.message + '). Staged gears kept, re-select to retry.';
       $('launchBtn').disabled = true;
       if (loadedScenarioId != null) $('launchScenario').value = loadedScenarioId;
       return;
@@ -689,7 +1037,7 @@
         // Popup blocked: window.open returned null. The launch already
         // succeeded, so surface the participant link as a manual fallback.
         $('launchStatus').innerHTML =
-          `Popup blocked — open <a href="${esc(purl)}" target="_blank" rel="noopener">the participant page</a> ` +
+          `Popup blocked, open <a href="${esc(purl)}" target="_blank" rel="noopener">the participant page</a> ` +
           `manually. Waiting for the participant to press Start…`;
       }
       const launchStartedAt = Date.now();
@@ -701,7 +1049,7 @@
           if (pr.status === 404 || pr.status === 410) {
             clearInterval(launchPoll); launchPoll = null;
             $('launchBtn').disabled = false;
-            $('launchStatus').textContent = 'Launch expired — start again.';
+            $('launchStatus').textContent = 'Launch expired, start again.';
             return;
           }
           if (!pr.ok) return;
@@ -718,7 +1066,7 @@
           if (Date.now() - launchStartedAt > MAX_WAIT_MS) {
             clearInterval(launchPoll); launchPoll = null;
             $('launchBtn').disabled = false;
-            $('launchStatus').textContent = 'Timed out waiting for the participant — start again.';
+            $('launchStatus').textContent = 'Timed out waiting for the participant, start again.';
           }
         } catch {}
       }, 1000);
@@ -744,6 +1092,165 @@
     while (log.children.length > 40) log.removeChild(log.lastChild);
   }
 
+  // Live failure strip. Everything that goes wrong inside a running encounter —
+  // an agent turn that produced no transcript, a planted beat that was briefed
+  // and never spoken, a steering pass that errored, the director falling back
+  // to the first agent, the gateway's own error frames — used to be written to
+  // events.jsonl and broadcast to nobody, so an encounter whose director was
+  // dead looked exactly like one that was working for the full 7-12 minutes.
+  // The socket now carries {type:'encounter_event'} for each of them, and this
+  // is where a researcher gets to see it while intervention is still possible.
+  const ENC_EVENT_KEEP = 100;
+  let encEvents = [];      // the retained tail, oldest first
+  let encEventTotal = 0;   // every event this session, including trimmed ones
+  let encErrorTotal = 0;
+  let encEventsOpen = false;
+
+  // Every key below is a `kind` the server can actually put on this socket, and
+  // it is spelled the way the server spells it — the events.jsonl event type
+  // wherever the failure has one, so a line read here mid-encounter and a row
+  // read in the archive afterwards name the same thing. A key that matches no
+  // emitter is worse than useless: it renders for a frame that never arrives,
+  // and it tells whoever edits this page next that the map is the inventory of
+  // what can happen when it is not. `realtime_error` sat here doing exactly
+  // that while `voice_error` — the kind the runner really sends — fell through
+  // to the raw-name fallback. Three producers feed this list: the runner's
+  // _encounter_event calls, the runner's store tee (auto_steer_error, written
+  // by Session and forwarded by type name), and app.py's
+  // _report_encounter_failure, which is the encounter dying outright at the
+  // socket handler. Adding an emitter without adding a label here is caught by
+  // tests/test_final_console.py, which reads all three producers from source.
+  const ENC_EVENT_LABEL = {
+    transcript_missing: 'agent turn produced no transcript',
+    trigger_undelivered: 'planted beat never spoken',
+    trigger_deferred: 'planted beat deferred',
+    trigger_brief_failed: 'planted beat never briefed to the character',
+    steer_deferred: 'steering shift deferred',
+    // The quietest way this study can fail, so it gets the bluntest words on
+    // the strip. On a model whose gateway does not honour a mid-session
+    // session.update, the direction is written to the record and never reaches
+    // the actor: audio, transcript, turns and planted beats all look right, and
+    // the encounter contains no manipulation at all. A researcher watching
+    // needs to know on the first turn, not in the analysis six weeks later.
+    steer_unacked: 'the model is not accepting stage directions: this encounter is unsteered',
+    auto_steer_error: 'auto-steering failed this turn',
+    director_fallback: 'director unavailable, routed to the first agent',
+    scribe_pump_ended: 'participant transcription channel ended',
+    voice_error: 'realtime gateway error',
+    voice_ws_error: 'voice connection failed, the encounter has ended',
+    // Not "participant connection failed": a participant disconnect is caught
+    // one clause earlier (app.py's `except WebSocketDisconnect: pass`) and
+    // sends no frame at all, so this kind is raised by everything EXCEPT the
+    // disconnect — usually the model gateway inside stream_reply.
+    participant_ws_error: 'the participant encounter failed, the encounter has ended',
+  };
+  // An unrecognised kind is rendered, not dropped. The server side owns the
+  // list of failures worth broadcasting; a console that silently ignores the
+  // ones it has no label for would reintroduce the exact defect this strip
+  // exists to close, one new event type at a time.
+  const encEventLabel = (kind) =>
+    ENC_EVENT_LABEL[kind] || String(kind == null ? 'unknown failure' : kind).replace(/_/g, ' ');
+
+  // `t` is seconds since the encounter started (storage.py writes
+  // time.time() - started_at), and is null for anything recorded outside a
+  // turn, which is why this returns '' rather than 0:00 for a missing value —
+  // 0:00 would read as "at the very start", which is a different claim.
+  function encEventTime(t) {
+    if (typeof t !== 'number' || !isFinite(t)) return '';
+    const s = Math.max(0, Math.round(t));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  function encEventText(e) {
+    return [encEventLabel(e.kind), e.agent_id ? agentName(e.agent_id) : '', e.detail || '']
+      .filter(Boolean).join(' · ');
+  }
+
+  function appendEncEvent(m) {
+    const sev = m.severity === 'error' ? 'error' : 'warn';
+    encEventTotal += 1;
+    if (sev === 'error') encErrorTotal += 1;
+    encEvents.push({ kind: m.kind, t: m.t, agent_id: m.agent_id, detail: m.detail, severity: sev });
+    // Trim the retained rows, never the count. A researcher told "34 failures"
+    // and shown 34 rows can trust both numbers; one quietly shown the last 34
+    // of 200 cannot, and the count is the number they act on.
+    while (encEvents.length > ENC_EVENT_KEEP) encEvents.shift();
+    renderEncEvents();
+  }
+
+  function resetEncEvents() {
+    encEvents = []; encEventTotal = 0; encErrorTotal = 0; encEventsOpen = false;
+    renderEncEvents();
+  }
+
+  function renderEncEvents() {
+    const strip = $('encEvents');
+    const list = $('encEventsList');
+    // An encounter with nothing wrong shows nothing at all. An empty strip
+    // saying "0 failures" is chrome the eye learns to skip, and the whole value
+    // of this element is that its appearance is itself the signal.
+    if (!encEventTotal) {
+      strip.style.display = 'none';
+      strip.classList.remove('sev-error');
+      $('encEventsCount').textContent = '';
+      $('encEventsLatest').textContent = '';
+      list.innerHTML = '';
+      list.style.display = 'none';
+      $('encEventsToggle').textContent = 'Show all';
+      $('encEventsToggle').setAttribute('aria-expanded', 'false');
+      return;
+    }
+    strip.style.display = 'block';
+    const anyError = encErrorTotal > 0;
+    strip.classList.toggle('sev-error', anyError);
+    $('encEventsBadge').textContent = anyError ? '!' : '△';
+    const noun = encEventTotal === 1 ? 'failure' : 'failures';
+    $('encEventsCount').textContent = anyError
+      ? `${encEventTotal} ${noun} · ${encErrorTotal} error${encErrorTotal === 1 ? '' : 's'}`
+      : `${encEventTotal} ${noun} · warnings`;
+    const last = encEvents[encEvents.length - 1];
+    const when = encEventTime(last.t);
+    $('encEventsLatest').textContent = `latest: ${when ? when + ' ' : ''}${encEventText(last)}`;
+
+    list.innerHTML = '';
+    if (encEventTotal > encEvents.length) {
+      const more = document.createElement('div');
+      more.className = 'enc-event';
+      more.textContent = `${encEventTotal - encEvents.length} earlier failures not kept, see events.jsonl`;
+      list.appendChild(more);
+    }
+    encEvents.forEach(e => {
+      const row = document.createElement('div');
+      row.className = 'enc-event' + (e.severity === 'error' ? ' error' : '');
+      const t = encEventTime(e.t);
+      if (t) {
+        const w = document.createElement('span');
+        w.className = 'when'; w.textContent = t;
+        row.appendChild(w);
+      }
+      const what = document.createElement('span');
+      what.className = 'what';
+      what.textContent = encEventLabel(e.kind) + (e.agent_id ? ' · ' + agentName(e.agent_id) : '');
+      row.appendChild(what);
+      if (e.detail) {
+        // Built as a text node rather than through innerHTML: `detail` is a
+        // server string that has been through redact_key, not a template this
+        // page wrote, and the only thing worse than missing a failure is a
+        // failure message that runs.
+        const d = document.createElement('span');
+        d.className = 'detail'; d.textContent = e.detail;
+        row.appendChild(d);
+      }
+      list.appendChild(row);
+    });
+    // Expansion is remembered across re-renders and is only ever changed by the
+    // toggle. A strip that opened itself on each new event would shove the
+    // transcript down the column under a reader's eyes mid-encounter.
+    list.style.display = encEventsOpen ? 'flex' : 'none';
+    $('encEventsToggle').textContent = encEventsOpen ? 'Hide' : 'Show all';
+    $('encEventsToggle').setAttribute('aria-expanded', encEventsOpen ? 'true' : 'false');
+  }
+
   function connect(sessionId) {
     if (ws) { try { ws.close(); } catch {} ws = null; }
     if (launchPoll) { clearInterval(launchPoll); launchPoll = null; $('launchBtn').disabled = false; $('launchStatus').textContent = ''; }
@@ -752,6 +1259,18 @@
     $('sessionBar').style.display = 'none';
     $('msgs').innerHTML = '';
     $('steerLog').innerHTML = '';
+    // The reconnect offer belongs to the session whose socket dropped, and it
+    // was only ever hidden by a socket opening or by the button itself. So
+    // switching from a dropped session to a closed one — the early return
+    // below opens no socket at all — left "The live connection to this session
+    // ended. [Reconnect]" on screen describing the previous encounter, over a
+    // transcript from this one. Hidden here, with the rest of the stale UI,
+    // because this is the one place every path into a session passes through.
+    $('reconnectRow').style.display = 'none';
+    // Same reason, and the same one place: the failure strip counts one
+    // session's collapse, so leaving it up over the next session's transcript
+    // reports failures against an encounter that has not had any.
+    resetEncEvents();
     currentSessionId = sessionId;
     const meta = sessionsCache.find(s => s.id === sessionId);
     currentSessionStatus = meta ? meta.status : null;
@@ -799,6 +1318,7 @@
       if (m.type === 'state') { state = m; renderState(); }
       else if (m.type === 'transcript') { appendMsg(m); }
       else if (m.type === 'steering') { appendSteer(m); }
+      else if (m.type === 'encounter_event') { appendEncEvent(m); }
     });
     sock.addEventListener('close', () => {
       if (ping) { clearInterval(ping); ping = null; }
@@ -815,7 +1335,7 @@
           && attempt < WS_RETRY_MS.length) {
         const div = document.createElement('div');
         div.className = 'msg'; div.style.color = 'var(--warn)';
-        div.textContent = '(connection lost — reconnecting)';
+        div.textContent = '(connection lost, reconnecting)';
         $('msgs').appendChild(div);
         const delay = WS_RETRY_MS[attempt];
         setTimeout(() => {
@@ -1013,8 +1533,13 @@
       $('sessionBar').style.display = 'none';
       $('steerLog').innerHTML = '';
       $('fileList').innerHTML = '<div class="files-empty">No session selected.</div>';
-      $('msgs').innerHTML = '';
+      showTranscriptPlaceholder();
+      resetEncEvents();
     }
+  });
+  $('encEventsToggle').addEventListener('click', () => {
+    encEventsOpen = !encEventsOpen;
+    renderEncEvents();
   });
   // Re-selecting the same session in the picker does not fire `change`, so
   // without this there was no way back to a live session but a page reload.
@@ -1045,8 +1570,14 @@
   });
 
   setRightPanel('empty');
+  showTranscriptPlaceholder();
   initLaunchCard();
-  refreshSessions();
+  // Painted again after the first list arrives: on load the picker is still
+  // empty, so the placeholder cannot yet tell "nothing selected" from "this
+  // data directory has no sessions", and those need different sentences.
+  refreshSessions().then(() => {
+    if (!currentSessionId) showTranscriptPlaceholder();
+  }).catch(() => {});
   setInterval(refreshSessions, 3000);
 </script>
 </body>
