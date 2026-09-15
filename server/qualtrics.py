@@ -29,9 +29,47 @@ import httpx
 from .llm import setting
 from .storage import DATA_DIR
 
-BASE = setting("QUALTRICS_BASE_URL", "https://cornell.qualtrics.com").rstrip("/")
+# The DATACENTER host, not the brand vanity host. They are not
+# interchangeable: cornell.qualtrics.com answers /whoami and /surveys happily
+# and then refuses /export-responses with
+#   "This endpoint is unavailable through datacenter proxying, please retry
+#    using the url of the datacenter the API user belongs to: yul1.qualtrics.com"
+# so a wrong value here fails only at the one call that matters, months after
+# anyone set it. Note also that /whoami reports datacenter "viawest" while the
+# routable host is "yul1" — the name it reports is NOT the name to put here, so
+# read the failure message rather than whoami's field. Measured against the
+# Cornell brand on 11 Sep 2026.
+BASE = setting("QUALTRICS_BASE_URL", "https://yul1.qualtrics.com").rstrip("/")
 SURVEY = setting("QUALTRICS_SURVEY_ID", "")
 EXPORT_DIR = DATA_DIR / "qualtrics"
+
+
+def _raise(r: "httpx.Response", what: str) -> None:
+    """Fail with what Qualtrics SAID, not merely with the status code.
+
+    httpx's own raise_for_status() renders a 400 as "Client error '400 Bad
+    Request' for url ..." plus a link to the MDN page for 400, and throws the
+    response body away. Qualtrics puts the actionable part in that body: the
+    datacenter-proxying refusal above names the exact host to use, which turns a
+    half-hour of guessing into a one-line fix. An error that carries the answer
+    and discards it is worse than no error, because it sends the reader to the
+    wrong place with confidence.
+    """
+    if r.status_code < 400:
+        return
+    detail = ""
+    try:
+        meta = r.json().get("meta", {})
+        err = meta.get("error", {}) or {}
+        detail = err.get("errorMessage") or ""
+        code = err.get("errorCode")
+        if code:
+            detail = f"{detail} [{code}]".strip()
+    except Exception:  # noqa: BLE001 - a non-JSON body is still worth showing
+        detail = (r.text or "")[:300]
+    raise RuntimeError(
+        f"Qualtrics refused the {what} request ({r.status_code}) at {r.request.url}: "
+        f"{detail or '(no message in the response body)'}")
 
 
 def _headers() -> Dict[str, str]:
@@ -43,7 +81,7 @@ def _headers() -> Dict[str, str]:
 
 def whoami() -> dict:
     r = httpx.get(f"{BASE}/API/v3/whoami", headers=_headers(), timeout=20)
-    r.raise_for_status()
+    _raise(r, "whoami")
     return r.json()["result"]
 
 
@@ -55,14 +93,14 @@ def export_responses(survey_id: Optional[str] = None, *, timeout: float = 180) -
 
     base = f"{BASE}/API/v3/surveys/{sid}/export-responses"
     start = httpx.post(base, headers=_headers(), json={"format": "json"}, timeout=30)
-    start.raise_for_status()
+    _raise(start, "export start")
     progress_id = start.json()["result"]["progressId"]
 
     deadline = time.time() + timeout
     file_id = None
     while time.time() < deadline:
         p = httpx.get(f"{base}/{progress_id}", headers=_headers(), timeout=30)
-        p.raise_for_status()
+        _raise(p, "export progress")
         result = p.json()["result"]
         if result["status"] == "complete":
             file_id = result["fileId"]
@@ -74,7 +112,7 @@ def export_responses(survey_id: Optional[str] = None, *, timeout: float = 180) -
         raise TimeoutError("Qualtrics export did not complete in time")
 
     f = httpx.get(f"{base}/{file_id}/file", headers=_headers(), timeout=60)
-    f.raise_for_status()
+    _raise(f, "export download")
     with zipfile.ZipFile(io.BytesIO(f.content)) as z:
         name = z.namelist()[0]
         payload = json.loads(z.read(name))

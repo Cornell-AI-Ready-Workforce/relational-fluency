@@ -37,9 +37,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # session UUID and all, with no environment override at all: everywhere else
 # the `fakes` fixture quietly fell back to an empty synthesised table and the
 # two cohort tests skipped, so three assertions about real data stopped
-# existing without a word. The `optional_wave` / `wave_index_db` fixtures come
-# from tests/conftest.py — the first never skips, the second skips with
-# instructions.
+# existing without a word. `optional_wave` comes from tests/conftest.py and
+# never skips: the wave is richer input where a machine has one, not a
+# precondition for running these tests at all. Nothing in this module skips for
+# want of a wave any more — the fixture synthesises an index with the same
+# schema server/storage.py builds, so the cohort routes are exercised
+# everywhere and a skip here would mean coverage that genuinely went missing.
 
 RATER_KEY = "test-session-key"
 TOKEN_A = "rt_" + "a" * 32
@@ -240,21 +243,68 @@ def fakes(monkeypatch, tmp_path, optional_wave):
                             list(appmod.ALLOWED_HOSTS) + ["testserver"])
 
     # The cohort→sessions query runs against a copy, never the wave itself.
+    #
+    # DB_PATH is repointed BEFORE the schema is built, not after. init_storage()
+    # reads the module global at call time, so patching afterwards would create
+    # the tables in the real data directory and leave the tmp file empty.
     db = tmp_path / "index.db"
+    from server import storage
+    monkeypatch.setattr(storage, "DB_PATH", db)
+
+    # The run directory is repointed for the same reason, and it is the less
+    # obvious half. The assignment route applies a third filter beyond the two
+    # `_cohort_in_index` mirrors below: it joins the cohort against the run
+    # files and withholds any encounter no run recorded as completed. RUNS_DIR is resolved from the
+    # live DATA_DIR, so left alone that join reads whatever this machine's
+    # data/runs happens to hold. On a laptop that has never run a study it is
+    # empty and the join stands down; on a researcher's own machine one
+    # completed run is enough to make every session in the index below look like
+    # an abandoned fragment, and the cohort tests fail for a reason that has
+    # nothing to do with the route. An empty tmp directory is the one input that
+    # means the same thing on every machine: no evidence either way, assign
+    # everything. What the join does with a real fragment is covered where the
+    # join lives, not here.
+    from server import runs
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path / "runs")
+
     fixture_db = (optional_wave / "index.db") if optional_wave else None
     if fixture_db is not None and fixture_db.is_file():
         shutil.copy(fixture_db, db)
-    else:
-        # The suite still runs without a wave: every test here except the two
-        # cohort ones is about routing, not data, and those two ask for
-        # `wave_index_db` and skip.
+
+    # The schema comes from init_storage(), never from a CREATE TABLE written
+    # out here. This fixture used to hand-transcribe a five-column `sessions`
+    # stub, and CREATE TABLE IF NOT EXISTS then left that stub alone when the
+    # client's startup hook ran init_storage() for real: the statement after it,
+    # CREATE INDEX ... ON sessions(participant_id), raised against a table with
+    # no such column, so every test in this file that opens a client errored at
+    # setup on any machine without a recorded wave — 108 of them, which is the
+    # whole researcher and rater API surface and all nine CI matrix cells.
+    # Deriving the schema is what stops the stub drifting from server/storage.py
+    # the next time a column is added. Run over a copied wave it is also the
+    # migration the app itself performs on startup, so an index.db written
+    # before run_id/cohort existed gets the same treatment here as in service.
+    storage.init_storage()
+
+    if fixture_db is None or not fixture_db.is_file():
+        # Synthesised rather than left empty, so that the cohort routes are
+        # exercised on a machine with no wave instead of skipping. Three
+        # encounters: two in `study` (oldest first is the order the route must
+        # return) and one in `internal`, which has to come back as a separate
+        # pool. No "unattributed" row, because the empty-cohort test asks for
+        # that name and expects a 400.
         conn = sqlite3.connect(db)
-        conn.execute("CREATE TABLE sessions (id TEXT, status TEXT, n_turns INT,"
-                     " started_at TEXT, cohort TEXT)")
+        conn.executemany(
+            "INSERT INTO sessions (id, participant_id, scenario, model,"
+            " started_at, status, n_turns, dir, cohort)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            [("s_1772460300_44c9a2", "p_1", "S1A", "fake-model", 1772460300.0,
+              "closed", 8, "data/sessions/s_1772460300_44c9a2", "study"),
+             ("s_1772461030_ea4b6f", "p_2", "S2A", "fake-model", 1772461030.0,
+              "closed", 12, "data/sessions/s_1772461030_ea4b6f", "study"),
+             ("s_1772461752_60a5de", "p_3", "S1B", "fake-model", 1772461752.0,
+              "closed", 5, "data/sessions/s_1772461752_60a5de", "internal")])
         conn.commit()
         conn.close()
-    from server import storage
-    monkeypatch.setattr(storage, "DB_PATH", db)
 
     return types.SimpleNamespace(raters=raters, ratings=ratings, packet=packet,
                                  reliability=reliability, db=db)
@@ -723,12 +773,20 @@ def _cohort_in_index(db, cohort):
     return [r[0] for r in rows]
 
 
-def test_assigning_a_whole_cohort_off_the_session_index(client, fakes, wave_index_db):
-    """The end-of-wave move: name the cohort, not four hundred session ids."""
+def test_assigning_a_whole_cohort_off_the_session_index(client, fakes):
+    """The end-of-wave move: name the cohort, not four hundred session ids.
+
+    Asks the index it was given, rather than `wave_index_db`. This used to
+    demand the private wave and therefore skipped everywhere else, which made
+    the one route a researcher actually uses to allocate a wave untested on
+    every machine but one; `fakes` now synthesises a study cohort when there is
+    no wave, so the route runs here either way and the wave, when present, is
+    still what the expectation is derived from.
+    """
     expected = _cohort_in_index(fakes.db, "study")
     internal = _cohort_in_index(fakes.db, "internal")
     if not expected:
-        pytest.skip(f"the wave at {wave_index_db.parent} has no rateable study cohort")
+        pytest.skip(f"the session index at {fakes.db} has no rateable study cohort")
     r = client.post("/api/rater-assignments", params={"key": RATER_KEY},
                     json={"cohort": "study", "rater_ids": ["ra_1", "ra_2", "ra_3"],
                           "per_encounter": 3, "seed": 1})
@@ -740,10 +798,10 @@ def test_assigning_a_whole_cohort_off_the_session_index(client, fakes, wave_inde
         assert sid not in sids               # are a separate pool
 
 
-def test_the_internal_cohort_is_a_separate_pool(client, fakes, wave_index_db):
+def test_the_internal_cohort_is_a_separate_pool(client, fakes):
     expected = _cohort_in_index(fakes.db, "internal")
     if not expected:
-        pytest.skip(f"the wave at {wave_index_db.parent} has no internal cohort")
+        pytest.skip(f"the session index at {fakes.db} has no internal cohort")
     r = client.post("/api/rater-assignments", params={"key": RATER_KEY},
                     json={"cohort": "internal", "rater_ids": ["ra_1"],
                           "per_encounter": 1})
@@ -928,3 +986,71 @@ def test_the_reliability_reports_own_notice_is_not_duplicated(client, fakes):
     body = client.get("/api/reliability", params={"key": RATER_KEY}).json()
     assert body["item_source_notice"] == "ESCI items, licensed under X"
     assert "notice" not in body
+
+
+# --- the fixture itself --------------------------------------------------------
+#
+# Three assertions about `fakes`, because every test above depends on it and
+# nothing above notices when it is wrong. It used to hand-write a five-column
+# `sessions` table; CREATE TABLE IF NOT EXISTS left that stub in place when the
+# app's startup hook ran init_storage() for real, the CREATE INDEX after it
+# named a column the stub did not have, and 108 tests here — the whole
+# researcher and rater surface — errored at setup on every machine without a
+# recorded wave, all nine CI cells included. Loud, and still easy to read past:
+# a wall of identical setup errors reads as one broken environment rather than
+# as the API surface going untested, which is how it survived a round of fixes.
+
+
+def test_the_fixture_index_carries_the_schema_the_app_builds(fakes):
+    """The stub is the real schema or it is not a stub, it is a trap.
+
+    Derived, not transcribed: this is the assertion that would have caught the
+    five-column table, and it is also the one that catches the next column added
+    to server/storage.py without this fixture hearing about it.
+    """
+    from server import storage
+
+    conn = sqlite3.connect(fakes.db)
+    try:
+        have = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+    finally:
+        conn.close()
+    for column in ("id", "participant_id", "scenario", "model", "started_at",
+                   "status", "n_turns", "dir", "run_id", "cohort"):
+        assert column in have, (
+            f"the fixture index has no {column!r} column; it was built by hand "
+            f"rather than by storage.init_storage() (columns: {sorted(have)})"
+        )
+    assert storage.DB_PATH == fakes.db
+
+
+def test_the_startup_hook_finishes_against_the_fixture_index(client, fakes):
+    """What the 108 setup errors were, in one assertion.
+
+    The client fixture runs the app's startup hooks, one of which is
+    init_storage(). It ran to completion only if the index it could not create
+    on a five-column table is there.
+    """
+    conn = sqlite3.connect(fakes.db)
+    try:
+        names = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'")}
+    finally:
+        conn.close()
+    assert "sessions_participant" in names, (
+        "init_storage() did not get past CREATE INDEX ... ON "
+        "sessions(participant_id) during app startup"
+    )
+
+
+def test_the_fixture_reads_no_state_from_outside_its_tmp_dir(fakes, tmp_path):
+    """Both paths the assignment route reads are under tmp_path.
+
+    Not tidiness. A route that reads the developer's live data/ directory gives
+    a different answer on every machine, which is how a green suite here and a
+    red one on a colleague's laptop both stop meaning anything.
+    """
+    from server import runs, storage
+
+    assert Path(storage.DB_PATH).is_relative_to(tmp_path)
+    assert Path(runs.RUNS_DIR).is_relative_to(tmp_path)

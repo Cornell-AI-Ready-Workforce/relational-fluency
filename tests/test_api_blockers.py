@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -37,11 +38,21 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from server import app as appmod
+from server import storage as storagemod
 from server import video
 
 SESSION_ID = "s_1772460300_44c9a2"
 OWNER = "p_1772460300_4327ae"
 KEY = "test-session-key"
+# A rating assignment over that encounter, in the shape raters.py mints (as_
+# plus twelve hex) and checks before it will interpolate one. rater_packet
+# builds the playback URL out of this rather than out of the session id, so a
+# _media() call made without one is not the call the rater console makes: it
+# takes the branch that cannot address the recording. Every _media() below
+# passes it for that reason — a test that omits an argument production never
+# omits stops exercising production the moment that argument starts mattering,
+# which is exactly how this file came to pin a design that had been deleted.
+ASSIGNMENT_ID = "as_4c9a2f10b3d7"
 
 
 # --- stubs -------------------------------------------------------------------
@@ -203,6 +214,64 @@ def test_the_webcam_routes_are_not_coroutines():
     assert not asyncio.iscoroutinefunction(appmod.api_video_uploaded)
 
 
+def test_health_never_pays_the_required_env_source_scan_on_the_loop():
+    """/health is `async def`, so anything slow inside it runs ON the loop.
+
+    One thing inside it is slow exactly once. storage.missing_required_env() ->
+    _declared_required_env() ast.parse()s every .py file under server/ and
+    memoises the result; measured on this tree, 157 ms cold on CPython 3.12 and
+    250-300 ms cold on 3.13 against ~0.2 ms warm. A cold call from the route is
+    a quarter-second in which the audio relay, the silence detector and every
+    concurrent encounter stop.
+
+    It reached CI as the sibling test below going red about one run in seven on
+    windows-latest x 3.13, which is misleading twice over: the stall is not the
+    S3 HEAD that test is named for (it reproduces with head_calls == 0), and
+    3.12 was never safe either — it simply had 0.15 s of headroom under the
+    0.35 s budget where 3.13 has none.
+
+    server.app._prime_required_env_scan() pays it at import instead. Asserted
+    directly, not just through the timing test: a timing assertion that fails
+    one run in seven on one cell is not a regression guard anybody can act on,
+    and the production hazard is real on every interpreter.
+    """
+    from server import storage
+
+    assert str(storage._SERVER_DIR) in storage._SCANNED_REQUIRED_ENV, (
+        "importing server.app must leave the REQUIRED_ENV declaration scan "
+        "warm; without it the first /health of the process ast.parse()s 33 "
+        "source files on the event loop"
+    )
+
+    t0 = time.perf_counter()
+    appmod._missing_required_env_for_health()
+    assert time.perf_counter() - t0 < 0.05, "the scan is not actually memoised"
+
+
+def test_priming_the_scan_did_not_cache_the_environment_too(monkeypatch):
+    """The half of /health that must NOT be memoised.
+
+    Only the static REQUIRED_ENV *declaration* is cached. The route recomputes
+    from os.environ per request on purpose — a task redeployed with the value,
+    or a secret that resolves late, has to stop showing as missing without a
+    restart — and a warming step that quietly froze the answer would reintroduce
+    the silent void the config block exists to close, in a form that looks
+    healthy.
+    """
+    from server import storage
+
+    name = "UPSTREAM_CONSENT_VERSION"
+    assert name in storage._declared_required_env(), "test's premise moved"
+
+    monkeypatch.delenv(name, raising=False)
+    assert name in appmod._missing_required_env_for_health()
+
+    monkeypatch.setenv(name, "2026-09-12.v4")
+    assert name not in appmod._missing_required_env_for_health(), (
+        "a value that arrived after boot is still reported missing"
+    )
+
+
 def test_a_slow_head_does_not_freeze_the_loop_and_only_happens_once(
         sessions_root, served, s3):
     """A 600 ms HEAD used to be 1.2 s of total silence: two HEADs, on the loop.
@@ -316,6 +385,175 @@ def test_the_browsers_own_reason_is_recorded_but_kept_apart(sessions_root, clien
     assert "client_error" not in video_events(sessions_root)[-1]
 
 
+# X9. Every reason static/v2.html composes carries a ':' — "recorder_failed:
+# NotSupportedError", "recorder_error:NotAllowedError" — and the filter used to
+# admit no ':' at all and cap at 40. So the route answered 200, wrote its event,
+# and dropped the browser's whole account of what broke: a silent discard of the
+# one field that says whether an encounter was lost to permissions, to the
+# network, or to a browser that cannot record.
+COMPOSED_REASONS = [
+    "recorder_failed:NotSupportedError",   # 33 chars, ':' — was rejected
+    "recorder_error:NotAllowedError",
+    "put_http_403",                        # the shapes that already worked
+    "confirm_timeout",
+    "abandoned",
+]
+
+
+@pytest.mark.parametrize("reason", COMPOSED_REASONS)
+def test_a_composed_browser_reason_is_recorded_not_silently_dropped(
+        sessions_root, client, s3, reason):
+    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
+                                       "client_error": reason})
+    assert video_events(sessions_root)[-1]["client_error"] == reason
+
+
+@pytest.mark.parametrize("junk", [
+    "s_1772460300_44c9a2 <b>x</b>",        # spaces and markup
+    "x" * 61,                              # longer than a diagnosis
+    "put failed: the bucket said no",      # a sentence, i.e. a paste
+    "",
+])
+def test_the_widened_filter_is_still_a_filter(sessions_root, client, s3, junk):
+    """':' was admitted; prose, markup and length were not. The value reaches a
+    human rater through the packet, so it stays a token."""
+    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
+                                       "client_error": junk})
+    assert "client_error" not in video_events(sessions_root)[-1]
+
+
+# --- X8: "no camera" is an absence, not a lost recording ----------------------
+
+def absent_events(sdir: Path) -> list:
+    return [e for e in events(sdir) if e.get("type") == "video_absent"]
+
+
+NO_CAMERA_PARAMS = [
+    # What static/v2.html's reportNoCamera sends today, colon and all.
+    {"client_error": "no_camera:NotAllowedError"},
+    {"client_error": "no_camera:NotReadableError"},
+    {"client_error": "no_camera:no_supported_mime"},
+    {"client_error": "no_camera:track_ended"},
+    {"client_error": "no_camera:recorder_failed:NotSupportedError"},
+    # And the dedicated parameter, so a fix on the client side lands too.
+    {"no_camera": "NotAllowedError"},
+    {"no_camera": ""},
+]
+
+
+@pytest.mark.parametrize("params", NO_CAMERA_PARAMS,
+                         ids=lambda p: "&".join(f"{k}={v}" for k, v in p.items()))
+def test_an_encounter_that_never_had_a_camera_is_recorded_as_absent(
+        sessions_root, client, s3, params):
+    """X8. The worst outcome in this chain, and it was the new one.
+
+    An encounter with no camera used to be POSTed down the confirm path, which
+    wrote a `video_uploaded` event with status "failed" — the words for "this
+    WAS recorded and the recording was lost". rater_packet then told the rater
+    not to score it and to report a storage fault, and static/rater.html
+    disabled the submit button. Every participant who denied the camera, or
+    whose camera was held by Zoom or FaceTime, produced a paid encounter no
+    rater was allowed to rate and a false fault report to the study team.
+
+    It must be its own event type, and S3 must not be asked: there is no object
+    to ask about, and with no credentials the question itself would have turned
+    an absent camera into a 503 and a storage fault.
+    """
+    r = client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
+                                           **params})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "absent" and body["ok"] is False
+    assert body["bytes"] is None and body["key"] is None
+
+    assert video_events(sessions_root) == [], \
+        "an absent camera was written down as a recording that was lost"
+    absent = absent_events(sessions_root)
+    assert len(absent) == 1
+    assert absent[0]["reason"], "the absence was recorded without a reason"
+    assert s3.head_calls == 0, "S3 was asked about an object that never existed"
+
+
+def test_the_reason_the_camera_never_ran_survives_into_the_trail(
+        sessions_root, client, s3):
+    """The reason is the whole point: "NotAllowedError" (the participant said
+    no) and "NotReadableError" (another application held the camera) are
+    different findings about the fielding, and only one of them is fixable."""
+    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
+                                       "client_error": "no_camera:NotReadableError"})
+    assert absent_events(sessions_root)[-1]["reason"] == "NotReadableError"
+
+    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
+                                       "no_camera": "no_supported_mime"})
+    assert absent_events(sessions_root)[-1]["reason"] == "no_supported_mime"
+
+    # A bare report with nothing to say is still a report, and says so.
+    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
+                                       "client_error": "no_camera"})
+    assert absent_events(sessions_root)[-1]["reason"] == "unspecified"
+
+
+def test_an_encounter_with_no_camera_stays_rateable(
+        sessions_root, client, s3, monkeypatch):
+    """End to end, on the two surfaces a human being reads. The record must say
+    "absent" and the packet must hand the rater the transcript with the N/A
+    instruction — not the blocked "report this fault" state."""
+    from server import rater_packet as rp
+
+    monkeypatch.setattr(rp, "SESSIONS_DIR", sessions_root.parent)
+    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
+                                       "client_error": "no_camera:NotAllowedError"})
+
+    assert _record_of(sessions_root)["video_upload"]["state"] == "absent"
+    media = rp._media(SESSION_ID, ASSIGNMENT_ID)
+    assert media["video_status"] == "absent"
+    assert media["video_available"] is False, \
+        "the rating console will block this encounter"
+    assert "WAS recorded" not in media["note"]
+
+
+def test_an_absence_report_cannot_write_off_a_recording_that_landed(
+        sessions_root, client, s3, monkeypatch):
+    """Order independence. A beacon is fire-and-forget and may arrive late or
+    twice; if a stray one could downgrade a confirmed upload, the study would
+    lose a recording that is sitting in the bucket.
+
+    "Lose" means lose to a human being, so the packet is asked for the URL and
+    not just for the word: a status of "ok" over a null video_url is an
+    encounter the rater is told to report rather than rate, which is the same
+    loss by a different name.
+    """
+    from server import rater_packet as rp
+
+    monkeypatch.setattr(rp, "SESSIONS_DIR", sessions_root.parent)
+    s3.missing = False
+    s3.size = 148_221
+    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY})
+    assert video_events(sessions_root)[-1]["status"] == "ok"
+
+    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
+                                       "no_camera": "NotAllowedError"})
+    assert (video.upload_receipt(SESSION_ID) or {}).get("bytes") == 148_221
+    assert _record_of(sessions_root)["video_upload"]["state"] == "ok"
+    media = rp._media(SESSION_ID, ASSIGNMENT_ID)
+    assert media["video_status"] == "ok"
+    assert media["video_available"] is True
+    assert media["video_url"] == f"/api/rater/video/{ASSIGNMENT_ID}", \
+        "the recording survived the stray beacon and the rater still cannot play it"
+
+
+def test_a_real_upload_failure_is_still_a_failure(sessions_root, client, s3):
+    """The other half of the contract: nothing about the absence branch may
+    soften a recording that was made and lost. Only a client that says
+    "no camera" gets the absent branch."""
+    s3.error = NoCredentialsError()
+    r = client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
+                                           "client_error": "put_http_403"})
+    assert r.status_code == 503
+    assert absent_events(sessions_root) == []
+    assert video_events(sessions_root)[-1]["status"] == "failed"
+
+
 def test_the_three_states_are_distinguishable_from_the_record(sessions_root, client, s3):
     """No event / failed event / ok event — the distinction rater_packet needs."""
     assert video_events(sessions_root) == []          # never captured
@@ -324,10 +562,16 @@ def test_the_three_states_are_distinguishable_from_the_record(sessions_root, cli
     client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY})
     failed = video_events(sessions_root)[-1]
     assert failed["status"] == "failed"
-    # A failure is not a receipt: nothing was acknowledged, so no playback link
-    # may be minted off it and no rater may be handed one.
+    # A failure is not a receipt: nothing was acknowledged, so no rater may be
+    # handed something to play off it. That used to be asserted as
+    # `video.playback_url(...) is None` — the presigned link that no longer
+    # exists — and the question has moved rather than gone away: whether a
+    # rater is handed a recording is decided by asking storage, so ask storage.
+    # It is the stronger form of the same guarantee, because it also refuses
+    # the case a minted link never covered, an "ok" event over bytes that are
+    # not there.
     assert video.upload_receipt(SESSION_ID) is None
-    assert video.playback_url(SESSION_ID) is None
+    assert video.exists(SESSION_ID) is False
 
     s3.error = None
     s3.missing = False
@@ -393,28 +637,40 @@ def test_the_record_tells_a_lost_upload_from_an_encounter_with_no_camera(
     assert ok["video_upload"]["attempts"] == 2
 
 
-def test_the_record_and_the_rater_packet_agree_on_all_three_states(
+def test_the_record_and_the_rater_packet_agree_on_all_four_states(
         sessions_root, client, s3, monkeypatch):
-    """The same three states, end to end: the event trail, the analyst-facing
-    record and the blinded packet a rater actually opens.
+    """The same states, end to end: the event trail, the analyst-facing record
+    and the blinded packet a rater actually opens.
 
-    They are derived independently — the packet reads the events, the record
-    rebuilds from them — and the whole failure this fixes was two surfaces
+    They are derived independently — the record rebuilds from the events, and
+    the packet now asks STORAGE and reads the events only for the question
+    storage cannot answer — and the whole failure this fixes was two surfaces
     disagreeing about the same encounter. A rater warned that the upload broke
     while record.json says the encounter had no video is only half a fix.
+
+    Three states became four when the playback link stopped being a presigned
+    S3 URL. The record still has three, because they are facts about the
+    encounter; the packet gained "unsigned", which is a fact about the PACKET —
+    the bytes exist and this particular packet has no assignment id to address
+    them with. It is included here rather than left to the packet's own tests
+    because it is the one state in which the two surfaces can newly disagree,
+    and the disagreement has to stay confined to addressing: the record says
+    the recording is there, and a packet that cannot reach it must not go on to
+    tell a rater the encounter had no camera or that the upload was lost.
     """
     from server import rater_packet as rp
 
     monkeypatch.setattr(rp, "SESSIONS_DIR", sessions_root.parent)
 
     assert _record_of(sessions_root)["video_upload"]["state"] == "absent"
-    assert rp._media(SESSION_ID)["video_status"] == "absent"
+    absent = rp._media(SESSION_ID, ASSIGNMENT_ID)
+    assert absent["video_status"] == "absent"
 
     s3.error = aws_error("AccessDenied")
     client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
                                        "client_error": "put_http_403"})
     assert _record_of(sessions_root)["video_upload"]["state"] == "failed"
-    media = rp._media(SESSION_ID)
+    media = rp._media(SESSION_ID, ASSIGNMENT_ID)
     assert media["video_status"] == "failed"
     # R14: what the browser said reaches the person who has to report it, next
     # to what this server found. "not_found" alone tells a rater the recording
@@ -429,7 +685,37 @@ def test_the_record_and_the_rater_packet_agree_on_all_three_states(
     s3.size = 148_221
     client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY})
     assert _record_of(sessions_root)["video_upload"]["state"] == "ok"
-    assert rp._media(SESSION_ID)["video_status"] == "ok"
+    ok = rp._media(SESSION_ID, ASSIGNMENT_ID)
+    assert ok["video_status"] == "ok"
+    assert ok["video_url"] == f"/api/rater/video/{ASSIGNMENT_ID}"
+
+    # The fourth. Same encounter, same storage, same record — a packet built
+    # outside a rating assignment, which is what an operator inspecting an
+    # encounter gets. It must degrade to "I cannot address this", never to a
+    # judgement about the encounter that contradicts the record beside it.
+    unsigned = rp._media(SESSION_ID)
+    assert unsigned["video_status"] == "unsigned", \
+        "the packet's judgement about the ENCOUNTER changed because this caller had " \
+        "no assignment id. 'absent' or 'failed' here contradicts the record beside " \
+        "it: one tells a rater to rate a recorded encounter from the transcript, " \
+        "the other reports a storage fault against a bucket that lost nothing"
+    assert unsigned["video_available"] is True, \
+        "the rating console would invite a transcript-only rating of an encounter " \
+        "whose recording is sitting in storage"
+    assert unsigned["video_url"] is None, \
+        "a URL nothing can serve is worse than none: the console reports a present " \
+        "recording as a missing one"
+    assert unsigned["upload_error"] is None, \
+        "an addressing problem was written down as an upload fault against the bucket"
+    assert _record_of(sessions_root)["video_upload"]["state"] == "ok", \
+        "the record moved because a packet could not name a URL"
+
+    # And on every branch there is no deadline for anyone to count down to. The
+    # app serves the bytes for as long as the rater's own token is good for; an
+    # expiry here is the presigned link coming back, and with it the hour into
+    # a sitting where every remaining encounter reads as "no video".
+    for state in (absent, media, ok, unsigned):
+        assert state["expires_in"] is None
 
 
 def test_the_packet_still_refuses_to_leak_a_session_id_through_a_client_error(
@@ -447,7 +733,7 @@ def test_the_packet_still_refuses_to_leak_a_session_id_through_a_client_error(
         fh.write(json.dumps({"type": "video_uploaded", "bytes": 0,
                              "status": "failed", "error": None,
                              "client_error": f"put failed for {SESSION_ID}"}) + "\n")
-    media = rp._media(SESSION_ID)
+    media = rp._media(SESSION_ID, ASSIGNMENT_ID)
     assert media["video_status"] == "failed"
     assert media["upload_error"] is None
     assert SESSION_ID not in json.dumps(media)
@@ -606,9 +892,31 @@ def test_uploaded_size_has_no_caller_left_in_this_server(sessions_root):
     assert "NOTHING IN THIS SERVER CALLS THIS" in video.uploaded_size.__doc__
 
 
-def test_the_client_is_built_with_bounded_timeouts(monkeypatch):
+def test_the_client_is_built_with_bounded_timeouts(monkeypatch, tmp_path):
     """boto3's defaults are 60 s connect, 60 s read, legacy retries. On a route
-    that shares a loop with live audio, that is minutes of frozen encounters."""
+    that shares a loop with live audio, that is minutes of frozen encounters.
+
+    The credential chain is pinned to "there is nothing here" first, and that
+    is not tidiness. Constructing a boto3 client RESOLVES credentials, so this
+    test — a question about a Config object — was the one place in this file
+    that reached the open internet: on a machine that is not an EC2 instance
+    the walk ends at 169.254.169.254, the instance metadata service, which is
+    unroutable off EC2, and botocore waits out its connect timeout twice before
+    giving up. Measured at 2.30 s, which is most of this file's runtime, and on
+    a machine that DOES hold a credential it would build a client able to sign
+    a real request against the IRB bucket.
+
+    Every spelling is neutralised rather than just the metadata service,
+    because a contributor with ~/.aws/credentials would otherwise run a
+    different test from CI's — and no fake credential is put in the
+    environment in its place: boto3's default session caches the credentials
+    object it resolves for the life of the process, so a fake one planted here
+    would still be there for every test that ran afterwards.
+    """
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-credentials"))
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-config"))
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
     monkeypatch.setattr(video, "_s3", None)
     cfg = video._client().meta.config
     assert cfg.connect_timeout == 3
@@ -686,10 +994,21 @@ def test_importing_the_app_contacts_nothing_and_writes_nothing(tmp_path):
     wherever there are no credentials, which is every offline tool run. And it
     PUT an object into an IRB bucket as a side effect of reading a record.
 
+    The "writes nothing" half went untested for as long as the name has been
+    making the claim, and it was false: the module body also called
+    init_storage(), so a bare import created DATA_DIR, sessions/, participants/
+    and a schema-only index.db. CI's own `python -c "import server.app"` did it
+    in all nine matrix cells, verify_record and scoring did it on the way to
+    producing a report, and on a read-only filesystem the import raised outright
+    — none of which anything asked for. DATA_DIR is pointed at an empty
+    directory here and the directory is the assertion.
+
     Asserted in a subprocess, because this process imported server.app long ago
     and nothing here could observe what that import did.
     """
     repo_root = Path(appmod.__file__).parents[1]
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
     probe = tmp_path / "probe.py"
     probe.write_text(
         "import socket, sys\n"
@@ -704,12 +1023,97 @@ def test_importing_the_app_contacts_nothing_and_writes_nothing(tmp_path):
         # and failed" are different answers and /health publishes this one.
         "assert a._STORAGE_PREFLIGHT['ok'] is None\n"
         "assert a._PREFLIGHT['ok'] is None\n"
+        # Asked from inside the process too, so the failure names itself rather
+        # than arriving as a bare listing mismatch.
+        "import server.storage as s\n"
+        "left = sorted(p.name for p in s.DATA_DIR.iterdir())\n"
+        "assert not left, 'the import created %r in DATA_DIR' % (left,)\n"
         "print('CLEAN')\n",
         encoding="utf-8")
+    env = dict(os.environ, DATA_DIR=str(data_dir))
     out = subprocess.run([sys.executable, str(probe)], capture_output=True,
-                         text=True, cwd=str(repo_root), timeout=120)
+                         text=True, cwd=str(repo_root), timeout=120, env=env)
     assert out.returncode == 0, out.stdout + out.stderr
     assert "CLEAN" in out.stdout
+    assert sorted(p.name for p in data_dir.iterdir()) == [], \
+        "importing server.app minted storage"
+
+
+def test_startup_is_what_creates_the_data_directory(tmp_path, monkeypatch):
+    """The other half: lazy must not mean never.
+
+    A process that is going to serve initialises its store up front, so a
+    DATA_DIR that cannot be written (a mis-mounted volume, wrong ownership in
+    the container, a read-only filesystem) is a startup failure rather than
+    something a paid participant discovers halfway through a conversation. The
+    hook is driven directly rather than through TestClient because standing the
+    whole app up would also run the preflights, which reach the network.
+    """
+    from server import storage as storage_mod
+
+    data = tmp_path / "data"
+    monkeypatch.setattr(storage_mod, "DATA_DIR", data)
+    monkeypatch.setattr(storage_mod, "SESSIONS_DIR", data / "sessions")
+    monkeypatch.setattr(storage_mod, "PARTICIPANTS_DIR", data / "participants")
+    monkeypatch.setattr(storage_mod, "DB_PATH", data / "index.db")
+    assert not data.exists()
+
+    asyncio.run(appmod._init_storage_on_startup())
+
+    assert (data / "sessions").is_dir() and (data / "participants").is_dir()
+    assert (data / "index.db").is_file()
+    with sqlite3.connect(data / "index.db") as conn:
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"sessions", "participants"} <= tables
+
+
+def test_the_storage_hook_runs_only_after_the_refusal(tmp_path, monkeypatch):
+    """A deployment that must not serve does not get to mint a data directory on
+    its way to exiting — the same ordering rule the preflights are held to."""
+    hooks = appmod.app.router.on_startup
+    assert appmod._init_storage_on_startup in hooks
+    assert hooks.index(appmod._refuse_to_serve_unprotected) \
+        < hooks.index(appmod._init_storage_on_startup)
+
+    from server import storage as storage_mod
+
+    data = tmp_path / "data"
+    monkeypatch.setattr(storage_mod, "DATA_DIR", data)
+    monkeypatch.setattr(storage_mod, "SESSIONS_DIR", data / "sessions")
+    monkeypatch.setattr(storage_mod, "PARTICIPANTS_DIR", data / "participants")
+    monkeypatch.setattr(storage_mod, "DB_PATH", data / "index.db")
+    monkeypatch.setattr(appmod, "SESSION_KEY", "")
+    monkeypatch.setattr(appmod, "ALLOWED_HOSTS", [appmod.APP_HOST])
+    monkeypatch.setenv("HOST", "0.0.0.0")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(appmod._refuse_to_serve_unprotected())
+    assert not data.exists(), "a process that refused to serve still made a store"
+
+
+def test_the_first_write_initialises_a_data_directory_that_appeared_late(
+        tmp_path, monkeypatch):
+    """And lazy must not mean broken. Nothing initialises at import any more, so
+    a DATA_DIR that only exists at write time — a mounted volume, a test
+    repointing it, an offline tool that decides to write after all — has to be
+    minted by the writer itself, or a participant's consent record dies on a
+    missing directory at the moment they consent."""
+    from server import storage as storage_mod
+
+    data = tmp_path / "late"
+    monkeypatch.setattr(storage_mod, "DATA_DIR", data)
+    monkeypatch.setattr(storage_mod, "SESSIONS_DIR", data / "sessions")
+    monkeypatch.setattr(storage_mod, "PARTICIPANTS_DIR", data / "participants")
+    monkeypatch.setattr(storage_mod, "DB_PATH", data / "index.db")
+
+    pid = storage_mod.create_participant("code-1", False, "v1")
+    assert storage_mod.get_participant(pid)["consent_given"] is False
+    assert storage_mod.record_consent(pid, "v1")["consent_given"] is True
+    with sqlite3.connect(data / "index.db") as conn:
+        row = conn.execute("SELECT consent_given FROM participants WHERE id = ?",
+                           (pid,)).fetchone()
+    assert row == (1,)
 
 
 def test_startup_is_what_runs_the_preflights(monkeypatch):
@@ -780,8 +1184,14 @@ def test_health_does_not_name_the_bucket_to_the_open_internet(client, monkeypatc
     the very "seed/abuse the study bucket" attack the presign guard exists to
     stop, and names the bucket holding IRB-recorded encounters."""
     monkeypatch.setattr(appmod, "_STORAGE_PREFLIGHT", LEAKY_PREFLIGHT)
+    # The required environment supplied, so the only fault in play is the
+    # bucket. /health's top-level word now answers to the config block too (see
+    # app._health_status), and this test's claim — a storage fault does not move
+    # the word — can only be read when nothing else is moving it.
+    monkeypatch.setenv(storagemod.UPSTREAM_CONSENT_VERSION_ENV,
+                       "cornell-irb-2026-09-v3")
     body = client.get("/health").json()
-    assert body["status"] == "ok"
+    assert body["status"] == "ok", "a storage fault must not move the word"
     storage = body["storage"]
     # The shape a probe needs, and nothing more.
     assert storage == {"ok": False, "readable": False, "writable": False,

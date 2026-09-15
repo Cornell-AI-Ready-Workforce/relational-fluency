@@ -17,7 +17,7 @@ import secrets
 import time
 from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
-from .llm import text_client
+from .llm import redact_key, text_client
 
 from .director import Director
 from .engine import AgentEngine, DEFAULT_MODEL
@@ -32,6 +32,18 @@ if TYPE_CHECKING:
 
 def new_session_id() -> str:
     return f"s_{int(time.time())}_{secrets.token_hex(3)}"
+
+
+def _realtime_model_name() -> str:
+    """The realtime voice model this process opens sessions on, read at call
+    time off the bridge module (the way the runner reads it), so a model
+    resolved after import is still the one the manifest names. Empty when the
+    bridge cannot be imported, which a text-only deployment is allowed to be."""
+    try:
+        from .voice import realtime as _realtime
+    except Exception:  # noqa: BLE001 - a text encounter needs no bridge
+        return ""
+    return str(getattr(_realtime, "MODEL", "") or "")
 
 
 # Auto steering is ON by default so participant-initiated sessions (landing
@@ -100,10 +112,24 @@ class Session:
         # who connect after the switches happened.
         self.steering_log: List[dict] = []
 
+        # What the record names as THE model. `self.model` is the text model
+        # the engines, director and steering run on, and that is what the
+        # manifest's `model` used to say for every encounter — including a
+        # voice encounter, where the character the participant actually
+        # talked to was played by REALTIME_MODEL and the text model never
+        # produced a spoken word. A manifest reading "nto.gemini-2.5-pro" on
+        # an encounter run on nto.gemini-live-2.5-flash misleads every later
+        # reader (rater packet, dashboards, an analyst asking which family a
+        # wave was collected on). A voice encounter is one that captures
+        # audio (the voice socket is the only caller that asks for it), and
+        # its manifest now names the realtime model; the text model stays
+        # on session_start as `text_model`, and realtime_session_started
+        # still records the voice model per encounter as before.
+        self.realtime_model: str = _realtime_model_name() if capture_audio else ""
         self.store = SessionStore(
             self.id,
             scenario=self.scenario.id,
-            model=self.model,
+            model=self.realtime_model or self.model,
             participant_id=participant_id,
             capture_audio=capture_audio,
             agent_ids=[a.id for a in self.scenario.cast],
@@ -128,6 +154,12 @@ class Session:
             scenario=self.scenario.id,
             mode=self.scenario.mode,
             model=self.model,
+            # Both named, so nobody has to infer which one spoke. `model` is
+            # the text model (what the engines, director and steering use);
+            # `realtime_model` is what a voice encounter's characters are
+            # played on, empty for a text encounter.
+            text_model=self.model,
+            realtime_model=self.realtime_model,
             participant_id=participant_id,
             capture_audio=capture_audio,
             # Study context on the first event too, so record.json (built from
@@ -347,7 +379,14 @@ class Session:
             )
         except Exception as e:
             if not self._closed:
-                self.store.event("auto_steer_error", message=str(e))
+                # str(e) here is whatever the gateway said, and anthropic's
+                # AuthenticationError stringifies to the response body verbatim.
+                # A gateway that quotes the credential it was sent would put a
+                # live key into events.jsonl, which is archived per encounter
+                # and shipped whole in the per-session download.zip - permanent
+                # in a way a log line is not. The type and the wording survive
+                # redaction; only key-shaped material does not.
+                self.store.event("auto_steer_error", message=redact_key(str(e)))
             return
         for adj in adjustments:
             if not self.auto_steering or self._closed:
@@ -359,7 +398,11 @@ class Session:
                 )
             except (KeyError, ValueError) as e:
                 if not self._closed:
-                    self.store.event("auto_steer_error", message=str(e))
+                    # Same sink, same treatment. This branch is local
+                    # validation rather than gateway text, but the adjustment
+                    # it is rejecting came from the model, so a key echoed into
+                    # a knob or agent_id would land here and nowhere else.
+                    self.store.event("auto_steer_error", message=redact_key(str(e)))
         if adjustments and not self._closed:
             await self.broadcast({"type": "state", **self.snapshot()})
 
@@ -390,6 +433,44 @@ class Session:
         for e in self.engines.values():
             e.set_model(model)
         self.store.event("model_set", model=model)
+
+    # --- teardown ---
+
+    async def close_participant_socket(self, code: int = 1000) -> bool:
+        """Shut the participant's capture socket. Says whether one was open.
+
+        THE HALF A WITHDRAWAL WAS MISSING. SessionRegistry.drop marks the
+        session closed and closes the store, and that is where the teardown
+        stopped: audio stopped being SAVED and did not stop being SENT. The
+        participant's microphone socket stayed open, every frame on it was still
+        read, still forwarded to the realtime gateway and still billed, until
+        they closed the tab themselves. config/consent.yaml promises the person
+        that pressing stop stops the recording, and a recording nobody keeps is
+        still a recording being taken.
+
+        Closing the socket is what actually ends it: the runner's
+        _client_to_model is blocked on ws.receive(), the close frame turns that
+        into a websocket.disconnect, run() is a FIRST_COMPLETED wait on it, and
+        run()'s finally closes the gateway sessions. One frame here tears the
+        whole chain down.
+
+        Never raises, and clears the reference before closing so a second call —
+        the handler's own finally, a second tab's withdrawal arriving behind the
+        first — is a no-op rather than a RuntimeError. The withdrawal is already
+        on disk by the time this runs, and a socket that has already gone must
+        not turn a participant's stop into a 500.
+        """
+        ws = self.participant_ws
+        if ws is None:
+            return False
+        self.participant_ws = None
+        try:
+            await ws.close(code=code)
+            return True
+        except Exception as e:  # noqa: BLE001, see the docstring
+            print(f"  WARNING: could not close the capture socket of session "
+                  f"{self.id}: {type(e).__name__}: {e}")
+            return False
 
     # --- broadcasting to researcher subscribers ---
 
