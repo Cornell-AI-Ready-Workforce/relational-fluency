@@ -760,6 +760,9 @@ class RealtimeVoiceSessionRunner:
     async def _finalize_member(self, agent, text: str, interrupted: bool = False) -> None:
         """Close one character's turn in a group room."""
         text = _strip_context_echo(_clean_agent_text(text), self._recent_told)
+        # A narrated lead-in before real speech, e.g. '(Casey responds with
+        # concerns.) If the roadmap is the priority...': drop the narration.
+        text = re.sub(r"^\s*[\(\[][^\)\]]{3,120}[\)\]]\s*", "", text).strip()
         if _is_stage_direction(text):
             self.session.store.event("stage_direction_output", agent_id=agent.id, text=text)
             text = ""
