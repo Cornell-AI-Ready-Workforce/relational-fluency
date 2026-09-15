@@ -2032,3 +2032,79 @@ def test_a_group_shift_reaches_the_record_saying_it_reached_nobody(tmp_path,
     knob_rows, sess, console = asyncio.run(scenario(None))
     assert knob_rows[0]["delivered"] is None
     assert sess.steering_log[-1]["delivered"] is None
+
+
+# --------------------------------------------------------------------------
+# The floor: three characters, one voice.
+# --------------------------------------------------------------------------
+
+def test_only_the_character_holding_the_floor_is_heard():
+    """The mechanism that stops a group room becoming three people at once.
+
+    This bridge fires a response on EVERY open session after speech-plus-silence,
+    committed or not, so a three-character room answers one participant turn
+    three times by default. give_floor commits only one member's buffer, and the
+    per-member pump is the guard behind it: any member without the floor has its
+    audio and transcript events dropped before they reach the participant, and
+    gets one cancel_response upstream.
+
+    Worth stating why this test exists: `unsolicited_response_suppressed` is the
+    event that records the guard firing, and it had no coverage at all here or
+    on the maintainer's main, and never fires in the reference wave. The thing
+    keeping the room to one voice was the one thing nothing checked.
+    """
+    async def scenario():
+        runner, session, ws = make_runner("S4A")
+        agents = runner._resolve_agents()
+        assert len(agents) >= 3, "S4A should seat at least three characters"
+        a, b, c = agents[0], agents[1], agents[2]
+
+        room = gr.GroupRoom(
+            agents,
+            instructions_for=lambda x: "x",
+            voice_for=lambda x: "Puck",
+        )
+        rts = {}
+        for ag in (a, b, c):
+            rt = FakeRT()
+            room.sessions[ag.id] = rt
+            rts[ag.id] = rt
+        runner.room = room
+
+        # a holds the floor; b and c do not.
+        room.speaking = a.id
+        pumps = [asyncio.create_task(runner._pump_member(ag, rts[ag.id]))
+                 for ag in (a, b, c)]
+        await asyncio.sleep(0)
+
+        # One participant utterance: the bridge answers on all three.
+        for ag in (a, b, c):
+            rts[ag.id].feed({"type": "agent_audio", "pcm": b"\x01\x02"})
+            rts[ag.id].feed({"type": "agent_transcript", "text": f"{ag.id} speaking"})
+        for _ in range(30):
+            await asyncio.sleep(0)
+
+        for ag in (a, b, c):
+            rts[ag.id].end()
+        for p in pumps:
+            try:
+                await asyncio.wait_for(p, timeout=5)
+            except asyncio.TimeoutError:
+                p.cancel()
+        return runner, session, ws, a, b, c, rts
+
+    runner, session, ws, a, b, c, rts = asyncio.run(scenario())
+
+    # The participant hears exactly one character.
+    heard = {f.get("agent_id") for f in ws.json if f.get("agent_id")}
+    assert heard <= {a.id}, f"the participant heard more than the floor holder: {heard}"
+    assert ws.binary, "the floor holder's audio never reached the participant"
+
+    # And the two who were not invited are recorded as suppressed, once each.
+    suppressed = [e["agent_id"] for e in session.store.of("unsolicited_response_suppressed")]
+    assert sorted(suppressed) == sorted([b.id, c.id]), (
+        f"expected exactly {b.id} and {c.id} suppressed, got {suppressed}")
+
+    # Cancelled upstream too, so the discarded reply stops being generated
+    # rather than merely being thrown away after the fact.
+    assert rts[b.id].responding is False and rts[c.id].responding is False
