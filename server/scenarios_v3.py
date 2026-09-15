@@ -41,6 +41,157 @@ def _join(names: list) -> str:
 _VOICES = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
 
 
+# --- Casting, per model family ----------------------------------------------
+#
+# A character's voice is a measured property of that character. S4's Dan and
+# Chris are cast 15 Hz apart because that encounter scores who holds the floor
+# and who is talked over, and a room where the two men sound alike is a room a
+# rater cannot check a speaker label against. But the two realtime families
+# keep DISJOINT rosters (REALTIME_FAMILIES in server/voice/realtime.py), so a
+# name is only ever a voice with respect to one family, and a cast is therefore
+# a name PER FAMILY rather than a name.
+#
+# It used to be a name plus a comment. Every spec carried its matched gpt voice
+# in a trailing YAML comment — `realtime_voice: Fenrir  # ... on gpt-realtime:
+# verse (~120 Hz)` — that nothing machine-readable read. So on a gpt model the
+# runner found a Gemini name it could not speak, fell back to the character's
+# POSITION in the gpt roster, and opened S4's three characters on
+# alloy/ash/ballad: three realtime_voice_unusable events an encounter, and a
+# room whose pitch spacing was whatever the roster's first three entries
+# happened to be rather than what was measured for those characters.
+#
+# `realtime_voice` is now a map, family -> voice, and this module reads it:
+#
+#     realtime_voice:
+#       gemini-live: Fenrir
+#       gpt-realtime: verse
+#
+# The resolved name goes onto the Agent as `realtime_voice`, which is the first
+# field realtime_voice_session._voice_of asks for. `voice` stays the
+# unqualified Gemini name in Agent.voice_id: that is the retired v1 cascade's
+# field, other scenarios still keep other things in it, and it is now only the
+# fallback for a character this map says nothing about.
+#
+# A plain string is still accepted and still means what it always meant — one
+# name, no family. That is precisely the shape the map replaces, so it is read
+# as a claim about whichever family is running, and checked like one.
+_VOICE_FIELD = "realtime_voice"
+
+
+class UnknownScenarioVoice(ValueError):
+    """A spec casts a character in a voice the running family cannot speak.
+
+    Raised rather than logged and worked around, because every way of working
+    around it is worse than not running. Substituting by cast position is what
+    produced alloy/ash/ballad above; sending the name anyway costs the whole
+    session.update, and with it the character brief, on both families — gpt
+    answers invalid_value and discards it, Gemini answers nothing at all.
+
+    A raise here is loud in both places an operator looks. The scenario listing
+    drops the spec (server/scenarios.list_scenarios compiles every v3 spec
+    precisely so that one which cannot be compiled is excluded "exactly as it
+    would fail later"), and creating a run on it fails with this message
+    instead of seating a participant in front of a voice nobody chose. The
+    log.error beside the raise is what survives list_scenarios' broad except.
+    """
+
+
+def _voice_map(agent_spec: dict) -> Dict[str, str]:
+    """The family -> voice map for one character, in either spelling."""
+    raw = agent_spec.get(_VOICE_FIELD)
+    if isinstance(raw, dict):
+        return {str(k): str(v).strip() for k, v in raw.items() if v}
+    if isinstance(raw, str) and raw.strip():
+        # Unqualified: a name and no family. Offered to whichever family is
+        # asking, and refused by the roster check below if it is the wrong one.
+        return {"*": raw.strip()}
+    return {}
+
+
+def _cast_voice_for(spec_id: str, agent_id: str, agent_spec: dict, caps) -> str:
+    """The voice family `caps` should speak this character with, or "".
+
+    "" means the spec says nothing about this family. That is not fatal: the
+    character falls back exactly as an uncast one always has, and the runner
+    writes a realtime_voice_unusable row naming what it could not use. It IS a
+    measured casting decision going missing, so it is said out loud.
+    """
+    mapping = _voice_map(agent_spec)
+    named = mapping.get(caps.family) or mapping.get("*") or ""
+    if not named:
+        if mapping:
+            log.error(
+                "v3 spec %s casts %s for %s but not for %s; on that family the "
+                "character will be cast by roster position instead of by "
+                "measurement", spec_id, agent_id,
+                "/".join(sorted(mapping)), caps.family,
+            )
+        return ""
+    if not caps.accepts_voice(named):
+        msg = (
+            f"{spec_id}/{agent_id} is cast in voice {named!r}, which the "
+            f"{caps.family} family does not accept; it accepts "
+            f"{', '.join(caps.voices)}. Fix the {_VOICE_FIELD} map in "
+            f"{spec_id}'s spec: a voice the family refuses takes the whole "
+            "session.update down with it, and the actor then plays the "
+            "gateway's stock assistant rather than this character."
+        )
+        log.error("%s", msg)
+        raise UnknownScenarioVoice(msg)
+    return named
+
+
+def _cast_voice(spec_id: str, agent_id: str, agent_spec: dict,
+                model: str = "") -> str:
+    """`_cast_voice_for`, resolving the family from a model name.
+
+    Empty for a model no row in the capability table covers: the runner's own
+    fallback is a better answer than anything this function could invent, and
+    connect() is about to refuse that model by name in any case. The model is
+    read from the bridge module at call time — compile_scenario is what builds
+    the cast, so this is the earliest moment the answer can be known, and
+    REALTIME_MODEL is never written here or anywhere else in this module.
+    """
+    from .voice import realtime as _rt
+
+    caps = _rt.capabilities_for(model or getattr(_rt, "MODEL", "") or "")
+    if caps is None:
+        return ""
+    return _cast_voice_for(spec_id, agent_id, agent_spec, caps)
+
+
+def voice_casting_problems() -> List[str]:
+    """Every casting fault in the bank, against EVERY family in the table.
+
+    The compile-time check only ever sees the family the study is running on,
+    so a typo in the other family's row survives until the PI switches model —
+    the one moment nobody wants to discover it. This walks every spec against
+    every family instead and answers in whole sentences, so a test, a preflight
+    or a researcher at a prompt can ask the same question and read the same
+    answer. Empty means the bank is castable on both families.
+    """
+    from .voice.realtime import REALTIME_FAMILIES
+
+    out: List[str] = []
+    for sid in available():
+        try:
+            spec = load_spec(sid)
+        except FileNotFoundError as exc:
+            out.append(f"{sid}: {exc}")
+            continue
+        for aid, a in (spec.get("agents") or {}).items():
+            for caps in REALTIME_FAMILIES.values():
+                try:
+                    if not _cast_voice_for(sid, aid, a, caps):
+                        out.append(
+                            f"{sid}/{aid} names no voice for the "
+                            f"{caps.family} family"
+                        )
+                except UnknownScenarioVoice as exc:
+                    out.append(str(exc))
+    return out
+
+
 # --- Spec cache -------------------------------------------------------------
 # Every v3 entry point below used to re-parse the whole spec directory: one
 # list_scenarios() call cost ~0.5 s and ~90 yaml.safe_load calls, and it runs
@@ -119,6 +270,62 @@ def load_spec(scenario_id: str) -> Dict[str, Any]:
     # from it. Hand out a private deep copy (~0.1 ms, against ~75 ms to re-parse)
     # so nothing a caller does can reach into the cache the next call reads.
     return copy.deepcopy(data)
+
+
+# --- Which forms are parallel to which ---------------------------------------
+#
+# THE ROUTING AUTHORITY. Ten specs carry a `parallel_form:` scalar and three of
+# them now carry a comment saying so in as many words (S1C, S3C), because the
+# scalar is provenance and nothing may route on it.
+#
+# The scalar was written when every construct had exactly two forms, so "the
+# other one" was a single id and naming it was the whole of the decision. With
+# three, a field that names one of three reads as naming the ONLY one, and the
+# failure it produced is on the record: a full run always contains Teamwork, so
+# FORM_EXCLUSIONS bars S1A, so attempt 1 served S1B — whose `parallel_form` is
+# S1A. runs.sibling_run read the scalar, passed it to create() as a pin, and
+# pins are exempt from the exclusion pass, so attempt 2 was handed the exact
+# pairing attempt 1 was built to avoid, in 120 of 120 sibling runs.
+#
+# Deriving the answer from `construct` instead cannot go stale: an S2 C or an
+# S4 D joins the set by being written, with nothing to remember to update. Both
+# functions read the parsed spec cache directly rather than load_spec(), which
+# deep-copies a ~40 KB mapping the caller would immediately throw away.
+def forms_by_construct() -> Dict[str, List[str]]:
+    """{construct: [every form of it, sorted by id]}.
+
+    Every form the bank actually carries, including ones a particular run may
+    not be allowed to serve — the exclusion rules are a property of a run's
+    composition, not of the bank, so they are applied by the caller that knows
+    the composition (runs._apply_form_exclusions) rather than hidden here.
+    """
+    out: Dict[str, List[str]] = {}
+    for sid, path in _spec_files().items():
+        data = _parse_spec(path)
+        if data is None:  # raced with an edit that broke the file
+            continue
+        out.setdefault(str(data["construct"]), []).append(sid)
+    for forms in out.values():
+        forms.sort()
+    return out
+
+
+def parallel_forms(scenario_id: str) -> List[str]:
+    """Every OTHER form of this scenario's construct, sorted by id.
+
+    The plural is the point. This is what `parallel_form:` cannot say once a
+    construct has three forms, and it is what a second attempt must choose from:
+    an empty list means the construct has nothing else to offer, one entry means
+    the old scalar would have been right, two or more means it never could be.
+
+    Raises FileNotFoundError for an unknown id, exactly as load_spec does — a
+    caller asking about a scenario that is not in the bank has a bug, and an
+    empty list would read as "this form has no sibling", which is a different
+    and much quieter kind of wrong.
+    """
+    spec = load_spec(scenario_id)
+    family = forms_by_construct().get(str(spec["construct"]), [])
+    return [sid for sid in family if sid != scenario_id]
 
 
 def _copresent_names(spec: dict, key: str) -> List[str]:
@@ -490,13 +697,22 @@ def compile_scenario(scenario_id: str, participant_key: str = "") -> Scenario:
 
     cast: List[Agent] = []
     for idx, (aid, a) in enumerate(agents_spec.items()):
-        cast.append(Agent(
+        agent = Agent(
             id=aid,
             name=a["name"],
             role=a.get("display_role", ""),
             system_prompt=_render_prompt(spec, aid, a),
             voice_id=a.get("voice") or _VOICES[idx % len(_VOICES)],
-        ))
+        )
+        # The realtime path's own field, set only when the spec casts this
+        # character for the family that is running. Agent.voice_id keeps the
+        # unqualified Gemini name either way — it is the v1 cascade's field and
+        # the fallback — so this attribute is the whole of the per-family
+        # answer, and _voice_of asks for it first.
+        cast_voice = _cast_voice(spec["id"], aid, a)
+        if cast_voice:
+            setattr(agent, _VOICE_FIELD, cast_voice)
+        cast.append(agent)
 
     interactions = spec.get("interactions", [])
     # An encounter is group-mode if any interaction puts several characters in
@@ -564,6 +780,23 @@ def _briefing(spec: dict) -> dict:
         {"name": a["name"], "role": a.get("display_role", "")}
         for a in spec["agents"].values()
     ]
+    # Singular or plural, decided by the scenario rather than assumed.
+    #
+    # The group arm's whole point is that there is more than one other person in
+    # the room, and every one of its six scenarios opened its situation card
+    # with "The other person hears you and replies" — in front of three named
+    # character tiles. A participant reading that reasonably expects to be
+    # speaking to one of them, and the first thing that happens is two more
+    # people talking.
+    #
+    # Keyed on the interaction MODE, not on how many characters the scenario
+    # has: S1A and S1B have two characters and speak to them one after the
+    # other, which is the singular case and must stay singular. Only a `group`
+    # interaction puts more than one of them in the room at once.
+    co_present = any(i.get("mode") == "group" for i in interactions)
+    talk = ("Talk out loud, as you would at work. The other people hear you and reply."
+            if co_present else
+            "Talk out loud, as you would at work. The other person hears you and replies.")
     return {
         "identity": spec.get("_identity", {}),
         "situation": spec.get("setup", "").strip(),
@@ -580,7 +813,7 @@ def _briefing(spec: dict) -> dict:
         ],
         "duration": spec.get("duration_minutes", [7, 12]),
         "howto": [
-            "Talk out loud, as you would at work. The other person hears you and replies.",
+            talk,
             "There are no right answers, say what you would actually say.",
             "The scene moves on by itself; you do not need to end it.",
         ],

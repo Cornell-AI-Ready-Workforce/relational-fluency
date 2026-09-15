@@ -5,7 +5,7 @@ agent_name: "Jordan"
 
 intro: |
   You presented a proposal in a leadership meeting today. One of your peers
-  pushed back hard — louder than felt warranted. After the meeting they pinged
+  pushed back hard, louder than felt warranted. After the meeting they pinged
   you: "do you have 10?" You're about to get on that call.
 
 system_prompt: |

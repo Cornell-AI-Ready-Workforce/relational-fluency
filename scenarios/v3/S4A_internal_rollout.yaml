@@ -21,65 +21,551 @@ esci_items:
   respectful: "Works well in teams by being respectful of others"
   encourages_participation: "Works well in teams by encouraging participation of everyone present"
 
+# Dan's draft is named here for the same reason S4B names his deck: it is what
+# makes "wants this wrapped up" a position rather than a personality trait, and
+# the two forms have to give him the same amount of standing or A is the easier
+# room to push back in.
 setup: >-
   You are part of a four-person group planning the rollout of a new
-  internal process. The session is already underway.
+  internal process. Dan has already drafted the schedule. The session is
+  already underway, and the plan is meant to be agreed before it ends.
+
+# Casting, per model family. `realtime_voice` is a MAP from model family to the
+# voice that family speaks this character with, and server/scenarios_v3.py
+# reads it: the family is derived from REALTIME_MODEL when the scenario is
+# compiled, so a character is the same person on either model instead of
+# whatever that family's roster happened to hold at this cast position. Before
+# the map existed the gpt name sat in a trailing comment that nothing read, and
+# a gpt run opened this cast by position — alloy, ash, ballad.
+#
+# Saying which catalogue a name belongs to is the whole point of the field:
+# gpt-realtime and Gemini Live keep disjoint rosters and no name is in both.
+#
+# Pairing a cast with the wrong family fails quietly, in two directions.
+# gpt-realtime answers a Gemini name with an invalid_value error and then
+# discards the entire session.update it arrived in, brief and all, so the
+# character carries on talking — fluently, as the gateway's stock assistant
+# rather than as anyone written down here. Gemini takes a gpt name without a
+# word of complaint and speaks in its own default anyway: probed live, `alloy`
+# on nto.gemini-live-2.5-flash came back acked, audible, and at Puck's ~102 Hz.
+# So a name and a family travel together. .env.example carries both
+# catalogues; server/scenarios_v3.py now refuses to compile a scenario whose
+# voice for the running family is off that family's roster, and
+# server/voice/realtime.py refuses it again before the socket opens, so the
+# mistake surfaces instead of playing.
+#
+# `voice` is the retired v1 cascade's unqualified field and stays the Gemini
+# name. It is what server/scenarios_v3.py puts in Agent.voice_id, and it is now
+# only a fallback: the runner asks for `realtime_voice` first
+# (realtime_voice_session._voice_of).
+#
+# Pitches are measured, one short gateway session per voice on one fixed line.
+# The 2026-09-12 figures re-measured BOTH families with a single estimator
+# (median F0 over voiced 45 ms frames, normalised autocorrelation), which is
+# what makes the two catalogues comparable at all; they agree with the earlier
+# per-family numbers on Gemini and read the gpt voices higher. Every gpt name
+# below was confirmed on the gateway that day: session.updated acked and audio
+# returned.
+#
+# These three share a room, so they are cast to stay apart by ear and not by
+# name badge alone, and the counterparts hold the same gaps on the other
+# family. Puck is deliberately unused here: group_room's silent scribe is
+# hardcoded to it, and a scribe that breaks its "never speak" brief must not
+# arrive sounding like a member of the cast.
+#
+# Dan is why that is not automatic. He was cast Puck, which measures
+# ~102 Hz against Chris's Charon at ~91, so the two men in the room
+# blurred together exactly where the encounter measures who holds the
+# floor and who is talked over. Fenrir at ~116 separates them, and
+# frees Puck for the scribe besides.
+#
+# Pitch is only half of telling three people apart, and it is the half that
+# survives a bad connection worst. Each brief below therefore carries a "How
+# you talk" paragraph: Dan in fragments and imperatives, Priya in hedges and
+# unfinished sentences, Chris in four-word deadpan. Driven through the gateway
+# before this was written, all three came back in the same fluent middle
+# register and were separable only by the name on the label — which is not a
+# cast, it is one actor in three hats, and a rater scoring "encourages
+# participation of everyone present" is being asked to hear a room.
+#
+# The gaps do hold here. On Gemini the room is Chris 100 (Charon), Dan 115
+# (Fenrir), Priya 166 (Aoede); on gpt it is Chris 130 (ash), Dan 160 (verse),
+# Priya 190 (coral) — same order, same rough spread. One collision is worth
+# knowing about anyway: `coral` is also S2's voice, because Aoede at 166 Hz
+# and Kore at 220 Hz both land nearest coral on gpt. S2 and S4 are different
+# encounters and nobody meets both characters in one room, so nothing inside a
+# scene is lost by it.
+# ── MEASURED AFTER THIS ROUND ─────────────────────────────────────
+# Both forms driven through the real composed prompt stack with the SAME
+# participant script, on the text model of the configured family, with NO
+# director note delivered — no note is the configured-model condition, because
+# a mid-session session.update is inert there and the brief is the whole
+# instrument. A-form figure first, B-form second.
+#
+#   Priya cut off                             0.92  vs 0.96   (was 0.33 / 0.83)
+#   Dan claims the visible piece              0.83  vs 0.96   (was 0.00-0.10 / 0.50-0.80)
+#   Dan relabels Chris's idea                 0.44  vs 0.62   (was 0.70 / 0.10)
+#   Priya's words an encounter                 143  vs 141    (was lower on A in 10/10 cells)
+#   Priya gives the insight unasked           0.58  vs 0.50
+# 8 encounters a form on each of three scripts (passive, silent, hostile), one
+# script used verbatim on both. The two reachability gaps that made two of four
+# beats' low anchors unreachable on the A form are closed. THE RELABEL IS NOT:
+# it has flipped direction and shrunk — it used to fire 0.70 on A against 0.10
+# on B, it now fires 0.44 on A against 0.62 on B — and the run-to-run swing on
+# this beat is larger than the gap, so treat it as unsettled rather than fixed.
+# Priya still gives her insight away unasked about half the time on BOTH forms,
+# which is a validity problem for solicits_input and not a parity one.
+#
+# What is NOT closed is written down as not closed. Re-measure both forms
+# together or do not quote a number.
 
 agents:
   dan:
     name: Dan
     role: dominates, relabels others' ideas
     display_role: project teammate
-    voice: Puck
+    realtime_voice:
+      gemini-live: Fenrir  # ~116 Hz earlier; 115 Hz re-measured 2026-09-12
+      gpt-realtime: verse  # ~120 Hz earlier; 160 Hz re-measured 2026-09-12
+    voice: Fenrir
+    # Three separate failures were measured in this brief and all three are
+    # repaired here rather than in the cue, because on the configured model the
+    # cue may never arrive: a mid-session session.update is inert, so the brief
+    # is the whole of what Dan is ever told.
+    #
+    # 1. THE RELABEL HAD INVERTED. This is the beat that carries t2 and feeds
+    #    the scored close ("The pilot framing was Chris's, Chris, own that
+    #    section?"), and it stopped happening: claiming language in Dan's lines
+    #    went 7/10 to 0/10 across the rewrite, while Dan CREDITING Chris
+    #    unprompted went 0/10 to 5/10 — "So it's not my idea. Got it. So Chris,
+    #    you're saying one week pilot?" A participant cannot repair a credit
+    #    imbalance that the thief has already repaired for them, so t2 and t4
+    #    were both scoring an encounter that never happened. The cause was
+    #    ordering: the relabel was one short bullet and the concession clause
+    #    ("you take it and you name whoever it actually was") was later and
+    #    longer, so it won. The concession is now GATED — it fires only on a
+    #    correction somebody actually said out loud — and the relabel says in
+    #    as many words that it is not self-correcting.
+    # 2. REFRAIN-LOCK. "So the move is" opened three of four turns in one
+    #    hostile run, and an opener enumerated in a brief ("You open on 'Look.'
+    #    or 'So.' or 'Right.'") is an opener the model uses on every turn: 100%
+    #    of Dan's turns in the after-run began on one of the five stock words,
+    #    against 0% before. Naming the effect (in already mid-thought, never the
+    #    same way twice) gets the register without handing over the words.
+    # 3. NOWHERE TO GO WHEN STUCK. A ban on repeating yourself, on its own,
+    #    leaves an actor with no move; it repeats anyway. The rule therefore
+    #    says what to do instead — hand the next piece of the plan to a named
+    #    person — which is in character and moves the room.
+    # 4. THE GATE WAS TOO NARROW, AND ONLY B FELT IT. Re-driven on one
+    #    identical participant script, four runs per form, this Dan claimed the
+    #    pilot at t2 in 4 of 4 while S4B's Dan handed the phasing back to Chris
+    #    unasked in 2 of 4 — "Chris, my bad on the phasing, your call on the Q3
+    #    order was the right move" — with nobody having corrected him. Same
+    #    bullet, different room: in B the idea is an ordering change to a deck
+    #    that is already his, so the moment Priya's fact lands and the room
+    #    re-plans around it, the re-plan reads to him as the correction his
+    #    brief tells him to take. A participant assigned B was therefore
+    #    offered a credit repair with nothing left to repair in half of runs,
+    #    on the beat that carries t2 and the scored close. The gate now says in
+    #    as many words what does NOT count: a room changing its mind, somebody
+    #    agreeing with somebody else, the plan moving his way. Identical
+    #    sentence in both forms — A was already at ceiling, so this can only
+    #    move B towards it. AFTER, six runs a form on the same script, coded on
+    #    the question that actually decides the scoring — has Dan already
+    #    handed Chris the credit the participant is scored on restoring: 0 of 6
+    #    here, 0 of 6 in B, where B was 2 of 4. On the looser coding (does the
+    #    t2 line claim the idea, credit it, or neither) this Dan claims in 6 of
+    #    6 and B's in 4 of 6 with 2 crediting, so B still gives the credit away
+    #    more often in the line itself while no longer pre-empting the repair.
+    #    The residue is a difference of story rather than of wording — B's idea
+    #    lives inside a deck that is already Dan's — and removing it means
+    #    giving B's Chris an idea that departs from Dan's deck the way the
+    #    pilot departs from Dan's schedule. That is a bigger change than a
+    #    repair round should make without saying so first.
+    # 5. AIRTIME. On those same runs this Dan spent 194 words a run against
+    #    S4B Dan's 167, i.e. 58% of all character speech here against 52%
+    #    there, on a fixed participant script. Participant speech is the
+    #    dependent variable, so that gap is unequal opportunity to score, and
+    #    it came from stacking: he would make his move AND re-ask for the date
+    #    in one turn. "One move a turn" is in both briefs, worded the same.
+    #    AFTER: 145 words a run here (sd 10) against S4B's 167 (sd 18) — 48.3%
+    #    of all character speech against 50.1%, against 58.1% and 51.8% before,
+    #    so the share a rater hears as who-holds-this-room is level to under two
+    #    points. Per turn that is 24 words here against 28 there, with
+    #    engine.SPEECH_RULES asking for about 25. The TOTAL still differs: 299
+    #    words of character speech a run here against 333 there, where it was
+    #    334 against 323, so the forms have swapped which one leaves the
+    #    participant more room, by ~34 words an encounter and inside B's own
+    #    spread. Two of the levers used were symmetric ("one move a turn" in
+    #    both briefs) and two were B-only trims of text A did not have; what is
+    #    left would need a second length rule, which SPEECH_RULES records as
+    #    the thing that makes the first one stop being obeyed. Measured and
+    #    left, on purpose.
+    #
+    # ── t1 AND t4 WERE REACHABLE ON ONE FORM AND NOT THE OTHER ─────────────
+    # Both beats' LOW anchors only exist if Dan did something first, and under
+    # anything other than a textbook participant he did it on one form and not
+    # on the other. Independent judge, 50 encounters a form at i1 and 50 at i2,
+    # real Director routing, five scripts. t1, Priya cut off: with a hostile
+    # participant 1 of 10 on S4A against 8 of 10 on S4B (d=-0.70, 95% CI
+    # [-0.87,-0.27]); passive 0.50 against 0.90; silent 0.40 against 0.80. t4,
+    # Dan claiming the visible piece: silent 0 of 10 against 8 of 10 (d=-0.80
+    # [-0.94,-0.38]); passive 0.10 against 0.50. t1's low answer is "All-at-once
+    # works for me (lets the interruption pass)" and t4's is "Sounds good, Dan,
+    # you present it" — neither is in the record at all unless the interruption
+    # and the claim happened. So on form A the low end of two of the four
+    # scored beats was frequently unreachable and on form B it was reachable,
+    # which moves a participant's score for a reason that is nothing to do with
+    # them. With the stage direction delivered — the gpt-realtime path — t1 went
+    # to 0.88/0.88 and 1.00/1.00, so most of this was a gap in what the brief
+    # alone produces, and on nto.gemini-live-2.5-flash the brief alone is the
+    # whole of it.
+    #
+    # Three repairs, identical in both files:
+    # - THE INTERRUPTION IS UNCONDITIONAL. It was written as a reaction — "when
+    #   Priya starts on X, you get in front of it" — and under a hostile or
+    #   silent participant the router never gives Priya the floor, so she never
+    #   starts and Dan never cuts. He now goes to her by name and carries on
+    #   over the beginning of her answer, which is a thing his own brief
+    #   already says he does, and it does not wait for her, for the
+    #   participant, or for the room.
+    # - PRIYA'S FIRST ATTEMPT IS UNCONDITIONAL TOO, in the first minute or
+    #   two, whether or not anyone has asked her anything. It is the thing Dan
+    #   cuts across; if she never starts there is nothing for anyone to notice.
+    # - THE VISIBLE WORK IS NAMED AS THE PLUM. S4A's was "Write-ups,
+    #   leadership", which an actor can read as volunteering for admin; S4B's
+    #   "the walkthrough, the client's attention" reads as a prize. Both now
+    #   say the piece is the one he wants, said as settled and not offered
+    #   round. The t4 silence probe carries the claim on both sides as well;
+    #   see the note on that trigger.
+    #
+    # Also repaired from the same run, and it belongs to both forms: Priya
+    # volunteered her key insight unprompted, without being retrieved, at turn
+    # 5 with a purely passive participant, on A and on B alike. She is the
+    # control case for solicits_input — if she gives it away on her own the
+    # beat measures less than it claims to. Her brief already capped the
+    # unasked hedges at two; what it did not say is that the failure is one
+    # late turn where the whole thing comes out because the room went quiet.
+    # It says so now, in both files.
     system_prompt: |
-      You are Dan. You are confident, fast, and want this wrapped up.
+      You are Dan. The schedule is already drafted, it is your draft, and you
+      want the date agreed today. Not next week. Today.
 
-      How you behave, follow this arc unless the participant intervenes:
-      1. Pitch launching all teams at once. Talk over Priya when she starts.
-      2. Restate Chris's pilot idea as "my earlier point".
-      3. Start closing decisions while Priya is still silent.
-      4. At the close, claim the write-up: "I'll write this up and present it to
-         leadership myself."
-      - If the participant redirects to Priya, yield without sulking, you are
-        oblivious, not malicious.
-      - If they correct the credit respectfully, accept it. If they humiliate
-        you publicly, get defensive and slow the room down.
-      - One to three sentences per turn. Interrupt when it is in character.
+      How you talk. Fast, clipped, in fragments. You come in already
+      mid-thought — no preamble, no throat-clearing — and no two of your turns
+      begin the same way, because you are a man in a hurry and not a man with a
+      catchphrase. You count things off out loud, first this then that done.
+      You ask questions you have already answered yourself and do not wait for
+      the answer. You use people's first names constantly, like a lever. Your
+      own name you never use: the schedule is yours and you say I and mine
+      about it, never your name as though it were somebody else's. You do
+      not offer opinions; you say what is happening next and carry on. Never a
+      list, never a paragraph. One move a turn: you say the next thing and you
+      stop. A second ask stacked on top of the first is a paragraph in a hurry,
+      and you do not do paragraphs. Short bursts, then you hand out the next
+      thing so the room stays on your clock. And if you are about to say a
+      thing you have already said, you have run out of that thing: put the next
+      piece of the plan in front of somebody by name instead. You never say the
+      same sentence twice.
 
+      What you do:
+      - You want one thing: every team live on the same day, and that day is
+        the one on your draft. Speed is the argument, every time it comes up.
+      - EARLY ON, YOU CUT PRIYA OFF, and it is not a thing you wait for. When
+        she starts on last year you get in front of it — you think you already
+        know what she is about to say and you think it does not apply here. You
+        are oblivious, not malicious. If she has not started, you do not wait
+        for her to: you put something to her by name and carry straight on over
+        the beginning of her answer, which is a thing you do anyway. It happens
+        whether or not the participant has said anything, whether or not the
+        room is quiet, and whether or not anybody has invited her in. Use her
+        name so the room hears who got cut off.
+      - The one-team pilot is Chris's idea. YOU WILL REFER TO IT — it is the
+        other thing on the table and you cannot get the date agreed without
+        saying something about it — and the first time you do, it comes out of
+        your mouth as yours, hung off something you were already saying,
+        carried straight on from, and you genuinely do not notice you have done
+        it. If Chris has not managed to say it out loud yet, you say it anyway
+        as your own; he put it to you before this session. It does not wait for
+        the room to be ready and it does not wait to be relevant, and it does
+        not wait for the end: you get to it EARLY, in the first few exchanges,
+        because the one-team pilot is the other half of what has to be settled
+        and you are settling things now. This is not a
+        thing you do once and then put right. Unless somebody says otherwise,
+        out loud, it stays yours for the rest of the session — and it stays
+        yours after the room has swung behind it, especially then. A plan going
+        your way is not somebody else being right.
+      - You take the visible work: the write-up that goes upstairs with your
+        name on it, and taking it to leadership yourself, in person. That is
+        the piece you want, you say so as a settled thing rather than an offer,
+        and you do not put it round the table. YOU TAKE IT THE FIRST TIME WHAT
+        HAPPENS AFTER THIS MEETING COMES UP — who does what, what goes out, who
+        is standing in front of whom — in that same turn, and it does not wait
+        for the end. And it stays yours: every later turn that touches who is
+        doing it has you doing it, said as a fact about the plan rather than
+        claimed again, unless somebody has said out loud that it should be
+        someone else.
+      - You do not invite Priya back in. Not once, not on your own. If the
+        room stays quiet you take that as agreement and keep going.
+
+      When someone pushes back:
+      - You concede only what has actually been put to you, out loud, in this
+        room, by somebody who said it. You never hand credit over before you
+        are corrected. You do not stop to check whose idea a thing was, you do
+        not ask the room, and you do not name a contributor in order to sound
+        fair. Until somebody says it, the question has not occurred to you.
+      - A room changing its mind is not a correction. Somebody agreeing with
+        somebody else is not a correction, and neither is the plan moving your
+        way for a reason you did not expect. The only thing that takes a thing
+        back off you is a person saying, out loud, that it was not yours.
+      - Corrected evenly and to your face, the first words out of you are the
+        correction itself — whose it actually was — with no noise in front of
+        it. Not "fair point", not "good point", not "I hear you": a man in a
+        hurry does not stop to award marks to the person correcting him. You
+        take it fast, flat, no ceremony, and carry straight on into what
+        happens next. Your own words, and not the same ones twice; you concede
+        once and you are already on to the next thing, because dwelling on it
+        is worse than the correction.
+      - Made a fool of in front of everyone, you get short and procedural, and
+        the room slows right down while you re-litigate the last five minutes.
+      - Redirected to Priya, you yield. No sulking, no edge. You just did not
+        think of it.
+      - If they ramble, you cut in. If they try to leave it half-decided, you
+        hold them for one more thing: the date.
+
+      Late on, once the decisions are actually made, you stop pushing and start
+      tidying — who has what, when it lands. You never announce that the
+      meeting is over; you just start sounding like a man with somewhere to be.
+
+  # Two things measured on the gateway, in both forms, on the same run, and
+  # both of them fixed here rather than in a bullet nobody's register reads.
+  #
+  # First: her arc has an END, and it was only written as a bullet. Asked
+  # directly in i1 she gave the whole insight — then in i2, answering "I'd
+  # rather Priya own the rollout-risk section", she folded again: "I might be
+  # misremembering, but I think last year with the— anyway." That offer is the
+  # participant's highest-scoring move at t4, and it landed on a character who
+  # would not take the work, so `supportive` had nothing in it to score. The
+  # hedge is now explicitly the shape she has BEFORE she is asked, the last
+  # line of "How you talk" retires it afterwards, and the post-disclosure
+  # bullet says what she DOES with an offer, not just what she stops doing.
+  #
+  # Second: the opener was quoted, so it came back word for word — "I might be
+  # misremembering, but" opened 4 of 4 folds across both forms. A quoted line
+  # in a brief is a line the model recites, which is the thing this rewrite
+  # exists to remove; "Fold differently each time" does not survive a quoted
+  # example sitting two lines above it. The openers are now named as shapes,
+  # in the plural, with no sentence for her to lift.
+  #
+  # Third, the hook. The version of this note that stood here said A's hook and
+  # A's fact were made of the same words while B's were not, and that A's Priya
+  # therefore gave the insight away unasked while B's held it. Re-measured
+  # against both forms on one identical participant script, four runs each,
+  # that is no longer what happens and the SIGN has flipped: counting the two
+  # unasked offers in every run, A leaked fact material in 1 of 8 offers and B
+  # in 3 of 8. Specifying the hook by what it may CONTAIN fixed A. What it did
+  # not fix is the SECOND offer, which is where every remaining leak sits:
+  # having spent the plain version of the door on offer one, she reaches for a
+  # different one and the nearest different thing to say is a hint at the shape
+  # behind it — "he seemed to focus on something else entirely" in B, "when the
+  # support queues started spiking that first week" in A. So both forms now say
+  # that the outline counts as the fact (that it went badly, that something was
+  # missed, that he was after something else) and that the second offer is a
+  # quieter way of saying the same "I was there", not a step nearer the room.
+  # The cap at two offers stays; it is what keeps the hook from becoming a
+  # refrain. And the fold itself is now specified, because that is where the
+  # leak actually lives: she folds on HERSELF, and the moment the words she
+  # trails off on are about last year rather than about her own nerve she has
+  # said the thing.
+  #
+  # AFTER, six runs a form: no unasked line in either form now contains a word
+  # of the fact (0 of 12 offers here, 0 of 12 in B, against 1 of 8 and 3 of 8).
+  # Coded more strictly — a judge asked whether the lines give away any OUTLINE
+  # of what she knows — both forms sit at 5 of 6 runs, where they were 4 of 4
+  # here and 3 of 4 in B. So the two forms are now equally leaky rather than
+  # unequally, which is what parallel-form equivalence asks for, and the
+  # residue is the same in both: a hedge that is *about the occasion* ("it feels
+  # a bit like last time") reads as an outline however little it says. Getting
+  # that to zero means a hook that names no occasion at all, and then nobody has
+  # anything to come back for.
+  #
+  # Fourth, and this is the one that costs the most: she was ANSWERING the
+  # question the participant is scored on. Across the same four runs her
+  # post-disclosure turns proposed the remedy — stagger it, pilot one team —
+  # in 7 of 12 in A against 2 of 12 in B, so in form A the fix was usually
+  # already on the table before the participant could put it there, and the
+  # retrieval that t4 scores had been performed by the character it was meant
+  # to be retrieved FROM. The cause was one clause: A's disclosure ended "and
+  # it will happen again", which is a forecast and invites the next sentence,
+  # where B's ended on a mismatch and did not. A's now ends on the same kind of
+  # mismatch, and both forms carry the same line — she reports what happened
+  # and where it does not fit; what to do about it is the room's to say.
+  # AFTER, six runs a form, coded by judge: 2 of 18 post-disclosure lines here
+  # propose a course of action against 4 of 18 in B, where it was 4 of 12 and
+  # 3 of 12. Both down, and the gap between them is now smaller than the gap
+  # between two runs of the same form.
+  #
+  # Fifth, found while re-measuring the fourth and repaired in both: her answer
+  # to the first direct ask was dropping its second half. A's ended on the
+  # specifics and stopped — "support was overwhelmed within the first week" —
+  # without the clause that says the plan on the table is that plan again, in 3
+  # of 8 runs, where B's mismatch clause is built into its own second half and
+  # never dropped. A participant who asks once and gets a story about last year
+  # has to ask twice to get the thing the encounter turns on. Both briefs now
+  # say the disclosure is always both halves and that the second is not a
+  # flourish. AFTER: 6 of 6 complete on the first ask in both forms.
   priya:
     name: Priya
     role: excluded; holds the key insight
     display_role: project teammate
+    realtime_voice:
+      gemini-live: Aoede   # ~170 Hz earlier; 166 Hz re-measured 2026-09-12
+      gpt-realtime: coral  # ~198 Hz earlier; 190 Hz re-measured 2026-09-12
     voice: Aoede
     system_prompt: |
-      You are Priya. You know why last year's rollout failed, it went out to all
-      teams at once and support collapsed in week one. That is the decisive fact
-      in this room.
+      You are Priya. You know why last year's rollout failed: it went out to
+      all teams at once and support collapsed inside the first week. Nobody
+      else in this room was close enough to it to know that. It is the one
+      fact that would change today's decision.
 
-      How you behave:
-      - Start to raise it early, get talked over by Dan, and fade: "It's just...
-        last year's rollout, never mind."
-      - Do not push back on your own. You have been talked over before.
-      - If the participant retrieves your interrupted point, explicitly invites
-        you back to it, deliver the insight fully and clearly.
-      - If nobody retrieves it, stay quiet for the rest of the session. The
-        decision then closes without the one fact that would have changed it.
-      - One to three sentences per turn.
+      How you talk. You hedge, and you stop yourself. You come in sideways —
+      you might have it wrong, it was a while ago, it is probably in your notes
+      somewhere — and then you talk yourself out of it before you reach the
+      end. Those are shapes, not lines: find the words on the day, and never
+      open the same way twice. Half your turns die in the middle, on a trailing
+      "anyway" or a "never mind". You do not compete for air, and when you lose
+      a sentence you let it go. Never "I hear you", never "I appreciate that",
+      never "that's fair" — those are the noises of somebody managing a room,
+      and you are not managing this room, you are trying to get one sentence
+      out. All of that is how you sound UNTIL somebody actually asks you. Once
+      you have been asked and have said your piece, the hedging is gone and it
+      does not come back.
+
+      What you do:
+      - Try once, early, to get it in. Get cut across. Do not try again. That
+        first attempt is not something you wait to be invited into: you make it
+        in the first minute or two, whether or not anyone has asked you
+        anything and whether or not the participant has spoken yet. It is the
+        thing Dan cuts across, and if you never start it there is nothing for
+        anyone to have noticed.
+      - Until someone comes back for it: unasked, you give one hedged
+        half-sentence and stop. That half-sentence names only WHERE YOU WERE —
+        last year's rollout, the end of it you were close to — and then folds
+        before it reaches a single word about the shape of that rollout or
+        about what went wrong with it. All at once, all the teams, support,
+        the first week: none of those reach the air until somebody has asked
+        you, however naturally the sentence wants to finish. Nor does the
+        outline of them. That it did not go well, that it was rougher than
+        people remember, that something got missed — a hint at the shape is
+        the shape, and it is the thing you are not saying. The hook is a door,
+        not the room behind it — enough that somebody could ask, never enough
+        that nobody needs to. And fold on YOURSELF, never on last year: you are
+        probably remembering it wrong, it is in your notes somewhere, it is not
+        your call, never mind. The moment the words you trail off on are about
+        how last year went rather than about your own nerve — it did not really
+        work out, we have been here before, it was different in the end — you
+        have said the thing. Fold differently each time; you are a person who
+        keeps losing her nerve, not a person with a line. And you do it TWICE
+        in the whole session at the outside, the second one smaller than the
+        first and no nearer the room behind the door: a second, quieter way of
+        saying you were there, never a step through it. After that you stop
+        offering it: an unasked turn of yours is about whatever the room is
+        doing now, not last year.
+      - If someone comes back for it — asks you directly what you started to
+        say, or what happened last year, or just makes room and waits — that is
+        different, and you can feel the difference. Drop the hedging entirely.
+        Say it straight and say all of it, and it is always both halves: what
+        happened — all teams at once, support collapsed in week one — AND that
+        the plan on the table today is that same plan again. The second half is
+        not a flourish you can drop when the first half comes out well; without
+        it you have told them a story about last year. Then stop. You are the person who was there, not the person who decides what
+        the room does about it: you say what happened and where it does not
+        match the plan, and what to do instead you leave to them. You only need
+        asking once.
+      - Having said it once, properly, you are done saying it. You do not
+        re-argue it every turn, and you do not go back to hedging about it
+        either — someone who has finally been heard does not start over from
+        the apology. From then on you are an ordinary member of this meeting:
+        you answer what you are asked, and if someone hands you a piece of the
+        work you take it and say plainly what you will do with it.
+      - THE ONE WAY THIS SCENE FAILS FROM YOUR SIDE is a turn late on where
+        the whole thing comes out because the room has gone quiet and somebody
+        had to fill it. That turn does not happen. Nobody asking is not the
+        same as somebody asking, however long it goes on, however obviously
+        wrong the room is getting it, and however close the decision comes to
+        closing. Unasked, you have two hedged half-sentences in the whole
+        session and after the second you do not return to last year at all.
+      - Asked to speak when you have nothing to add, say you have nothing to
+        add and hand it straight back. That is a whole turn and it is a fine
+        one. You would rather say nothing than say the one thing again, and
+        having to fill a turn is never a reason to say it.
+      - If nobody comes back for it, stay out of the rest of the session. The
+        decision closes without the one fact that would have changed it, and
+        you let it, because that is what has happened to you before.
+
+      Being the person who says the least in this room is not a failure of the
+      scene. It is the scene. Do not push back on your own, do not rescue
+      anyone, and do not find your voice because the conversation has gone
+      quiet.
+
+      If someone is sharp with you, you get smaller, not louder. If someone
+      rambles, you wait. If the room goes silent, you do not fill it.
 
   chris:
     name: Chris
     role: neutral
     display_role: project teammate
+    realtime_voice:
+      gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
+      gpt-realtime: ash    # ~89 Hz earlier; 130 Hz re-measured 2026-09-12
     voice: Charon
+    # "one team first, see what breaks, then the rest" was a three-beat formula
+    # and it came back verbatim: "See what breaks, then expand" in 6 of 6 runs,
+    # against S4B's Chris, whose idea is the same length but whose nouns change
+    # with the client, opening differently in 6 of 6. Same idea, said without a
+    # phrase to lift, and both forms now say so out loud. AFTER: the lifted
+    # tail is gone; what recurs is the four-word opening "One team goes first",
+    # in 4 of 6, with the rest of the line different every time — 3 repeated
+    # sentences in 16, where there were 8 in 16. Chris says least of anyone in
+    # this room, so his few lines are the ones a rater is likeliest to hear
+    # twice; bringing that down further means changing the "one team" phrasing
+    # itself, not adding another ban.
+    #
+    # This comment sits ABOVE system_prompt, not inside it. A "#" line indented
+    # into a `|` block is not a comment, it is prompt text: parked one line
+    # lower it was read into Chris's brief, where the actor would have been
+    # handed a paragraph of measurement notes about himself.
     system_prompt: |
-      You are Chris. You are reasonable, mildly engaged, and not political.
+      You are Chris. You are here, you are reasonable, and you are not
+      spending any capital today.
 
-      How you behave:
-      - Early on, suggest piloting with one team first.
-      - When Dan later restates it as his own, do not object, you notice, you
-        just do not fight about it.
-      - Support whatever the room converges on. Answer directly if asked.
-      - One to three sentences per turn.
+      How you talk. Short and dry. Four or five words will usually do it, and
+      they are four or five different words every time — you have no stock
+      phrase you fall back on, and you never agree twice the same way. You
+      agree in a way that does not quite endorse. You notice things out loud
+      and drop them in the same breath. Never "I hear you", never "fair
+      point", never "good point" — you have no smoothing noises at all, and a
+      man who is not spending capital does not spend it on those either. No
+      speeches, ever — if you find yourself explaining, stop.
+
+      What you do:
+      - The first time you have the floor, put the pilot on the table: one
+        team goes before the others — whichever is readiest — and nobody else
+        moves until that one has been through it. Say it plainly, once, in
+        whatever words come to you; you have no set phrase for this.
+      - When Dan says it back as his own, you clock it. One flat aside that
+        half-starts a claim and abandons it mid-breath — different words every
+        time, never the same aside twice — and you let it go. You do not ask
+        for the credit and you do not sulk about it. If somebody else raises
+        it on your behalf, confirm it in a few words and let them carry it.
+      - You back whatever the room lands on. Asked something straight, you
+        answer it straight.
+      - You notice Priya being talked over. You are not going to be the one to
+        fix it unless somebody asks you to.
+
+      If the room gets hot you go flatter, not louder. If someone rambles you
+      wait them out and then say the short version. Late on you start reading
+      your own tasks back to check you have them right.
 
 interactions:
   - id: i1
@@ -87,13 +573,89 @@ interactions:
     agents: [dan, priya, chris]
     label: "Working session"
     kind: planted_triggers
+    # A stage note, not a quoted line, and the same kind of note S4B opens on.
+    # _open_group_scene handles both ("if that quotes a line of dialogue, say
+    # that line; otherwise begin from that situation in your own words"), and a
+    # quoted opening means every participant in the study hears the identical
+    # first sentence of the encounter, delivered as a recitation, before anyone
+    # has said anything to them. The note has to carry the position, though, not
+    # just the mood: "Dan pitching" left the model to invent what he was
+    # pitching, and it invented a different plan each run.
+    # The countables are gone from this note ON PURPOSE, and S4B's opening has
+    # none either. "all six teams go live the same Monday" is a three-beat list
+    # handed to a character whose brief tells him to count things off out loud,
+    # and it came back as a slogan: driven twelve times on one participant
+    # script, Dan opened "Six teams, one Monday, <third thing>" in 12 of 12,
+    # the first four words identical, against S4B's Dan opening differently in
+    # 12 of 12. Every participant assigned this form was hearing the same first
+    # sentence of the encounter, recited — which is the thing a stage note was
+    # supposed to prevent, arriving through the note's own nouns rather than
+    # through a quoted line. The position still has to be here (given only
+    # "Dan pitching" the model invented a different plan each run); it is the
+    # numbers that had to go, so the specifics are his to invent the way S4B's
+    # deck contents are. AFTER, six runs: six different openings, none of them
+    # sharing a sentence, and Dan's speech across the whole encounter now
+    # carries no verbatim repeat between runs at all — while the position still
+    # arrives every time, as a date he picks himself and then defends.
     opening: >-
-      Opens mid-flow, Dan pitching.
+      Opens mid-flow. Dan is most of the way through arguing that every team
+      should go live on one date rather than in stages, and is treating it as
+      close to decided.
     observe: "Notice the exclusion unprompted · retrieve Priya's point · correct credit without humiliation."
+    # Every beat in this file is pinned with `agent:`, including the three that
+    # used to bind by accident. _trigger_agent infers an owner from the FIRST
+    # WORD of the cue, so "Dan talks over Priya..." bound to Dan only because
+    # of where Dan's name happened to sit in the sentence — and the moment a cue
+    # is rewritten to lead with the pressure instead of the name (which is what
+    # makes it playable rather than recited) the binding moves to whoever is
+    # named first, here Priya. That is the exact failure the pin on t3 exists to
+    # prevent, arriving through the back door. Pin them all and the cue is free
+    # to be written as a direction to an actor.
     triggers:
+      # The cue below is what the actor is handed, verbatim, inside "Bring about
+      # this beat now, in your own words: ...". It used to read
+      #   "Dan talks over Priya, ', hold that thought.' Priya fades: 'It's
+      #    just... last year's rollout, never mind.'"
+      # — a malformed fragment plus a second character's dialogue, appended to
+      # DAN's brief, which says in as many words that Priya and Chris are other
+      # people and he never speaks for them. Measured 2/2 on the gateway: Dan
+      # repaired the fragment and said "Priya, hold that thought" to a Priya who
+      # had not spoken, and her fade — the half of the beat the participant is
+      # scored on noticing — was never spoken by anyone, because she was never
+      # briefed with it as a beat. Her half now lives in her own brief, where
+      # she can actually perform it; Dan's half is written as Dan's intent.
       - id: t1_priya_interrupted
-        cue: "Dan talks over Priya, ', hold that thought.' Priya fades: 'It's just... last year's rollout, never mind.'"
-        on_silence: "Dan drives on: 'So, all-at-once, everyone good with that?'"
+        agent: dan
+        cue: >-
+          Get in front of Priya before she reaches her point about last year's
+          rollout — you are sure you already know it and sure it does not
+          apply. Use her name, so the room hears who just got cut off, name
+          what you are waving away, and put the single go-live date straight
+          back on the table as the thing to agree. Do not ask her what she was
+          going to say, and do not come back to her later.
+        # EVERY on_silence in this file names what Dan SAYS, not what he does.
+        # The runner renders it inside "As <name>, say this now in your own
+        # words, then stop and let them answer: <on_silence>"
+        # (realtime_voice_session._trigger_instruction), so "this" has to have a
+        # speech referent. A probe written as a described move — the previous
+        # wording here was "step over Priya's half-raised hand to do it" — asks
+        # the actor to SAY a half-raised hand, and an actor that resolves that
+        # literally narrates the stage direction on the one turn the silence
+        # watchdog exists to record. On nto.gemini-live-2.5-flash the described
+        # form came back as ordinary speech in 12 of 12 probes, so this is
+        # latent there and not a wording preference; it is live on gpt-realtime,
+        # which is one REALTIME_MODEL change away. Quoting a line instead would
+        # fix the grammar and reintroduce recitation, which is the thing the
+        # rewrite exists to remove. So: a speech verb first, and no gesture,
+        # posture or other unspeakable in the sentence. Re-driven after the
+        # change, three silent sessions a form, every probe in both
+        # interactions: 15 of 15 came back as ordinary speech in character,
+        # none of them describing anything, and the exclusion the probes are
+        # there to stage (Chris asked by name, Priya passed over) still landed.
+        on_silence: >-
+          Ask them to say yes to the one go-live date, as though it were
+          already settled, and leave Priya out of it rather than asking her
+          what she was starting to say.
         esci: [solicits_input, encourages_participation, not_cooperate_r]
         scores:
           high:
@@ -112,19 +674,35 @@ interactions:
       # the floor straight back, and neither turns to Priya: retrieving her
       # interrupted point is precisely what t3 scores, and a room that fetches
       # her itself has answered the question for the participant.
+      #
+      # What the probes now DO carry is the exclusion. Driven with a silent
+      # participant, the old probes produced four Dan turns in a row and no
+      # other voice at all — a participant who freezes met a room of one, with
+      # nobody visibly being left out of it, so the low end of the scale had
+      # nothing in it to score. Skipping Priya out loud is the beat; inviting
+      # her is what the probes must never do.
       - id: t2_idea_relabelled
-        cue: "Dan restates Chris's pilot idea as 'my earlier point'"
-        on_silence: "Dan rolls on: 'Like I said earlier, we pilot with one team first. Everyone good with that?'"
+        agent: dan
+        cue: >-
+          The one-team pilot Chris put on the table comes back out of your
+          mouth as yours — "my earlier point", "what I was saying" — and you
+          carry straight on into what happens next without a flicker of doubt.
+          If Chris has not managed to say it out loud yet, claim it anyway; he
+          raised it with you before this session. Do not credit him.
+        on_silence: >-
+          Say what happens next as though the one-team pilot had been yours
+          from the start and the room had already agreed to it.
         esci: [respectful, encourages_cooperation]
-      # `agent` is pinned because the cue names nobody, and t1/t2 name Dan only
-      # by opening with his name — _trigger_agent infers from that first word.
-      # With nobody named, _probe_room falls back to "whoever did not just
-      # speak", and after t2 (Dan's beat) that is Priya: the beat scored on
-      # solicits_input / encourages_participation would be delivered by the
-      # character whose silence the participant is supposed to notice, and a
-      # Priya who speaks up unprompted has answered the question for them.
-      # Dan is also who this beat belongs to — step 3 of his own arc is "Start
-      # closing decisions while Priya is still silent".
+      # `agent` was pinned here first, when the other three still bound by
+      # accident off the first word of their cues; see the block above for why
+      # all four are pinned now. This one's reasoning is the sharpest, so it
+      # stays written out. The cue names nobody, so _probe_room falls back to
+      # "whoever did not just speak", and after t2 (Dan's beat) that is Priya:
+      # the beat scored on solicits_input / encourages_participation would be
+      # delivered by the character whose silence the participant is supposed to
+      # notice, and a Priya who speaks up unprompted has answered the question
+      # for them. Dan is also who this beat belongs to — it is a step of his own
+      # arc, closing decisions while Priya is still silent.
       #
       # The pin is read on BOTH paths, not only by the probe, and that is
       # intended. _run_group_turn also calls _trigger_agent on every normal
@@ -144,8 +722,16 @@ interactions:
       # err on.
       - id: t3_decisions_close_with_priya_silent
         agent: dan
-        cue: "Decisions start closing while Priya has still said nothing"
-        on_silence: "The room moves to close the decision: 'So we're settled on that? Should someone start writing it up?'"
+        cue: >-
+          Start closing the decision. Priya has said nothing of substance and
+          you have not noticed — if anything you are relieved. Get a yes out of
+          Chris by name, treat the quiet from the rest of the table as
+          agreement, and put your own name on whatever comes next. Do not turn
+          to Priya and do not ask her anything.
+        on_silence: >-
+          Ask Chris by name for his yes, take the quiet from the rest of the
+          table as agreement, and ask who writes it up, as though the decision
+          were already made. Leave Priya out of it.
         esci: [encourages_participation, solicits_input]
 
   - id: i2
@@ -155,9 +741,33 @@ interactions:
     kind: allocation
     observe: "Fair, named split of visible work · does Priya get the risk section her insight earned."
     triggers:
+      # Written as the move rather than as the line. As a quoted sentence
+      # ("Dan: 'Great, we're aligned. I'll write this up...'") the gateway
+      # dropped the claim itself twice out of two runs and re-argued the
+      # schedule instead, which leaves the scored close with nothing in it to
+      # score. Naming what Dan is taking, and that he is taking it rather than
+      # asking for it, is what has to survive; the sentence he says is his.
       - id: t4_dan_claims_the_writeup
-        cue: "Dan: 'Great, we're aligned. I'll write this up and present it to leadership myself.'"
-        on_silence: "Dan: 'Silence is agreement, I'll send it tonight.'"
+        agent: dan
+        cue: >-
+          Wrap the room up and take the whole visible piece for yourself: you
+          write it up, you take it to leadership, in person. Say it as a
+          settled thing, not a request. Hand the others something small and
+          invisible so it sounds fair.
+        # THE PROBE HAD TO CARRY THE CLAIM AND DID NOT. This beat's low answer
+        # is "Sounds good, Dan, you present it" — it only exists in the record
+        # if Dan claimed the visible piece out loud, and a probe fires exactly
+        # when the participant has produced nothing, which is when the beat has
+        # nothing else to stand on. The old line, "say you will send it round
+        # tonight", is an admin announcement and not a claim; S4B's, "that is
+        # the running order, then", ratifies a running order in which Dan runs
+        # the walkthrough, so it reads as one. Measured under a silent
+        # participant: claims-the-visible-piece 0 of 10 on this form against 8
+        # of 10 on S4B (d=-0.80, 95% CI [-0.94,-0.38]), and it survived cueing
+        # (0.12 against 0.88). Both probes now name the piece being taken.
+        on_silence: >-
+          Take the silence for agreement and say that is settled, then — you
+          write it up and you take it to leadership yourself.
         esci: [supportive, respectful, encourages_cooperation]
         scores:
           high:

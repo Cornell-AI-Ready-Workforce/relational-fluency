@@ -4,8 +4,8 @@ skill: "perspective taking"
 agent_name: "Sam"
 
 intro: |
-  You're a manager. One of your senior engineers — someone who used to be very
-  reliable — has missed three sprint commitments in a row. You've scheduled this
+  You're a manager. One of your senior engineers, someone who used to be very
+  reliable, has missed three sprint commitments in a row. You've scheduled this
   1:1 to address it. They just joined the call. Start when you're ready.
 
 system_prompt: |
