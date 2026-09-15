@@ -63,6 +63,23 @@ survey response to its four encounters. A participant who reopens the link
 lands back in the same run at the encounter they were on. The bare base URL
 without parameters stays researcher-only.
 
+## Adding a second deployer
+
+Never share `jinsook-cli` (it is AdministratorAccess). Give the person their
+own IAM user with deploy-scoped rights, and move Terraform state to the shared
+bucket so two laptops cannot hold diverging copies of what is deployed:
+
+```bash
+infra/scripts/add-deployer.sh <username>      # e.g. ben-cli; idempotent
+```
+
+The script prints the two follow-ups: `tofu init -migrate-state` (once, by
+whoever holds the current local state) and `aws iam create-access-key` (run
+it yourself; the secret shows once; hand it over on a secure channel, never
+email or chat). The new user has PowerUserAccess plus read-only IAM and the
+right to pass the two task roles; changes to IAM roles themselves still need
+an admin. They also need: access to the GitHub org repo, Docker, and OpenTofu.
+
 ## Before every deploy: is anyone mid-encounter?
 
 A rollout starts a new task and retires the old one about two minutes later,
