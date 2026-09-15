@@ -19,8 +19,13 @@ work rather than done here, because those files are owned elsewhere.
 """
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import struct
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -353,6 +358,136 @@ def test_dockerfile_ships_the_esci_item_bank():
     )
 
 
+# --------------------------------------------------------------------------
+# Line endings — asked of git, not inferred from the pattern list
+#
+# .gitattributes is a set of globs with a last-match-wins rule and a content
+# heuristic behind `text=auto`. Reading it tells you the intent; only `git
+# check-attr` tells you the decision, and only a checkout tells you the bytes.
+# These helpers ask git directly so the tests below assert outcomes.
+#
+# If this is not a git checkout (an unpacked tarball, say) the property is not
+# merely untested, it does not exist — there is nothing for attributes to act
+# on. That is a genuine "not applicable", so it skips with a reason. A missing
+# `git` binary inside a real checkout is a broken environment, not a
+# not-applicable, so it fails.
+# --------------------------------------------------------------------------
+
+_IN_GIT_CHECKOUT = (REPO_ROOT / ".git").exists()
+
+requires_git = pytest.mark.skipif(
+    not _IN_GIT_CHECKOUT,
+    reason=(
+        f"{REPO_ROOT} is not a git checkout, so .gitattributes governs nothing "
+        "here and there are no committed bytes to compare against"
+    ),
+)
+
+
+def _git(*args: str) -> bytes:
+    exe = shutil.which("git")
+    assert exe, (
+        "git is not on PATH, but this IS a git checkout — the line-ending "
+        "guarantees cannot be verified. Fix the environment rather than "
+        "skipping: a silently unverified checkout is how the PDFs broke."
+    )
+    return subprocess.run(
+        [exe, *args], cwd=REPO_ROOT, check=True, capture_output=True
+    ).stdout
+
+
+def _tracked_files() -> list[str]:
+    """Every path in the index, slash-separated (git's own form, on all OSes)."""
+    return [p for p in _git("ls-files", "-z").decode("utf-8").split("\0") if p]
+
+
+def _attributes(paths: list[str]) -> dict[str, dict[str, str]]:
+    """{path: {"text": ..., "eol": ..., "binary": ...}} straight from git.
+
+    Values are git's own words: "set", "unset", "unspecified", or the literal
+    value ("auto", "lf", "crlf"). Paths need not exist — check-attr answers for
+    a hypothetical path too, which is what lets the tests below probe for files
+    the repository does not have yet but will.
+    """
+    payload = "\0".join(paths).encode("utf-8")
+    exe = shutil.which("git")
+    assert exe, "git is not on PATH"
+    out = subprocess.run(
+        [exe, "check-attr", "--stdin", "-z", "text", "eol", "binary"],
+        cwd=REPO_ROOT,
+        input=payload,
+        check=True,
+        capture_output=True,
+    ).stdout.decode("utf-8")
+    fields = out.split("\0")
+    result: dict[str, dict[str, str]] = {p: {} for p in paths}
+    # -z output is a flat NUL-separated stream of (path, attribute, value).
+    for i in range(0, len(fields) - 2, 3):
+        result.setdefault(fields[i], {})[fields[i + 1]] = fields[i + 2]
+    return result
+
+
+_BLOBS: dict[str, bytes] | None = None
+
+
+def _blob_bytes(path: str) -> bytes:
+    """The bytes git holds for this path — not the working-tree file, which in
+    a clone made before .gitattributes landed can differ from them without git
+    saying so.
+
+    Addressed as `:<path>`, the index entry, because the index is what a
+    checkout materialises. HEAD:<path> would be the same object in a clean tree
+    and *missing* for a file added but not yet committed, which is a confusing
+    way to fail.
+
+    Read through one `git cat-file --batch` for the whole tree rather than a
+    subprocess per file: at ~180 tracked paths the per-process cost dominates
+    on Windows, and this job runs on nine CI cells.
+    """
+    global _BLOBS
+    if _BLOBS is None:
+        paths = _tracked_files()
+        exe = shutil.which("git")
+        assert exe, "git is not on PATH"
+        stdout = subprocess.run(
+            [exe, "cat-file", "--batch"],
+            cwd=REPO_ROOT,
+            input=("\n".join(f":{p}" for p in paths) + "\n").encode("utf-8"),
+            check=True,
+            capture_output=True,
+        ).stdout
+        # Each record is "<sha> <type> <size>\n" then exactly <size> bytes then
+        # "\n". Walk by the declared size — the contents are binary and may
+        # contain anything, newlines included, so nothing here may split lines.
+        blobs, pos = {}, 0
+        for p in paths:
+            nl = stdout.index(b"\n", pos)
+            size = int(stdout[pos:nl].split()[-1])
+            start = nl + 1
+            blobs[p] = stdout[start : start + size]
+            pos = start + size + 1
+        _BLOBS = blobs
+    return _BLOBS[path]
+
+
+def _blob_is_utf8_text(path: str) -> bool:
+    """Whether the committed bytes are text at all.
+
+    Deliberately NOT git's own heuristic, which is "a NUL byte in the first
+    8000". That heuristic is what mangled the PDFs: a PDF starts with an ASCII
+    header and a comment line, its first NUL can be well past 8000 bytes, so
+    `text=auto` classified all three as text and normalised their line endings
+    on the way in. Asking "does this decode as UTF-8" gets the PDFs right, and
+    is the property that actually matters — if it is not text, git must be told
+    so explicitly rather than left to guess.
+    """
+    try:
+        _blob_bytes(path).decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
 def test_line_endings_have_one_answer():
     """Without a .gitattributes, the committed bytes of a generated file depend
     on each contributor's core.autocrlf. docs/scenario-map.md is regenerated and
@@ -385,6 +520,165 @@ def test_line_endings_have_one_answer():
         "the *.bat rule must come after the `*` rule — for a given attribute "
         "the LAST matching pattern wins, so ordering is the override"
     )
+
+
+@requires_git
+def test_every_tracked_extension_is_accounted_for():
+    """`* text=auto eol=lf` is a catch-all, so "is everything covered?" cannot be
+    answered by reading the pattern list — it is answered by asking git, per
+    file, what it decided. The failure this guards is a tracked binary that no
+    `binary` line names: git's content heuristic then decides from the first
+    8000 bytes, and a file it guesses wrong about is newline-converted on
+    checkout. That is not hypothetical here — see the PDFs in
+    test_binary_files_survive_a_checkout_byte_for_byte."""
+    files = _tracked_files()
+    assert files, "no tracked files: is this a git checkout?"
+    attrs = _attributes(files)
+    # git reports `text` as one of: "auto" (the `*` catch-all), "set" (an
+    # explicit `text eol=...` pin), "unset" (what the `binary` macro expands
+    # to), or "unspecified" — and only the last means no rule matched.
+    unresolved = [p for p in files if attrs[p]["text"] == "unspecified"]
+    assert not unresolved, (
+        f"these tracked files match no rule in .gitattributes, so their line "
+        f"endings are whatever git guesses: {sorted(unresolved)}"
+    )
+    # And the converse, which is the half that actually bit. `text=auto` is a
+    # guess, and the guess is "is there a NUL in the first 8000 bytes" — a test
+    # a PDF passes, because its header and first comment are ASCII. So do not
+    # ask git whether it thinks a file is binary; ask whether it is text, and
+    # require anything that is not to be named.
+    unnamed = sorted(
+        path
+        for path in files
+        if attrs[path]["binary"] != "set" and not _blob_is_utf8_text(path)
+    )
+    assert not unnamed, (
+        f"these tracked files are not text, but no `binary` line in "
+        f".gitattributes names them: {unnamed}. Until one does, `text=auto` "
+        f"decides from the first 8000 bytes and a wrong guess silently "
+        f"rewrites their line endings — which is how the PDFs here broke. "
+        f"Add the extension to the binary block."
+    )
+
+
+@requires_git
+def test_things_a_shell_or_a_container_executes_are_pinned_to_lf():
+    """A CRLF shell script or Dockerfile fails as `bad interpreter` or as a
+    package name with a trailing CR — never as "your line endings are wrong".
+    These inherit LF from the catch-all, so this test is really guarding the
+    inheritance: it fails if someone narrows `*`, or extends the .bat/.cmd/.ps1
+    CRLF block by symmetry to .sh."""
+    for probe in (
+        "deploy.sh",
+        "scripts/entrypoint.sh",
+        "Dockerfile",
+        "agents/Dockerfile",
+        "Dockerfile.dev",
+        ".env",
+        ".env.example",
+        "agents/.env.example",
+    ):
+        got = _attributes([probe])[probe]["eol"]
+        assert got == "lf", (
+            f"{probe} would be checked out with eol={got!r}. Anything /bin/sh, "
+            f"docker build or `--env-file` reads must be LF on every platform."
+        )
+
+
+@requires_git
+def test_windows_shells_still_get_crlf():
+    """The other half of the same promise: cmd.exe reads past the end of an
+    LF-only .bat and can execute a truncated command, and docs/OPERATIONS.md
+    names cmd.exe as an operator shell."""
+    for probe in ("run.bat", "run.cmd", "ops/collect.ps1"):
+        got = _attributes([probe])[probe]["eol"]
+        assert got == "crlf", f"{probe} would be checked out with eol={got!r}"
+
+
+@requires_git
+def test_a_fresh_checkout_matches_what_the_attributes_promise():
+    """Materialise the repository into an empty directory and check the bytes.
+
+    Reading .gitattributes tells you what was asked for; only a checkout tells
+    you what arrives, and the two came apart in this repository once already.
+    `git checkout-index --prefix` is the checkout without the clone: it writes
+    only into the temporary directory, and GIT_INDEX_FILE points at a copy so
+    nothing can touch the repository's own index.
+
+    What is asserted, per file, is the promise itself:
+      * binary   — bytes identical to the blob, no conversion at all;
+      * eol=lf   — no CRLF anywhere;
+      * eol=crlf — every LF preceded by a CR.
+    """
+    tmp = tempfile.mkdtemp(prefix="rf-fresh-checkout-")
+    try:
+        index_copy = Path(tmp) / "index-copy"
+        shutil.copyfile(REPO_ROOT / ".git" / "index", index_copy)
+        out = Path(tmp) / "tree"
+        out.mkdir()
+        env = dict(os.environ, GIT_INDEX_FILE=str(index_copy))
+        subprocess.run(
+            ["git", "checkout-index", "--all", "--force", f"--prefix={out.as_posix()}/"],
+            cwd=REPO_ROOT,
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+
+        files = _tracked_files()
+        attrs = _attributes(files)
+        problems = []
+        for path in files:
+            got = (out / path).read_bytes()
+            if attrs[path]["binary"] == "set":
+                want = _blob_bytes(path)
+                if got != want:
+                    problems.append(
+                        f"{path}: declared binary but a checkout produces "
+                        f"{len(got)} bytes where the blob has {len(want)} — "
+                        f"git converted a file it was told not to touch"
+                    )
+            elif attrs[path]["eol"] == "crlf":
+                if re.search(rb"(?<!\r)\n", got):
+                    problems.append(f"{path}: eol=crlf but a bare LF survived")
+            else:
+                if b"\r\n" in got:
+                    problems.append(
+                        f"{path}: eol=lf but a checkout produces CRLF, so a "
+                        f"Windows tree is not byte-identical to a Linux one"
+                    )
+        assert not problems, "\n".join(problems)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@requires_git
+def test_binary_files_survive_a_checkout_byte_for_byte():
+    """The specific thing the previous test would have caught earlier.
+
+    The three tracked PDFs were committed before .gitattributes existed, under
+    core.autocrlf=true. Every checkout since re-inserted a CR before each of
+    their LF bytes, which shifts everything after the first one: `startxref`
+    still names offset 9429 while the xref table has moved, so a reader reports
+    a damaged file. git said nothing, because with `text` set both directions
+    of the conversion are "correct". `*.pdf binary` is the fix, and this asserts
+    it holds — including that a PDF materialised from the index still parses,
+    which is a property no line-ending rule states directly."""
+    files = [p for p in _tracked_files() if p.lower().endswith(".pdf")]
+    assert files, "no PDF is tracked any more; drop this test or repoint it"
+    for path in files:
+        data = _blob_bytes(path)
+        assert data.startswith(b"%PDF-"), f"{path}: committed blob is not a PDF"
+        assert b"%%EOF" in data[-40:], f"{path}: committed blob has no trailer"
+        m = list(re.finditer(rb"startxref\s+(\d+)", data))
+        assert m, f"{path}: committed blob has no startxref"
+        offset = int(m[-1].group(1))
+        assert data[offset : offset + 4] == b"xref", (
+            f"{path}: startxref points at offset {offset}, which holds "
+            f"{data[offset:offset + 12]!r} rather than the xref table. That is "
+            f"what CR injection does to a PDF: the bytes are all still there, "
+            f"just moved, so the file looks fine to everything except a reader."
+        )
 
 
 # --------------------------------------------------------------------------
@@ -430,6 +724,101 @@ def test_ci_actually_runs_the_platform_test_suite():
     )
 
 
+# --------------------------------------------------------------------------
+# `import server` must not depend on how pytest was started
+# --------------------------------------------------------------------------
+#
+# The failure these two guard was worth nine red cells and zero tests run.
+# `server` is a top-level package living at the repository root and is never
+# installed. There is no root pytest.ini, pyproject.toml, setup.cfg or
+# conftest.py and no tests/__init__.py, so under pytest's default `prepend`
+# import mode the root reaches sys.path only if the invocation put it there:
+# `python -m pytest` does (cwd), the `pytest` console script does not (its own
+# bin directory). CI used the console script. Six modules raised
+# "ModuleNotFoundError: No module named 'server'" during collection and the job
+# failed having tested nothing, while the adjacent `python -c "import
+# server.app"` step passed — `python -c` adds the cwd.
+#
+# It is not a Linux or a 3.11/3.13 effect. It reproduces identically on
+# Windows/3.12, which is why it would have taken every cell at once, and why
+# every baseline ever quoted for this repository (all produced with
+# `python -m pytest`) missed it.
+
+
+def _pytest_without_cwd_on_path() -> list:
+    """An argv that starts pytest WITHOUT the current directory on sys.path.
+
+    That is the only property of `pytest tests` that matters here: the console
+    script sets sys.path[0] to its own bin directory, so the repository root is
+    never inserted. The script itself is used when one is findable — beside this
+    interpreter first, because a venv's Scripts/bin is often not on the PATH a
+    test subprocess inherits, then the PATH, which is where CI's is. Failing
+    both, `python -P -m pytest` reproduces the same condition exactly (-P, 3.11+,
+    suppresses the cwd prepend) so this guard never silently skips on a machine
+    whose layout happens to hide the script.
+    """
+    exe = "pytest.exe" if os.name == "nt" else "pytest"
+    beside = Path(sys.executable).parent / exe
+    if beside.is_file():
+        return [str(beside)]
+    found = shutil.which("pytest")
+    if found:
+        return [found]
+    return [sys.executable, "-P", "-m", "pytest"]
+
+
+def test_the_suite_collects_under_a_bare_pytest_invocation():
+    """The invocation CI actually used, run for real.
+
+    A static assertion about ci.yml would not have caught this and does not
+    guard it: the hazard is a property of sys.path, not of a YAML string, and it
+    bites an IDE runner and anyone typing `pytest` by hand just as hard. So this
+    runs the console script the way CI did and asserts collection completes.
+
+    Deliberately three modules and not the whole tree: these are the ones that
+    `from server import ...` at module scope without self-inserting the root,
+    and they are the exact casualties. Collecting all of tests/ would add
+    seconds to every run to prove the same thing.
+    """
+    targets = ["tests/test_app.py", "tests/test_api_blockers.py",
+               "tests/test_core_blockers.py"]
+    env = {k: v for k, v in os.environ.items()
+           if k not in {"RF_FIXTURE", "RF_FIXTURE_DIR", "DATA_DIR"}}
+    # PYTHONPATH would hand the answer to the thing under test.
+    env.pop("PYTHONPATH", None)
+    proc = subprocess.run(
+        [*_pytest_without_cwd_on_path(), *targets,
+         "--collect-only", "-q", "-p", "no:cacheprovider"],
+        cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=300,
+    )
+    assert "No module named 'server'" not in (proc.stdout + proc.stderr), (
+        "collection under a bare `pytest` cannot import the repository root.\n"
+        "tests/conftest.py is where that is fixed, once, for every invocation "
+        "form.\n\n" + (proc.stdout or proc.stderr)[-2000:]
+    )
+    assert proc.returncode == 0, (proc.stdout or proc.stderr)[-2000:]
+
+
+def test_ci_runs_pytest_through_the_interpreter():
+    """The second lock, on the invocation CI itself uses.
+
+    conftest.py makes either form work, so this is not what keeps the build
+    green — it keeps the *documented* command the same as the one every quoted
+    baseline was produced with, so a future reader comparing counts is
+    comparing like with like.
+    """
+    runs = " ".join(str(s.get("run", "")) for s in _matrix_job()["steps"])
+    suite = [line.strip() for line in runs.splitlines()
+             if re.search(r"\bpytest\s+tests\b", line)]
+    assert suite, "the matrix job must run `pytest tests`"
+    for line in suite:
+        assert re.search(r"\bpython\s+-m\s+pytest\s+tests\b", line), (
+            "run the suite as `python -m pytest tests`: the bare console "
+            "script does not put the repository root on sys.path, and "
+            f"`server` is imported from there.\n  {line}"
+        )
+
+
 def test_ci_python_versions_match_the_declared_support_range():
     """requirements.txt is where the supported range is stated. If CI and that
     statement disagree, one of them is lying to a researcher choosing an
@@ -444,6 +833,221 @@ def test_ci_python_versions_match_the_declared_support_range():
     assert stated == tested, (
         f"requirements.txt says {sorted(stated)}, CI tests {sorted(tested)}. "
         "An untested floor is not a floor, and an untested ceiling is a guess."
+    )
+
+
+# The modules that drive a page through node. Each one skips when node is
+# absent, which is correct on a laptop and wrong on a runner.
+NODE_HARNESS_MODULES = [
+    "tests/test_client_blockers.py",
+    "tests/test_browser_compat.py",
+    "tests/test_rating_console.py",
+]
+
+
+def test_the_node_harnesses_still_locate_node_the_way_ci_checks_for_it():
+    """Pins the premise of the two tests below.
+
+    CI proves node is present by asking shutil.which("node") — the same
+    question the harnesses ask. If a harness switched to `npx`, a bundled
+    runtime, or a hard-coded path, CI's check would go on passing while
+    answering about something else. This is the only place that link is
+    written down, so assert it rather than trust it.
+    """
+    for module in NODE_HARNESS_MODULES:
+        text = (REPO_ROOT / module).read_text(encoding="utf-8")
+        assert 'shutil.which("node")' in text, (
+            f"{module} no longer resolves node with shutil.which(). The CI "
+            "precondition step in .github/workflows/ci.yml asks that exact "
+            "question; update both together or the check stops meaning "
+            "anything."
+        )
+        assert "pytest.skip" in text, (
+            f"{module} no longer skips when node is missing — if it now fails "
+            "instead, that is better, and the CI precondition can go."
+        )
+
+
+def test_ci_installs_node_for_the_page_harnesses():
+    """Node was never installed by the matrix job, so all the Safari-facing
+    client coverage — the -webkit prefix guards, the MediaRecorder WebM/MP4
+    negotiation, the rating console harness — rested on the runner image
+    happening to ship a node. The day an image stops shipping one, every such
+    test skips and the build stays green: coverage lost without a sound, which
+    is the failure this suite exists to catch."""
+    steps = _matrix_job()["steps"]
+    node_steps = [s for s in steps if "setup-node" in str(s.get("uses", ""))]
+    assert node_steps, (
+        "the platform-tests matrix has no actions/setup-node step, so node is "
+        f"an inherited property of the runner image rather than a declared "
+        f"dependency — and {len(NODE_HARNESS_MODULES)} test modules need it"
+    )
+    version = str(node_steps[0].get("with", {}).get("node-version", ""))
+    assert re.fullmatch(r"\d+(\.\d+)*", version), (
+        f"node-version is {version!r}. Pin it the way the python matrix is "
+        "pinned: a harness that starts failing should be a change someone "
+        "made, not one that happened to them overnight."
+    )
+    # Installing node is no use after the tests have already run.
+    order = [i for i, s in enumerate(steps) if "setup-node" in str(s.get("uses", ""))]
+    tests_at = [
+        i for i, s in enumerate(steps) if re.search(r"\bpytest\s+tests\b", str(s.get("run", "")))
+    ]
+    assert order[0] < tests_at[0], "setup-node must come before the test step"
+
+
+def test_ci_fails_loudly_when_node_is_absent_instead_of_testing_less():
+    """setup-node declaring node is not the same as node reaching the
+    interpreter that runs pytest. Without a step that checks, a node installed
+    somewhere the test process cannot see it produces a green build over a
+    quieter test run — the exact shape of failure the audit found 252 times."""
+    steps = _matrix_job()["steps"]
+    runs = "\n".join(str(s.get("run", "")) for s in steps)
+    assert 'shutil.which("node")' in runs, (
+        "no step in the matrix job verifies node is reachable from python. "
+        "Add one that calls shutil.which('node') — the same call the harnesses "
+        "make — and exits non-zero when it comes back empty."
+    )
+    assert "sys.exit(" in runs or "exit 1" in runs, (
+        "the node check must exit non-zero; printing a warning into a green "
+        "log is indistinguishable from not checking"
+    )
+    # -rs makes every skip and its reason visible in the log, so coverage that
+    # goes missing for some other reason is at least readable.
+    assert re.search(r"pytest\s+tests\b[^\n]*-rs", runs), (
+        "run `pytest tests -q -rs` so the log lists what skipped and why"
+    )
+
+
+# --------------------------------------------------------------------------
+# Text output that must not depend on the machine that produced it
+#
+# Path.write_text()/open() in text mode with no encoding= use the machine's
+# locale — cp1252 on Windows, UTF-8 on macOS and Linux — and with no newline=
+# they translate "\n" to os.linesep. Both make the same script emit different
+# bytes on different machines, which is the same defect as the one
+# .gitattributes exists to fix, one layer up.
+# --------------------------------------------------------------------------
+
+# An unpinned *read* is a decode of bytes someone else wrote; an unpinned
+# *write* mints the divergence. Both matter, so scan both.
+_TEXT_IO_FUNCS = {"write_text", "read_text"}
+
+
+def _unpinned_text_io(path: Path) -> list[str]:
+    """['<file>:<line> <call>'] for text I/O with no explicit encoding.
+
+    An AST walk rather than a grep, because "encoding" appears in prose all
+    over this repository and a grep would be answering a different question.
+    """
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = None
+        if isinstance(node.func, ast.Attribute):
+            name = node.func.attr
+        elif isinstance(node.func, ast.Name):
+            name = node.func.id
+        if name not in _TEXT_IO_FUNCS | {"open"}:
+            continue
+        if name == "open":
+            # `open` as an attribute is ambiguous: Path.open() is file I/O,
+            # GroupRoom.open() and socket.open() are not. Every file open in
+            # this repository passes a mode, an encoding or both, so requiring
+            # at least one argument separates them cleanly. The cost, stated
+            # rather than hidden: a bare `p.open()` — an unpinned text read
+            # with no arguments at all — would not be seen. None exists today.
+            if isinstance(node.func, ast.Attribute) and not (node.args or node.keywords):
+                continue
+            # Binary mode has no encoding, so it is not in question.
+            mode = next(
+                (
+                    kw.value.value
+                    for kw in node.keywords
+                    if kw.arg == "mode" and isinstance(kw.value, ast.Constant)
+                ),
+                None,
+            )
+            if mode is None and len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+                mode = node.args[1].value
+            if isinstance(mode, str) and "b" in mode:
+                continue
+        if any(kw.arg == "encoding" for kw in node.keywords):
+            continue
+        out.append(f"{path.name}:{node.lineno} {name}()")
+    return out
+
+
+def test_the_reddit_analysis_outputs_do_not_depend_on_the_machine():
+    """01_descriptive_stats_and_topics.py writes two committed artefacts —
+    antiwork_descriptive_stats.json and antiwork_topics.json — that back the
+    situation taxonomy cited in server/runs.py's FORM_EXCLUSIONS rationale.
+
+    Unpinned, they were written in the locale encoding and with os.linesep line
+    endings. json.dumps defaults to ensure_ascii=True so the bytes were ASCII
+    either way, but the newline half was already live: antiwork_topics.json is
+    CRLF in a Windows working tree and LF in the committed blob, invisible only
+    because .gitattributes normalises text on comparison. The encoding half
+    goes live the first time anyone passes ensure_ascii=False, which on a
+    Reddit corpus full of emoji and smart quotes means mojibake on one platform
+    and a UnicodeEncodeError on another, from one script and one input.
+    """
+    target = REPO_ROOT / "reddit-analysis" / "notebooks" / "01_descriptive_stats_and_topics.py"
+    assert not _unpinned_text_io(target), (
+        f"unpinned text I/O in {target.name}: {_unpinned_text_io(target)}. "
+        'Pass encoding="utf-8" (and newline="" on a committed artefact).'
+    )
+    # And newline=, which encoding= does not cover: with the default, Python
+    # translates every "\n" to os.linesep on write. Asserted through the AST,
+    # not as a substring — the docstring beside the call says `newline=""` too,
+    # so a text search would keep passing after the keyword was deleted.
+    import ast
+
+    tree = ast.parse(target.read_text(encoding="utf-8"), filename=str(target))
+    writes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "write_text"
+    ]
+    assert writes, f"{target.name} no longer writes its artefacts with write_text()"
+    unpinned = [n.lineno for n in writes if not any(kw.arg == "newline" for kw in n.keywords)]
+    assert not unpinned, (
+        f"{target.name} lines {unpinned}: encoding alone still lets Windows "
+        "write CRLF where macOS and Linux write LF, from the same script and "
+        'the same input. Pin newline="" too, the way '
+        "tools/gen_scenario_map.py does."
+    )
+
+
+def test_the_remaining_unpinned_text_io_is_a_named_list_that_only_shrinks():
+    """A recorded gap, not a silent one.
+
+    reddit-analysis/notebooks/02_situation_taxonomy.py has the same unpinned
+    write and is owned elsewhere, so it is named here instead of being fixed or
+    quietly tolerated. The assertion is equality, so this fails if the problem
+    spreads AND if it is fixed — the second failure is the one that tells
+    whoever fixes it to delete this test.
+    """
+    known = {"02_situation_taxonomy.py:125 write_text()"}
+    found = set()
+    for path in sorted((REPO_ROOT).rglob("*.py")):
+        parts = set(path.parts)
+        if parts & {".venv", "venv", "__pycache__", "node_modules", ".git"}:
+            continue
+        if path.name == "01_descriptive_stats_and_topics.py":
+            continue  # asserted clean above
+        found.update(_unpinned_text_io(path))
+    assert found == known, (
+        f"the set of unpinned text reads/writes changed.\n"
+        f"  newly unpinned: {sorted(found - known)}\n"
+        f"  now pinned (delete them from `known`, or drop this test if the set "
+        f"is empty): {sorted(known - found)}"
     )
 
 

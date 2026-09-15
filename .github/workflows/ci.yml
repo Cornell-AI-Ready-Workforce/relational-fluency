@@ -57,6 +57,28 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+      # Node is a real dependency of this job, so declare it instead of
+      # inheriting it.
+      #
+      # Three test modules drive the participant and rater pages through node
+      # (tests/test_client_blockers.py, tests/test_browser_compat.py,
+      # tests/test_rating_console.py). Each calls shutil.which("node") and
+      # pytest.skip()s when it is absent — the right behaviour on a
+      # contributor's laptop, where node is not a runtime dependency of the
+      # study, and the wrong behaviour here. Until this step existed the job
+      # never installed node and passed only because the GitHub runner images
+      # happen to ship one. The day an image stops shipping it, every Safari
+      # -webkit guard, every MediaRecorder WebM/MP4 negotiation check and the
+      # entire rating-console harness would skip and the build would stay
+      # green: coverage disappearing without a sound, which is the failure mode
+      # this suite exists to prevent (tests/conftest.py).
+      #
+      # Pinned rather than `latest` for the same reason the python matrix is
+      # pinned: a harness that starts failing should be a change someone made,
+      # not one that happened to them overnight.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       # `shell: bash` on every multi-line step. The default shell on
       # windows-latest is pwsh, whose wrapper only checks the exit code of the
       # *last* line, so a failing install in the middle of a block would pass
@@ -77,12 +99,169 @@ jobs:
       - name: Import check
         shell: bash
         run: python -c "import server.app; print('server.app imports OK')"
+      # setup-node above declares node; this proves it reached the interpreter
+      # that runs the tests. The harnesses locate node with shutil.which(), so
+      # ask the same question the same way — a node that is installed but not on
+      # the PATH this step sees is exactly as useless as one that is missing,
+      # and would otherwise show up only as a quieter test run.
+      - name: Node harnesses can find node
+        shell: bash
+        run: |
+          python - <<'PY'
+          import shutil, subprocess, sys
+          node = shutil.which("node")
+          if not node:
+              sys.exit(
+                  "node is not on PATH for python's shutil.which(), so "
+                  "tests/test_client_blockers.py, tests/test_browser_compat.py and "
+                  "tests/test_rating_console.py would skip their page harnesses and "
+                  "this build would go green having tested less than it claims. "
+                  "Check the actions/setup-node step above."
+              )
+          print(node, subprocess.run([node, "--version"], capture_output=True, text=True).stdout.strip())
+          PY
       # The suite that guards participant-facing behaviour. No RF_FIXTURE is set
       # here, so the wave-backed guards skip by design (tests/conftest.py) rather
       # than failing on a path that exists only on one laptop.
+      #
+      # `-rs` lists every skip and its reason in the log a human reads; the
+      # junit report is the same run in a form the step below can count, and it
+      # is written even when pytest exits non-zero.
+      #
+      # `python -m pytest`, not bare `pytest`, and the difference is not
+      # cosmetic. `server` is a top-level package imported off the repository
+      # root and is never installed; `python -m` puts the invocation directory
+      # on sys.path, whereas the console script puts its own bin directory there
+      # instead. Written as `pytest tests`, this step raised
+      # "ModuleNotFoundError: No module named 'server'" during collection on all
+      # nine cells and ran zero tests — while the "Import check" step above
+      # stayed green, because `python -c` does add the cwd. tests/conftest.py
+      # now inserts the root itself so either form works; this is the second
+      # lock on the same door, and it makes this step agree with how every
+      # quoted baseline for this repository was actually produced.
       - name: Platform test suite
         shell: bash
-        run: pytest tests -q
+        run: python -m pytest tests -q -rs --junitxml=platform-tests.xml
+      # An error is not a failure, and telling them apart is the whole reason
+      # this step exists.
+      #
+      # tests/test_app.py's `fakes` fixture used to hand-write a five-column
+      # `sessions` table. The app's startup hook then ran the real
+      # init_storage() against it, CREATE TABLE IF NOT EXISTS left the stub
+      # alone, and the CREATE INDEX on sessions(participant_id) after it raised
+      # — so 108 tests, the entire researcher and rater API surface, errored
+      # during setup on any machine without the private fixture wave. That is
+      # every machine here. All nine cells were red for a reason everyone had
+      # stopped reading, which is exactly how the next real regression gets
+      # waved through: it arrives inside noise that is already being ignored.
+      # pytest's exit code cannot say "108 tests never ran" any differently from
+      # "one assertion failed", so say it here, separately, and name them.
+      #
+      # The second half is the skip roster, for the same reason in the opposite
+      # direction: a skip is coverage that did not happen, and the only skips
+      # this job is entitled to are the wave-backed ones. node comes from
+      # setup-node and git from actions/checkout, so a skip mentioning either is
+      # a harness that stopped running rather than a guard doing its job. An
+      # unrecognised reason fails here on purpose — adding a pattern to ALLOWED
+      # is then a sentence somebody writes deliberately, the same contract
+      # EXPECTED_V3 carries in the scenario job below.
+      #
+      # It runs when the suite went red, because the split between "errored at
+      # setup" and "genuinely failed" is needed most exactly then; not when the
+      # job was cancelled, which should read as cancelled rather than as a
+      # missing report. A missing report is otherwise a claim this step cannot
+      # make, so it says so and fails rather than passing on an absence.
+      - name: No test errored, and every skip says why
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import collections, sys, xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          # Skip reasons and assertion messages in this suite are written
+          # with em dashes. On windows-latest python's default stdout
+          # encoding is the ANSI codepage, and one of those characters
+          # would end this step in a UnicodeEncodeError instead of a
+          # report, on the one runner most likely to be reporting a real
+          # path problem.
+          sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+          sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+          # Substring, lowercased. Each line is a category of skip this job
+          # expects to see; anything else stops the build.
+          ALLOWED = (
+              "recorded wave",      # tests/conftest.py NO_WAVE_REASON, and the
+              "the wave",           # guards that word their own version of it
+              "this wave",
+              "session index at",
+              "rf_fixture",
+              # A parametrisation whose only source of cases is the wave.
+              # pytest's own wording, and it should grow a stated reason.
+              "empty parameter set",
+              # A red-before guard that has outlived its own defect. These
+              # compare the shipped page against the one in HEAD and exist to
+              # prove a fix was needed; once that fix IS HEAD there is no
+              # before left to fail, and the honest report is a skip saying so
+              # rather than a pass asserting nothing. They retire themselves the
+              # moment their commit lands, which is why this job sees them on a
+              # committed tree and not in the working copy that wrote them.
+              "there is no before left to fail",
+          )
+
+          report = Path("platform-tests.xml")
+          if not report.is_file():
+              sys.exit("platform-tests.xml was never written: pytest did not run "
+                       "to completion, so nothing here can be certified.")
+
+          root = ET.parse(report).getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          total = int(suite.get("tests", 0))
+          n_err = int(suite.get("errors", 0))
+          n_fail = int(suite.get("failures", 0))
+          n_skip = int(suite.get("skipped", 0))
+          print(f"{total} collected: {total - n_err - n_fail - n_skip} ran clean, "
+                f"{n_fail} failed, {n_err} errored, {n_skip} skipped")
+
+          errored, skips = [], collections.Counter()
+          for case in suite.iter("testcase"):
+              err = case.find("error")
+              if err is not None:
+                  first = (err.get("message") or "").strip().splitlines()
+                  errored.append(f"{case.get('classname')}::{case.get('name')}"
+                                 f"  {first[0] if first else 'no message'}")
+              skipped = case.find("skipped")
+              if skipped is not None:
+                  # Keyed on the whole reason and truncated only for the
+                  # printout: a wave guard whose wording explains itself at
+                  # length would otherwise be judged on its first 120
+                  # characters and fail this step for being verbose.
+                  skips[" ".join((skipped.get("message") or "").split())] += 1
+
+          print("\nskipped, by reason:")
+          for reason, count in skips.most_common():
+              print(f"  {count:>4}  {(reason or '(no reason given)')[:120]}")
+
+          bad = []
+          if errored:
+              bad.append(f"{len(errored)} test(s) errored rather than ran:")
+              bad.extend(f"    {line}" for line in errored[:25])
+              if len(errored) > 25:
+                  bad.append(f"    ... and {len(errored) - 25} more")
+              bad.append("  An error is a test that never got to run. Fix the "
+                         "setup, do not read past it.")
+          unknown = [r for r in skips if not any(p in r.lower() for p in ALLOWED)]
+          if unknown:
+              bad.append("skipped for a reason this job does not expect:")
+              bad.extend(f"    {skips[r]:>4}  {(r or '(no reason given)')[:120]}"
+                         for r in unknown)
+              bad.append("  Either it should run on a CI runner (node, git and "
+                         "every pinned dependency are here), or its wording "
+                         "belongs in ALLOWED above, added deliberately.")
+          if bad:
+              print("\n".join(bad), file=sys.stderr)
+              sys.exit(1)
+          PY
 
   # Instrument integrity. Not platform-specific, so one cell is the right amount
   # of CI: these steps read scenario YAML and regenerate a markdown table. The
@@ -113,10 +292,18 @@ jobs:
           from pathlib import Path
           from server import scenarios, scenarios_v3
 
-          # The eight study forms. This literal is the contract: if a spec stops
+          # The ten study forms. This literal is the contract: if a spec stops
           # loading, or a new one is added, CI fails until someone updates this
           # line deliberately. A study scenario must never vanish quietly.
-          EXPECTED_V3 = {"S1A", "S1B", "S2A", "S2B", "S3A", "S3B", "S4A", "S4B"}
+          #
+          # Updated deliberately for the third form of every construct: S1 C,
+          # S2 C, S3 C and S4 C. All four constructs now carry three forms, so a
+          # second attempt can draw one the participant has not seen. This line
+          # is the thing that notices if one of them ever stops loading, and it
+          # is not the place that gets papered over -- if a form is deliberately
+          # retired, delete it here in the same commit that retires it.
+          EXPECTED_V3 = {"S1A", "S1B", "S1C", "S2A", "S2B", "S2C",
+                         "S3A", "S3B", "S3C", "S4A", "S4B", "S4C"}
 
           bad = []
 
