@@ -1,22 +1,33 @@
 # Scenario design (Research Note v3, 2026-08-11)
 
-Authoritative structure for the eight encounters. Source: *Relational Fluency
-Research Note v3*, slides 7–14.
+Authoritative structure for the encounters. Source: *Relational Fluency
+Research Note v3*, slides 7–14. The Research Note specified eight; the bank now
+holds **twelve**, three forms per construct, and this document has been brought
+up to what is compiled.
 
-## One skeleton per construct, two parallel variants
+## One skeleton per construct, three parallel forms
 
-Variants exist to measure improvement: **attempt 1 → feedback → attempt 2 on the
-other variant**. That only works if the variants are parallel forms of the same
-measurement task, so A and B share:
+Forms exist to measure improvement: **attempt 1 → feedback → attempt 2 on a form
+the participant has not met**. That only works if the forms are parallel forms
+of the same measurement task, so A, B and C share:
 
 - the same trigger sequence
 - the same ESCI item map
 - the same rubric and difficulty
 
 Δ across attempts is then skill change, not an easier scenario. A pilot checks
-difficulty equivalence; form order is counterbalanced. This settles the deck's
-open question "same scenario twice, or a parallel form?" — attempt 2 runs the
-other variant. A third variant per construct can be added on the same skeleton.
+difficulty equivalence; form order is counterbalanced.
+
+**Attempt 2 does not run "the other variant".** That phrasing is from the
+two-form design and it is now a defect rather than a description: with three
+forms there is no "the other" one, and the `parallel_form:` scalar each spec
+carries names only the sibling it was *written to match*. It is provenance.
+**The routing authority is `server/scenarios_v3.parallel_forms()`**, which
+returns every other form of the construct; `server/runs.sibling_run` chooses
+from that list, rotating on attempt 1's run id so no form is unreachable, and
+pins the result PER SLOT so a restricted arm can serve a construct's unseen form
+and one it has met rather than the same conversation twice. Nothing may route on
+`parallel_form:` and nothing may count forms from this document.
 
 ## Two structural rules that drive the implementation
 
@@ -49,7 +60,7 @@ participant ("The participant is a senior analyst at…"), and leave their lever
 out — an actor who knows it cannot play the encounter honestly.
 
 None of the three is required and none is validated, so a spec loads and compiles
-without them; today none of the eight defines `actor_setup`. Note also that
+without them; today none of the twelve defines `actor_setup`. Note also that
 authoring one changes only what the *actors* see. The debrief judge and the
 steering controller read the unredacted retelling of `setup` instead, because
 they reason about the encounter rather than perform in it, and the leverage is
@@ -62,7 +73,7 @@ scoreable behavior rather than missing data. The runner therefore needs a
 no-speech timeout that prompts the agent to probe, not just a silence detector
 that closes turns.
 
-## The eight encounters
+## The twelve encounters
 
 Interaction mode matters: **1:1** is one character at a time; **group** is
 several characters in one live room, where the dynamics between them (talking
@@ -72,20 +83,27 @@ over, relabelling ideas) are themselves the measurement.
 |---|---|---|---|---|---|
 | Conflict Management | A | Taken credit | Riley (colleague, pushes) · Sam (peer) | 1:1 — Riley corners you | 1:1 — hallway run-in with Sam |
 | Conflict Management | B | Hostile after-hours message | Mel (urges reply-all) · Drew (sender) | 1:1 — Mel pings you first thing | 1:1 — coffee-machine run-in with Drew |
+| Conflict Management | C | Blamed in front of the manager | Nadia (was in the room, pushes) · Wes (told it as his) | 1:1 — Nadia catches you about Tuesday | 1:1 — Wes stops by your desk |
 | Influence | A | Promised raise & competing offer | Morgan (budget-constrained manager) | 1:1 — making the case | 1:1 — the deflection ladder |
 | Influence | B | Hybrid under an RTO mandate | Sasha (manager squeezed from above) | 1:1 — making the case | 1:1 — the deflection ladder |
+| Influence | C | Stopping the Monday pack | Imani (manager exposed, not squeezed) | 1:1 — making the case | 1:1 — the deflection ladder |
 | Inspirational Leadership | A | After resignations | Alex (cynic) · Jordan (disengaged) · Casey (anxious junior) | **group — team meeting** | 1:1 — brief one-on-ones |
 | Inspirational Leadership | B | After a commission cut | Toni (cynic) · Lee (disengaged) · Ari (anxious junior) | **group — team meeting** | 1:1 — brief one-on-ones |
+| Inspirational Leadership | C | A system nobody asked for | Bex (cynic) · Rafa (disengaged) · Noor (anxious junior) | **group — team meeting** | 1:1 — brief one-on-ones |
 | Teamwork | A | Planning an internal rollout | Priya (excluded) · Dan (dominates) · Chris (neutral) | **group — 4-person working session** | **group — the close** |
 | Teamwork | B | Preparing a client presentation | Priya · Dan · Chris | **group — working session** | **group — the close** |
+| Teamwork | C | Writing up the outage | Yara (excluded) · Hugo (dominates) · Finn (neutral) | **group — 4-person working session** | **group — the close** |
 
-**All eight are authored and compiled** into `scenarios/v3/` (`S1A S1B S2A S2B
-S3A S3B S4A S4B`). Being in the bank is not the same as being assignable,
-though: **S1-A must not be served in a session that also contains S4.** Both
-turn on someone taking credit for the participant's work, so pairing them makes
-the Conflict Management and Teamwork measures bleed into each other. Every
-session contains S4, so the S1 form a study participant gets is **B** (the
-canonical spec also allows C, which is not compiled yet). See "Variation
+**All twelve are authored and compiled** into `scenarios/v3/` (`S1A S1B S1C
+S2A S2B S2C S3A S3B S3C S4A S4B S4C`). Being in the bank is not the same as
+being assignable, though: **S1-A must not be served in a session that also
+contains S4.** Both turn on someone taking credit for the participant's work, so
+pairing them makes the Conflict Management and Teamwork measures bleed into each
+other. Every *full* session contains S4, so a study participant on the
+unrestricted arm gets **S1-B or S1-C** — which is what the C forms bought: while
+the bank held two, the exclusion left the unrestricted arm one Conflict
+Management form and no contrast at all. S1-A still reaches participants on the
+one-to-one arm, which carries no Teamwork. See "Variation
 assignment" in `reddit-analysis/scenarios/scenario-specifications.md`. The rule
 is enforced rather than left on paper: `FORM_EXCLUSIONS` in `server/runs.py`
 carries it as data and `runs.create` corrects any draw that violated it, noting
@@ -129,5 +147,6 @@ and should be carried into the scenario files rather than left in the deck.
    ESCI item ids, so the steering log shows which trigger produced which
    response. This is what makes an encounter scoreable.
 4. **Probe-on-silence** belongs in the runner alongside turn detection.
-5. **Variant pairing** must be modelled so the RCT can serve the other variant
-   at attempt 2, with counterbalanced order.
+5. **Form pairing** must be modelled so the RCT can serve a form the
+   participant has not met at attempt 2, with counterbalanced order. Not "the
+   other variant": see the correction at the top of this document.

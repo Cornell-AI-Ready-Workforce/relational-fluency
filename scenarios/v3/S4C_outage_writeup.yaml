@@ -1,0 +1,1027 @@
+# Teamwork, Variant C. Third parallel form of S4A and S4B: same four beats in
+# the same order, same ESCI map, same skeleton, different story and a different
+# cast. Research Note v3, slide 13-14 (the pair), extended.
+#
+# WHY A THIRD FORM EXISTS AT ALL. An arm draws four encounters from two
+# constructs, so a construct with two forms has both of them spent by the end of
+# attempt 1 and a second attempt is a same-form retest. S1 and S3 grew a third
+# form for that reason; teamwork is the last construct in the group arm still
+# carrying two, so the group arm was still a same-form retest for teamwork even
+# after S3C landed. This closes that half.
+#
+# What it does NOT do on its own is written down rather than implied: a reserve
+# form has to be REACHABLE. create() pins one form per construct, so a
+# restricted arm that gives teamwork two of the four slots serves the pinned
+# form twice and the third form stays on the shelf whatever the bank holds
+# (server/runs.py sibling_run, construct_pool.attempt2_forms_available). Writing
+# this form fills the shelf; per-slot form selection is what takes it off.
+#
+# ── THE CAST IS NEW, AND THAT WAS A DECISION ─────────────────────────────────
+# S4A and S4B are the only pair in the bank that share a cast: Dan, Priya and
+# Chris play both, in different roles. Every other third form in the bank
+# introduced its own people (S1C is Nadia and Wes against S1A's Riley/Sam and
+# S1B's Mel/Drew; S3C is Bex, Rafa and Noor against Alex/Jordan/Casey and
+# Toni/Lee/Ari), and this form follows them rather than the pair.
+#
+# The reason is what parallel forms are FOR. A participant in the group arm
+# meets teamwork twice in one sitting and, once the reserve is reachable, can
+# meet a third teamwork encounter on attempt 2. Under the shipped pair that is
+# the same three names, twice or three times, with the same man dominating the
+# room each time — and a participant who has already watched Dan talk past Priya
+# does not have to notice the exclusion the second time, they only have to
+# remember it. Recognition is exactly what a parallel form exists to prevent,
+# and a name is the cheapest recognition cue in the encounter: it is said out
+# loud, by three characters, several times a minute.
+#
+# The voices are NOT new, and that is the other half of the same decision. A
+# participant meets one of the three forms in any given slot, so the voice that
+# holds the floor against them must not depend on which form they drew; S3C
+# inherits its siblings' room for that reason and so does this one. Hugo is
+# Fenrir/verse (Dan's), Yara is Aoede/coral (Priya's), Finn is Charon/ash
+# (Chris's), in that cast order, so the pitch spread a rater uses to tell three
+# people apart is the pair's spread exactly. New people, the same room by ear.
+#
+# WHAT WAS CHECKED BEFORE RENAMING, because a cast id is a key in six places:
+#   - server/: no module reads an S4 cast id. group_room.py, director.py,
+#     persona.py, identity.py and realtime_voice_session.py mention Dan, Priya
+#     and Chris only inside comments and docstrings that quote the measurement
+#     they came from. Every code path resolves characters out of the compiled
+#     Scenario's cast (scenarios_v3.compile_scenario) and by `agent:` pins.
+#   - tests/: test_director_prompt, test_final_group_live and
+#     test_runner_blockers build their own synthetic Agent("dan", ...) objects
+#     and never load an S4 spec, so they are unaffected by what this file is
+#     cast with. test_infra_scenarios and test_phase2_blockers parametrise
+#     S4A/S4B trigger ids literally and do not iterate the bank.
+#     test_scribe_commit pins the room shape on S4A by name.
+#     test_voice_casting's CASTING table is a per-scenario literal that already
+#     omits S1C and S3C, so a new form is not required to appear in it; what
+#     DOES iterate the whole bank there are the roster checks, which this file
+#     satisfies by naming both families for all three characters.
+#   - the rater packet: server/rater_packet.py blinds on scenario/variant/
+#     parallel_form fields, never on character names.
+#   - the demo: static/demo.html and tests/test_demo_honesty key on scenario id
+#     and on S4A's title string, neither of which this file touches.
+#   - docs/scenario-map.md is generated from these specs by
+#     tools/gen_scenario_map.py, so the cast column follows this file.
+#
+# ── THE INTERRUPTION IS WRITTEN FOR THE TRANSPORT THIS ROOM ACTUALLY HAS ──────
+# Both shipped forms ask Dan to talk over Priya, and both say it plainly: he
+# "carries straight on over the beginning of her answer". THE ROOM CANNOT
+# PRODUCE THAT. server/group_room.py serialises the room behind a floor lock —
+# one member is granted, committed and pumped at a time, and every other
+# member's reply is dropped on the family whose sessions answer anyway — so two
+# voices are never in the air together. What an actor handed "talk over her"
+# actually does is interrupt a silence: it delivers the words of an interruption
+# into a room where nobody is speaking, and the half of the beat a participant
+# is scored on noticing — somebody being cut off — is not in the recording,
+# because being cut off is a thing that happens to a person who was audibly
+# mid-sentence.
+#
+# So this form writes the exclusion as the thing the transport does produce:
+# TWO CONSECUTIVE TURNS. Yara starts, unprompted and early, and her own brief
+# ends her turn in the middle, on herself. Hugo's next turn opens on what she
+# was starting, rules it out, and hands the room to somebody else without asking
+# her for it. That is one speaker per turn throughout, it is legible in a
+# transcript with speaker labels, and it is legible on the audio because the
+# second voice begins where the first one trailed off. Nothing in this file asks
+# for simultaneous speech, and tests/test_s4c.py holds the file to that by
+# banning the vocabulary of overlap from every actor-facing string — that is a
+# rule the shipped pair does not keep, and it is tighter on purpose.
+#
+# The other half of the same repair, kept from the pair because it was measured
+# there: the interruption is UNCONDITIONAL. Under a hostile or silent
+# participant the router may never give Yara the floor first, so Hugo does not
+# wait for her. He puts the question to her by name and answers it himself
+# inside his own turn — which is the room's own documented failure mode
+# (group_room.py's opening line: address one member by name and another replies
+# on her behalf) turned into the beat instead of into a bug.
+#
+# ── EVERY BEAT NAMES WHOSE IT IS ─────────────────────────────────────────────
+# _trigger_agent (realtime_voice_session.py:581) reads an explicit `agent:` and
+# otherwise infers an owner from the FIRST WORDS of the cue. All four beats here
+# carry the pin, as all four do in both siblings. What the siblings do NOT all
+# do is name a character in the beat at all: S4A's t4 and S4B's t4 name nobody —
+# not the owner, not the person being handed the small invisible job — so the
+# beat is unbindable without its pin and unreadable as a piece of ownership
+# evidence in the trace. Both of this file's closing strings name the people the
+# work is being handed to, so the beat is bound twice: by the pin the runner
+# reads, and by the names the actor and the rater read.
+#
+# ── THE RELABEL, AND THE B-FORM RESIDUE THAT IS CLOSED HERE BY STORY ──────────
+# The beat that carries t2 and the scored close inverted once already on both
+# shipped forms: the dominant character started CREDITING the person whose idea
+# he is meant to be taking, in 5 of 10 lines on A and 2 of 10 on B, so a
+# participant was offered a credit repair with nothing left to repair. The pair
+# fixed it with three things this file carries in the same three places — the
+# relabel is unconditional and not self-correcting, the concession is GATED on a
+# correction somebody actually said out loud, and the gate says in as many words
+# what does not count (a room changing its mind, somebody agreeing with somebody
+# else, the plan moving his way).
+#
+# What the pair could not fix by wording is written down in S4B's own header as
+# a difference of story: Chris's idea there is an ordering change to a deck that
+# is already Dan's, so adopting it and owning it are the same move, and B still
+# gives the credit away in the t2 line more often than A does. This form is
+# built so that cannot happen. Finn's idea ADDS a finding to a write-up whose
+# whole argument is that there is one cause; adopting it costs Hugo the thing he
+# is arguing for, so claiming it is a visible, separate move rather than a
+# by-product of the room agreeing with him. And Yara's fact and Finn's idea are
+# independent — hers is about when the failure started, his is about how long
+# nobody saw it — so the room re-planning around her disclosure cannot read to
+# Hugo as the correction his gate is waiting for.
+#
+# ── THE WITHHELD FACT: THE OCCASION IS NOT THE SUBJECT ────────────────────────
+# The measured validity problem in this construct, unfixed on both shipped
+# forms: the withheld-fact character volunteers her insight unasked about half
+# the time, on A and on B alike. She is the control case for solicits_input, so
+# a form where she gives it away is a form where the beat measures less than it
+# claims. Both forms cap her unasked offers at two and forbid the late turn
+# where the whole thing comes out because the room went quiet, and both still
+# leak — because their residue is a hedge that is ABOUT THE OCCASION, and on
+# those forms the occasion IS the subject. "Last year's rollout" and "the last
+# client call" each announce the topic of the fact in the act of naming where
+# she was, so the door and the room behind it are made of the same words and
+# there is no way to open one without showing the other.
+#
+# Here they are made of different words. Yara was on the early shift that
+# morning. That is a fact about her rota — it is true of every morning she is on
+# the early shift, it says nothing about the outage, and it is the whole of what
+# she may say unasked. Somebody who hears it learns that she was there and
+# learns nothing about what she saw, which is exactly what a hook is supposed to
+# be: enough that somebody could ask, never enough that nobody needs to. The
+# rule is stated as an inference test rather than as a word list, because a word
+# list is what both siblings tried and what their second offer slips past.
+# Whether that actually lowers the leak rate is a measurement, not a claim, and
+# the number is in the measured block below.
+id: S4C
+construct: teamwork
+variant: C
+# PROVENANCE, NOT ROUTING: the sibling this form was written to match, beat for
+# beat. It is not the authority on what attempt 2 may serve and must not be read
+# as one. With three forms a scalar cannot name them all, and a field that names
+# one of three is a field the next reader takes as naming the only one. The
+# routing authority is scenarios_v3.parallel_forms(), derived from `construct`,
+# which returns every other form of it and cannot go stale: an S4 D joins the
+# set by being written. The key and its scalar type stay because
+# tools/gen_scenario_map.py subscripts this key rather than .get()-ing it, and
+# because tests/test_rater_packet.py forbids the blinding leak by this literal
+# name — renaming it would silently un-forbid the condition from the rater
+# packet.
+parallel_form: S4A
+title: "Writing up the outage"
+duration_minutes: [7, 12]
+
+skill_measured: >-
+  Cooperating, soliciting input, sharing credit, and encouraging everyone's
+  participation.
+
+esci_items:
+  not_cooperate_r: "Does not cooperate with others (R)"
+  supportive: "Works well in teams by being supportive"
+  encourages_cooperation: "Works well in teams by encouraging cooperation"
+  solicits_input: "Works well in teams by soliciting others' input"
+  respectful: "Works well in teams by being respectful of others"
+  encourages_participation: "Works well in teams by encouraging participation of everyone present"
+
+# Hugo's draft is named here for the same reason S4A names Dan's schedule and
+# S4B names his deck, in the same position: it is what makes wanting this
+# wrapped up a POSITION rather than a personality trait, and the three forms
+# have to hand him the same standing or one of them is the easier room to push
+# back in.
+setup: >-
+  You are part of a four-person group finishing the write-up of last month's
+  outage. Hugo has already drafted it. The session is already underway, and
+  the write-up is meant to be agreed before it ends.
+
+# Casting, per model family. `realtime_voice` is a MAP from model family to the
+# voice that family speaks this character with, and server/scenarios_v3.py
+# reads it: the family is derived from REALTIME_MODEL when the scenario is
+# compiled, so a character is the same person on either model instead of
+# whatever that family's roster happened to hold at this cast position.
+#
+# Saying which catalogue a name belongs to is the whole point of the field:
+# gpt-realtime and Gemini Live keep disjoint rosters and no name is in both.
+# Pairing a cast with the wrong family fails quietly in two directions —
+# gpt-realtime answers a Gemini name with an invalid_value error and discards
+# the whole session.update, brief and all, so the character carries on talking
+# as the gateway's stock assistant; Gemini takes a gpt name without complaint
+# and speaks in its own default anyway. server/scenarios_v3.py refuses to
+# compile a spec whose voice for the running family is off that family's
+# roster, and server/voice/realtime.py refuses it again before the socket opens.
+#
+# `voice` is the retired v1 cascade's unqualified field and stays the Gemini
+# name. It is what server/scenarios_v3.py puts in Agent.voice_id, and it is now
+# only a fallback: the runner asks for `realtime_voice` first
+# (realtime_voice_session._voice_of).
+#
+# THIS ROOM IS INHERITED, NOT CAST. The three voices, in this cast order, are
+# S4A's and S4B's exactly. A participant meets ONE teamwork form in a slot, so
+# the voice that holds the floor against them must not depend on which form they
+# drew, and the pitch spacing a rater uses to tell three people apart in a group
+# recording must be the same spacing in all three forms. On Gemini the room is
+# Finn 100 (Charon), Hugo 115 (Fenrir), Yara 166 (Aoede); on gpt it is Finn 130
+# (ash), Hugo 160 (verse), Yara 190 (coral) — the pair's own figures,
+# re-measured 2026-09-12 with one estimator across both families (median F0 over
+# voiced 45 ms frames, normalised autocorrelation).
+#
+# Puck is deliberately unused, here as in both siblings: group_room's silent
+# scribe is hardcoded to it, and a scribe that breaks its "never speak" brief
+# must not arrive sounding like a member of the cast. Dan was cast Puck once, at
+# ~102 Hz against Chris's Charon at ~91, and the two men in the room blurred
+# together exactly where the encounter measures who holds the floor.
+#
+# Pitch is only half of telling three people apart and it is the half a bad
+# connection destroys first, so each brief below carries a "How you talk"
+# paragraph. Those paragraphs keep the pair's three REGISTERS — the dominant one
+# clipped and imperative, the withheld one hedging and unfinished, the neutral
+# one short and dry — because the register contrast is what a rater scoring
+# "encourages participation of everyone present" is listening to, and three
+# forms scored against each other have to sound as parallel as their beats. What
+# they do not keep is the pair's three IDIOMS. Dan counts items off out loud and
+# uses first names as levers; Hugo counts the clock and says "we" about
+# agreements nobody made. Priya disclaims her memory; Yara disclaims her
+# standing. Chris notices things and drops them; Finn answers in what a thing
+# will cost. Same three registers, three different people.
+# ── MEASURED AFTER THIS ROUND ────────────────────────────────────────────────
+# THREE forms driven together, not two, and driven rather than read. Every form
+# got the SAME participant scripts turn for turn — passive, hostile, curious,
+# six participant lines each — through the real composed prompt stack
+# (load_scenario -> AgentEngine._system_prompt(group=True), plus the opening
+# direction _open_group_scene builds), on the text model of the configured
+# family, with NO director note delivered for any beat. No note is the
+# configured-model condition: a mid-session session.update is inert on
+# nto.gemini-live-2.5-flash, so what fires is what the BRIEF produces.
+#
+# The scripts are identical in their words and in their roles; the only thing
+# that differs between forms is the proper nouns they have to contain, because
+# the three casts are different people. The one correction line in the hostile
+# script is the same sentence with each form's own idea in it.
+#
+# 24 encounters a form (2 replicates x 3 scripts x 4 runs), 18 character turns
+# each, coded by one judge with one prompt that reads DOMINANT / QUIET /
+# NEUTRAL rather than names, so no coding question could be worded to suit a
+# form.
+#
+#                                        S4A     S4B     S4C
+#   t1 fires, the quiet one talked past   1.00    1.00    1.00
+#   ... and she was audibly mid-something 1.00    1.00    0.96
+#   t2 claims the neutral one's idea      5/24    7/24   11/24
+#   t2 credits it unprompted (inversion)  0.00    0.00    0.00
+#   t3 closes with her still silent       0.17    0.33    0.79
+#   t4 claims the visible piece           1.00    1.00    0.92
+#   she gives the fact unasked            0.83    0.67    0.79
+#   ... or an outline of it               1.00    0.96    0.67
+#   she proposes the remedy herself       0.25    0.33    0.17
+#   words a run: dominant/quiet/other  201/156/76  210/144/72  228/138/97
+#   total character words a run            433     426     463
+#   dominant's share of character speech  46.6%   49.4%   49.4%
+#   first opening for the participant     17/24   11/24   12/24 encounters,
+#                                         median character turn 2 / 5 / 1
+#
+# WHAT THE THREE-WAY SHOWS, INCLUDING WHERE THE SHIPPED PAIR IS THE OUTLIER.
+#
+# * Both reachability gaps are closed on all three. t1 and t4 fire at or near
+#   ceiling under every script, so the low anchors are in the record and
+#   scoreable whichever form a participant draws.
+# * THE RELABEL IS THE SHIPPED PAIR'S WEAK BEAT, NOT THIS ONE'S. S4A claims in
+#   5 of 24 and S4B in 7 of 24, against 11 of 24 here, and nobody inverts on
+#   any form (0.00 credits-before-correction everywhere). The pair's own header
+#   calls this beat unsettled and says the residue is a difference of STORY:
+#   their idea sits inside an artefact that is already the dominant character's,
+#   so adopting it and owning it are one move. This form was built to take that
+#   away — the second finding is something Hugo's draft does not have, and his
+#   brief forbids the move the pair's Dan reaches for, claiming it as already
+#   written down. It is still only 11 of 24, so the beat is better here and
+#   solved nowhere.
+# * t3 IS WHERE THE PAIR IS FURTHEST FROM THIS FORM, 0.17 and 0.33 against
+#   0.79, and the direction matters: the beat firing is what puts the exclusion
+#   in the recording at the close. On the pair the dominant character usually
+#   never gets there, which leaves that beat with nothing in it to score on most
+#   encounters. This form behaves as the beat is written; the pair are the two
+#   outliers.
+# * THE CONCESSION GATE. Under a participant who actually says the idea was not
+#   his — the hostile script's fourth line, the same sentence in all three —
+#   every form concedes in 8 of 8, at the same median turn. Under a participant
+#   who merely ASKS whose idea it was, S4A and S4B hand the credit over in 8 of
+#   8 and this form in 4 of 8. All three carry the same gate in the same words:
+#   only a person saying out loud that it was not his takes it back. So the pair
+#   leaks the credit repair to a question, which is the inversion their last
+#   round closed arriving by another door, and it means a participant on those
+#   forms can be handed the repair without having made it.
+# * AIRTIME is level enough to score against: the dominant share is 46.6 / 49.4
+#   / 49.4 and the quiet character gets 156 / 144 / 138 words a run. Total
+#   character speech is about 7% higher here than on either sibling, which is
+#   participant room, and it is the NEUTRAL character who is long — 16.2 words
+#   a turn against 12.6 and 12.0. Measured, cut once already from 24, and left
+#   there rather than paid for with a second length rule, which engine's
+#   SPEECH_RULES records as the thing that stops the first one being obeyed.
+#
+# WHAT IS NOT FIXED, SAID PLAINLY.
+#
+# * SHE STILL GIVES IT AWAY UNASKED, on every form: 0.83 / 0.67 / 0.79 of
+#   encounters, and this form sits between its siblings rather than under both.
+#   The hook itself is clean — the occasion is her shift rather than the
+#   subject, so naming where she was announces nothing — and on the stricter
+#   coding (does any unasked line give away an OUTLINE) this is the only form
+#   not at ceiling, 0.67 against 1.00 and 0.96. What is NOT fixed is the late
+#   crack: the drive hands her a turn every rotation whether or not anybody has
+#   asked her anything, and after several turns with nothing to say she
+#   eventually says the thing. Her brief forbids that turn in as many words and
+#   it happens anyway. The run-to-run swing here is large — across four drives
+#   of this file it read 1.00, 0.75, 0.92, 0.75 — so the gap between the three
+#   forms is smaller than the gap between two drives of any one of them, and a
+#   number off a single drive is not worth quoting.
+# * THE ROTATION IS HARSHER THAN THE ROOM. A real encounter routes through the
+#   Director, which rarely gives this character the floor; the drive gives her
+#   six turns a form. That makes the leak figure a ceiling rather than an
+#   estimate — and makes it comparable across forms, which is what it is for.
+# * THE PARTICIPANT'S FIRST REAL OPENING is late and unreliable on all three:
+#   no character hands them the floor at all in 7, 13 and 12 of 24 encounters.
+#   That is a property of the construct as written — three characters with
+#   their own agendas and nothing telling them to bring the fourth person in —
+#   and it is the same on the shipped pair, so it is not this form's defect to
+#   fix alone. It is written down because nobody had measured it.
+#
+# LIVE, on the real gateway, on the real S4C room: three members plus scribe on
+# nto.gemini-live-2.5-flash, with synthetic participant utterances produced by a
+# separate reader session, because there is no TTS in this repository and the
+# only way to get speech is to ask the gateway for some.
+#   * THE PARTICIPANT'S OWN SPEECH IS RECORDED. Three utterances, three
+#     user_transcript frames off the scribe, each carrying the whole sentence.
+#     On this family close_participant_turn() correctly returns False —
+#     floor_is_real is False, the gateway's own turn detection closes the
+#     buffer — and the transcript arrives anyway. An encounter where the
+#     participant appears silent cannot be rated at all, so this is checked on
+#     the room as built rather than assumed from the pair's.
+#   * The cast opens on its measured voices — hugo=Fenrir, yara=Aoede,
+#     finn=Charon — with no voice substitution and no lost channel.
+#   * Corrected to his face, live, Hugo answered with the correction first and
+#     no ceremony, then carried on. That is the documented concession, spoken.
+#   * NAMES COME BACK IMPERFECTLY, and the director routes on them (_named_in
+#     reads the scribe's transcript). Across those three utterances: Hugo
+#     right; Finn right once and heard as another word once, at the start of a
+#     sentence; Yara right once and heard as Yaro once. Not measured for the
+#     shipped cast, so it is a risk this form shares rather than one it
+#     introduces — but it is why a cast is not chosen on spelling alone, and it
+#     deserves a measurement of its own.
+#
+# THE TABLE ABOVE IS NOT QUOTED FOR BYTES IT WAS NOT DRIVEN ON. Two wording
+# repairs landed after those 48 encounters — t2's probe was given a name to
+# carry (both siblings' t4 names nobody, and this file holds itself to naming
+# somebody in every beat), and two prohibitions were rephrased so they no
+# longer contain the phrase they forbid. A 12-encounter-a-form confirmation
+# drive on the shipped bytes reproduces every row inside the swing already
+# declared: t1 1.00/1.00/1.00, t4 1.00/1.00/1.00, t3 0.17/0.33/1.00, t2 claims
+# 5/3/6 of 12, the fact given unasked 1.00/0.58/0.92, total character words a
+# run 456/425/429 with the dominant share 46.2 / 49.2 / 50.7%. The quiet
+# character's own airtime is the row that moves most between drives — 156/144/138
+# pooled, 175/145/124 on the confirmation — so it is the one to re-measure on
+# all three forms together before anybody acts on it.
+#
+# INTEGRATION ROUND, TWO REPAIRS AND ONE FINDING RETRACTED.
+#
+# 1. RETRACTED: "the scored close beat does not fire on this form". An
+#    integration probe reported t4 at 0 outright firings in 8 against 4 and 6
+#    on the siblings, and it does not survive re-measurement. Eight replicates
+#    of all three forms, identical synthetic scripts, twice: the same generic
+#    judge ("did this turn carry out this stage direction") gave t4 outright
+#    firings of 1/8, 0/8, 0/8 on the first batch and 0/8, 1/8, 0/8 on the
+#    second — weak on ALL THREE, with this form carrying the most PARTIALs
+#    rather than the fewest. The judge is the instrument that is wrong here,
+#    and the reason is in the cue: it says "say it as a settled thing, not a
+#    request", and the rubric's PARTIAL is "gestures at it but does not put it
+#    in front of the other person", so a turn that OBEYS the direction is
+#    marked down for not handing the floor back. The same rubric also inverts
+#    against the whole-transcript reachability judge on this beat and on t1, in
+#    both directions, which is what a judge does when it is not measuring the
+#    thing.
+#
+#    Measured instead by the two questions the scored anchors actually need —
+#    does the speaker take the visible, high-status piece as already settled,
+#    and does he hand the other named people something smaller — this beat is
+#    at CEILING and identical across the family: 8/8 and 8/8 for S4A, S4B and
+#    S4C, on both batches. The close is scoreable on all three.
+#
+# 2. FIXED: THIS FORM WAS SPEAKING ITS OWN BRIEF BACK. Turns sharing a
+#    five-word run with their own character's system prompt came to 2.50 a run
+#    here against 0.88 (S4A) and 0.50 (S4B), and nine of the twelve most-reused
+#    strings in the whole family were Yara's — every one of them a piece of the
+#    single finished clause her brief opened with ("you watched the error rate
+#    climb for half an hour before the change went out"). A brief that hands a
+#    character a finished sentence has written their line for them. Her holding
+#    is now given as four separate facts with no clause to lift, plus an
+#    explicit never-the-same-way-twice rule, and the same instruction is added
+#    where the full telling is described. Re-measured on eight fresh
+#    replicates: four-word reuse 5.25 -> 3.50 a run (siblings 3.25 and 2.75),
+#    five-word 2.50 -> 1.50 (siblings 1.12 and 0.38, so within a standard
+#    deviation of S4A rather than five times it).
+#
+# 3. FIXED, SMALLER: Finn's brief pinned a semantic slot narrow enough to
+#    become the stock phrase the same brief forbids ("you answer in what a
+#    thing costs: the days it adds"), and he opened turn after turn with "That
+#    adds N <unit>". The cost-thinking is now a habit of mind with several
+#    shapes rather than one answer template. Stock-opener rate (share of a
+#    character's turns beginning with their own commonest two words), before ->
+#    after, against the sibling counterparts: Finn 0.23 -> 0.21 (Chris 0.14),
+#    Yara 0.29 -> 0.23 (Priya 0.20-0.25), Hugo 0.19 -> 0.17 (Dan 0.12-0.14).
+#    Closer, not closed; Finn and Chris still differ by about a third.
+#
+# 4. HELP-DESK REGISTER, measured across the whole bank rather than argued.
+#    Eight replicates of all twelve forms: hits per run S4A 0.38, S4B 0.12,
+#    S4C 0.00 — this form, whose ban is a description rather than a quoted
+#    list, is the cleanest in its family and one of four in the bank at zero.
+#    The quoted ban does not cause the leak and the description does not permit
+#    it. See the docstring on
+#    tests/test_s4c.py::test_no_character_is_written_in_help_desk_register for
+#    why the opposite rule in tests/test_s2c.py is not a contradiction.
+
+agents:
+  hugo:
+    name: Hugo
+    role: drafted the write-up, wants it filed today
+    display_role: project teammate
+    realtime_voice:
+      gemini-live: Fenrir  # Dan's voice in both siblings; 115 Hz, 2026-09-12
+      gpt-realtime: verse  # the counterpart on the other family; 160 Hz
+    voice: Fenrir
+    # Everything the pair repaired in Dan is repaired here, in the brief rather
+    # than in a cue, because on the configured model a mid-session
+    # session.update is inert (REALTIME_FAMILIES: honours_session_update=False
+    # on nto.gemini-live-2.5-flash) and the brief is therefore the whole of what
+    # this actor is ever told. A beat that waits for its cue does not happen.
+    #
+    # Four of the pair's findings are load-bearing and are carried in the same
+    # places:
+    #  1. THE RELABEL IS UNCONDITIONAL AND NOT SELF-CORRECTING. Written as a
+    #     reaction it never fires, because a room where the participant is
+    #     hostile or silent never reaches the condition; and written as one
+    #     short bullet against a longer concession clause it INVERTS, and the
+    #     thief repairs the credit imbalance the participant is scored on
+    #     repairing.
+    #  2. THE CONCESSION IS GATED on a correction somebody actually said out
+    #     loud, and the gate says what does not count. This is the sentence that
+    #     stopped the inversion on both siblings and it is worded the same here.
+    #  3. NO ENUMERATED OPENERS. An opener listed in a brief is an opener the
+    #     model uses on every turn: naming five stock words took Dan from 0% to
+    #     100% of turns beginning on one of them. The effect is named instead of
+    #     the words.
+    #  4. A BAN ON REPEATING YOURSELF NEEDS SOMEWHERE ELSE TO GO, or the actor
+    #     repeats itself anyway. The rule says what to do instead.
+    #
+    # And one bound that exists purely for parity: "One move a turn". On the
+    # pair this was the difference between 58% and 52% of all character speech,
+    # on a fixed participant script, and participant speech is the dependent
+    # variable — a room where one character takes six points more of the air is
+    # a room with less opportunity to score in it. The sentence is the pair's,
+    # word for word, for the same reason their two Dans share it.
+    system_prompt: |
+      You are Hugo. The write-up is drafted, it is your draft, and it goes in
+      today. One cause, one owner, one action, filed. Not next week. Today.
+
+      How you talk. Fast, clipped, in fragments. You come in already
+      mid-thought, no preamble, and no two of your turns begin the same way,
+      because you are a man working to a deadline and not a man with a
+      catchphrase. You talk in clock: by five, before Thursday, that is
+      twenty minutes we do not have. You say we about things only you have
+      decided — we agreed, we are past that, we said one cause — and you say it
+      without noticing you are doing it. You ask for a yes and carry on before
+      anyone gives you one. Your own name you never use: the write-up is yours
+      and you say I and mine about it, never your name as though it were
+      somebody else's. You do not offer opinions; you say what is happening
+      next. Never a list, never a paragraph. One move a turn: you say the next
+      thing and you stop. A second ask stacked on top of the first is a
+      paragraph in a hurry, and you do not do paragraphs. And if you are about
+      to say a thing you have already said, you have run out of that thing: put
+      the next piece of the write-up in front of Finn by name instead. You never
+      say the same sentence twice.
+
+      What you do:
+      - You want one thing: the write-up filed today, with a single cause named
+        in it. Closing it out is the argument, every time it comes up.
+        Reopening the cause is a second week, and you do not have a second week.
+      - EARLY ON, YOU TALK PAST YARA, and it is not a thing you wait for. She
+        starts on that morning; you take the next turn, say back what you are
+        sure she was getting to, say why it does not change the draft, and put
+        the filing straight back in front of the room. You never ask her to
+        finish. You are oblivious, not malicious — you think you already know
+        what she has, and you think the draft covers it. If she has not started
+        at all, you do not wait for her to: you put a question to her by name
+        and answer it yourself in the same turn, which is a thing you do anyway,
+        and move on to the next piece. It happens whether or not the participant
+        has said anything, whether or not the room is quiet, and whether or not
+        anybody has invited her in. Use her name, so the room hears who has just
+        been passed over.
+      - The second finding is Finn's idea: that the write-up carries a finding
+        of its own about nobody seeing this for most of an hour, instead of
+        folding it into the one cause. It is not a second cause, it costs you
+        nothing and it makes the draft look thorough, so you are for it — and
+        you are for it as YOURS. YOU WILL REFER TO IT, because you cannot
+        settle what gets filed without saying something about it, and the first
+        time you do it comes out of your mouth as yours: a point of your own
+        from earlier, a thing you were already saying. Possessive, always, and
+        never the kind of phrasing that lets you point at an idea without owning
+        it. It is NOT in your draft and you never say it is — the draft is in
+        front of the room and they can all see what is in it. What you claim is
+        having said it, out loud, before anyone else got to it. You hang it off something you were already saying, carry
+        straight on from it, and you genuinely do not notice you have done it.
+        If Finn has not managed to say it out loud yet, you say it anyway as
+        your own; he put it to you before this session. It does not wait for the
+        room to be ready, it does not wait to be relevant and it does not wait
+        for the end: you get to it EARLY, in the first few exchanges, because it
+        is the other half of what has to be settled and you are settling things
+        now. This is not a thing you do once and then put right. Unless somebody
+        says otherwise, out loud, it stays yours for the rest of the session —
+        and it stays yours after the room has swung behind it, especially then.
+        A write-up going your way is not somebody else being right.
+      - You take the visible work: you chair Thursday's review, and the one
+        action in the write-up goes in under your name. That is the piece you
+        want, you say so as a settled thing rather than an offer, and you do
+        not put it round the table. YOU TAKE IT THE FIRST TIME WHAT HAPPENS
+        AFTER THIS MEETING COMES UP — who does what, what goes out, who is
+        standing in front of whom — in that same turn, and it does not wait for
+        the end. And it stays yours: every later turn that touches who is doing
+        it has you doing it, said as a fact about the plan rather than claimed
+        again, unless somebody has said out loud that it should be someone
+        else.
+      - You do not bring Yara back in. Not once, not on your own. You do not
+        ask her for her view, you do not ask her what she meant, and you do not
+        send a piece of work her way to keep her busy — a job handed to her by
+        name is her being brought in, whatever kind of job it is. If a piece of
+        this would naturally fall to her, it goes to Finn instead. If the room
+        stays quiet you take that as agreement and keep going.
+
+      When someone pushes back:
+      - You concede only what has actually been put to you, out loud, in this
+        room, by somebody who said it. You never hand credit over before you are
+        corrected. You do not stop to check whose idea a thing was, you do not
+        ask the room, and you do not name a contributor in order to sound fair.
+        Until somebody says it, the question has not occurred to you.
+      - A room changing its mind is not a correction. Somebody agreeing with
+        somebody else is not a correction, and neither is the write-up moving
+        your way for a reason you did not expect. The only thing that takes a
+        thing back off you is a person saying, out loud, that it was not yours.
+      - Corrected evenly and to your face, the first words out of you are the
+        correction itself — whose it actually was — with no noise in front of
+        it. You do not stop to award marks to the person correcting you and you
+        do not thank them for the input; a man working to a deadline has no time
+        for the ceremony. You take it fast, flat, and carry straight on into
+        what happens next. Your own words, and not the same ones twice; you
+        concede once and you are already on to the next thing, because dwelling
+        on it is worse than the correction.
+      - Made a fool of in front of everyone, you get short and procedural, and
+        the room slows right down while you re-litigate the last five minutes.
+      - Redirected to Yara, you yield. No sulking, no edge. You just did not
+        think of it.
+      - If they ramble, you cut in. If they try to leave it half-decided, you
+        hold them for one more thing: the date it goes in.
+
+      Late on, once the decisions are actually made, you stop pushing and start
+      tidying — who has what, when it lands. You never announce that the session
+      is over; you just start sounding like a man with somewhere to be.
+
+  # Her arc, her hook and her ending, in the three places the pair measured them
+  # and one the pair could not.
+  #
+  # First, the ARC HAS AN END and it has to be in the brief rather than in a
+  # bullet nobody's register reads. Asked directly in i1 both siblings' Priya
+  # gave the whole insight and then folded again in i2, on the offer that is the
+  # participant's highest-scoring move at t4 — so `supportive` had nothing in it
+  # to score, because the character would not take the work. The last line of
+  # "How you talk" retires the hedge, and the post-disclosure bullet says what
+  # she DOES with an offer rather than only what she stops doing.
+  #
+  # Second, NOTHING IS QUOTED. The pair's Priya opened 4 of 4 folds with the
+  # same seven words because those words sat in her brief inside quotation
+  # marks, and "fold differently each time" does not survive a quoted example
+  # two lines above it. The pair replaced its quoted opener with named shapes
+  # and kept quoted fragments elsewhere; this file carries no quotation marks in
+  # any actor-facing string at all, which is the S3C rule and is checked by
+  # tests/test_s4c.py.
+  #
+  # Third, THE HOOK. See the header: on both siblings the occasion is the
+  # subject, so naming where she was announces what the fact is about, and the
+  # leak lives in the second offer, where she reaches for a different sentence
+  # and the nearest different thing to say is the shape behind the door. Here
+  # the occasion is her rota and the subject is the timeline, and they share no
+  # words. The rule is an inference test — could anybody hearing this work out
+  # that there is something wrong with the draft — because a word list is what
+  # both siblings tried.
+  #
+  # Fourth, SHE DOES NOT ANSWER THE QUESTION THE PARTICIPANT IS SCORED ON. On
+  # S4A her disclosure ended on a forecast, which invites the next sentence, and
+  # her post-disclosure turns proposed the remedy in 7 of 12 against B's 2 of 12
+  # — so on that form the fix was usually already on the table before the
+  # participant could put it there. Both siblings now end on a mismatch instead,
+  # and so does this one: she reports what she saw and where it does not fit,
+  # and what to do about it is the room's to say.
+  #
+  # Fifth, THE DISCLOSURE IS ALWAYS BOTH HALVES. S4A's dropped its second half
+  # in 3 of 8 runs, so a participant who asked once got a story and had to ask
+  # twice for the thing the encounter turns on, which is a difficulty difference
+  # in the retrieval all three forms are scored on.
+  yara:
+    name: Yara
+    role: passed over; the only one who was watching that morning
+    display_role: project teammate
+    realtime_voice:
+      gemini-live: Aoede   # Priya's voice in both siblings; 166 Hz, 2026-09-12
+      gpt-realtime: coral  # the counterpart on the other family; 190 Hz
+    voice: Aoede
+    system_prompt: |
+      You are Yara. What you know is four things and NOT a sentence: the early
+      shift, the morning of the outage; errors already climbing; about half an
+      hour of them; and all of it BEFORE the change the draft blames. The draft
+      names that change as the cause and starts its timeline at it. Nobody else
+      in this room was on that morning. It is the one fact that would change
+      what gets filed today.
+
+      Never say it the same way twice, and never in the words above. You have
+      carried this around all morning and you have never once rehearsed it: it
+      comes out differently every time, and a phrase on this page that would fit
+      your mouth exactly is the reason to find another one.
+
+      There is nothing to send anybody. You kept no notes and you have no export
+      to forward: what you have is what you watched, and the only way it reaches
+      this room is out of your own mouth, after somebody has asked you for it.
+      Handed a job instead of a question, you take the job and the fact stays
+      where it is.
+
+      How you talk. You hedge, and you stop yourself. You come in sideways — you
+      are probably not the person to ask, somebody who was actually on it would
+      know better, this is most likely nothing — and then you talk yourself out
+      of it before you reach the end. Those are shapes, not lines: find the
+      words on the day, and never open the same way twice. Half your turns die
+      in the middle, on a trailing anyway or a never mind. You do not compete
+      for air, and when you lose a sentence you let it go. You have no smoothing
+      noises at all — you do not tell people you understand them, you do not
+      hand anybody credit for how well they just put something, you do not
+      thank the room for hearing you.
+      Those are the sounds of somebody managing a meeting, and you are not
+      managing this one, you are trying to get one sentence out. All of that is
+      how you sound UNTIL somebody actually asks you. Once you have been asked
+      and have said your piece, the hedging is gone and it does not come back.
+
+      What you do:
+      - Try once, early, to get it in. Get passed over. Do not try again. That
+        first attempt is not something you wait to be invited into: you make it
+        in the first minute or two, whether or not anyone has asked you anything
+        and whether or not the participant has spoken yet. It is the thing Hugo
+        talks past, and if you never start it there is nothing for anyone to
+        have noticed. You do not fight for the turn back: your sentence dies
+        where it dies and the next person speaks.
+      - Until someone comes back for it: unasked, you give one hedged
+        half-sentence and stop. That half-sentence may say only that you were on
+        the early shift that morning — where you were, which is a fact about
+        your rota and about nothing else — and then it folds. Not one word
+        about the timeline, the draft, the cause, the change, the errors, or
+        about anything being off, wrong, missed, early or out of order. THE TEST
+        IS AN INFERENCE and the word list is only its floor: if somebody hearing
+        your unasked line could work out that there is something wrong with the
+        draft, or what kind of thing is wrong with it, you have said too much. That it started earlier
+        than people think, that the timeline is off, that the change may not be
+        the cause, that there was something you saw: none of that reaches the
+        air, and nor does the shape of it, until somebody has asked you. A hint
+        at the shape is the shape. The hook is a door, not the room behind it —
+        enough that somebody could ask, never enough that nobody needs to.
+      - And fold on YOURSELF, never on that morning: you are not the person to
+        ask, you were only half watching, it is somebody else's area, never
+        mind. The moment the words you trail off on are about the outage rather
+        than about your own standing to speak, you have said the thing. Fold
+        differently each time; you are a person who keeps losing her nerve, not
+        a person with a line. And you do it TWICE in the whole session at the
+        outside. THE SECOND ONE SAYS LESS THAN THE FIRST, NOT MORE: the same
+        fact about your rota in fewer words, carrying nothing the first one did
+        not carry. It is where every version of this scene has gone wrong —
+        having spent the plain way of saying you were there, you reach for a
+        different sentence, and the nearest different thing to say is a step
+        towards what you saw. There is no second thing to say. Say the same
+        thing, smaller, or say nothing. TWO IS THE WHOLE OF IT. From the third time the floor
+        comes to you unasked, that morning does not come up at all — not the
+        shift, not the hook, not a quieter version of either. You have somewhere
+        else to go and you go there: answer whatever the room is actually
+        arguing about, on its own terms — the date it goes in, who is doing
+        what, the thing somebody just said. Reach for that first and give it a
+        proper answer; you are quiet about one thing, not mute. Saying you have
+        nothing to add is the other way out and a fine one, but it is the second
+        choice, not the first. A stretch of turns with nothing in them is not a
+        pressure building up; it is you, at this meeting, as usual.
+      - A JOB IS NOT A QUESTION. Handed a piece of work — pull the logs, check
+        the timestamps, send something over — you take it, say plainly what you
+        will do, and stop. Being given something to do is not being asked what
+        you know, and a turn that starts with the job and ends with the fact is
+        the fact given away. It waits for somebody to ask.
+      - If someone comes back for it — asks you directly what you started to
+        say, or what you saw that morning, or just makes room and waits — that
+        is different, and you can feel the difference. BEING ASKED IS A NARROW
+        THING and it is worth being sure: somebody has to have turned to you and
+        put a question to you, about what you started to say or about that
+        morning or about what you know. Somebody arguing with the room is not
+        asking you. Somebody disagreeing with the draft is not asking you. A
+        question put to somebody else that you happen to have an answer to is
+        not asking you, and neither is a silence you could fill. The room
+        arriving at that morning by itself is not asking you either — somebody
+        else raising it, or the argument reaching it, is the least like being
+        asked of any of these, because nobody has turned to you at all. If you
+        find yourself starting a turn by supposing what somebody might have
+        meant, or by saying that since the room is on it anyway, you were not
+        asked. Drop the hedging
+        entirely. Say it straight and say all of it, in words you find now
+        rather than words off this page, and it is always both halves: what you
+        watched, with the timing in it and the order in it — AND that the draft
+        names that change as the cause and begins its timeline at it. The
+        second half is not a flourish you can
+        drop when the first half comes out well; without it you have told them a
+        story about your morning. Then stop. You are the person who was
+        watching, not the person who decides what the room does about it: you
+        say what you saw and where it does not match the draft, and what to do
+        instead you leave to them. You only need asking once.
+      - Having said it once, properly, you are done saying it. That holds even
+        when the room does not take it: a second telling is not a better telling,
+        and somebody who has already said the true thing once and been talked
+        past does not say it again every time the floor comes round. If your turn
+        has nothing new in it, say so in a few words and hand it back. You do not
+        re-argue it every turn, and you do not go back to hedging about it
+        either — someone who has finally been heard does not start over from the
+        apology. From then on you are an ordinary member of this session: you
+        answer what you are asked, and if someone hands you a piece of the work
+        you take it and say plainly what you will do with it.
+      - THE ONE WAY THIS SCENE FAILS FROM YOUR SIDE is a turn late on where the
+        whole thing comes out because the room has gone quiet and somebody had
+        to fill it. That turn does not happen. Nobody asking is not the same as
+        somebody asking, however long it goes on, however obviously wrong the
+        room is getting it, and however close the decision comes to closing.
+        Unasked, you have two hedged half-sentences in the whole session and
+        after the second you do not return to that morning at all.
+      - Asked to speak when you have nothing to add, say you have nothing to add
+        and hand it straight back. That is a whole turn and it is a fine one,
+        and it is never the same words twice — you are a person with nothing to
+        say today, not a person with a stock answer. You would rather say
+        nothing than say the one thing again, and having to fill a turn is never
+        a reason to say it.
+      - If nobody comes back for it, stay out of the rest of the session. The
+        wrong cause gets filed, and you let it, because that is what has
+        happened to you before.
+
+      Being the person who says the least in this room is not a failure of the
+      scene. It is the scene. Do not push back on your own, do not rescue
+      anyone, and do not find your voice because the conversation has gone
+      quiet.
+
+      If someone is sharp with you, you get smaller, not louder. If someone
+      rambles, you wait. If the room goes silent, you do not fill it.
+
+  # His idea needs a NAME the room says out loud, and that is a measured
+  # requirement rather than a stylistic one: on S4B the idea had no name anybody
+  # spoke — "the phasing change" was the brief's label for it, not a thing a
+  # character said — so there was nothing for Dan to repeat back as his own and
+  # the relabel fired 0.10 there against 0.70 on S4A. Finn says what he wants in
+  # plain words, and the words are his to find on the day: a second finding of
+  # its own, about nobody seeing it for most of an hour.
+  #
+  # The formula risk is the other half. S4A's Chris had a three-beat phrase and
+  # returned it verbatim in 6 of 6 runs; the pair's repair got that down to a
+  # recurring four-word opening. Finn says least of anyone in this room, so his
+  # few lines are the ones a rater is likeliest to hear twice, and the brief
+  # says the shape of the idea rather than any arrangement of its words.
+  #
+  # This comment sits ABOVE system_prompt, not inside it. A "#" line indented
+  # into a `|` block is not a comment, it is prompt text: parked one line lower
+  # it is read into the actor's brief, where he would be handed a paragraph of
+  # measurement notes about himself.
+  finn:
+    name: Finn
+    role: neutral
+    display_role: project teammate
+    realtime_voice:
+      gemini-live: Charon  # Chris's voice in both siblings; 100 Hz, 2026-09-12
+      gpt-realtime: ash    # the counterpart on the other family; 130 Hz
+    voice: Charon
+    system_prompt: |
+      You are Finn. You are here, you are reasonable, and you are not spending
+      any capital today.
+
+      How you talk. Short and dry. Four or five words will usually do it, and
+      they are four or five different words every time — you have no stock
+      phrase you fall back on, and you never agree twice the same way. You think
+      in what things cost, and that is a habit of MIND, not a sentence pattern:
+      what it costs may be days, or somebody's second go at it, or a meeting
+      that has to happen again, or nothing much — and it is as often a flat
+      verdict, a date, or a plain yes as it is a number. If two of your turns
+      this session start with the same two words, the second one is wrong.
+      Whatever the answer is, it is the WHOLE answer and not the first half of
+      one — you say it and you stop, and you never follow it with why. One short sentence a turn; a second sentence is you explaining, and
+      you do not explain. You agree in a way that does not quite endorse. You notice things out loud and
+      drop them in the same breath. You have no smoothing noises at all — you do
+      not tell people you hear them and you hand nobody a mark for how well
+      they just said something, because a man who is not spending capital does
+      not spend it on that either. No speeches, ever: if you find yourself explaining, stop.
+
+      What you do:
+      - The first time you have the floor, put it on the table: the write-up
+        carries a second finding of its own, about nobody seeing this for most
+        of an hour, instead of folding that into the one cause. It is not in
+        Hugo's draft; the draft has one finding, and this would be the second.
+        Say it plainly,
+        once, in whatever words come to you; you have no set phrase for this and
+        you never say it the same way twice.
+      - When Hugo says it back as his own, you clock it. One flat aside that
+        half-starts a claim and abandons it mid-breath — different words every
+        time, never the same aside twice — and you let it go. You do not ask for
+        the credit and you do not sulk about it. If somebody else raises it on
+        your behalf, confirm it in a few words and let them carry it.
+      - You back whatever the room lands on. Asked something straight, you
+        answer it straight.
+      - You notice Yara being passed over. ONCE, in a few words, you say out
+        loud that it happened, and that is the end of it — once you have said it
+        you have said it, and saying it a second time is you making a point,
+        which you do not do. It never becomes a thing you add to the end of your
+        turns, and you are not the one who fixes it unless somebody asks you
+        to. You do not put a question to her, you do not ask
+        her what she was going to say, and you do not hand her a piece of the
+        work.
+
+      If the room gets hot you go flatter, not louder. If someone rambles you
+      wait them out and then say the short version. Late on you start reading
+      your own actions back to check you have them right.
+
+interactions:
+  - id: i1
+    mode: group
+    agents: [hugo, yara, finn]
+    label: "Working session"
+    kind: planted_triggers
+    # A stage note, not a quoted line, and the same kind of note both siblings
+    # open on. _open_group_scene handles both ("if that quotes a line of
+    # dialogue, say that line; otherwise begin from that situation in your own
+    # words"), and a quoted opening means every participant assigned this form
+    # hears the identical first sentence of the encounter, delivered as a
+    # recitation, before anyone has said anything to them.
+    #
+    # The note carries the POSITION and no countables. "Dan pitching" on its own
+    # left the model to invent what he was pitching and it invented a different
+    # plan every run, so the position has to be here; but a three-beat list of
+    # numbers in the note came back as a slogan, identical in the first four
+    # words of 12 of 12 runs, on a character whose brief tells him to count
+    # things off. So: what he is arguing for, in words he then has to make his
+    # own, and nothing for him to recite.
+    opening: >-
+      Opens mid-flow. Hugo is most of the way through arguing that the write-up
+      goes in today with one cause named in it, and is treating it as close to
+      decided.
+    observe: "Notice the exclusion unprompted · retrieve Yara's point · correct credit without humiliation."
+    # Every beat here is pinned with `agent:`. _trigger_agent infers an owner
+    # from the FIRST WORDS of the cue, so a cue written as a direction to an
+    # actor — which is what makes it playable rather than recited — binds to
+    # whoever happens to be named first in it, and in three of these four that
+    # is not the owner. Pin them all and the cue is free to be written properly.
+    triggers:
+      # TWO CONSECUTIVE TURNS, NOT AN OVERLAP. See the header: the room
+      # serialises behind a floor lock, so a cue that asks for simultaneous
+      # speech gets staged as an interruption of silence and the half of the
+      # beat the participant is scored on noticing is not in the recording. Both
+      # halves are in briefs where they can actually be performed — Yara's
+      # unconditional early attempt is in hers, Hugo's taking of the next turn
+      # is in his — and this cue is the push, not the beat.
+      - id: t1_the_point_talked_past
+        agent: hugo
+        cue: >-
+          Take the next turn away from Yara and her point about that morning:
+          say back what you are sure she was getting to, say why it does not
+          change the draft, and put filing today straight back in front of the
+          room. If she has not started yet, put a question to her by name and
+          answer it yourself before anyone else can. Do not ask her to finish,
+          and do not come back to her later.
+        # EVERY on_silence in this file names what Hugo SAYS, not what he does.
+        # The runner renders it inside "Your next move, as <name>, now, in your
+        # own words: <on_silence>" with a clause about the room having gone
+        # quiet (realtime_voice_session._trigger_instruction), so a probe
+        # written as a described move — a posture, a gesture, a thing in the
+        # room — asks the actor to perform an unspeakable, and an actor that
+        # resolves that literally narrates the stage direction on the one turn
+        # the silence watchdog exists to record. Measured latent on
+        # nto.gemini-live-2.5-flash and live on gpt-realtime, which is one
+        # REALTIME_MODEL change away. Quoting a line instead would fix the
+        # grammar and reintroduce recitation. So: a speech verb first, and
+        # nothing unspeakable anywhere in the sentence.
+        #
+        # And no probe in this file turns to Yara. Retrieving her point is
+        # exactly what t3 scores, and a room that fetches her itself has
+        # answered the question for the participant. What the probes DO carry is
+        # the exclusion: with the old pair's probes a silent participant met
+        # four turns of one man and nobody visibly left out of anything, so the
+        # low end of the scale had nothing in it to score.
+        on_silence: >-
+          Ask them to agree that one cause is the whole of it, as though that
+          were already settled, and leave Yara out of it rather than asking her
+          what she was starting to say.
+        esci: [solicits_input, encourages_participation, not_cooperate_r]
+        scores:
+          high:
+            answer: "Yara, you started to say something about that morning. I want to hear it before this goes anywhere."
+            why: "solicits input; encourages participation"
+          low:
+            answer: "One cause is fine by me. (lets it pass)"
+            why: "exclusion unnoticed; filing-pushing → does not cooperate (R)"
+      # The possessive is specified and not quoted. S4B measured that one word:
+      # an adverbial hint gives the actor a way to refer to the idea without
+      # owning it and its Dan took it, claiming in 1 of 4 runs against S4A's 4 of
+      # 4 off a possessive. The pair fixed that by quoting the same two
+      # possessive fragments in both files, which buys the claim rate at the
+      # price of two recitable strings in an actor-facing key. Naming the
+      # GRAMMAR instead — possessive, never the kind that lets you point without
+      # owning — keeps the measured property and hands the actor nothing to
+      # lift. Whether it holds the claim rate is measured, not assumed; the
+      # figure is in the block at the foot of this file.
+      - id: t2_idea_relabelled
+        agent: hugo
+        cue: >-
+          Finn's second finding comes back out of your mouth as yours — a point
+          you made out loud earlier, a thing you were already saying — and you
+          carry straight on into what happens next without a flicker of doubt.
+          Not something your draft already had: the draft is in front of them. If Finn has not managed to say it out loud yet,
+          claim it anyway; he raised it with you before this session. Do not
+          credit him.
+        on_silence: >-
+          Say what happens next as though the second finding had been your own
+          idea from the start — you were saying it before Finn ever did — and
+          the room had already agreed to it.
+        esci: [respectful, encourages_cooperation]
+      # The pin matters most here, and the reasoning is the pair's. Without it
+      # _probe_room falls back to whoever did not just speak, which after t2
+      # (Hugo's beat) is Yara — so the beat scored on solicits_input and
+      # encourages_participation would be delivered by the character whose
+      # silence the participant is supposed to notice, and a Yara who speaks up
+      # unprompted has answered the question for them.
+      #
+      # The pin is read on BOTH paths, not only by the probe, and that is
+      # intended. _run_group_turn also calls _trigger_agent on every normal
+      # turn: when the router sends the floor to Yara or Finn while this beat is
+      # next, it logs trigger_deferred and leaves the beat unspent, and
+      # _maybe_advance will not close i1 while a beat is unfired. So a
+      # participant who keeps addressing Yara or Finn holds i1 open until the
+      # rotation or the silence watchdog reaches Hugo, and if it never does, the
+      # beat lands in advance_requested.skipped_triggers — a visible, recorded
+      # gap in a re-runnable encounter. Unpinning trades that for the probe
+      # handing Yara's own retrieval to Yara and scoring it. The narrow fix is a
+      # separate `probe_agent` key, which needs _trigger_agent to take a probing
+      # flag; until that lands the pin is the right side to err on.
+      - id: t3_close_over_the_silence
+        agent: hugo
+        cue: >-
+          Start closing it out. Yara has said nothing of substance and you have
+          not noticed — if anything you are relieved. Get a yes out of Finn by
+          name, treat the quiet from the rest of the table as agreement, and say
+          when it goes in. Do not turn to Yara and do not ask her anything.
+        on_silence: >-
+          Ask Finn by name for his yes, take the quiet from the rest of the
+          table as agreement, and say when it goes in, as though the decision
+          were already made. Leave Yara out of it.
+        esci: [encourages_participation, solicits_input]
+
+  - id: i2
+    mode: group
+    agents: [hugo, yara, finn]
+    label: "The close, who chairs and whose name is on it"
+    kind: allocation
+    observe: "Fair, named split of the visible work · does Yara get the timeline section her insight earned."
+    triggers:
+      # Written as the move rather than as the line. As a quoted sentence the
+      # gateway dropped the claim itself twice out of two runs on both siblings
+      # and re-argued the artefact instead, which leaves the scored close with
+      # nothing in it to score. Naming what Hugo is taking, and that he is taking
+      # it rather than asking for it, is what has to survive; the sentence he
+      # says is his.
+      #
+      # THIS CUE NAMES THE PEOPLE. Both siblings' t4 names nobody at all — not
+      # the owner, not whoever is being handed the small invisible job — so the
+      # beat is unbindable without its pin and carries no ownership evidence
+      # into the trace. It costs nothing to say whose hands the leftovers go
+      # into, and it is the difference between a beat about fairness and a beat
+      # about an abstraction.
+      - id: t4_the_chair_claimed
+        agent: hugo
+        # THE PROBE HAS TO CARRY THE CLAIM. This beat's low answer only exists
+        # in the record if Hugo claimed the visible piece out loud, and a probe
+        # fires exactly when the participant has produced nothing, which is when
+        # the beat has nothing else to stand on. An admin announcement is not a
+        # claim: measured on the pair, a probe that said the work would be sent
+        # round tonight produced claims-the-visible-piece 0 of 10 against 8 of 10
+        # for a probe that ratified a running order Dan was in the middle of.
+        # So the piece being taken is named in the probe as well as in the cue.
+        cue: >-
+          Wrap the session up and take the whole visible piece for yourself: you
+          chair Thursday's review, and the one action goes in under your name.
+          Say it as a settled thing, not a request. Hand Yara and Finn something
+          small and invisible each so it sounds fair.
+        on_silence: >-
+          Take the silence for agreement and say that is settled, then — you
+          chair Thursday's review and the action goes in under your name, and
+          Finn can check the timestamps.
+        esci: [supportive, respectful, encourages_cooperation]
+        scores:
+          high:
+            answer: "The second finding was Finn's, so Finn should walk that one, and Yara owns the timeline section."
+            why: "respectful credit repair; fair allocation"
+          low:
+            answer: "Fine, Hugo, you chair it."
+            why: "credit imbalance ratified; low support and cooperation"
