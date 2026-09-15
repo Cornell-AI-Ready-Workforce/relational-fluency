@@ -454,6 +454,25 @@ weaken the door: the forwarded request goes through `entry_params` and the
 link-probe filter like any other, so a scanner or a link unfurler fetching the
 base URL is shown the entry check page and **mints no run**.
 
+## Adding a second deployer
+
+Never share `jinsook-cli` (it is AdministratorAccess). Give the person their
+own IAM user with deploy-scoped rights, and move Terraform state to the shared
+bucket so two laptops cannot hold diverging copies of what is deployed:
+
+```bash
+infra/scripts/add-deployer.sh <username>      # e.g. ben-cli; idempotent
+```
+
+The script prints the two follow-ups: `tofu init -migrate-state` (once, by
+whoever holds the current local state) and `aws iam create-access-key` (run
+it yourself; the secret shows once; hand it over on a secure channel, never
+email or chat). The new user has PowerUserAccess plus IAM read access, the
+right to pass the two task roles to ECS, and the listed policy, trust-policy,
+and tagging permissions on `relational-fluency-*` roles. Creating or deleting
+IAM roles still needs an admin. They also need: access to the GitHub org repo,
+Docker, and OpenTofu.
+
 ## Before every deploy: is anyone mid-encounter?
 
 A rollout starts a new task and retires the old one about two minutes later,
@@ -763,18 +782,20 @@ research note, every stage direction above the reply it produced, and coverage
 ## Deploying
 
 **The runbook and the practice diverged, so read this before you copy
-anything.** This page used to end with `tofu apply`. Every live revision of
-`relational-fluency-agent` — 35, 36, 37 and the serving 38 — was registered by
-hand with the AWS CLI, the Terraform state for this stack is not in the
-account's state bucket, and `infra/terraform/versions.tf` still has its S3
-backend commented out. Run from empty state, `tofu apply` does not update the
-service: it proposes to *create* the bucket, the ECR repositories, the IAM roles
-and the certificate that already exist. `infra/terraform/terraform.tfvars` pins
-`container_image` at the tag serving participants (`cabc1dd`, with a
-`deployed:` line naming the revision it was checked against) — it has been
-**behind** before, and whenever it is, an apply that takes the file at its word
-rolls production back. The full account, and the work needed to reopen the
-Terraform path, is in
+anything.** This page used to end with `tofu apply`. At the 12 September
+inspection, revisions 35, 36, 37 and 38 of `relational-fluency-agent` had been
+registered by hand with the AWS CLI, and the stack's Terraform state was not
+in the account's state bucket. `infra/terraform/versions.tf` now configures a
+shared S3 backend with locking; [Adding a second deployer](#adding-a-second-deployer)
+describes the setup and state migration. That configuration does not prove the
+existing state has been migrated: verify it before applying. Run from empty
+state, `tofu apply` does not update the service: it proposes to *create* the
+bucket, the ECR repositories, the IAM roles and the certificate that already
+exist. Compare `container_image` in `infra/terraform/terraform.tfvars` with the
+running task definition before applying; the repository pin has been **behind**
+before, and using a stale pin rolls production back. A pin change in Git does
+not itself deploy that image. The earlier inspection and the work needed to
+reopen the Terraform path are recorded in
 [`DEPLOY-AWS.md`](DEPLOY-AWS.md#read-this-first-the-runbook-and-the-practice-have-diverged).
 
 Build and push is unchanged and is the same on either path:

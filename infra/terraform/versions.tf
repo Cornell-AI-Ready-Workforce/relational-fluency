@@ -8,13 +8,16 @@ terraform {
     }
   }
 
-  # After first apply, migrate state to the created S3 bucket:
-  # terraform init -migrate-state  (uncomment and fill in)
-  # backend "s3" {
-  #   bucket = "<project>-tfstate"
-  #   key    = "agent-platform/terraform.tfstate"
-  #   region = "us-east-1"
-  # }
+  # Shared state, so more than one person can deploy. The bucket and lock
+  # table are created by infra/scripts/add-deployer.sh; migrate an existing
+  # local state with `tofu init -migrate-state`.
+  backend "s3" {
+    bucket         = "relational-fluency-tfstate-540586745717"
+    key            = "platform/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "relational-fluency-tflock"
+    encrypt        = true
+  }
 }
 
 provider "aws" {

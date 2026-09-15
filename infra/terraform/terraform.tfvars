@@ -30,7 +30,9 @@
 #   which requires the pin to name a revision. What is actually known:
 #     - the tag below was moved cabc1dd -> df1ab83 during the merge of
 #       origin/main (d1f3dfc, "Pin platform image df1ab83"), because df1ab83 is
-#       the build production is running;
+#       the build recorded at that earlier merge;
+#     - this merge follows origin/main's newer pin, 3d3cbfc (9659eb4).
+#       The running AWS task revision has not been verified by this merge;
 #     - the last time anyone ran describe-services and wrote the answer down was
 #       relational-fluency-agent:38, 2026-09-12, against image tag cabc1dd — two
 #       releases behind the tag below.
@@ -38,7 +40,7 @@
 #   replace the 0 with the real running revision and today's date, and commit
 #   that in the same change. Applying against an unverified pin is exactly the
 #   rollback-with-a-success-message this block exists to prevent.
-container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:df1ab83"
+container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:3d3cbfc"
 
 # Live voice model. Native-audio route (nto.gemini-live-2.5-flash is being
 # deprecated); verified for 1:1 and group rooms on 5a45420, 2026-09-08.

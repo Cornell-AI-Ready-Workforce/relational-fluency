@@ -15,40 +15,48 @@ not be collected there.
 ## Read this first: the runbook and the practice have diverged
 
 This page used to describe one deployment flow — `tofu apply` — and that flow
-has never been run against this service. Checked against the account on
-**12 September 2026**:
+had not been run against this service at the **12 September 2026** account
+inspection. The findings below describe that inspection, not a current AWS
+verification:
 
 - **Every live revision of the task definition was registered by hand with the
   AWS CLI.** The family is `relational-fluency-agent`; the service is `platform`
-  in cluster `relational-fluency`; revisions 35 through 38 exist and 38 is
+  in cluster `relational-fluency`; revisions 35 through 38 existed and 38 was
   serving, at image tag `cabc1dd`.
-- **The Terraform state for this stack is not in the account's state bucket.**
-  That bucket holds `bootstrap/` and `staging/` and nothing for this stack, and
-  `infra/terraform/versions.tf` still has its S3 `backend "s3"` block commented
-  out — so whatever state these 50-odd resources were created from is on
-  somebody's laptop, or gone.
+- **The Terraform state for this stack was not in the account's state bucket.**
+  That bucket held `bootstrap/` and `staging/` and nothing for this stack, and
+  `infra/terraform/versions.tf` then had its S3 `backend "s3"` block commented
+  out — the state these 50-odd resources were created from needed to be found
+  on somebody's laptop or recovered.
 - **Consequence, and this is the whole reason for the warning:** `tofu apply`
-  run from here today does **not** update the running service. With empty
+  run against empty state does **not** update the running service. With empty
   state, Terraform believes nothing exists, so it plans to *create* the S3
   study-data bucket, the ECR repositories, the IAM roles and the ACM
   certificate that are already there. Bucket and role creation fail on
   `AlreadyExists` partway through, leaving a half-built state file that matches
   neither reality nor the previous state.
-- **`infra/terraform/terraform.tfvars` pins `container_image` at `cabc1dd`,
-  which is what participants are talking to** — corrected on 12 September, when
-  it read `3cf8496`, two releases behind. The hazard is structural rather than
+- **`infra/terraform/terraform.tfvars` was corrected to `cabc1dd` on
+  12 September**, matching the running image then; it had read `3cf8496`,
+  two releases behind. The hazard is structural rather than
   fixed: whenever that pin lags, an apply that takes the file at its word would
   **roll production back** to an older build and report success doing it. The
-  file now carries a `deployed:` line naming the revision the tag was verified
-  against, and `tests/test_terraform_persistence.py` requires it, so moving the
-  tag means saying what you checked.
-- **HEAD's `infra/terraform/ecs.tf` declares resources that appear in no live
-  revision** — the EFS file system, its access point, the `/data` mount and the
+  file carries a `deployed:` line recording verification status, and
+  `tests/test_terraform_persistence.py` checks that the line exists; the test
+  does not verify the live deployment.
+- **`infra/terraform/ecs.tf` declared resources absent from those live
+  revisions** — the EFS file system, its access point, the `/data` mount and the
   `DATA_DIR` environment entry. Those are the fix, not the state of the world;
   see [No persistent volume](#no-persistent-volume-yet), below.
 
-So this page now documents **two** paths and is explicit about which one you
-are on:
+**Repository update, 15 September 2026:** `versions.tf` now configures a shared
+S3 backend with a DynamoDB lock table, and `terraform.tfvars` pins image
+`3d3cbfc` from `main`. Its `deployed:` note explicitly marks that pin unverified.
+The merge did not check or change AWS. Use
+[Adding a second deployer](OPERATIONS.md#adding-a-second-deployer) to provision
+the backend and migrate existing state, then verify the state and running
+image before applying.
+
+This page documents **two** paths; their status at the inspection was:
 
 | Path | Status | Use it for |
 |---|---|---|
@@ -435,9 +443,9 @@ tofu -chdir=infra/terraform apply -var container_image=$REPO:$SHA
 
 PowerShell: `tofu -chdir=infra/terraform apply -var "container_image=${REPO}:${SHA}"`.
 
-That command is correct **and it is not runnable today**, because the state
-this stack was built from is not in the account's state bucket and
-`versions.tf` has no active backend. Run against empty state it proposes to
+That command requires the state this stack was built from. `versions.tf` now
+has an active shared backend, but the repository cannot establish that the
+existing state has been migrated there. Run against empty state it proposes to
 create the bucket, the ECR repositories, the IAM roles and the certificate that
 already exist, fails partway on `AlreadyExists`, and leaves a state file that
 describes neither the old world nor the new one. Find or rebuild the state
@@ -452,8 +460,9 @@ Two notes that hold for whenever the path reopens:
   untouched — the release then re-applies the tag already pinned and the
   operator watches a successful deploy serve the previous build.
 - **Check the committed pin against the service before every apply.**
-  `terraform.tfvars` says `cabc1dd` and the service is running `cabc1dd`, as
-  of 12 September; it read `3cf8496` before that, two releases behind, and an
+  `terraform.tfvars` now pins `3d3cbfc`; the merge did not verify the running
+  image. The pin and service matched at `cabc1dd` on 12 September, after the
+  pin had lagged at `3cf8496`, two releases behind. An
   apply without `-var container_image=` against a stale pin would **roll
   production back** mid-study and report success. Whoever reopens the
   Terraform path re-verifies that pin and its `deployed:` line against
@@ -861,11 +870,14 @@ here as a question with somebody to ask rather than filled in with a plausible
 procedure. Answering them is what closes the gap between this page and the
 Terraform that is supposed to be the source of truth.
 
-1. **Where is the Terraform state for this stack?** The account's state bucket
-   holds `bootstrap/` and `staging/` only. Ask whoever ran the original
+1. **Where is the Terraform state for this stack?** At the 12 September
+   inspection, the account's state bucket held `bootstrap/` and `staging/`
+   only. Ask whoever ran the original
    build-out whether a `terraform.tfstate` survives on their machine or in a
-   backup. If it does: commit `versions.tf`'s S3 backend block, then
-   `tofu init -migrate-state`, then `tofu plan` — and expect that plan to show
+   backup. If it does: provision the shared backend described in
+   [Adding a second deployer](OPERATIONS.md#adding-a-second-deployer), then run
+   `tofu init -migrate-state` using the already-configured S3 backend, then
+   `tofu plan` — and expect that plan to show
    drift from every hand-registered revision since. If it does not survive, the
    options are `tofu import` for each of the ~50 resources, or accepting the CLI
    path permanently and deleting the Terraform that describes an unmanaged

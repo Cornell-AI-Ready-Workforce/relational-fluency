@@ -2893,9 +2893,16 @@ class RealtimeVoiceSessionRunner:
         text = _strip_context_echo(
             text, [line for aid, line in self._recent_told
                    if aid != agent.id])
-        if _is_stage_direction(text):
+        # Drop a narrated lead-in before classifying the remaining speech:
+        # '(Casey pauses.) I agree (for now)' is still a spoken reply.
+        before_narration = text
+        text = re.sub(r"^\s*[\(\[][^\)\]]{3,120}[\)\]]\s*", "", text).strip()
+        # A standalone direction may have been stripped in full. Retain its
+        # original text for the diagnostic, while recording no spoken reply.
+        direction_text = text or before_narration
+        if _is_stage_direction(direction_text):
             self.session.store.event("stage_direction_output",
-                                     agent_id=agent.id, text=text)
+                                     agent_id=agent.id, text=direction_text)
             text = ""
         await self._finalize_member_inner(agent, text, interrupted=interrupted,
                                           audio_bytes=audio_bytes,

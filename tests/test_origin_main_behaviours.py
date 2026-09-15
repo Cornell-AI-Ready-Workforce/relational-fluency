@@ -771,7 +771,34 @@ def test_a_scribe_that_went_quiet_is_replaced_in_kind():
         assert room.scribe_reopens == 1
 
 
-def test_the_director_may_not_hand_one_character_every_unnamed_turn():
+def _complete_group_replies(runner, room, monkeypatch):
+    """Deliver a reply through production finalization after each floor grant.
+
+    The imported direction-delivery harness only signals response_done; it
+    never emits speech. Speaker bookkeeping belongs to finalization, so tests
+    of who actually spoke must supply that missing gateway response.
+    """
+    monkeypatch.setenv("ROUTE_TRANSCRIPT_WAIT", "0.01")
+    monkeypatch.setenv("AUTOFIRE_WAIT", "0.01")
+    agents = {agent.id: agent for agent in runner._resolve_agents()}
+    grants = []
+
+    async def give_floor(agent_id):
+        # Bypass the harness's completion signal: the real finalizer must be
+        # what releases the turn, just as it is when gateway speech arrives.
+        rt = await type(room).give_floor(room, agent_id)
+        grants.append(agent_id)
+        if rt is not None:
+            await runner._finalize_member(
+                agents[agent_id], "We should confirm the date.", audio_bytes=96000,
+            )
+        return rt
+
+    monkeypatch.setattr(room, "give_floor", give_floor)
+    return grants
+
+
+def test_the_director_may_not_hand_one_character_every_unnamed_turn(monkeypatch):
     """Anti-dominance (bb3fa13). Absent a direct address the room prefers a
     candidate who did not just speak, and when the director's ONLY candidate is
     the character who just spoke it rotates to the next member instead.
@@ -784,6 +811,7 @@ def test_the_director_may_not_hand_one_character_every_unnamed_turn():
     runner, session, room = _runner_with_room(
         GPT, [{"agent_id": "dan", "intent": "Push back on the date."}],
     )
+    grants = _complete_group_replies(runner, room, monkeypatch)
     runner._last_group_speaker = "dan"           # ...and Dan is the only pick
     asyncio.run(asyncio.wait_for(runner._run_group_turn(), timeout=10))
 
@@ -794,10 +822,16 @@ def test_the_director_may_not_hand_one_character_every_unnamed_turn():
     )
     assert rotated[0]["from_agent"] == "dan"
     assert rotated[0]["to_agent"] != "dan"
-    assert runner._last_group_speaker != "dan"
+    spoken = [row["agent_id"] for row in session.store.of("assistant_turn")]
+    assert spoken == grants
+    assert spoken[0] == rotated[0]["to_agent"]
+    # Rotation chooses the first response. The director's ordered follow-up
+    # may still be Dan; the last speaker must reflect who actually finished.
+    assert spoken == ["priya", "dan"]
+    assert runner._last_group_speaker == spoken[-1]
 
 
-def test_a_character_who_did_not_just_speak_is_left_alone():
+def test_a_character_who_did_not_just_speak_is_left_alone(monkeypatch):
     """The other direction, and the reason the rotation is a preference rather
     than a rule: a genuine routing decision to someone else must not be
     disturbed, or the director stops deciding anything at all.
@@ -805,7 +839,68 @@ def test_a_character_who_did_not_just_speak_is_left_alone():
     runner, session, room = _runner_with_room(
         GPT, [{"agent_id": "priya", "intent": "Ask what the deadline was."}],
     )
+    grants = _complete_group_replies(runner, room, monkeypatch)
     runner._last_group_speaker = "dan"
     asyncio.run(asyncio.wait_for(runner._run_group_turn(), timeout=10))
     assert session.store.of("dominance_rotated") == []
+    assert grants == ["priya"]
+    assert [row["agent_id"] for row in session.store.of("assistant_turn")] == grants
     assert runner._last_group_speaker == "priya"
+
+
+@pytest.mark.parametrize("grant_fails", [False, True])
+def test_a_grant_without_a_finalized_reply_does_not_change_the_last_speaker(
+        monkeypatch, grant_fails):
+    runner, session, room = _runner_with_room(
+        GPT, [{"agent_id": "priya", "intent": "Ask what the deadline was."}],
+    )
+    monkeypatch.setenv("ROUTE_TRANSCRIPT_WAIT", "0.01")
+    monkeypatch.setenv("AUTOFIRE_WAIT", "0.01")
+    if grant_fails:
+        async def fail_grant(agent_id):
+            return None
+        monkeypatch.setattr(room, "give_floor", fail_grant)
+    # Otherwise use the original harness, which signals completion without
+    # finalizing any speech. Neither case justifies recording a new speaker.
+    runner._last_group_speaker = "dan"
+    asyncio.run(asyncio.wait_for(runner._run_group_turn(), timeout=10))
+    assert session.store.of("assistant_turn") == []
+    assert runner._last_group_speaker == "dan"
+    assert bool(session.store.of("floor_grant_failed")) is grant_fails
+
+
+@pytest.mark.parametrize("reply,expected", [
+    ("(Casey responds with concerns.) If the roadmap is the priority, say so.",
+     "If the roadmap is the priority, say so."),
+    ("[Priya hesitates.] We need to confirm the date.",
+     "We need to confirm the date."),
+    ("(Casey pauses.) I agree (for now)", "I agree (for now)"),
+    ("(Priya hesitates.) We need time. (She looks down.)",
+     "We need time. (She looks down.)"),
+    ('(Context, not for you to repeat: Dan just said out loud to the group: '
+     '"We slipped.") (Priya hesitates.) What is the revised date?',
+     "What is the revised date?"),
+    ("We need to confirm the date.", "We need to confirm the date."),
+])
+def test_a_narrated_lead_in_is_removed_from_the_recorded_group_reply(reply, expected):
+    runner, session, room = _runner_with_room(GPT, [])
+    agent = next(a for a in runner._resolve_agents() if a.id == "priya")
+    room.speaking = agent.id
+    asyncio.run(runner._finalize_member(agent, reply, audio_bytes=128000))
+    (turn,) = session.store.of("assistant_turn")
+    assert turn["text"] == expected
+    assert session.shared_history[-1] == {"speaker": "priya", "text": expected}
+    assert runner._response_done.is_set()
+
+
+def test_a_standalone_stage_direction_keeps_its_diagnostic_when_finalized():
+    runner, session, room = _runner_with_room(GPT, [])
+    agent = next(a for a in runner._resolve_agents() if a.id == "priya")
+    room.speaking = agent.id
+    asyncio.run(runner._finalize_member(agent, "[Priya remains quiet.]"))
+    (diagnostic,) = session.store.of("stage_direction_output")
+    assert diagnostic["text"] == "[Priya remains quiet.]"
+    (turn,) = session.store.of("assistant_turn")
+    assert turn["text"] == ""
+    assert turn["transcript_missing"] is True
+    assert all(row["speaker"] != "priya" for row in session.shared_history)
