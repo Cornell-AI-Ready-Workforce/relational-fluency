@@ -1,0 +1,622 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="icon" type="image/png" href="/static/favicon.png" />
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+<title>Evidence trace</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No third-party request on load. This was the only one of the five pages
+     that made one, and it made it on every view of a console that displays
+     participant transcripts — disclosing each researcher's and rater's IP and
+     User-Agent to Google, which is not a thing to do casually in an IRB study,
+     and stalling the render for the browser's timeout on any machine behind a
+     campus or enterprise proxy that cannot reach it. The fallback stack below
+     was already correct on all three operating systems, so dropping the
+     webfont costs a dense data console almost nothing. If IBM Plex is wanted
+     back, self-host it under /static/fonts and declare it with @font-face. -->
+<style>
+:root{
+  --ground:#eeeeec; --surface:#ffffff; --surface-2:#f6f6f4; --ink:#1b1b1a; --ink-2:#3c3c3a;
+  /* Both greys are darker than they look on a mock-up, and deliberately so.
+     --faint was #9a9a96: 2.82:1 on --surface and 2.61:1 on --surface-2, against
+     the 4.5:1 WCAG AA requires at the 10px-to-12px this token is used at — and
+     it is used at those sizes 43 times on a loaded page: every clock in the
+     session list, the latency pills, the "recording present" note, the
+     instrument labels, the "pending instrumentation" cells. This is a console
+     a researcher reads for an hour at a stretch, often on a laptop in a bright
+     room, and those are the cells that carry the numbers.
+     AA at those sizes puts the ceiling at about #6b6b68 on this page's
+     backgrounds, which is where --muted already sat — so --muted moves down
+     with it rather than the two collapsing to one value and the page losing a
+     level of hierarchy it uses to separate a label from its reading.
+     Measured against --surface #ffffff, --surface-2 #f6f6f4 and --ground
+     #eeeeec: --muted 6.71 / 6.20 / 5.77, --faint 5.35 / 4.94 / 4.60. */
+  --muted:#5c5c59; --faint:#6b6b68; --line:#e2e2df; --line-2:#d3d3ce;
+  --red:#b3181b; --dir:#2f4f7d; --dir-bg:#eef3fa; --dir-line:#c9d6e8;
+  --ok:#2f7d4f; --ok-bg:#eef7f0; --ok-line:#bfe0c8;
+  /* #946a12 was 4.38:1 on --warn-bg and 4.48:1 on --surface-2 — under AA at
+     the 10px the "Partial" badge and the probe note are set in, and the last
+     token on this page that was. #8c6311 is the same hue two steps down:
+     4.86 on --warn-bg, 5.37 on --surface, 4.97 on --surface-2. Measured with a
+     computed-style pass over the rendered page (leaf text nodes only, real
+     background resolved by walking ancestors): 43 failures before this round's
+     token work, 0 after. */
+  --warn:#8c6311; --warn-bg:#faf3e2; --warn-line:#e6d3a3;
+  --flag:#6b4f9e; --flag-bg:#f2eefb; --flag-line:#d7cbee;
+  --fail:#b3181b; --fail-bg:#fbecec; --fail-line:#eecaca;
+  --shadow:0 1px 2px rgba(20,20,20,.05),0 3px 12px rgba(20,20,20,.04);
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+/* Light only, like every other page in this platform. The dark palette that
+   stood here made this the one screen that flipped with the operating system,
+   so a researcher on a dark OS read the evidence trace on a different ground
+   from the console they opened it out of. */
+*{box-sizing:border-box;}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;}
+.mono{font-family:var(--mono);font-variant-ligatures:none;}
+.wrap{max-width:none;margin:0;padding:0;height:100vh;min-height:560px;}
+a{color:var(--dir);}
+h1{font-size:26px;font-weight:700;letter-spacing:-.01em;margin:0 0 3px;display:inline-block;padding-bottom:7px;border-bottom:3px solid var(--red);}
+.subtitle{color:var(--muted);font-size:12.5px;margin:8px 0 18px;}
+.app{background:var(--surface);border:0;border-top:3px solid var(--red);border-radius:0;box-shadow:none;overflow:hidden;height:100%;display:flex;flex-direction:column;}
+.appbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid var(--line);min-height:48px;}
+.appbar .sid{font-family:var(--mono);font-weight:600;font-size:13px;}
+.appbar .crumb{color:var(--ink-2);}
+.appbar .crumb b{font-weight:600;}
+.appbar .spacer{flex:1;}
+.appbar .versions{font-family:var(--mono);font-size:11px;color:var(--muted);}
+.badge{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:4px;border:1px solid transparent;}
+.b-complete{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-line);}
+.b-partial{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-line);}
+.b-flagged{color:var(--flag);background:var(--flag-bg);border-color:var(--flag-line);}
+.b-failed{color:var(--fail);background:var(--fail-bg);border-color:var(--fail-line);}
+.b-active{color:var(--dir);background:var(--dir-bg);border-color:var(--dir-line);}
+.b-study{background:var(--ink);color:var(--surface);letter-spacing:.08em;}
+/* Not the study's ink, and not a shade a glance can mistake for it: the point
+   of this badge is that a screenshot of a demo cannot be read as a screenshot
+   of study data. The same purple static/demo.html wears, so the two screens
+   agree about what "not the wave" looks like. */
+.b-cohort{background:var(--flag);color:#fff;letter-spacing:.08em;}
+.b-nocohort{color:var(--muted);background:var(--surface-2);border-color:var(--line-2);}
+/* The same mark, small, on the row in the picker. It sits in the status line
+   and not in the scenario line because four of the eight v3 scenarios are
+   titled "Planning an internal rollout": a cohort word inside a title is not a
+   mark, it is a coincidence waiting to be misread. */
+.cmark{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.07em;
+       text-transform:uppercase;color:#fff;background:var(--flag);border-radius:3px;padding:0 5px;}
+.cmark.none{color:var(--muted);background:var(--surface-2);border:1px solid var(--line-2);}
+.keystrip{padding:5px 18px;font-size:11.5px;color:var(--muted);background:var(--surface-2);
+          border-bottom:1px solid var(--line);}
+.keystrip[hidden]{display:none!important;}
+.body{display:grid;grid-template-columns:214px 1fr 266px;align-items:stretch;flex:1;min-height:0;}
+.col{min-width:0;min-height:0;display:flex;flex-direction:column;}
+.col.sessions{border-right:1px solid var(--line);}
+.col.side{border-left:1px solid var(--line);overflow-y:auto;}
+.sess-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 8px;}
+.sess-head .t{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600;}
+.sess-head select{font:inherit;font-size:11px;color:var(--muted);background:var(--surface);border:1px solid var(--line-2);border-radius:5px;padding:2px 4px;}
+.sesslist{flex:1;min-height:0;overflow:auto;}
+/* The resets a <button> needs to keep looking exactly like the row it replaced;
+   the same handful rater.html already applies to its own .qcard/.turn buttons. */
+.sess{padding:9px 14px;border-top:1px solid var(--line);cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center;width:100%;text-align:left;font:inherit;color:inherit;background:none;border-left:0;border-right:0;border-bottom:0;}
+.sess:focus-visible,.tab:focus-visible,.turn:focus-visible,.diamond:focus-visible{outline:2px solid var(--red);outline-offset:2px;}
+.sess:hover{background:var(--surface-2);}
+.sess.sel{background:var(--surface-2);box-shadow:inset 3px 0 0 var(--red);}
+.sess .id{font-family:var(--mono);font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;}
+.sess .time{font-family:var(--mono);font-size:11px;color:var(--faint);text-align:right;}
+.sess .scen{grid-column:1/-1;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sess .st{grid-column:1/-1;display:flex;align-items:center;gap:6px;margin-top:1px;}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;}
+.dot.complete{background:var(--ok);}.dot.partial{background:var(--warn);}.dot.flagged{background:var(--flag);}.dot.failed{background:var(--fail);}.dot.active{background:var(--dir);}
+.sess .stlbl{font-size:11px;color:var(--muted);text-transform:capitalize;}
+.trace-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:14px 18px 6px;flex-wrap:wrap;}
+.trace-head .scene{font-weight:600;font-size:14px;}
+.trace-head .scene .em{color:var(--muted);font-weight:400;}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;}
+.tab{font-size:11.5px;color:var(--muted);padding:3px 9px;border:1px solid var(--line-2);border-radius:14px;cursor:pointer;background:var(--surface);font-family:inherit;}
+.tab.on{color:var(--red);border-color:var(--fail-line);background:var(--fail-bg);}
+.tab:hover:not(.on){color:var(--ink-2);}
+.thead,.turn{display:grid;grid-template-columns:44px 1.15fr 1.35fr 1.15fr;gap:14px;}
+.thead{padding:8px 18px 6px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);border-bottom:1px solid var(--line);}
+.turns{padding:2px 0 6px;flex:1;min-height:0;overflow:auto;}
+.turn{padding:11px 18px;border-bottom:1px solid var(--line);cursor:pointer;scroll-margin-top:12px;width:100%;text-align:left;font:inherit;color:inherit;background:none;border-top:0;border-left:0;border-right:0;}
+.turn:hover{background:var(--surface-2);}
+.turn.active{background:var(--dir-bg);}
+.turn.active .ts{color:var(--red);}
+.ts{font-family:var(--mono);font-size:12px;color:var(--muted);padding-top:2px;}
+.p-text{color:var(--ink);}
+.p-none{color:var(--faint);}
+.a-text{color:var(--ink-2);}
+.a-missing{color:var(--faint);font-style:italic;}
+.dcard{background:var(--surface-2);border:1px solid var(--line);border-left:2px solid var(--dir);border-radius:0 7px 7px 0;padding:9px 11px;}
+.dcard .code{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--dir);}
+.dcard .dtext{font-size:12.5px;color:var(--ink-2);margin:4px 0 7px;}
+.dcard .meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+.pill{font-family:var(--mono);font-size:10px;font-weight:600;padding:1px 7px;border-radius:10px;border:1px solid transparent;}
+.pill.steered{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-line);}
+.pill.probe{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-line);}
+.pill.pending{color:var(--faint);background:transparent;border-color:var(--line-2);}
+.unsteered{color:var(--faint);font-size:11.5px;font-style:italic;}
+.override{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 18px 14px;padding:9px 12px;border:1px dashed var(--line-2);border-radius:8px;color:var(--faint);font-size:12px;}
+.panel{padding:14px 16px;flex-shrink:0;}
+.panel + .panel{border-top:1px solid var(--line);}
+.panel h3{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 11px;font-weight:600;display:flex;justify-content:space-between;}
+.panel h3 .cov{color:var(--ink-2);}
+.frow{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;margin:6px 0;}
+.frow .fcode{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);}
+.frow .fnote{font-family:var(--mono);font-size:10px;color:var(--faint);text-align:right;}
+.check{color:var(--ok);font-weight:700;}.miss{color:var(--faint);}
+/* Third state, between a hit and a miss: the beat fired, but only because the
+   runner probed for it. It must not read as green. */
+.probed{color:var(--warn);font-weight:700;}
+.panel h3 .cov .probe-note{color:var(--warn);font-weight:600;}
+.iglabel{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:11px 0 4px;}
+.iglabel:first-child{margin-top:0;}
+.hrow{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:7px 0;font-size:12px;}
+.hrow .k{color:var(--muted);}
+.hrow .v{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);text-align:right;}
+.hrow .v .g{color:var(--ok);}.hrow .v .pend{color:var(--faint);}
+.esci-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;}
+.etag{font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:9px;border:1px solid var(--line-2);color:var(--faint);background:var(--surface);}
+.etag.hit{border-color:var(--ok-line);color:var(--ok);background:var(--ok-bg);}
+.etag.probe{border-color:var(--warn-line);color:var(--warn);background:var(--warn-bg);}
+.replay{border-top:1px solid var(--line);padding:16px 18px 18px;display:grid;grid-template-columns:1fr 210px;gap:20px;align-items:center;flex-shrink:0;}
+.replay h3{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 18px;font-weight:600;}
+.timeline{position:relative;height:34px;margin:0 6px;}
+.axis{position:absolute;top:16px;left:0;right:0;height:1px;background:var(--line-2);}
+.axis .done{position:absolute;left:0;top:0;height:1px;background:var(--warn);width:0;}
+.diamond{position:absolute;top:10px;width:11px;height:11px;background:var(--surface);border:1.5px solid var(--muted);transform:translateX(-50%) rotate(45deg);cursor:pointer;padding:0;}
+.diamond:hover{border-color:var(--ink);}
+.diamond.active{background:var(--warn);border-color:var(--warn);}
+.playhead{position:absolute;top:2px;width:1.5px;height:28px;background:var(--ink);transform:translateX(-50%);left:0;}
+.tl-hint{font-size:11px;color:var(--faint);margin-top:8px;}
+.video{position:relative;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;aspect-ratio:16/10;display:flex;align-items:center;justify-content:center;color:var(--faint);text-align:center;}
+.video svg{width:34px;height:34px;opacity:.5;}
+.video .tc{position:absolute;right:8px;bottom:6px;font-family:var(--mono);font-size:11px;color:var(--muted);}
+.video .vnote{position:absolute;left:8px;top:6px;font-size:10px;color:var(--faint);}
+.empty{padding:40px;text-align:center;color:var(--muted);}
+.pending-tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);border:1px solid var(--line-2);border-radius:4px;padding:1px 5px;margin-left:6px;}
+/* Full-screen only while the three-column layout is actually up.
+
+   Below 1080px the columns stack, and below ~620px tall there is no room for a
+   transcript, a side panel and the replay at once. Holding the app at 100vh in
+   either state does not make it fit, it just moves the overflow somewhere with
+   no scrollbar: the stacked replay grew to 348px of a 600px window and the side
+   panel's last rows were simply unreachable. So the window-sized console is for
+   windows that can hold it, and everything else falls back to the scrolling page
+   this layout was designed as. */
+@media (max-width:1080px), (max-height:620px){
+  .wrap{height:auto;min-height:0;}
+  .app{height:auto;display:block;}
+  .body{min-height:0;}
+  .col{display:block;}
+  .col.side{overflow-y:visible;}
+  .sesslist{max-height:50vh;}
+  .turns{max-height:60vh;}
+}
+@media (max-width:1080px){
+  .body{grid-template-columns:1fr;}
+  .col.sessions,.col.side{border:none;border-top:1px solid var(--line);}
+  .replay{grid-template-columns:1fr;}.video{max-width:320px;}
+  .thead,.turn{grid-template-columns:38px 1fr;}
+  .thead span:nth-child(3),.thead span:nth-child(4){display:none;}
+  .turn>div:nth-child(3),.turn>div:nth-child(4){grid-column:2;}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+</style>
+
+<div class="wrap">
+  <div class="app">
+    <div class="appbar" id="appbar">
+      <span class="sid" id="ab-sid">—</span>
+      <span class="spacer"></span>
+    </div>
+    <!-- Painted by the strip below, not by a route: a page that says the key is
+         gone before the script has taken it out would be the worst of both. -->
+    <div class="keystrip" id="keyStrip" hidden>
+      Researcher key removed from the address bar. Reloading this page will need it again.
+    </div>
+    <div class="body">
+      <div class="col sessions">
+        <div class="sess-head"><span class="t">Sessions</span>
+          <select id="statusFilter">
+            <option value="">All statuses</option>
+            <option value="complete">Complete</option>
+            <option value="partial">Partial</option>
+            <option value="failed">Failed</option>
+            <option value="active">Active</option>
+          </select>
+        </div>
+        <div class="sesslist" id="sessList"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="col trace">
+        <div class="trace-head"><div class="scene" id="sceneTitle"></div><div class="tabs" id="tabs"></div></div>
+        <div class="thead"><span>t (s)</span><span>Participant</span><span>Director</span><span>Actor</span></div>
+        <div class="turns" id="turns"><div class="empty">Select an encounter.</div></div>
+        <div class="override"><span>🔒 Override next direction</span><span>Disabled in study mode</span></div>
+      </div>
+      <div class="col side">
+        <div class="panel"><h3>Fidelity <span class="cov" id="covTriggers"></span></h3><div id="fidelity"></div></div>
+        <div class="panel"><h3>ESCI coverage <span class="cov" id="covEsci"></span></h3><div id="esci"></div></div>
+        <div class="panel"><h3>Session health</h3><div id="health"></div></div>
+      </div>
+    </div>
+    <div class="replay">
+      <div>
+        <h3>Replay</h3>
+        <div class="timeline" id="timeline"><div class="axis"><div class="done" id="axisDone"></div></div><div class="playhead" id="playhead"></div></div>
+        <div class="tl-hint">Click a turn or a marker to seek. <span class="pending-tag">video sync pending</span> needs clock_offset_ms in the manifest.</div>
+      </div>
+      <div class="video">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6"/></svg>
+        <span class="vnote" id="videoNote"></span>
+        <span class="tc mono" id="videoTc">t —</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* The researcher key, and why it does not stay in the address bar.
+
+   This page is opened from static/demo.html — the page whose whole purpose is
+   to be projected onto a wall in front of a lab — and from the researcher
+   console's "Full evidence trace" button, and both of them have to pass the key
+   in the URL because /evidence and /api/encounters are check_key routes. The
+   demo door takes the key out of its OWN bar and prints a banner saying so,
+   then handed it straight to this page, which kept it: after clicking through,
+   location.href still carried the key, on the screen the room had just been
+   asked to look at. Stripping it from one page of four is not stripping it.
+
+   So it is read once, kept in a variable, and taken out of the bar here — which
+   fixes every entrance to this page at once, the bookmark and the pasted link
+   included, not just the one the demo door builds. ?session= is preserved: it
+   is what decides which encounter this opens, and dropping it would break the
+   console's link to fix a different problem.
+
+   Deliberately NOT stashed anywhere that outlives the tab. A reload needs the
+   key again; a credential left behind on a shared demo machine is worse. */
+const _params = new URLSearchParams(location.search);
+const KEY = _params.get('key') || '';
+if (KEY) {
+  try {
+    _params.delete('key');
+    const rest = _params.toString();
+    // typeof-guarded because this page is also driven headless by the test
+    // harnesses, where there is no History to call.
+    if (typeof history !== 'undefined' && history.replaceState)
+      history.replaceState(null, '', location.pathname + (rest ? '?' + rest : ''));
+    const strip = document.getElementById('keyStrip');
+    if (strip) strip.hidden = false;
+  } catch (e) { /* a browser that will not rewrite the bar still gets the page */ }
+}
+const q = p => KEY ? `${p}${p.includes('?') ? '&' : '?'}key=${encodeURIComponent(KEY)}` : p;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const cap = s => s ? s[0].toUpperCase()+s.slice(1) : s;
+// A trigger id like "t3_defensiveness" reads as "defensiveness"; an interaction
+// id "i2" reads as "I2". Together: the beat code shown on the director card.
+const beatCode = (interaction, triggerId) => {
+  const ig = interaction ? interaction.toUpperCase() : '';
+  const beat = triggerId ? triggerId.replace(/^t\d+_/, '').replace(/_/g,' ') : '';
+  return [ig, beat].filter(Boolean).join(' · ');
+};
+
+/* Which dataset this encounter belongs to, read off the one field that answers
+   that question.
+
+   This used to be painted from `spec` — i.e. from "load_spec found a v3
+   scenario for this scenario id" — and printed the word STUDY whenever it did.
+   Every encounter in a wave draws a v3 scenario, demos included, because a demo
+   that ran different scenarios would not be a demo of the study. So an internal
+   test encounter opened here read "COMPLETE · scenario v3 · STUDY", and this is
+   the screen static/demo.html's own button sends a room to: the platform
+   telling a lab the opposite of the truth about its own containment.
+   Reproduced on the demo wave at /evidence?session=s_1773142745_384dad, an
+   encounter whose manifest says cohort: "internal".
+
+   Three answers, because the manifest can say three things. "study" is the
+   analysis set. Any other cohort is named as itself rather than flattened into
+   "not study" — "internal" is a demo somebody ran on purpose and "unattributed"
+   is a real participant whose survey key did not pipe, and those need different
+   things done about them. No cohort at all is an encounter recorded before the
+   tag existed, or one started outside a run: every ?cohort= filter drops it, so
+   it is not study data either, and "cohort unrecorded" is the only honest thing
+   to call it. */
+function cohortBadge(entry) {
+  const c = String((entry && entry.cohort) || '').toLowerCase();
+  if (c === 'study') return '<span class="badge b-study">Study</span>';
+  if (c) return `<span class="badge b-cohort">${esc(c)}</span>`;
+  return '<span class="badge b-nocohort">cohort unrecorded</span>';
+}
+
+/* The same answer, small, for a row in the session picker. */
+function cohortMark(entry) {
+  const c = String((entry && entry.cohort) || '').toLowerCase();
+  if (c === 'study') return '';
+  return c ? `<span class="cmark">${esc(c)}</span>`
+           : '<span class="cmark none">no cohort</span>';
+}
+
+let encounters = [], selectedId = null, convs = [], convIdx = 0, activeTurn = null, curSpan = 1;
+
+async function loadList() {
+  const el = document.getElementById('sessList');
+  try {
+    const r = await fetch(q('/api/encounters'));
+    if (!r.ok) { el.innerHTML = `<div class="empty">Couldn't load sessions (HTTP ${r.status}).</div>`; return; }
+    const data = await r.json();
+    if (!Array.isArray(data)) { el.innerHTML = '<div class="empty">Unexpected response.</div>'; return; }
+    encounters = data;
+  } catch (e) {
+    el.innerHTML = '<div class="empty">Couldn\'t reach the server. Check your connection and reload.</div>'; return;
+  }
+  renderList();
+  // ?session= lands on one encounter, which is what the researcher console's
+  // "Full evidence trace" link passes. Falls back to the first rather than
+  // showing nothing when the id is unknown: a stale link should still open a
+  // usable page, and the list makes it obvious which encounter is selected.
+  const want = new URLSearchParams(location.search).get('session');
+  const target = want && encounters.some(e => e.id === want) ? want
+               : (encounters.length ? encounters[0].id : null);
+  if (target) select(target);
+}
+
+function renderList() {
+  const el = document.getElementById('sessList');
+  const filt = document.getElementById('statusFilter').value;
+  const rows = encounters.filter(e => !filt || e.status === filt);
+  if (!rows.length) { el.innerHTML = '<div class="empty">No encounters.</div>'; return; }
+  el.innerHTML = rows.map(e => {
+    const st = e.status || 'complete';
+    // A date as well as a clock. This showed a bare time of day, so a wave that
+    // ran from 2026-03-02 to 2026-03-10 read as 27 unordered clock times —
+    // "09:25 PM / 09:37 PM / 09:35 AM / 09:17 AM" down the list, with nothing
+    // on the row and no title attribute carrying the day. Nobody can tell a
+    // Monday encounter from a Tuesday one, and the session list is the control
+    // this whole console is navigated by.
+    // Same shape static/rater.html already formats the same timestamp with, so
+    // the two screens name an encounter's moment the same way. The locale is
+    // the reader's (undefined), not the page's.
+    const time = e.started_at ? (() => {
+      const d = new Date(e.started_at*1000);
+      return d.toLocaleDateString(undefined, {month:'short', day:'numeric'})
+           + ' ' + d.toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
+    })() : '';
+    const label = e.title ? esc(e.title) : esc(e.scenario || e.id);
+    // A <button>, not a <div> with a click listener: free keyboard reach, free
+    // Enter/Space, free focus ring, free screen-reader role, no JS change. The
+    // whole page was mouse-only, which rater.html avoids by building the same
+    // kind of control as a real button.
+    return `<button type="button" class="sess ${e.id===selectedId?'sel':''}" data-id="${esc(e.id)}">
+      <span class="id">${esc(e.id)}</span><span class="time">${esc(time)}</span>
+      <span class="scen">${label}${e.variant?` · var ${esc(e.variant)}`:''}</span>
+      <span class="st"><span class="dot ${st}"></span><span class="stlbl">${esc(st)}</span>${cohortMark(e)}</span>
+    </button>`;
+  }).join('');
+  el.querySelectorAll('.sess').forEach(n => n.addEventListener('click', () => select(n.dataset.id)));
+}
+
+async function select(id) {
+  selectedId = id;
+  renderList();
+  const turns = document.getElementById('turns');
+  turns.innerHTML = '<div class="empty">Loading…</div>';
+  let rec;
+  try {
+    const r = await fetch(q(`/api/encounters/${encodeURIComponent(id)}/record`));
+    if (!r.ok) { turns.innerHTML = `<div class="empty">Couldn't load record (HTTP ${r.status}).</div>`; return; }
+    rec = await r.json();
+  } catch (e) { turns.innerHTML = '<div class="empty">Couldn\'t reach the server.</div>'; return; }
+  renderRecord(rec, id);
+}
+
+function renderRecord(rec, id) {
+  const spec = rec.spec, prov = rec.provenance || {}, counts = rec.counts || {};
+  const entry = encounters.find(e => e.id === id) || {};
+  const st = entry.status || 'complete';
+  // app bar
+  const models = [prov.realtime_model, prov.text_model].filter(Boolean).map(m => m.split('/').pop()).join(' · ');
+  document.getElementById('appbar').innerHTML = `
+    <span class="sid">${esc(id)}</span>
+    ${spec ? `<span class="crumb">${esc(cap(spec.construct.replace(/_/g,' ')))} ${esc(spec.variant)} · <b>${esc(spec.title)}</b></span>` : `<span class="crumb"><b>${esc(rec.scenario||'—')}</b></span>`}
+    <span class="badge b-${st}">${esc(cap(st))}</span>
+    <span class="spacer"></span>
+    <span class="versions">${spec?'scenario v3 · ':''}${esc(models||'—')}</span>
+    ${cohortBadge(entry)}`;
+
+  // A beat the participant walked into is not the same evidence as one the
+  // runner had to prompt for. The silence watchdog re-arms every
+  // PROBE_AFTER_SECONDS and resets the activity clock each time it probes, so a
+  // participant who never speaks still marches through every planted beat that
+  // carries an on_silence line — which, since S2 A and S2 B gained theirs, is
+  // all of them. Counting the two the same way rendered a silent encounter as
+  // fully covered, and coverage is what tells a researcher whether an encounter
+  // is scoreable at all, so the one record that most needs flagging read as
+  // complete. Split them here: `probing` is already on every entry (see
+  // server/app.py, which builds triggers_fired), it was just being dropped.
+  // Legacy records predate the flag and read as volunteered, which is the safer
+  // direction to be wrong in for an old file. static/director.html makes the
+  // same split for the same reason.
+  const probedIds = new Set(
+    (rec.triggers_fired || []).filter(f => f.probing).map(f => f.trigger_id));
+  const volunteeredIds = new Set(
+    (rec.triggers_fired || []).filter(f => !f.probing).map(f => f.trigger_id));
+  const iMeta = {}; (spec?.interactions || []).forEach(i => iMeta[i.id] = i);
+
+  // Group the transcript into conversations by interaction. Participant turns
+  // don't carry an interaction in the record, so carry the last agent turn's
+  // interaction forward (and back-fill any leading participant turns with the
+  // first interaction) — otherwise every participant turn would start a new
+  // group.
+  const tr = rec.transcript || [];
+  const firstIk = (tr.find(t => t.interaction) || {}).interaction || null;
+  let lastIk = null;
+  convs = []; let cur = null;
+  for (const t of tr) {
+    if (t.interaction) lastIk = t.interaction;
+    const ik = t.interaction || lastIk || firstIk;
+    if (!cur || cur.ik !== ik) { cur = { ik, meta: iMeta[ik], turns: [] }; convs.push(cur); }
+    cur.turns.push(t);
+  }
+  if (!convs.length) { convs = [{ ik:null, meta:null, turns: [] }]; }
+  convIdx = 0;
+  renderTabs();
+
+  // fidelity (planned vs what actually happened, grouped by interaction)
+  // The headline is what the participant volunteered; probed beats sit beside
+  // it rather than inside it, so the figure only reads full when the instrument
+  // actually got what it planted for. The per-row note now describes what
+  // happened in THIS encounter — it used to read spec.probe, i.e. "this beat
+  // has an on_silence line", which is a property of the scenario file and was
+  // shown whether or not a probe was ever used.
+  let fidHtml = '', planned = 0, hit = 0, probedCount = 0;
+  (spec?.interactions || []).forEach(i => {
+    fidHtml += `<div class="iglabel">${esc(i.id.toUpperCase())} · ${esc(i.label||'')}</div>`;
+    (i.triggers || []).forEach(tr => {
+      planned++;
+      const isHit = volunteeredIds.has(tr.id);
+      const isProbed = !isHit && probedIds.has(tr.id);
+      if (isHit) hit++; else if (isProbed) probedCount++;
+      fidHtml += `<div class="frow"><span class="${isHit?'check':isProbed?'probed':'miss'}">${isHit?'✓':isProbed?'◐':'○'}</span>
+        <span class="fcode">${esc(beatCode(i.id, tr.id))}</span>
+        <span class="fnote">${isProbed?'silence probe':''}</span></div>`;
+    });
+  });
+  document.getElementById('fidelity').innerHTML = fidHtml || '<div class="hrow"><span class="k">No instrument spec for this scenario.</span></div>';
+  document.getElementById('covTriggers').innerHTML = spec
+    ? `${hit}/${planned}` + (probedCount ? ` <span class="probe-note">+${probedCount} probed</span>` : '')
+    : '';
+
+  // ESCI coverage. An item reached only because the runner prompted for it is
+  // not evidence the participant demonstrated the competency, so the count is
+  // the volunteered set and probed items are shown in their own colour.
+  const allEsci = Object.keys(spec?.esci_items || {});
+  const seenEsci = new Set(
+    (rec.triggers_fired || []).filter(f => !f.probing).flatMap(f => f.esci || []));
+  const probedEsci = new Set(
+    (rec.triggers_fired || []).filter(f => f.probing).flatMap(f => f.esci || []));
+  const probedOnlyEsci = [...probedEsci].filter(k => !seenEsci.has(k)).length;
+  document.getElementById('esci').innerHTML = allEsci.length
+    ? `<div class="esci-tags">${allEsci.map(k => `<span class="etag ${seenEsci.has(k)?'hit':probedEsci.has(k)?'probe':''}" title="${esc((spec.esci_items||{})[k]||'')}">${esc(k)}</span>`).join('')}</div>`
+    : '<div class="hrow"><span class="k">—</span></div>';
+  document.getElementById('covEsci').innerHTML = allEsci.length
+    ? `${seenEsci.size}/${allEsci.length}` + (probedOnlyEsci ? ` <span class="probe-note">+${probedOnlyEsci} probed</span>` : '')
+    : '';
+
+  // session health (real bits + clearly-marked pending instrumentation)
+  const audio = rec.audio || {}, video = rec.video || [];
+  const rows = [
+    ['Turns', `participant <b>${counts.participant_turns||0}</b> · agent <b>${counts.agent_turns||0}</b>`],
+    ['Directions', `${counts.stage_directions||0}`],
+    ['Audio', `${audio.participant?'participant <span class="g">✓</span>':'participant —'} · agents ${(audio.agents||[]).length}`],
+    ['Video', video.length ? `<span class="g">✓</span> ${video.length} file${video.length>1?'s':''}` : '—'],
+    ['Models', esc(models||'—')],
+    ['Gateway', esc((prov.gateway||'—').replace(/^https?:\/\//,''))],
+    ['Director latency', '<span class="pend">pending instrumentation</span>'],
+    ['Connection / reconnects', '<span class="pend">pending instrumentation</span>'],
+    ['Gemini resumptions', '<span class="pend">pending instrumentation</span>'],
+  ];
+  document.getElementById('health').innerHTML = rows.map(([k,v]) =>
+    `<div class="hrow"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+
+  document.getElementById('videoNote').textContent = video.length ? 'recording present' : 'no video';
+  renderConversation();
+}
+
+function renderTabs() {
+  const el = document.getElementById('tabs');
+  if (convs.length <= 1) { el.innerHTML = ''; return; }
+  el.innerHTML = convs.map((c,i) => {
+    const label = c.meta ? `Conversation ${i+1}` : `Segment ${i+1}`;
+    return `<button type="button" class="tab ${i===convIdx?'on':''}" data-i="${i}">${esc(label)}</button>`;
+  }).join('');
+  el.querySelectorAll('.tab').forEach(n => n.addEventListener('click', () => { convIdx=+n.dataset.i; renderConversation(); }));
+}
+
+function renderConversation() {
+  const c = convs[convIdx] || { turns: [], meta: null };
+  const m = c.meta;
+  document.getElementById('sceneTitle').innerHTML = m
+    ? `${esc(m.id.toUpperCase())} · <span class="em">${esc(m.label||'')}</span>${m.observe?` — <span class="em">${esc(m.observe)}</span>`:''}`
+    : (c.turns.length ? '<span class="em">Conversation</span>' : '');
+  renderTabs();
+
+  const ts = c.turns.map(t => t.t).filter(v => typeof v === 'number');
+  const t0 = ts.length ? ts[0] : 0;
+  curSpan = ts.length ? Math.max(ts[ts.length-1] - t0, 1) : 1;
+
+  const el = document.getElementById('turns');
+  if (!c.turns.length) { el.innerHTML = '<div class="empty">No turns recorded for this segment.</div>'; renderTimeline(); return; }
+  el.innerHTML = c.turns.map((t,i) => {
+    const tsec = (typeof t.t === 'number') ? t.t.toFixed(1) : '—';
+    if (t.role === 'participant') {
+      const body = t.text ? `<div class="p-text">${esc(t.text)}</div>` : '<div class="p-none">—</div>';
+      return `<div class="turn" data-i="${i}"><div class="ts">${tsec}</div><div>${body}</div><div></div><div></div></div>`;
+    }
+    // agent turn
+    let dcell = '<div class="unsteered">unsteered</div>';
+    if (t.stage_direction) {
+      const code = beatCode(t.interaction, t.trigger_id) || (t.interaction ? t.interaction.toUpperCase() : 'directed');
+      dcell = `<div class="dcard">
+        <div class="code">${esc(code)}</div>
+        <div class="dtext">${esc(t.stage_direction)}</div>
+        <div class="meta">
+          <span class="pill steered">steered</span>
+          ${t.probing ? '<span class="pill probe">silence probe</span>' : ''}
+          <span class="pill pending" title="per-turn director latency is pending instrumentation">latency —</span>
+        </div></div>`;
+    }
+    const abody = t.text ? `<div class="a-text">${esc(t.text)}</div>` : '<div class="a-missing">(no transcript recorded for this turn)</div>';
+    return `<button type="button" class="turn" data-i="${i}"><div class="ts">${tsec}</div><div></div><div>${dcell}</div>${abody}</button>`;
+  }).join('');
+  el.querySelectorAll('.turn').forEach(n => n.addEventListener('click', () => seek(+n.dataset.i)));
+  renderTimeline();
+  seek(0, false);
+}
+
+// Timestamps for the timeline's spoken labels.
+function mmss(sec) {
+  const t = Math.max(0, Math.round(Number(sec) || 0));
+  return `${Math.floor(t/60)}:${String(t%60).padStart(2,'0')}`;
+}
+
+function renderTimeline() {
+  const c = convs[convIdx] || { turns: [] };
+  const tl = document.getElementById('timeline');
+  tl.querySelectorAll('.diamond').forEach(d => d.remove());
+  const ts = c.turns.map(t => t.t).filter(v => typeof v === 'number');
+  const t0 = ts.length ? ts[0] : 0;
+  tl.setAttribute('role', 'group');
+  tl.setAttribute('aria-label', 'Conversation timeline');
+  c.turns.forEach((t,i) => {
+    if (typeof t.t !== 'number') return;
+    // Real buttons with a spoken label: the diamonds are the only way to seek
+    // the replay and they were unreachable without a mouse.
+    const d = document.createElement('button');
+    d.type = 'button';
+    d.className = 'diamond'; d.style.left = ((t.t - t0)/curSpan*100)+'%'; d.dataset.i = i;
+    d.setAttribute('aria-label', `Jump to ${mmss(Math.max(0, t.t - t0))}`);
+    d.addEventListener('click', () => seek(i));
+    tl.appendChild(d);
+  });
+}
+
+function seek(i, scroll=true) {
+  const c = convs[convIdx] || { turns: [] };
+  if (!c.turns.length) { document.getElementById('videoTc').textContent = 't —'; return; }
+  activeTurn = i; const t = c.turns[i]; if (!t) return;
+  document.querySelectorAll('.turn').forEach((n,j) => n.classList.toggle('active', j===i));
+  const ts = c.turns.map(x => x.t).filter(v => typeof v === 'number');
+  const t0 = ts.length ? ts[0] : 0;
+  const rel = (typeof t.t === 'number') ? (t.t - t0) : 0;
+  const pct = rel/curSpan*100;
+  document.getElementById('playhead').style.left = pct+'%';
+  document.getElementById('axisDone').style.width = pct+'%';
+  document.querySelectorAll('.diamond').forEach(d => d.classList.toggle('active', +d.dataset.i === i));
+  document.getElementById('videoTc').textContent = (typeof t.t === 'number') ? `t ${t.t.toFixed(1)} s` : 't —';
+  if (scroll) { const el = document.querySelectorAll('.turn')[i]; el && el.scrollIntoView({block:'nearest', behavior:'smooth'}); }
+}
+
+document.getElementById('statusFilter').addEventListener('change', renderList);
+loadList();
+</script>

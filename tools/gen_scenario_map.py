@@ -1,7 +1,24 @@
 """Generate docs/scenario-map.md from the specs, so the table cannot drift."""
-import yaml, glob, pathlib
+import pathlib, sys, yaml
 
-specs = [yaml.safe_load(open(f)) for f in sorted(glob.glob('scenarios/v3/*.yaml'))]
+# Both the specs and the output are located from this file, not from the working
+# directory. With relative paths, running the script from anywhere but the repo
+# root matched no specs and still wrote a map: header rows, no encounters, no
+# triggers, exit 0. That failure is worse than a crash, because a header-only
+# map reads as "the scenarios have no planted triggers" rather than as "you ran
+# this from the wrong place". The empty-glob check below covers the same
+# accident inside the repo (a moved or renamed scenarios/v3).
+#
+# Both ends are pinned to UTF-8 deliberately: the specs and the generated table
+# carry em dashes and curly quotes, so under a non-UTF-8 default encoding an
+# implicit read mangles the text and an implicit write dies partway through the
+# file, leaving a truncated map behind.
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+SPEC_DIR = ROOT / "scenarios" / "v3"
+spec_paths = sorted(SPEC_DIR.glob("*.yaml"))
+if not spec_paths:
+    sys.exit(f"no scenario specs found under {SPEC_DIR}; nothing to generate")
+specs = [yaml.safe_load(p.read_text(encoding="utf-8")) for p in spec_paths]
 MODE = {'one_to_one': '1:1', 'group': 'group', 'one_to_one_series': '1:1 series'}
 L = ["# Scenario map",
      "",
@@ -46,5 +63,15 @@ for construct, items in seen.items():
     L += [f"- `{k}` — {v}" for k, v in items.items()]
     L.append("")
 
-pathlib.Path("docs/scenario-map.md").write_text("\n".join(L) + "\n")
-print("wrote docs/scenario-map.md")
+out_path = ROOT / "docs" / "scenario-map.md"
+# newline="" is pinned for the same reason as the encoding above. Text mode
+# translates "\n" to the platform default on write, so a researcher regenerating
+# the map on Windows emits CRLF where macOS and Linux emit LF. CI regenerates it
+# on ubuntu-latest and then runs `git diff --exit-code -- docs/scenario-map.md`:
+# a CRLF file in the index makes that diff the WHOLE file, so the freshness step
+# fails on every subsequent PR with a message about a stale spec — which is not
+# what went wrong, and not something anyone will guess from it. (A .gitattributes
+# with `* text=auto eol=lf` at the repo root is the other half of this; it is
+# outside this file.)
+out_path.write_text("\n".join(L) + "\n", encoding="utf-8", newline="")
+print(f"wrote {out_path} from {len(specs)} specs")

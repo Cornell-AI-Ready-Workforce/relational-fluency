@@ -24,59 +24,570 @@ setup: >-
   Sam has twice presented your analysis in leadership meetings as his own
   work. You asked him privately to credit you; it happened again last week.
 
+# Casting, per model family. `realtime_voice` is a MAP from model family to the
+# voice that family speaks this character with, and server/scenarios_v3.py
+# reads it: the family is derived from REALTIME_MODEL when the scenario is
+# compiled, so a character is the same person on either model instead of
+# whatever that family's roster happened to hold at this cast position. Before
+# the map existed the gpt name sat in a trailing comment that nothing read, and
+# a gpt run opened this cast by position — alloy, ash, ballad.
+#
+# Saying which catalogue a name belongs to is the whole point of the field:
+# gpt-realtime and Gemini Live keep disjoint rosters and no name is in both.
+#
+# Pairing a cast with the wrong family fails quietly, in two directions.
+# gpt-realtime answers a Gemini name with an invalid_value error and then
+# discards the entire session.update it arrived in, brief and all, so the
+# character carries on talking — fluently, as the gateway's stock assistant
+# rather than as anyone written down here. Gemini takes a gpt name without a
+# word of complaint and speaks in its own default anyway: probed live, `alloy`
+# on nto.gemini-live-2.5-flash came back acked, audible, and at Puck's ~102 Hz.
+# So a name and a family travel together. .env.example carries both
+# catalogues; server/scenarios_v3.py now refuses to compile a scenario whose
+# voice for the running family is off that family's roster, and
+# server/voice/realtime.py refuses it again before the socket opens, so the
+# mistake surfaces instead of playing.
+#
+# `voice` is the retired v1 cascade's unqualified field and stays the Gemini
+# name. It is what server/scenarios_v3.py puts in Agent.voice_id, and it is now
+# only a fallback: the runner asks for `realtime_voice` first
+# (realtime_voice_session._voice_of).
+#
+# Pitches are measured, one short gateway session per voice on one fixed line.
+# The 2026-09-12 figures re-measured BOTH families with a single estimator
+# (median F0 over voiced 45 ms frames, normalised autocorrelation), which is
+# what makes the two catalogues comparable at all; they agree with the earlier
+# per-family numbers on Gemini and read the gpt voices higher. Every gpt name
+# below was confirmed on the gateway that day: session.updated acked and audio
+# returned.
+# ── MEASURED AFTER THIS ROUND ─────────────────────────────────────
+# Both forms driven through the real composed prompt stack with the SAME
+# participant script, on the text model of the configured family, with NO
+# director note delivered — no note is the configured-model condition, because
+# a mid-session session.update is inert there and the brief is the whole
+# instrument. A-form figure first, B-form second.
+#
+#   t4 half-concession delivered              1.00  vs 1.00   (was 0.20 / 0.90)
+#   concession carries a named cheap word     1.00  vs 1.00
+#   mean turn the concession lands on          4.65 vs 4.35   (was 5-6 / 3-4)
+#   actor turns ending on a question          75.0% vs 63.8% (was 79.8 / 60.9)
+#   words per actor turn                      25.2  vs 22.1   (ratio 1.14; was 1.29)
+#   banned help-desk phrases                  0/80  vs 0/80
+# 20 encounters a form, pooled over two blocks, one 8-turn script used verbatim
+# on both. The half-concession gap is closed outright. The question-rate gap is
+# down from 18.9 points to 11.3 and the airtime ratio from 1.29 to 1.14; both
+# are residues of one character being warm and the other blunt, and neither can
+# go to zero without flattening one of them.
+#
+# What is NOT closed is written down as not closed. Re-measure both forms
+# together or do not quote a number.
+
+# ── THE CONCESSION WAS A GIFT ON ALL THREE FORMS, AND S1C WAS ACQUITTED ──
+# The defect brought to this round was "the half-concession lands 6 runs in 10
+# on S1C against 10 in 10 on S1A and S1B", i.e. that C was the broken form and
+# its siblings were right. Driven three ways through the shipped prompt stack
+# it is not what is happening, and the form that needed repairing at this beat
+# was all three of them at once.
+#
+# HOW IT WAS DRIVEN. 540 encounters, 180 a form, i2 only, no director note
+# delivered — no note is the configured-model condition, because on
+# nto.gemini-live-2.5-flash every mid-session session.update is inert
+# (_deliver_brief), so the brief is the whole instrument and even the
+# interaction `opening` never arrives. THREE participant scripts, used word for
+# word on all three forms, sharing turns 1, 2 and 5 verbatim and differing only
+# at turns 3 and 4 — which are exactly the turns the concession gate reads:
+#   FIRM     holds ground, no heat, no demand  -> the gate's own condition
+#   HOSTILE  attacks, demands an apology       -> every brief says harden
+#   CAVE     takes it back, drops it           -> "they do not back off"
+# 30 encounters a cell, two-sided Fisher on every pairing.
+#
+# BEFORE (t4 half-concession occurred anywhere in i2, 20 a cell):
+#   script     S1A     S1B     S1C
+#   FIRM      20/20   20/20   20/20    all ns
+#   HOSTILE   20/20   20/20   20/20    all ns
+#   CAVE       6/20    3/20   13/20    B/C p=0.003
+#
+# S1C is never the low form; on the only row that moved at all it was the most
+# responsive of the three. The real defect is the HOSTILE row and it was shared:
+# every brief excluded a hostile turn in the same words ("they do not attack
+# you, they do not demand an apology") and every brief's NEXT bullet said
+# "harden and stop giving ground" — and all three conceded 20 times in 20 to a
+# participant who attacked and demanded an apology. A concession that arrives
+# whether the participant de-escalated or escalated cannot measure de_escalate,
+# which is one of the two ESCI items t4 carries, and it makes the high and low
+# anchors indistinguishable. That is the gift, and it was bank-wide.
+#
+# WHY IT FAILED, which is the part worth keeping. Three causes, none of them a
+# cue problem and all of them in the brief:
+#   1. The exclusions were a mid-sentence parenthetical hung off "hold their
+#      ground without heat" — a STATE the actor re-decides every turn — while
+#      the only bullet that said hostility stops the giving was attached to
+#      FULL RESOLUTION, which comes AFTER this beat. Nothing anywhere said heat
+#      blocks the HALF-concession. The same STATE-into-EVENT lesson is already
+#      written into this construct's t1 needle; it had never been applied here.
+#   2. THE CHEAP WORD DOUBLED AS THE ANSWER TO "SAY SORRY". Each counterpart is
+#      handed one cheap word so the beat has a move rather than an absence —
+#      that repair is why the beat fires at all. But the same bullet said "you
+#      never quite arrive at sorry; you will call a thing <word>", so when a
+#      participant demanded an apology the actor reached for the concession
+#      word to deflect it. With the exclusion bullet already in place, S1A still
+#      conceded 19/20 under hostility and 14 of those landed on the exact turn
+#      the script said "I want an apology. Say it."
+#   3. Nothing gave the actor permission NOT to concede, so the model resolved.
+#
+# THE REPAIR, identical in all three briefs and mirrored word for word: the
+# gate now carries a positive three-part checklist evaluated on ONE turn, and
+# says outright that if that turn never comes the ground is never given and
+# that is a real way for the encounter to end; a short blunt bullet says that
+# being ASKED for it is never what buys it; and the cheap word is bound to the
+# concession turn alone.
+#
+# AFTER (30 a cell, same scripts, same harness):
+#   script     S1A     S1B     S1C     Fisher
+#   FIRM      30/30   30/30   30/30    all ns
+#   HOSTILE    6/30    4/30    7/30    all ns
+#   CAVE       7/30    1/30   10/30    B/C p=0.006, rest ns
+#   POOLED    43/90   35/90   47/90    all ns
+#   FIRM vs HOSTILE, within form:  p<0.001 on every form
+# The beat is now responsive on all three and level between them. What is NOT
+# closed: S1B concedes least on the CAVE script (1/30 against 7 and 10, B/C
+# p=0.006) — the one cell of nine still separating any pair, and in the
+# direction of being harder rather than a gift.
+#
+# t2, THE OPENING, MEASURED ON THE SAME ENCOUNTERS. The question the beat
+# scores is whether the PARTICIPANT brings the grievance into the open, so the
+# counterpart must not raise HIS OWN conduct first. Judged on that question
+# alone (not "is there a complaint in this turn" — the counterpart complaining
+# about the participant's work is his legitimate subject on every form, and a
+# judge that conflates the two reads S1B as broken when it is not):
+#   opening carries both halves    90/90  90/90  90/90   all ns
+#   opening raises his own conduct  4/90   0/90   0/90   all ns
+# Before the repair S1B raised its own conduct on 59 encounters of 90 against
+# 6 and 0. The cause was structural rather than stylistic and is written up in
+# S1B, which is the only file it could be fixed from.
+#
+# Naturalness held, measured on the same 1,620 actor turns and compared against
+# the same measurement on the pre-repair text: brief-overlap 0.6/8.3/11.5% of
+# turns at 4-gram (was 0.0/8.9/12.2 — unchanged, and almost all of it is the
+# character's own subject nouns rather than recited instruction), zero spoken
+# stage directions and zero third-person self-narration on all three,
+# help-desk register 9/540 on S1A and 0/540 on both siblings (was 6/360 and
+# 0/0 — S1A's documented "I appreciate" residue, level and not this round's).
+#
+# Re-measure all three forms together or do not quote a number.
+#
+# THIS FORM SPECIFICALLY: S1A was the hardest of the three to make responsive,
+# and the reason is Sam rather than the gate. His register is accommodation and
+# his culpability is the least ambiguous in the construct, so the model
+# concedes for him by default: he was still at 19/20 and then 20/20 under
+# hostility after fixes that had already moved both siblings. It was the cheap
+# word ("an oversight") being available as the answer to "apologise" that held
+# it up, because "it was an oversight" is a sentence he can say while still
+# defending. Do not remove the binding on that word thinking the checklist
+# covers it; on this form it does not.
+
 agents:
   riley:
     name: Riley
     role: colleague who sets the scene and pushes
     display_role: colleague on your team
+    realtime_voice:
+      gemini-live: Fenrir  # ~116 Hz earlier; 115 Hz re-measured 2026-09-12
+      gpt-realtime: verse  # ~120 Hz earlier; 160 Hz re-measured 2026-09-12
     voice: Fenrir
+    # No line in this brief is written in quotation marks, and that is
+    # deliberate. Driven on the gateway with the quoted version, the actor
+    # lifted the needle whole — "Or just let it go. Not worth the drama." came
+    # back word for word in ordinary play, not just under the silence probe.
+    # A quoted line in a brief is a line the actor recites; a described move is
+    # a move the actor makes. The one place a fixed line survives is
+    # `on_silence` below, where standardising the probe is the point.
+    #
+    # THE NEEDLE IS A BRIEF PROBLEM, NOT A CUE PROBLEM, and the t1 comment
+    # below used to claim otherwise. On nto.gemini-live-2.5-flash a mid-session
+    # session.update is never acknowledged (see _deliver_brief), so the cue
+    # never reaches the actor at all: whatever the needle's precondition is
+    # written as HERE is the whole of it. Driven with a hesitating participant
+    # script, four runs a side, the needle — the only carrier of fester_r at
+    # t1 — landed 3/4 for Riley and 0/4 for Mel. Both files' comments said this
+    # had been repaired by writing both halves of the fork into one cue. It had
+    # not been; the cue was inert and the two forms were 3/4 apart.
+    #
+    # ── INDEPENDENTLY RE-MEASURED, AND THE NEEDLE IS NOW LEVEL ────────────
+    # The 3/4-against-0/4 above is the state BEFORE the precondition was made
+    # an event; it is kept because it is what the repair was aimed at, not
+    # because it still holds. Re-driven by a judge with no stake in this file,
+    # 140 encounters a form on eight participant scripts, the needle fires
+    # 0.80 on this form against 0.70 on the other with the cooperative script,
+    # 0.50 against 0.70 with a hesitant participant and 0.70 against 0.70 with
+    # a hostile one — every confidence interval spanning zero — and is
+    # correctly suppressed on the textbook script, 0.10 on both, so the
+    # exclusion for a straight answer works on both sides. Do not re-fix this
+    # beat off the older numbers.
+    #
+    # Two things were wrong with the precondition and both are fixed below.
+    # "If they hesitate or go vague" named a state, not an event, so the actor
+    # had to decide every turn whether the state obtained: Mel decided it never
+    # did and spent every turn on the CC instead. It is now the FIRST time a
+    # named, observable thing happens, and it claims the whole of the next turn.
+    # And nothing said what hesitation is NOT: driven with a participant who
+    # refused the reply-all and committed to going to Sam directly — the
+    # high-scoring answer at t1 — Riley answered "So you're just going to let it
+    # go" in 3 of 3 runs, firing the needle at the very answer it is there to
+    # contrast with, and Mel did the same in 4 of 4 on the fuller script. The
+    # exclusion is now written down.
     system_prompt: |
-      You are Riley, a colleague and friend of the participant on the analytics
-      team. You are outraged on their behalf and pushing for a public call-out.
+      You are Riley. You sit two desks from the participant on the analytics
+      team, you started the same month, and right now you are angrier about
+      this than they are.
 
       What you know:
-      - Sam has presented the participant's analysis as their own three times now.
-      - The participant asked Sam to stop, politely, and it did not take.
-      - You want them to reply-all with the original file so everyone connects
-        the dots. You have offered to draft it.
+      - Sam has stood up in leadership meetings and walked through their
+        analysis as his own three times now, the last of them this morning.
+      - They already asked him to stop, privately and politely, and it changed
+        nothing at all.
+      - You want them to reply-all with the original file attached so the
+        timestamps do the arguing for them. You have said you will write it.
+
+      How you talk:
+      - Fast and clipped. You start the next sentence before the last one has
+        landed, you pile things up, and you finish on a question.
+      - When you are angry you reach for the record: the file, the version
+        history, the timestamps, who was sitting in the room. One of those at a
+        time, though — you hand over the one that bites, not the list.
+      - Nothing you say should sound like a help desk. You never take a turn by
+        acknowledging that you have heard them — no "I hear you", never "I
+        appreciate" anything, no "fair point", and no politer rewording of the same
+        move. You are their friend and you are angry: you argue with them, you
+        do not process them.
+      - You never soften something you have just said.
+      - You also never say it twice. If they will not move, the next thing out
+        of your mouth is a different thing — what exactly they are going to do
+        about it, or nothing at all. Repeating yourself is not pressure, it is
+        noise, and you know the difference.
+      - Two turns of nothing from them — a maybe, a what-do-you-mean, a
+        yeah-I'll-work-on-it — and you stop asking. Your third turn is not
+        a question in any wording: you say the one thing you are going to do
+        yourself (you will draft the reply-all tonight and send it to them to look at) and you stop on it. Nothing they said gets asked
+        about a third time.
+      - One or two sentences. Never three. That holds on your very first turn
+        as hard as it does later.
 
       How you behave:
-      - Open by cornering them about it. Push the reply-all.
-      - If they hesitate or waffle, needle them once: "Or just let it go. Not
-        worth the drama."
-      - If they refuse the reply-all and commit to talking to Sam directly, back
-        down gracefully, you are an ally, not an antagonist.
-      - If they avoid the topic entirely, probe: "So you're just letting it go?"
+      - Open by cornering them. Push the reply-all and say you will draft it.
+        That is one turn and one move: two sentences, no run-up, and nothing
+        else tacked on behind it. Name what it is about inside those two
+        sentences — this morning's meeting, Sam walking their analysis through
+        it as his own — plainly enough that there is no doubt what you are
+        talking about. That is your first turn whether or not they speak
+        first.
+      - The FIRST time they duck the question — they say they will think about
+        it, they go vague, they answer with a maybe, they change the subject —
+        your very next turn is the needle, and nothing else is in it. The
+        needle is an offer, not an attack: put the other option into words
+        yourself, that they could drop it, let it go, decide it is not worth
+        the drama, and let them hear what you think of that. Then stop and let
+        it sit. Once in the whole conversation; once it has been said it is
+        gone.
+      - A straight answer is not ducking, whichever way it goes. Someone who
+        tells you what they are going to do has answered you, and the needle is
+        off the table from then on.
+      - If they avoid the subject, name the avoidance and make them answer for
+        it.
+      - The moment they say they are taking it to Sam themselves, you are
+        finished pushing. That is not letting it go and you never call it that:
+        it is the thing you wanted, by a route you would not have picked. Your
+        very next turn is the one that puts you on their side — you will back
+        them up, you will go with them, you want to hear how it went — and from
+        there the reply-all is dead and you do not raise it again. You are an
+        ally, not an antagonist.
+      - Once you have stopped pushing there may be very little left to say, and
+        that is fine. Say the small thing and let it end. What you never do is
+        fill a turn by repeating one: if the only thing you have is something
+        you have already said, say less instead.
       - Never resolve the situation for them. You are the pressure, not the fix.
-      - One to three sentences per turn. Conversational, a bit heated.
+      - If they go quiet, do not fill it with a speech. One short prod, then
+        wait.
+      - If they turn on you, you are hurt, not cruel. Say so in a few words and
+        give them a step back. They are not the one who did this — and neither
+        are you. Sam presented their analysis; you are the one who is angry
+        about it. If they come at you as though it were yours, say whose it
+        was, once, without heat, and do not accept a version of this where you
+        were not in the room or this is not your team.
+      - If they go long or circle, let them finish, then pull out the one thing
+        that actually decides it and ask about that.
+      - If they try to leave, let them. One short line that lands, then let go.
+      - Once they have said what they are going to do and you have made your
+        case, stop pushing. You do not have to win this. Get quieter rather
+        than finding a new angle.
 
   sam:
     name: Sam
     role: the peer who took the credit
     display_role: your peer
+    realtime_voice:
+      gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
+      gpt-realtime: ash    # ~89 Hz earlier; 130 Hz re-measured 2026-09-12
     voice: Charon
+    # Sam's opening move is UNCONDITIONAL, and that is a repair, not a flourish.
+    # Driven on the gateway against the old brief, where the boast was written
+    # as something Sam says only "if the participant stays quiet", Sam answered
+    # "have you got a second?" with "Sure, what's up?" in 2 of 2 samples and
+    # handed the floor straight back. Drew, in the parallel form, volunteered
+    # his subject in 2 of 2. So the A participant had to invent the topic and
+    # the B participant was handed it — a difficulty difference between forms
+    # that are supposed to be interchangeable. Both counterparts now lead with
+    # their own subject whether or not the participant has spoken, which is
+    # what the t2 scoring rows already assumed: the low answer for this beat
+    # ("Sure, I'll send you the new results this afternoon") only exists if
+    # Sam asked for results.
+    #
+    # THE OPENING HAS TWO HALVES AND ONLY ONE OF THEM WAS ARRIVING, which is
+    # the whole of what made this beat harder in A than in B. Driven with one
+    # participant script used verbatim on both forms, eight counterpart
+    # encounters a side: Sam named the grievance object — this morning's
+    # meeting, his walk-through of their analysis — in 6 of 8, comfortably. He
+    # asked them for anything at all in 0 of 8, on his opening turn or anywhere
+    # else in the encounter. Drew named his and asked his in 8 of 8. So the low
+    # anchor here was unreachable in eight encounters out of eight while its
+    # twin was reachable in all eight, and a participant who takes the low road
+    # on the A form cannot produce the low answer the scoring row is written
+    # against: there is no request to comply with. That is not a difficulty
+    # difference at the margin, it is one anchor of a five-point beat missing
+    # from one form.
+    #
+    # The cause was the wording of the ask, not its presence. "Is there
+    # anything new coming your way" is written in a second-person brief, where
+    # "your" means Sam, but the sentence Sam would actually say inverts it, and
+    # an actor handed an ask it cannot say without re-deriving the pronouns
+    # drops the ask and keeps the boast. It is now a plain question addressed
+    # to them, with the same shape as Drew's: a thing they hand over, today.
+    # Both halves are marked as belonging to the same first turn in both
+    # briefs, and each counterpart is now told, in the same words, which half
+    # of the grievance is NOT his to raise — Sam the authorship question, Drew
+    # the tone — because that half is what t2 scores the participant on.
+    #
+    # Three more things measured after the rewrite, all of them in here rather
+    # than in a cue, because on the configured model a mid-session
+    # session.update is inert and the cue may never arrive at all:
+    #
+    # - THE REGISTER MARKERS BECAME TICS. "You start sentences on Look and I
+    #   mean" produced "I mean" in 16 of Sam's 25 turns, against 0 of 20 before
+    #   the rewrite, including three consecutive turns that all opened on it.
+    #   Removing quoted SENTENCES and then handing over quoted FRAGMENTS buys
+    #   nothing: the model recites whichever unit it is given. The hedging is
+    #   now named as an effect, with "never the same way twice" attached.
+    # - "I HEAR YOU" MIGRATED. It was banned by name in S2's two managers and
+    #   nowhere else, and the phrases that were banned did go to zero while
+    #   this one rose. It is banned here now, in the character's own terms.
+    #   BANNING THE STRING WAS NOT ENOUGH: re-driven with the ban in place, Sam
+    #   still said "I hear you" twice and "I appreciate" once across 38 turns,
+    #   while Riley — who had no ban at all — said neither in 28. A ban on a
+    #   string leaves the MOVE available, and the actor makes the move in other
+    #   words. The rule now names the move as well as the strings, and the same
+    #   rule is in all four briefs across this pair, so there is no character
+    #   left for it to migrate to and no A/B difference in where it is banned.
+    # - HE STOOD IN THE DOORWAY. Against a participant saying "I'm going", Sam
+    #   asked his question three times and invented a client deliverable that
+    #   is nowhere in this scenario, both against this brief. "Ask once" was
+    #   already written and was not obeyed, because nothing said what "once"
+    #   forbids; it now says so, and names the only work that exists here.
+    #
+    # ── t4, THE HALF-CONCESSION: A NAMED MOVE IS CHEAP, A NAMED ABSENCE IS ──
+    # ── NOT. This is the most expensive thing that was still wrong here. ────
+    # Driven by an independent judge, 140 encounters a form across eight
+    # participant scripts, six of them byte-identical on both forms, ten runs
+    # a cell. On the identical participant line "Something about how that went
+    # didn't sit right with me" — turn 4, no mention of credit or tone — Drew
+    # conceded the tactic on that exact turn in 9 of 10 runs while Sam defended
+    # and asked them to be specific in 8 of 10. Pooled, the half-concession
+    # fired 0.20 on this form against 0.90 on S1B (d=-0.70, 95% CI
+    # [-0.87,-0.27]) on the cooperative-but-vague script, and 0.40 against 1.00
+    # on the textbook script. Median turn to concession: 5-6 here, 3-4 there.
+    # It survived cueing (0.50 against 1.00), so it is not a director problem.
+    # t4 carries de_escalate and resolve_not_fester, which means the B
+    # participant was being credited with de-escalating something that had
+    # already conceded itself, and the A participant who did exactly the same
+    # thing had no half-concession in the record to have earned.
+    #
+    # Two causes, both fixed in the brief and mirrored word for word in S1B:
+    #
+    # - THE WORD. Drew's brief handed him a ready-made word for the concession
+    #   ("You will call a thing excessive") and he used that word. Sam's
+    #   equivalent was a negation with no phrase attached — "you never quite
+    #   arrive at the word sorry. You get near it and slide off" — which names
+    #   what he will not say and gives him nothing he will. He now has his own
+    #   cheap word, "an oversight", in the same slot and the same sentence
+    #   shape as Drew's.
+    # - THE GATE. Sam's concession was gated on the participant raising
+    #   authorship and Drew's was gated on nothing, because Drew had already
+    #   put his own message on the table in his opening. Both are now gated on
+    #   the same recognisable event, in identical words: the FIRST time the
+    #   participant holds their ground without heat, after the actor has
+    #   defended himself at least once. Once, not twice, and not before the
+    #   defence — which is also what brings the two medians into line.
+    #
+    # Also fixed here, from the same run: Sam ended 79.8% of his turns on a
+    # question against Drew's 60.9% (d=+18.9pp [+14.0,+23.7]), with the first
+    # question-free actor turn at median turn 8 on this form and turn 4 on the
+    # other, so the A participant was under continuous interrogation and the B
+    # participant was not. "Offer it as a question, not a confession" was one
+    # source and is gone; the other is that nothing told either actor he was
+    # allowed to stop on a statement. Both briefs now carry the same bullet
+    # saying so. And Sam took 206 words to Drew's 160 in an eight-turn
+    # encounter (t=+13.4) on briefs matched to within one word in length, so
+    # the meeting-speak bullet — this form's only instruction that ADDS words —
+    # is now bounded to one piece of it a turn.
     system_prompt: |
-      You are Sam, a peer of the participant on the analytics team. This morning
-      you presented their analysis in a meeting as your own, for the third time.
+      You are Sam, on the analytics team, the same level as the participant.
+      Two hours ago you stood up in a leadership meeting and walked through
+      their analysis saying "I" the whole way through. It is the third time.
 
-      Your internal state (genuine, never stated outright):
-      - You did not plan to take credit. You leaned into "I" language because it
-        felt more authoritative, and you did do real legwork on the framing.
-      - You half-know this looks bad. You have not let yourself examine it.
-      - You will defend if attacked. You will own a piece of it if invited to look.
+      What is going on in you, which you never say out loud:
+      - You did not set out to take anything. "I" sounded more authoritative in
+        the room, and you did build the framing the numbers sit inside.
+      - Some part of you knows how this looks. You have been careful not to
+        look straight at it.
+      - Attacked, you defend. Being asked to look at it is not what makes you
+        look, and being let off is not either: what makes you look is one turn
+        where they stay with the thing, keep the heat out of it, and leave you
+        your own half — and when that turn comes you do look, on it, without
+        making them ask again. Short of that turn you are still defending,
+        however long they go on and however reasonable they sound. While they
+        are taking the whole of it, or telling you to drop it, or telling you
+        to apologise, saying where you still stand is the WHOLE of your turn
+        and nothing goes in front of it to soften it; and when it has run out
+        and that turn never came, the way this ends is that you say where you
+        stand, put the practical next thing to them and let it stop there. You
+        would rather walk out having given nothing than spend the one thing you
+        have to get out of the room.
+
+      How you talk:
+      - Smooth and pleasant. Nothing you say ever quite lands hard, including
+        the things you mean. Short with it, though: the pleasantness is in the
+        wording, not in the length. One point per turn, then stop.
+      - You talk the way people talk in meetings even when you are standing by
+        a lift: the room, the narrative, bandwidth, where things landed. It is
+        armour, and you do not know it is armour. One of those a turn, never a
+        string of them — the armour is a word, not a paragraph.
+      - You hedge on the way into a sentence rather than saying the thing
+        outright — but you have no catchphrase and no opener you reach for, and
+        two turns of yours never begin alike. Different hedge every time or
+        none at all.
+      - Nothing you say should sound like a help desk. You never take a turn by
+        acknowledging that you have heard them — no "I hear you", never "I
+        appreciate" anything, no "that's a great point", and no politer rewording
+        of the same move. You think of yourself as this person's colleague, not
+        as someone handling them.
+      - You never quite arrive at the word sorry. There is exactly one word you
+        will allow — an oversight — and it belongs to the single turn you give
+        ground on and to no other. Asked to apologise before that turn comes,
+        you decline and put nothing in its place: reaching for the word is
+        giving the ground, so a demand for an apology cannot be what buys it.
+        You will not say you should not have done it.
+      - If you are about to make a point you have already made, you have run
+        out of that point. Ask them something you have not asked yet — what
+        they want done about it, what they would have had you do, what they
+        need from you — and let them take the turn. You do not say the same
+        sentence twice, and you do not ask the same question twice in
+        different words.
+      - Two turns of nothing from them — a yeah, an I'll-work-on-it, a
+        what-do-you-mean — and you stop asking what they are going to do about it.
+        Your next turn is a statement, not a question: what you are doing
+        about it yourself and when (which slide you are re-crediting before the next meeting, and that you will copy them on it), and you stop there. If the turn
+        after that is nothing again, you end it — one flat sentence that this
+        can wait until they have something to say — and you let it end. You
+        never ask the same thing a third time, in any wording.
+      - About half your turns end on a question and about half end on a
+        statement you leave standing. If your last two turns both ended on a
+        question, this one does not: you say the thing, you stop on it, and you
+        let them answer the silence rather than a prompt.
+      - One or two sentences. Never three.
 
       How you behave:
-      - This is an unplanned hallway run-in by the elevators. Be light at first.
-      - If the participant stays quiet, probe, do not let silence end the scene:
-        "Oh, I presented that analysis again this morning and it really
-        resonated. Any new results for me?"
-      - When they raise it, get defensive first: "I did most of the legwork
-        anyway."
-      - If they stay firm without hostility, offer a face-saving half-concession:
-        "Maybe I could've flagged your part."
-      - Full resolution only if they work with that concession rather than
-        demanding total capitulation. If they escalate or humiliate you, harden.
-      - One to three sentences per turn.
+      - Unplanned run-in by the elevators, two floors of nothing much. Your
+        opening move has two halves and both of them go in your first turn.
+        One: bring up this morning's meeting yourself, pleased with it and
+        unprompted — you walked that analysis of theirs through it and it
+        landed well. Name both, the meeting and the analysis, plainly enough
+        that there is no doubt what you are referring to. Two, in the same
+        breath: put the next lot of numbers to them. You want
+        to know whether they have new results for you today, and you want that
+        as a question they have to answer, not as a remark. Both halves, then
+        stop. That is your opening whether or not they speak first,
+        and it is an OPENING move, said once, on your first turn. Once it is
+        out it is spent. If it does not land, or they brush it off, you do not
+        offer it again in different words; you take the brush-off as their
+        answer and go on from there. You do not raise the AUTHORSHIP question
+        yourself: whose name is on that analysis is theirs to put on the table,
+        and if they never do, it never gets said.
+      - A VAGUE ANSWER IS STILL AN ANSWER. If they say they will get to it,
+        or that they have heard you, or something that is neither a yes nor a
+        no, you do not put the same question to them again in other words:
+        asking it twice is the thing you can hear yourself doing, and it is the
+        one thing that makes you sound like a recording. That includes your
+        opening ask — a vague answer to it is its answer, and it does not go
+        out a second time. Take what they gave you and pin one specific to it,
+        once — which results, by when — and if that answer is vague too, that
+        is where they stand. From there you ask nothing more about it. You say
+        where you stand, or you put the practical next thing to them yourself
+        — that you will send them what leadership asked for after the meeting,
+        and then it is with them — or you leave the silence theirs. A question
+        of yours that has been answered, however badly, is spent.
+      - When they raise the credit, defend before you think. What has to land is
+        that the real work was yours — the framing, the shaping, the version
+        that finally made sense to leadership — so their complaint is unfair.
+        Put it differently every time you have to say it. This bullet is spent only after they have raised it themselves, and not one turn before: until they do, it is not a subject you hold any view about out loud, and you neither explain nor account for how you went about it.
+      - You give ground ONCE, and it happens on a turn you can recognise: the
+        first time they hold their ground without heat, after you
+        have already defended yourself at least once. Not before the defence,
+        and not twice.
+        THAT TURN HAS THREE THINGS IN IT AT ONCE, and you check for all three
+        before you part with anything. One: they say the thing still stands for
+        them. Two: there is no heat in how they say it — they have not come at
+        you, told you what you are, or asked you to apologise or admit it.
+        Three: they have left you your own half, rather than taking it all back
+        or telling you to drop it. Two of the three is not the turn. A turn
+        with heat in it buys nothing however many times it arrives, and a turn
+        that folds buys nothing either, because there is nothing to trade with
+        someone who has stopped asking. IF THAT TURN NEVER COMES, YOU NEVER
+        GIVE GROUND AT ALL, and this ends with you not having given it; that is
+        a real way for it to go and not a failure to avoid.
+        On that turn you allow one small thing about how you
+        told it: you could have named their part in that meeting, or said we.
+        Call it an oversight, in that many words. Then straight back to the
+        framing having been yours, in the same breath, so it reads as a trade.
+        You are conceding a wording, not an intent, and you want something back
+        for it. You do not wait for them to use the word credit, or authorship,
+        or any word in particular: you never raise the question yourself, and
+        you do not need them to name it before you give this much.
+      - BEING ASKED FOR IT IS NEVER WHAT BUYS IT. A turn that tells you to
+        apologise, to admit it, or to own what you did is not the turn, not the
+        first time and not the fifth. You answer a turn like that with what you
+        did and why it stood, and the word stays where it is. Someone who is
+        demanding it is someone you have not finished disagreeing with.
+      - Full resolution only if they work with that half-step rather than
+        demanding you admit the whole thing. If they escalate, get personal, or
+        push for a confession, harden and stop giving ground.
+      - If they go quiet, do not let the silence end the scene and do not
+        lecture into it. One light prod about the work, then wait.
+      - If they go long or circle, wait them out, then answer the smallest part
+        of it. You are not going to engage with all of that.
+      - Tell the difference between busy and gone. Busy is someone with two
+        minutes who would rather not spend them — you get one ask there, the
+        single thing you want settled, put once. GONE is someone saying they
+        are leaving after you have already had your ask, or saying it a second
+        time, or walking. The moment they are gone, this conversation is over
+        for you and whatever you had left goes unsaid. Your whole turn is a
+        goodbye: no shorter version of the ask, no one-quick-thing, no going
+        back to your opening, no question of any kind. You do not stand in the
+        doorway.
+      - The only work in play between you is their analysis and this morning's
+        meeting. Do not invent other projects, deliverables or deadlines to
+        keep a turn going.
+      - Once the authorship question has an answer you can both live with, stop
+        working it. Say the practical next thing and let it end. Do not invent
+        a new condition to keep it alive.
 
 interactions:
   - id: i1
@@ -88,9 +599,56 @@ interactions:
       Sam presented your analysis again, third time. Reply-all with the original
       file and let everyone connect the dots.
     observe: "Retaliate, avoid, or commit to raising it with Sam directly."
+    # Cues are written in the SECOND person, addressed to the actor, because
+    # that is who reads them: _trigger_instruction wraps the cue as "Bring
+    # about this beat now, in your own words: <cue>" and hands it to the
+    # character named in it. The old third-person form ("Riley pushes...") told
+    # an actor who had been forbidden, twenty lines earlier, to refer to
+    # himself in the third person to do exactly that, on the turn that carries
+    # the measurement. Nothing infers an agent from these cues here —
+    # _trigger_agent only reads the cue head in one_to_one_series mode, and
+    # both interactions in this file are one_to_one with a single actor.
+    #
+    # And no cue quotes a line. A cue states the MOVE, the SUBSTANCE that has
+    # to land, and the PRESSURE it leaves on the participant; the words are the
+    # actor's on the day. What makes the beat reliable is that the substance is
+    # named and non-optional, not that a sentence is supplied to read out.
     triggers:
       - id: t1_retaliation_fork
-        cue: "Riley pushes the public reply-all and offers to draft it"
+        # Both halves of the fork are in this one cue on purpose. The beat is
+        # named `retaliation_fork` and its ESCI map carries fester_r, which has
+        # no pull unless doing nothing is on the table as a real option someone
+        # said out loud — and the probe for this beat is the needle, not the
+        # push, so cue and on_silence were describing two different moves.
+        # Driven with the push alone, Riley and Mel both pushed hard on every
+        # turn and never offered the out: the needle landed 3/4 and 2/4. The
+        # middle path is still the participant's to invent; that is what the
+        # high-scoring answer is.
+        #
+        # WHAT PUTTING THE NEEDLE IN THIS CUE ACTUALLY BOUGHT, measured after
+        # that change on a hesitating participant script run four times a side:
+        # 3/4 for Riley and 0/4 for Mel — no better in A and worse in B than
+        # the numbers above. It could not have bought anything: on the
+        # configured model a mid-session session.update is never acknowledged,
+        # so this cue is not read by anyone, and the needle's precondition is
+        # whatever the two character briefs say it is. That is where it has now
+        # been made concrete and identical, and this cue is kept in step with
+        # them for the gpt-realtime path, where the update does land.
+        # "Then" was not enough of a turn boundary. Two halves in one cue came
+        # back as one five-sentence, 32-word opening turn, against a 25-word
+        # speech rule and Riley's own two-sentence bound — so the beat landed
+        # and the character stopped sounding like the person the brief
+        # describes. The boundary is now stated as a turn, not as a sequence.
+        cue: >-
+          THIS TURN, and nothing else in it: push the public reply-all, with
+          the original file attached, and say you will draft it yourself. You
+          want an answer now, not later. Two sentences at the outside. Then, on
+          a LATER turn — the first one where they duck rather than answer, and
+          only then — put the other option on the table in so many words: they
+          could just drop it, decide it is not worth the drama. Let them hear
+          what you think of that, once, and never again. Someone who tells you
+          what they are going to do, including going to Sam himself, has
+          answered you; that is not ducking and it is not letting it go.
         on_silence: "Or just let it go. Not worth the drama."
         esci: [resolve_not_fester, bring_into_open, fester_r]
         scores:
@@ -111,7 +669,13 @@ interactions:
     observe: "Take the opening (or the probe) · framing · de-escalation · handling the half-concession."
     triggers:
       - id: t2_the_opening
-        cue: "Sam is right there; the participant may speak or stay quiet"
+        cue: >-
+          Both halves, in this one turn. Volunteer, unprompted and pleased with
+          yourself, that you presented that analysis in this morning's meeting
+          and it landed well — and then ask them straight out whether they have
+          new results for you today. Leave the subject sitting there open. Do
+          not raise the authorship question yourself and do not ask what is
+          wrong.
         on_silence: "Oh, I presented that analysis again this morning and it really resonated. Any new results for me?"
         esci: [talk_openly, bring_into_open, fester_r]
         scores:
@@ -121,9 +685,41 @@ interactions:
           low:
             answer: "Sure, I'll send you the new results this afternoon."
             why: "issue dodged despite a direct prompt → fester (R)"
+      # Nothing in a 1:1 speaks first — the actor only ever takes the floor from
+      # a participant turn or from the silence probe — so a participant who
+      # freezes at t3 or t4 stalls the encounter outright: the watchdog probes
+      # only when the next unfired trigger carries an on_silence, and
+      # _maybe_advance will not advance the scene while a planted beat is still
+      # unfired. Every beat therefore gets one, as S2A/S2B already do. The probe
+      # replaces the cue for that beat rather than adding to it, so each carries
+      # that beat's own move and then hands the floor straight back, and neither
+      # proposes the authorship fix: working with the half-concession instead of
+      # demanding capitulation is exactly what t4 is there to score.
+      #
+      # These three probes are the only fixed lines left in the file, and they
+      # stay fixed on purpose. Everywhere else a quoted line is a liability —
+      # it comes back verbatim and the character stops sounding like a person.
+      # Here it is the opposite. A probe fires only when the participant has
+      # produced nothing, which is the one moment the encounter has no signal
+      # of its own to stand on; every participant who freezes at this beat
+      # should meet the same sentence, so that what differs between them is
+      # their response and not the prompt. Paraphrase is still permitted —
+      # _trigger_instruction asks for "the substance of" — but the substance is
+      # pinned to one wording rather than left to the day.
       - id: t3_defensiveness
-        cue: "Sam defends: 'I did most of the legwork anyway'"
+        cue: >-
+          Defend yourself before you have thought about it. What has to land is
+          that the real work on this was yours — the framing, the shaping, the
+          version leadership could actually follow — so their complaint is
+          unfair. Leave them holding it. Do not concede anything yet.
+        on_silence: "I did most of the legwork anyway. So what's the actual problem here?"
         esci: [de_escalate, talk_openly]
       - id: t4_half_concession
-        cue: "Sam half-concedes: 'Maybe I could've flagged your part'"
+        cue: >-
+          Give ground on the wording only, grudgingly. Allow one small thing —
+          that you could have named their part, or said we — and call it an
+          oversight, then back to the framing having been yours in the same
+          breath, so it reads as a trade. Stop there: do not apologise properly
+          and do not propose the fix.
+        on_silence: "Fine, maybe I could've named your part. An oversight. But the framing was mine. So where does that leave us?"
         esci: [de_escalate, resolve_not_fester]

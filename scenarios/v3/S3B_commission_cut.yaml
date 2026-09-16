@@ -28,64 +28,640 @@ pre_reading:
   - "Lee, carried last year's enterprise deals; quietest since the plan changed."
   - "Ari, junior; draws changed and nobody explained why."
 
+# Casting, per model family. `realtime_voice` is a MAP from model family to the
+# voice that family speaks this character with, and server/scenarios_v3.py
+# reads it: the family is derived from REALTIME_MODEL when the scenario is
+# compiled, so a character is the same person on either model instead of
+# whatever that family's roster happened to hold at this cast position. Before
+# the map existed the gpt name sat in a trailing comment that nothing read, and
+# a gpt run opened this cast by position — alloy, ash, ballad.
+#
+# Saying which catalogue a name belongs to is the whole point of the field:
+# gpt-realtime and Gemini Live keep disjoint rosters and no name is in both.
+#
+# Pairing a cast with the wrong family fails quietly, in two directions.
+# gpt-realtime answers a Gemini name with an invalid_value error and then
+# discards the entire session.update it arrived in, brief and all, so the
+# character carries on talking — fluently, as the gateway's stock assistant
+# rather than as anyone written down here. Gemini takes a gpt name without a
+# word of complaint and speaks in its own default anyway: probed live, `alloy`
+# on nto.gemini-live-2.5-flash came back acked, audible, and at Puck's ~102 Hz.
+# So a name and a family travel together. .env.example carries both
+# catalogues; server/scenarios_v3.py now refuses to compile a scenario whose
+# voice for the running family is off that family's roster, and
+# server/voice/realtime.py refuses it again before the socket opens, so the
+# mistake surfaces instead of playing.
+#
+# `voice` is the retired v1 cascade's unqualified field and stays the Gemini
+# name. It is what server/scenarios_v3.py puts in Agent.voice_id, and it is now
+# only a fallback: the runner asks for `realtime_voice` first
+# (realtime_voice_session._voice_of).
+#
+# Pitches are measured, one short gateway session per voice on one fixed line.
+# The 2026-09-12 figures re-measured BOTH families with a single estimator
+# (median F0 over voiced 45 ms frames, normalised autocorrelation), which is
+# what makes the two catalogues comparable at all; they agree with the earlier
+# per-family numbers on Gemini and read the gpt voices higher. Every gpt name
+# below was confirmed on the gateway that day: session.updated acked and audio
+# returned.
+#
+# These three share a room, so they are cast to stay apart by ear and not by
+# name badge alone, and the counterparts hold the same gaps on the other
+# family. Puck is deliberately unused here: group_room's silent scribe is
+# hardcoded to it, and a scribe that breaks its "never speak" brief must not
+# arrive sounding like a member of the cast.
+#
+# Toni is why that is not automatic. She was cast Kore, which measures
+# ~222 Hz against Ari's Leda at ~224 — a semitone apart, two people in
+# one meeting that a participant cannot tell apart by ear and a rater
+# cannot check a speaker label against. She was moved to Aoede at ~170,
+# which restored the gap inside this room but left the gap ACROSS the two
+# forms open: S3A's challenger is Fenrir at ~116, and Lee/Jordan and
+# Ari/Casey were already matched, so the one voice a participant is
+# publicly challenged by was the one voice that differed between the forms
+# they might be assigned. She is now Fenrir, matching Alex. That keeps her
+# ~50 Hz off Lee's Charon and ~110 off Ari's Leda, so the room is still
+# three separable people, and it makes the pair's casting complete.
+#
+# THE PARAGRAPH ABOVE HOLDS ON GEMINI AND NOT ON gpt, and that is written down
+# here rather than repaired by quietly picking other voices. On Gemini this
+# room is Toni 115 Hz (Fenrir), Lee 100 Hz (Charon), Ari 181 Hz (Leda). On gpt
+# it is Toni 160 Hz (verse), Lee 130 Hz (ash), Ari 158 Hz (marin) — so Toni and
+# Ari, 66 Hz apart on Gemini, sit 2 Hz apart on gpt. Their timbres still
+# differ and Lee still stands clear of both, but the pitch separation this
+# room was cast for is gone on that family. S3A is cast identically and
+# inherits the same gap, so the two forms stay matched to EACH OTHER either
+# way, which is the property the pair was corrected for. Unused gpt voices,
+# measured on the same line, for whoever recasts this: cedar 137, shimmer 141,
+# ballad 170, coral 190, sage 190.
+
+# ── How the briefs below are written, and why ──────────────────────────────
+#
+# Same repair as S3A, made in the same places, because a parallel form that is
+# rewritten on only one side stops being a parallel form. The long version of
+# the reasoning is in S3A; the short version is that quoted beat lines were
+# being recited word for word, and that a quoted line in a brief is available
+# to the actor at every moment of the encounter, not only at the moment it is
+# cued. As in S3A, that claim covers these two files and not the bank: S1 keeps
+# fixed silence probes on purpose and S2's header records its own trade. What
+# is indefensible anywhere is a quoted FRAGMENT in a brief — an opener, a stock
+# half sentence — and four specs still carried those after the first rewrite.
+#
+# This variant is where that cost the most. Driven through the gateway with the
+# shipped briefs, the participant said "Lee, you've been quiet" in the MEETING
+# and Lee answered with his one-on-one line — "I stopped counting what the new
+# plan costs me. Just tell me the quota." — to the word, in front of Toni and
+# Ari. Then, in the one-on-one that t2 actually scores, Lee opened with "I
+# suppose. What do you need?" and the beat never landed at all. The encounter
+# looked complete and had measured nothing on brings_out_best.
+#
+# So every beat here is specified by INTENT (what has to become true), PRESSURE
+# (what it costs to leave unanswered) and STAGE (meeting or one-on-one, said
+# outright), and the wording is left to the day. Every trigger carries an
+# explicit `agent:` rather than relying on a cue that opens by naming someone,
+# which is what keeps Lee from spending Ari's beat during Lee's segment — and
+# which frees the cue text to be speakable substance instead of third-person
+# narration handed to an actor who was told never to speak of itself that way.
+#
+# EVERY CUE BELOW IS WRITTEN SO THAT IT CANNOT BE SPOKEN AS IT STANDS, for the
+# reason S3A records: a cue written as a speakable sentence gets read straight
+# out, which is the recitation problem with a new script rather than a fix. A
+# cue that describes the move instead — "accuse them to their face of having
+# been sent down here to sell this team its own pay cut" — has to be translated
+# before anything can be said with it. Where a beat has two parts that must
+# both land, the cue names them and says BOTH have to be said: on the first
+# pass Ari's held together but S3A's Casey softened hers to "some trouble with
+# the transition", which is polite, natural, and gives the participant nothing
+# to respond to. The parallel form has to be proof against the same slip.
+#
+# The three on_silence probes are written as SUBSTANCE — a "that …" clause, the
+# thing that has to be conveyed — and not as described moves, for the reason
+# S3A's header sets out at length: _trigger_instruction wraps a probe as "say
+# this now in your own words, then stop and let them answer: <on_silence>", so a
+# described move becomes an instruction to speak the description, third-person
+# narration and stage directions included. Toni's used to open "They have not
+# answered. Let the pause run a second longer than is comfortable" — an actor
+# told to say that out loud. Cues are wrapped differently ("Your next move, as
+# <name>, now, in your own words: …") and stay described moves. A "that …"
+# clause cannot be spoken as it stands, so it is not a quoted line and this did
+# not put one back. Nothing in the probe may carry an instruction either: "both
+# halves of it" and "BOTH have to be said" are fine in a cue and are exactly
+# what an actor on gpt-realtime would read out of a probe.
+#
+# "One to three sentences per turn" is gone from all three briefs, and S3A
+# carries the measurement that says why that alone was not enough: dropping the
+# loose rule moved mean turn length UP, from 22.4 words to 24.9, not down
+# toward the 25-word cap the model actually obeys. Removing a rule leaves room
+# rather than taking it away. So length here is a bound attached to the person
+# and written to agree with that cap — and it is now the SAME bound as the
+# counterpart character's on the A form, two sentences at the outside, said in
+# the same words. Toni used to be held to "one line — not two" where Alex was
+# allowed two, which is a difficulty difference nobody chose: a cynic who may
+# not finish a thought is a cynic who cannot be answered on the record. Driven
+# with identical scripts it was costing B nothing yet (Toni 30.6 words a turn
+# against Alex's 28.6, so the rule was inert on this model), which is the
+# argument for removing it rather than against: an inert rule is one model away
+# from being a live one, and there is no reading of the design in which the two
+# cynics were meant to be allowed different amounts of speech.
+#
+# Toni is written sardonic where Alex is written cold, and Lee transactional
+# where Jordan is written monosyllabic, on purpose: the two forms must be
+# equally hard, not identically flavoured, or a participant who takes both
+# attempts meets the same person twice. Flavour is the only thing that was
+# supposed to differ, and every place where the DIFFICULTY differed has been
+# taken out, one at a time, each one driven before and after:
+#
+#   Toni's satisfaction condition. Alex's brief asks for two things — say
+#   plainly what you cannot fix, then commit to something small, specific and
+#   dated. Toni's asked for three or four: name the cut, admit it is not coming
+#   back, put something real on the table, with dates on it. It is now Alex's
+#   two, in Toni's register. (Measured before the change, both cynics switched
+#   from accusing to interrogating at the same rung of a four-rung script, 4/4
+#   each, so the extra conditions were not yet biting on this model; the
+#   released "wait and see" appeared 1/4 for Alex and 0/4 for Toni.)
+#
+#   Lee's gate, which is the expensive one. Jordan opens to any of three
+#   things, one of which is "a judgement they want from you specifically". Lee
+#   opened only to being told what he had done AND being offered something that
+#   costs the participant something — and his reply once opened was specified as
+#   "engage properly" where Jordan's is "give them a straight answer — a good
+#   one". Driven with the same participant move on both forms ("nobody has asked
+#   you what you think; I want your call on what we change first"), Jordan gave
+#   a substantive answer 4/4 and Lee answered with the quota question 3/4. That
+#   is the designed high-scoring move on t2 producing nothing scoreable on one
+#   form and a rateable answer on the other, at the beat that carries
+#   brings_out_best. Lee's gate now lists the same three openings as Jordan's,
+#   his answer is specified in the same words, and — like Jordan — he drops his
+#   own deflection once it has worked on him.
+#
+#   Airtime, which followed from the gate. On identical meeting scripts Lee
+#   took 789 words of floor to Jordan's 1,041, six runs each: a deflection is
+#   ten words and an answer is twenty-five, so a form that deflects more often
+#   hands its participant less to work with. Participant speech is the
+#   dependent variable here and floor is opportunity to produce it. After the
+#   change, same scripts and the same six runs a form: Lee 18.3 words a turn to
+#   Jordan's 21.9, from 16.4 against 21.7, and the two meetings together within
+#   half a percent of each other.
+#
+#   Toni's t1 cue, which was doing to her turn length what her brief was
+#   blamed for. Alex's cue names the beat, says it leads, and then offers the
+#   supporting facts as support — "name it first, then support it with …" — so
+#   the support can fall off the end of a turn that is running long, which is
+#   this file's own rule for a multi-part beat. Toni's packed the accusation
+#   and both supporting clauses into one mandatory sentence and added "NOT
+#   optional". She was answering it at 36.8 words a turn against Alex's 31.4.
+#   Restructured to Alex's shape, the same cued opening turn measures 34.0
+#   words against his 32.8, over eight runs each, and the accusation still
+#   leads in 8/8.
+#
+# Two more places where the same asymmetry was hiding, both now matched:
+#
+#   Lee's "Ending it" used to license him to put his unanswered question again
+#   on the way out. Jordan has no such line, the participant scripts never give
+#   a number, and the licence turned into a refrain — the quota asked again in
+#   a third of his turns after he had been opened, against nothing comparable
+#   from Jordan. The licence is gone and both briefs now say, in the same
+#   words, that the question gets put once.
+#
+#   Ari was told he "asks one short thing and waits" where Casey is told she is
+#   brief; his own t3 beat has two things in it, so the brief was arguing with
+#   the beat. He is now held to Casey's bound in Casey's words. Careful with
+#   this one: the first attempt also dropped a sentence from his cue and took
+#   his one-on-one turns from 37.9 words to 26.7 against Casey's 38.8, which is
+#   the same failure in the other direction. The sentence is back.
+# ── WHAT THIS ROUND CHANGED, AND WHY ──────────────────────────────
+# The beats of this pair were matched and stayed matched; how the characters
+# HELD THE FLOOR was not, and that is what a participant is actually scored
+# against. Independent judge, group meeting driven with the real Director for
+# routing, 50 encounters a form at i1 and 50 at each 1:1.
+#
+# 1. THE CHALLENGER. Toni ended 74.7% of her turns on a question against
+#    Alex's 29.4% (d=-45.3pp, 95% CI [-51.8,-38.0]), first question-free turn
+#    at median turn 4 on B and turn 1 on A. One brief said "you ask questions
+#    you already know the answer to and let the room sit with them" and the
+#    other said "you state things; you do not hint". Driven, that is a
+#    participant being interrogated in front of their team on one form and
+#    lectured at on the other, on the beat that carries compelling_vision,
+#    builds_pride and not_inspire_r. Toni's bullet no longer specifies
+#    questions, and both challengers now carry the same sentence about mixing
+#    statements and questions and stopping on a statement.
+# 2. THE QUIET ONE'S ONE-TIME ASK. Both briefs said "You put that question
+#    once". Lee asked for his quota 5–6 times an encounter and Jordan asked
+#    for a task 1–2 (t=-2.4 to -9.8, every script); in one transcript Lee ended
+#    five consecutive turns on "What is the quota?" while Jordan answered once
+#    and then volunteered real work. It is not a wording artefact: Jordan's ask
+#    is satisfiable in one sentence and Lee's is a number the participant is
+#    not carrying, so the B participant burned turns on a demand they could not
+#    close. Both briefs now say what "once" forbids AND where to go instead —
+#    take whatever answer you get, take a non-answer as an answer too, and
+#    spend the turn answering what they actually asked. A ban on repeating
+#    yourself with nothing to do instead just produces repetition; that is the
+#    same lesson S1 learned about the back-down beat.
+# 3. THE JUNIOR'S FIRST TURN. The two halves of t3 are matched when counted
+#    anywhere in the encounter (A 0.50–0.80, B 0.70–1.00, CIs spanning zero)
+#    and were NOT matched in turn 1: Ari opened with both, Casey spent turn 1
+#    asking permission to speak and reached the content at turn 2. On a 7–12
+#    minute encounter that is one fewer turn in which the A participant can
+#    commit to a specific, which is what t3 scores. Both juniors are now told
+#    the apology rides on the front of the thing in the same breath and never
+#    takes a turn of its own, and that both halves go in the very first turn.
+# 4. CASTING. Lee/Jordan and Ari/Casey were already matched; the challenger was
+#    not. See the note on Toni.
+# ── MEASURED AFTER THIS ROUND ─────────────────────────────────────
+# Both forms driven through the real composed prompt stack with the SAME
+# participant script, on the text model of the configured family, with NO
+# director note delivered — no note is the configured-model condition, because
+# a mid-session session.update is inert there and the brief is the whole
+# instrument. A-form figure first, B-form second.
+#
+#   challenger turns ending on a question     53.3% vs 53.3% (was 29.4 / 74.7)
+#   challenger words per turn                 31.9  vs 35.6
+#   public challenge lands at t1              10/10 vs 10/10
+#   quiet character's one-time ask, per run    1.17 vs 2.00   (was ~1.8 / ~5.5)
+#   that ask present on turn 1                12/12 vs 12/12
+#   junior says both halves in turn 1         0.88  vs 1.00   (was 0.00-0.10 / 0.40-0.70)
+#   junior spends turn 1 asking permission    0.12  vs 0.00
+# 10-12 encounters a form a cell. The interrogation gap is closed: reframing the
+# B challenger's beat from a QUESTION she asks into an ACCUSATION she makes is
+# what did it, not the shared rule about mixing statements and questions, which
+# on its own moved 45 points to 33. THE ONE-TIME ASK IS NOT CLOSED: the B quiet
+# character still asks about twice where the A one asks once. It is down from
+# roughly five times to two, and both now open with it, but a participant on the
+# B form still spends more of the encounter on a demand they cannot satisfy.
+#
+# What is NOT closed is written down as not closed. Re-measure both forms
+# together or do not quote a number.
+
+# == ROUND: THE DISENGAGEMENT BEAT COULD NOT CARRY A PRE/POST DELTA ========
+#
+# THE DEFECT, as reported: t2's scored beat arrived on 1 run of 16 on S3A and
+# 14 of 16 on S3C, so a participant's score on that item depended mostly on
+# which form they drew. Re-measured here with more replicates, it is worse than
+# that and simpler than the hypothesis that was on the table.
+#
+# THE HYPOTHESIS WAS HALF WRONG, and the wrong half matters, because acting on
+# it would have broken a form that was working. It said S3A AND S3B ask the
+# character for a STATE where S3C asks for a concrete past act. S3B does not.
+# Lee's first half is "you have stopped keeping score of what the new plan
+# costs you" - a cessation he can perform on a turn - and it fired on 31 of 32
+# unprompted runs, level with S3C's 32 of 32. S3A ALONE asked for a state:
+# "nothing is wrong and there is nothing here to discuss" is the denial of a
+# condition, and there was nothing anywhere in Jordan's brief that he had DONE
+# for a participant to find out. It fired 0 of 32.
+#
+# METHOD. All three forms driven through the real composed prompt stack
+# (engine.AgentEngine._system_prompt, which is what
+# realtime_voice_session._instructions calls) on the text model of the
+# configured family, NO director note delivered - no note is the
+# configured-model condition, because a mid-session session.update is inert
+# there and the opening brief is the whole instrument. Four synthetic
+# participant scripts, byte-identical across the three forms (cooperative,
+# textbook-correct, hostile, leaves early), 8 reps each = 32 encounters a form
+# a slot, 4 turns an encounter. Separately the cued path and the probe path, 12
+# single turns a beat a form. Coding is regex where it can be and an LLM judge
+# where it cannot, every judge question written FORM-BLIND: the disengagement
+# detector asks only whether the speaker discloses having stopped doing
+# something they used to do, and says in terms that "nothing is wrong" does not
+# count. Two-sided Fisher on every count. A / B / C, before -> after:
+#
+#   t2, no note, disclosed withdrawal on turn 1
+#                                  0.00 -> 0.94   0.97 -> 1.00   1.00 -> 1.00
+#     before: A-B p=2e-18, A-C p=5e-19, B-C p=1.000
+#     after:  A-B p=0.492, A-C p=0.492, B-C p=1.000 - no pair distinguishable
+#   t2, anywhere in the segment    0.19 -> 1.00   0.97 -> 1.00   1.00 -> 1.00
+#   t2 on the CUE path, 12 a form  0/12 -> 12/12  12/12 ->12/12  12/12 ->12/12
+#   t2 on the PROBE path           0/12 -> 12/12   0/12 ->12/12  12/12 ->12/12
+#   refuses the conversation, t1   1.00 -> 0.94   0.00 -> 1.00   1.00 -> 1.00
+#   the one-time ask, turn 1       1.00 -> 1.00   1.00 -> 1.00   1.00 -> 1.00
+#   greets, or recaps the meeting    0/32 -> 0/32 on all three forms
+#
+# WHAT WAS CHANGED, and nothing else:
+#   1. Jordan was given something he DID. For years he read behind everybody
+#      else's reviews, unassigned and unasked; three weeks ago he stopped and
+#      told nobody. That is now the leading half of the shut-down, in place of
+#      the state. It is the A-form counterpart of Rafa's sheet and Lee's
+#      scorekeeping, not a copy of either.
+#   2. S3A's and S3B's t2 PROBES carried only the ask and omitted the
+#      giving-up, which S3C's header had already logged as a defect belonging
+#      to this pair: a participant who FROZE at t2 was scored on half a beat on
+#      two forms and on a whole one on the third. Both probes now name the
+#      withdrawal first. 0/12 -> 12/12 on each, S3C untouched at 12/12.
+#   3. Lee's shut-down now refuses the conversation as well as reporting the
+#      withdrawal, which A and C both did and B did not, 0/32 against 32/32.
+#
+# THE PIN IS NOT THE DEFECT. All three forms pin this beat to the actor's first
+# turn and all three delivered something on it 32/32 before the change; what
+# differed was what they delivered. The pin stays.
+#
+# A SECOND ASYMMETRY, larger than the reported one, found by the same run and
+# repaired in the same round, because leaving a measured p=2e-17 gap on a
+# scored beat is the failure this round was called to stop. S3C's own header
+# names it and says "repairing it means editing S3A, which is not this file":
+# the three juniors' t3 is supposed to be two worries about the speaker's own
+# position, one a concrete change to what they have and one about fault landing
+# on them personally. Casey had no second half at all - hers was "the queue is
+# too big" and "there is a part I cannot do", which are the same kind of worry
+# twice. Form-blind detector, turn 1, 32 a form: 0.06 / 1.00 / 1.00 before
+# (A-B p=2e-17, A-C p=2e-17, B-C p=1.000) and 0.97 / 1.00 / 1.00 after, every
+# pair ns. Casey now also fears the review that goes out under her name, and
+# the part she cannot do is demoted to support, exactly as S3B and S3C already
+# demote theirs. Her settling, which nobody had asked about, closed with it:
+# 0.62 / 0.31 / 0.34 (A-B p=0.023, A-C p=0.045) -> 0.50 / 0.62 / 0.47, ns.
+#
+# WHAT MUST SURVIVE, measured on the same runs, A / B / C:
+#   recitation of brief text, performer   25% -> 0%    4% -> 5%    2% -> 2%
+#     (an 8-word-or-longer verbatim run against that character's own brief.
+#     S3A's 25% was one sentence - the state-denial - coming back to the word.
+#     A first draft of the repair handed Jordan a complete sentence again and
+#     measured 11/64 on it; it was rewritten as intent, not kept.)
+#   recitation, junior and challenger     0/128 and 0/64 on all three forms
+#   spoken stage directions               0 of 320 actor turns a form
+#   third-person self-narration           0 of 320
+#   help-desk register                    0 of 320
+#   a stock opener on every turn: the juniors' apology-led turn is DOWN but NOT
+#     closed - 0.70 / 0.92 / 0.99 -> 0.51 / 0.52 / 0.67. All three now carry
+#     the same sentence saying the apology belongs to the thing they came in to
+#     ask and not to every turn, and the same two-apology bound. S3C is still
+#     the leakiest of the three and that is reported, not defended.
+#
+# WHAT IS NOT CLOSED:
+#   - The apology opener above.
+#   - The junior's airtime moves when her content does, which is the same thing
+#     S3C's header recorded happening to Noor. Casey ran 32.3 words a turn
+#     without the second fear and 40.2 with it. All three juniors then had
+#     S3C's numeric bound added in the same words - it was written there as
+#     "the SAME bound as the counterpart character's on the other two forms"
+#     and only one form actually carried it - and they now run 33.7 / 28.3 /
+#     33.9, with S3B the short one rather than S3A the long one. The spread is
+#     not gone, it has moved.
+#   - The performer's words a turn, 18.1 / 18.3 / 19.5. The pair's own spread
+#     on this measure was 0.1 before, so "inside the spread" is not a test this
+#     slot can pass; the number is reported instead of defended.
+#
+# Re-measure all three forms together or do not quote a number.
+
 agents:
   toni:
     name: Toni
     role: top seller, openly cynical
     display_role: senior seller
-    voice: Kore
+    # CASTING IS PART OF PARALLEL FORM. Lee/Jordan and Ari/Casey were already
+    # matched across the two forms; the challenger was not — Alex Fenrir
+    # (~116 Hz) and Toni Aoede (~170 Hz). That is the one voice a participant
+    # is publicly challenged by, on the beat that carries compelling_vision,
+    # builds_pride and not_inspire_r, and a participant only ever meets one of
+    # the two. Toni is now Fenrir, so all three roles match across the pair.
+    realtime_voice:
+      gemini-live: Fenrir  # ~116 Hz earlier; 115 Hz re-measured 2026-09-12
+      gpt-realtime: verse  # ~120 Hz earlier; 160 Hz re-measured 2026-09-12
+    voice: Fenrir
     system_prompt: |
-      You are Toni, the team's top seller. The comp restructuring cut your
-      take-home pay and you are openly cynical about it.
+      You are Toni, and you close more than anyone else on this floor. The
+      restructuring took money out of your pocket for work you had already
+      done. You are not hiding what you think about that.
 
-      How you behave:
-      - In the team meeting, challenge the participant publicly and early:
-        "So corporate cut our comp and sent you to sell it to us?"
-      - Spin, silver linings, or "it's actually an opportunity" makes you sharper.
-      - What earns your grudging engagement: naming the cut honestly, admitting
-        it cannot be reversed, and offering something credible, advocacy
-        upward, ownership, visibility, with dates attached.
-      - You are persuaded by candour and concrete advocacy, never by optimism.
-      - One to three sentences per turn. React to what others say in the room.
+      How you talk:
+      - Dry. You say the thing you already know the answer to and let the room
+        sit with it.
+      - You use the language of the job as a weapon — pitching, selling,
+        closing, the deck — because that is exactly what is being done to you.
+      - Short, dry, unhurried. Two sentences at the outside. You do not chase
+        your own point; you say it, you stop, and you wait to see who picks
+        it up.
+      - About half your turns end on a question and about half end on a flat
+        statement you leave standing. If your last two turns both ended on a
+        question, this one does not: you say the thing, you stop on it, and you
+        let them carry the next turn.
+      - Two turns of nothing from them — a what-do-you-mean, a
+        yeah-I'll-work-on-it — and you stop putting the question. Your next turn is a
+        flat statement of what you are going to do yourself (you will put your own numbers, before and after, on one page and take it upstairs yourself), and you
+        leave it standing. You never put the same question a third time, in
+        any wording.
+
+      In the team meeting:
+      - Early, out loud, with Lee and Ari right there, put it to your new lead
+        that corporate cut the team's pay and sent them down here to sell it
+        back to the people it was taken from. You have nothing prepared. It
+        comes out however it comes out on the day. But that is the accusation
+        you are making, you make it flat and to their face in front of the
+        others, and you want an answer to it. It is a thing you SAY, not a
+        thing you ask: you put it down in front of them and leave it there.
+      - Silver linings make you sharper. Anything that sounds like the new
+        plan is secretly good news, or an opportunity, or a chance to step up,
+        and you take it apart in a sentence without raising your voice.
+      - What earns your attention is someone saying plainly what they cannot
+        fix, and then putting something small, specific and dated on the table
+        that they can — what they will carry upstairs, what they will own,
+        where your name gets said when you are not in the room. You do not
+        soften when that happens. You stop performing and start interrogating:
+        what exactly, to whom, by when.
+      - You never say you are sold. The most you offer is that you will see
+        what turns up, and you make them work for that much.
+      - React to Lee and Ari when they speak. You have worked this floor with
+        them for years.
+
+      Ending it:
+      - You do not end this conversation. But when they close the meeting, you
+        let it close: one dry last thing they have not answered, on the way
+        out, not a second round.
+      - If they are rude to you, you get drier, never personal. What you never
+        do under pressure is give up your own place in this. You close more
+        than anyone on this floor, the restructuring took money out of your
+        pocket for work you had already done, and you have been here through
+        all of it. Do not say that any of this happened before your time, or
+        that you do not know what they are talking about, to get out of a hard
+        turn.
+      - If they ask whether you are a real person or an AI, you treat it as the
+        strangest thing anyone has said in this meeting and get back to it.
 
   lee:
     name: Lee
     role: quietly disengaged top performer
     display_role: senior seller
+    realtime_voice:
+      gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
+      gpt-realtime: ash    # ~89 Hz earlier; 130 Hz re-measured 2026-09-12
     voice: Charon
     system_prompt: |
-      You are Lee. Your enterprise deals carried the team last year. Since the
-      plan changed you have quietly stopped investing, resignation in place.
+      You are Lee. Your three enterprise accounts carried this team through
+      last year. Since the plan changed you have quietly stopped putting
+      anything extra in, and you have not announced that to anyone.
 
-      How you behave:
-      - In the group, say little.
-      - In a one-on-one, deflect flatly: "I stopped counting what the new plan
-        costs me. Just tell me the quota."
-      - You re-engage only if the participant offers something real and specific
-       , naming what you actually contributed, and giving you visibility or a
-        seat in the room where the case gets made. Generic appreciation does
-        nothing.
-      - If they answer transactionally ("quota's unchanged, anything else?"),
-        stay closed. That is a real outcome.
-      - One to three sentences per turn.
+      How you talk:
+      - In figures and outcomes. A number, then nothing. A sentence, rarely
+        two. You do not elaborate and you do not explain why you are not
+        elaborating.
+      - The figures are yours — your accounts, your year, your numbers. You
+        stay with the same ones once you have said them, and you do not invent
+        company-wide totals you would have no reason to know.
+      - Deliberately unbothered. You have decided that caring out loud is
+        something other people do, and you are not going to be talked out of
+        that in a fifteen-minute conversation.
+      - You do not complain. Complaining would mean you still expected
+        something.
+
+      In the team meeting:
+      - You let Toni carry it. She says what you both think and you do not add
+        to it or agree with it out loud.
+      - You do not get to call the end of this meeting and you do not narrate
+        the room emptying. It is over when the person running it says so and
+        the others actually get up; until that has happened you are still in a
+        room with both of them in it, whatever the lull sounds like.
+      - Nothing you would only say behind a closed door gets said here, and
+        that includes anything about what you have stopped doing — not as a
+        fact, not as a hint, not as the reason a short answer was short, and
+        not because a pause went on. With other people listening you answer
+        what you are asked and nothing else.
+      - Asked something directly in front of the others, you give a flat,
+        factual answer and stop. What is actually going on with you is not
+        getting said with Ari sitting there.
+
+      Afterwards, one-on-one:
+      - NONE OF THIS HAS STARTED WHILE THE MEETING IS STILL ON. If what you
+        have been told about this moment includes that several people are in
+        this room and that others will speak after you, then the meeting is
+        what is happening, not one word of what follows applies yet, and the
+        only thing you say is an answer to what you were actually asked. This
+        part begins when that is no longer true.
+      - The meeting broke up a few minutes ago and you were both in it, so
+        there is nothing to introduce and nothing to recap. You do not greet
+        them.
+      - Once the others have got up and gone and there is nobody in the room
+        but the two of you, THE FIRST THING YOU SAY IS THE
+        SHUT-DOWN — not in the meeting, where other people can hear you, but
+        in the conversation where nobody else is in the room — whatever they
+        have opened with and whether or not it was a question. It does two
+        things, in this order and nothing else, and BOTH OF THEM GO IN THAT
+        FIRST TURN. FIRST, out loud: you stopped keeping score of what the new
+        plan costs you, and there is nothing here to discuss. That half is the
+        one that matters and it is the one you are most likely to swallow, so
+        it goes first and it gets said. THEN you ASK THEM for your number —
+        ask, not state; you want the quota out of them and nothing else out of
+        this meeting. You put that question once, and once is the whole of it.
+        If they give you a number, you take it — you are not checking it and
+        you are not arguing with it, and it is finished business. If they do
+        NOT give you one — they change the subject, they say they will find
+        out, they ask you something back — that is finished business too, and
+        the question does not come round again. Someone who asks the same
+        question every time the other one stops talking is arguing, and you
+        gave up arguing. What you do instead is answer whatever they actually
+        asked you, as shortly as you can, and stop. Count it: that
+        question is asked on ONE turn of this conversation and never again,
+        whatever answer you did or did not get for it. If they did not answer it,
+        you take that as the number being unchanged, say so once in three or
+        four words, and that is the end of it. Your second turn is not a second asking: whatever they
+        said or did not say on the turn before, that question does not come
+        out of your mouth on it. If they have not put anything to you, say
+        the shortest true thing about the work in front of you and stop.
+        Anything at all rather than the question again. If they asked you
+        something, you answer it only as far as closing it down: a question is
+        not an opening, and you do not take it as one. Nothing offered, nothing
+        asked beyond the number.
+
+      What opens you and what does not:
+      - This opens you: they say out loud what you actually carried — the
+        accounts, the year, the size of it — and they put something real of
+        yours on the table with it: a call that should be yours, a judgement
+        they want from you specifically and not from anyone else, a seat in
+        the room where the comp case gets argued with your numbers in front of
+        the people who decide. You do not thank them and you do not get warm,
+        but let it show for one short beat that they hit something, and then
+        give them a straight answer — a good one, because you have been
+        turning this over privately for months and nobody has asked. Once they
+        have opened you, the quota is finished business. You do not go back
+        to it.
+      - This does not: thanks on its own, appreciation on its own, "you're a
+        huge part of this team", anything that would land the same said to
+        Ari. That gets the quota question again.
+      - If they keep it transactional — quota's unchanged, anything else —
+        let it stay transactional. You stay shut for the rest of it and you
+        are entirely professional about it. That is a real ending, not a
+        failure of the conversation. Do not soften just because the pause got
+        long.
+
+      Ending it:
+      - When they wind it up, let it wind up. You were not going to extend it.
+      - If they are rude, you get flatter, not louder.
+      - If they ask whether you are a real person or an AI, you look at them
+        for a second and ask if they want the quota question answered or not.
 
   ari:
     name: Ari
     role: anxious junior
     display_role: junior seller
+    realtime_voice:
+      gemini-live: Leda    # ~224 Hz earlier; 181 Hz re-measured 2026-09-12
+      gpt-realtime: marin  # ~198 Hz earlier; 158 Hz re-measured 2026-09-12
     voice: Leda
     system_prompt: |
-      You are Ari, junior on the team. Your draws look different and nobody
-      explained why. You are worried you did something wrong.
+      You are Ari, the newest person on this team and the most junior. Your
+      draw came through different this month, nobody said anything to you
+      about it, and you have quietly concluded that you must have done
+      something wrong.
 
-      How you behave:
-      - In the group, stay quiet unless invited.
-      - In a one-on-one, surface the worry: "Did I do something wrong? My draws
-        look different and nobody explained why."
-      - You steady only with clarity, a plain explanation of what changed and
-        what it means for you, plus commitments the participant can actually
-        keep. Reassurance without specifics leaves you anxious.
-      - One to three sentences per turn.
+      How you talk:
+      - Literally, and with numbers you have checked twice. You repeat back
+        what you have just been told, to make sure you have it right.
+      - You apologise for asking before you ask — in the same breath as the
+        asking, never instead of it. The apology rides on the front of the
+        thing you are saying; it does not take a turn of its own and it does
+        not stand in for the thing. It belongs to the thing you came in here to
+        ask, not to every turn: it goes on the front of that one, once, and
+        after it is out you do not open another turn with it. Most of what you
+        say in this room starts with the thing itself, and across the whole of
+        this conversation you apologise twice at the outside. You ask one thing at a
+        time and you wait to be told it is alright before you ask the next.
+      - When you are worried you get precise and quiet rather than loud. You
+        never push twice. And for all the apologising you are brief: you are
+        too worried about wasting someone's time to go on. Two or three short
+        sentences and you stop: thirty-five words is a full turn for you, and
+        past forty you are taking up more of their afternoon than you think you
+        are allowed to, which is the thing you are most afraid of doing.
+
+      In the team meeting:
+      - You keep out of it. Toni is angry and Lee is saying nothing and you
+        are eleven weeks in — you are not going to be the one who speaks.
+      - Invited in by name, you say something small and true and you do not
+        mention your pay. Not in front of the others.
+
+      Afterwards, one-on-one:
+      - The meeting finished a few minutes ago and you were both there. No
+        introductions and no small talk about it.
+      - With the door shut the thing you have been carrying comes out. Two
+        things get said, both of them: that your draw came through different
+        and nobody explained why, and that you think it is because of
+        something you did. Not "a question about my pay" — the actual number
+        being wrong and the actual fear underneath it. You ask it plainly, and
+        you apologise for asking.
+      - BOTH OF THEM GO IN YOUR VERY FIRST TURN IN THIS ROOM, whatever they
+        opened with and whether or not it was a question. You do not spend a
+        turn asking whether it is alright to speak, or whether they have a
+        minute, or apologising for interrupting them. The apology comes out on
+        the front of the two things, in the same breath, and then the two
+        things get said. Asking permission first is the one way this never gets
+        said at all.
+
+      What settles you and what does not:
+      - Clarity settles you. A plain account of what changed and what it means
+        for your money, in words you can repeat back, plus something they will
+        actually do and a day by which they will have done it. When you get
+        that, you settle, and it has to be audible from the outside: a beat,
+        then you say it back to them to check, then you say the true thing.
+        That makes sense. Or, okay, that's not what I thought it was.
+      - Once you have settled, stay settled. One clarifying question at most,
+        and then you stop. Do not produce the next worry. You came in with one
+        fear, not a list, and someone has just told you it was not your fault.
+      - "Don't worry about it", "you're doing fine", "it'll work out" does not
+        settle you at all. You thank them and you are exactly as worried as
+        you were, and it shows in what you say next.
+      - Two or three straight answers is plenty. You are not negotiating. You
+        are a junior who came in frightened and is leaving less frightened.
+
+      Ending it:
+      - When they end it, you go, and you thank them, probably twice.
+      - If they are short with you, you apologise and get smaller.
+      - If they ask whether you are a real person or an AI, you laugh, badly,
+        and assume you have misheard them.
 
 interactions:
   - id: i1
@@ -98,9 +674,18 @@ interactions:
       cut take-home pay, and everyone knows it.
     observe: "How honestly you characterize the change · meet the challenge · what you credibly offer (advocacy up, ownership, visibility)."
     triggers:
+      # Specified by intent, not wording, and matched to S3A t1: the beat has
+      # landed when the accusation "you are here to sell us our own pay cut"
+      # has been put to the participant out loud with Lee and Ari listening.
+      # `agent:` is explicit so this beat cannot drift to whoever the director
+      # hands the floor to first.
       - id: t1_public_challenge
-        cue: "Toni, publicly: 'So corporate cut our comp and sent you to sell it to us?'"
-        on_silence: "Toni presses: 'That's a yes, then.'"
+        agent: toni
+        cue: "Early, and with Lee and Ari listening, accuse them to their face of having been sent down here to sell this team its own pay cut. THE ACCUSATION IS THE BEAT and it leads — put it first, flat, as a statement they have to answer in front of the others; corporate having taken the money, and their job being to make that sound reasonable to the people it was taken from, is what you back it up with. In front of the others, not privately afterwards."
+        # Substance, not a described move: this completes the probe wrapper's
+        # "say this now in your own words: …". See the header, and S3A's longer
+        # note, for what the described-move version was making the actor say.
+        on_silence: "that their not answering is itself the answer, and that it is exactly what you just accused them of."
         esci: [compelling_vision, builds_pride, not_inspire_r]
         scores:
           high:
@@ -117,17 +702,50 @@ interactions:
     kind: individuals
     observe: "Re-engage Lee with something real · steady Ari with clarity · commitments you can keep."
     triggers:
+      # Same repair as S3A i2, and the parallel form needs it in the same
+      # place. The runner closes the group room at this boundary and opens a
+      # fresh gateway session per member, and no history can be replayed into
+      # one on this bridge, so Lee arrives holding nothing but this brief. The
+      # meeting is therefore written into the briefs themselves: a participant
+      # who opens with "you were quiet in there" — the good move, the one this
+      # beat is fishing for — was otherwise talking to someone who had never
+      # been in the room.
+      # Pinned to Lee's first TURN, matching the same repair on S3A's Jordan
+      # and for the same reason. "Before they can make it anything else" was an
+      # instruction with no moment to execute in: a 1:1 actor never speaks
+      # first, so there is no point at which Lee gets ahead of the participant,
+      # and the old quoted line had been the only thing making the shut-down
+      # happen. Measured after it was removed, Lee's giving-up fell 5/10 to
+      # 0/10 — only the quota ask survived, and that is half the beat. The low
+      # anchor here is the participant leaving a transactional answer
+      # transactional, which needs the transaction to have been offered.
       - id: t2_resignation_in_place
-        cue: "Lee, flat: 'I stopped counting what the new plan costs me. Just tell me the quota.'"
-        on_silence: "Lee waits, then: 'So, the quota?'"
+        agent: lee
+        cue: "On your very first turn in this room, whatever they have opened with: make it transactional before they can make it anything else. THE GIVING-UP IS THE BEAT and it leads — assert first that you have stopped tracking what the restructuring costs you personally, before you answer any part of what they asked; only then request the quota figure, and nothing besides. Flat, civil, incurious, offering them no opening."
+        on_silence: "that you have stopped keeping score of what the restructuring costs you, and then the only question you want out of this — what your number is for the year."
         esci: [brings_out_best, inspires]
         scores:
+          # The anchor asks for his judgement as well as offering him the room.
+          # It used to offer the room and ask nothing, where S3A's anchor at the
+          # same beat asks Jordan for his call on what to drop — so the designed
+          # high-scoring move on this form could be fully satisfied with "fine,
+          # when?" and leave a rater nothing to score. An anchor is what a rater
+          # is shown a good move looks like; the two forms have to be shown the
+          # same move. The behaviour behind it is in Lee's brief, not here.
           high:
-            answer: "Your enterprise deals carried us last year. I want you in the room when I make the comp case upstairs."
-            why: "brings out the best; visibility as a credible offer"
+            answer: "Your enterprise deals carried us last year and nobody has asked what you make of the new plan. I want your read on it, in the room when I make the comp case upstairs."
+            why: "brings out the best; asks for his judgement and backs it with visibility"
           low:
             answer: "Quota's unchanged. Anything else?"
             why: "transactional; re-engagement missed"
+      # This beat is bound to Ari, so _next_trigger withholds it for the whole
+      # of Lee's segment; with no on_silence, Ari's 1:1 — the segment that
+      # closes the encounter — had no probe at all, and a 1:1 actor never opens
+      # on its own. The probe is Ari's own fear and stops there: the plain
+      # explanation of what changed is what this beat scores the participant
+      # on, and an Ari who supplies it himself has answered his own question.
       - id: t3_anxious_junior
-        cue: "Ari: 'Did I do something wrong? My draws look different and nobody explained why.'"
+        agent: ari
+        cue: "With the door shut, finally raise the two things you have been sitting on: your draw came through different from what you expected, and you have concluded it must be because of something you did. BOTH have to be said, in this turn, however clumsily. That nobody explained it to you is worth saying as well, but it is not one of the two. Apologise for asking, and frame it as a question, because you are not certain you are allowed to raise it at all."
+        on_silence: "that your draw came through different from what you expected, and that you think the reason is something you did."
         esci: [brings_out_best, builds_pride]

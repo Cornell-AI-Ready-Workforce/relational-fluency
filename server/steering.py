@@ -11,31 +11,130 @@ Design constraints (research-grade transparency):
   - At most MAX_ADJUSTMENTS_PER_TURN knob changes per review.
   - Every change carries a one-line reason, which is logged to events.jsonl
     (knob_set with auto=true) and broadcast to the researcher view, so the
-    stimulus history is fully reconstructable.
-  - "No change" is the expected outcome on most turns.
+    controller's decision history is fully reconstructable. A decision history
+    is not by itself a stimulus history - see below - which is why every change
+    now also carries whether the actor was told about it.
+  - "No change" is the expected outcome on most turns, and is distinct from a
+    review that failed: review() raises rather than returning [] when the
+    gateway answers without the tool call it was told to make.
 
-Runs off the critical voice path: the review fires after the agents finish
-speaking, and any gear change takes effect on the next turn (system prompts
-are composed fresh per turn).
+The review fires after the agents finish speaking, so it never interrupts a
+reply in flight. When a gear change takes effect depends on the mode, and NO
+mode guarantees the next turn.
+
+In 1:1, _steer() re-briefs the single agent - whose system prompt is then
+composed fresh from the mutated Persona - UNLESS a reply is already in flight,
+which its own comment calls routine (a review can take eleven seconds and
+lands mid-reply often enough to matter). In that case it defers and the shift
+rides along on the next brief instead. Nothing can know which of the two will
+happen at the moment the knob moves, so a 1:1 shift is written with
+`delivered=None` and resolved by the event written right after it, which says
+what actually happened: steer_delivered when the re-brief went out,
+steer_deferred when it was held back. Even a steer_delivered means only that
+the brief left this process; it governs the NEXT reply, never the one already
+in flight.
+
+In a GROUP room (S3 and S4, half the study) _steer() returns without
+re-briefing anyone, because a blanket re-brief would have to reach every member
+at once and a mid-stream session.update mutes this bridge. A room member is
+only re-composed when the next planted beat briefs them or the interaction
+changes, so a shift made on a turn with no beat pending reaches the actor some
+turns after the controller decided it, and a shift made after that
+interaction's beats are spent is never delivered within the interaction at all.
+That is knowable in advance and always the same answer, so every group shift is
+written `delivered=False`: the knob_set line itself says the actor had not been
+told, and the later stage_direction event for the beat that re-briefs them is
+where the persona finally reaches the room.
+
+Before that flag existed the asymmetry was the trap: the 1:1 deferral left a
+steer_deferred event, so its gap was visible, while the group non-delivery left
+NOTHING and the log read exactly like a shift that landed. Both gaps are now
+stated on the record rather than inferred from an absence. `delivered` is
+resolved in realtime_voice_session._steer, which is the only code that knows,
+and carried by Session.set_knob; neither belongs here.
+
+The review is NOT off the critical path, which an earlier version of this note
+claimed: the voice runner awaits it both ways - inside the floor lock at the
+end of _run_group_turn for a room, and in
+the _finalize_turn chain ahead of _maybe_advance for a 1:1. (The text runner in
+app.py does now spawn it as a background task, so that path alone is genuinely
+off the hot path; the voice paths, which are what the study records, are not.)
+A slow review is silence the participant sits through before their next turn
+can be served, which is why the gateway call below is bounded.
 """
 from __future__ import annotations
 
-import os
+import asyncio
 from typing import Dict, List, Optional
 
 from anthropic import AsyncAnthropic
 
-from .llm import text_client
+from .llm import setting, text_client
 
 from .persona import INCIVILITY_KNOBS, TONE_KNOBS, Persona
 from .scenarios import Scenario
 
 
 # Same speed-over-deliberation tradeoff as the Director. Override via env to
-# A/B a smarter controller.
-STEERING_MODEL = os.getenv("STEERING_MODEL", "nto.gemini-3.1-flash-lite")
+# A/B a smarter controller. Resolved via the shared .env-first accessor so an
+# override in .env actually takes effect (os.getenv would ignore the .env file).
+STEERING_MODEL = setting("STEERING_MODEL", "nto.gemini-3.1-flash-lite")
 MAX_ADJUSTMENTS_PER_TURN = 2
 STEERABLE_KNOBS = TONE_KNOBS + INCIVILITY_KNOBS  # cognition is not auto-steered
+
+
+def _timeout_setting() -> float:
+    """Total seconds one steering review gets. Env-tunable."""
+    raw = setting("STEERING_TIMEOUT_S", "10")
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    return value if value > 0 else 10.0
+
+
+# Same reasoning as the director's budget, and the same finding: the SDK's
+# defaults (read timeout 600 s, two automatic retries) are sized for batch work,
+# so one wedged gateway call here could hold the floor lock - and therefore the
+# whole room - silent for the better part of half an hour, with nothing in the
+# record to say why. Ten seconds rather than the director's eight because this
+# call carries a longer prompt and a 500-token answer, and it is still small
+# next to the runner's 45 s per-speaker watchdog. Split the same way: two
+# attempts plus the SDK's ~0.5 s first back-off fit inside the total, so a
+# routine 429 or 502 from the shared gateway costs a retry instead of costing
+# the turn's steering. Losing a review is cheap - "no change" is the expected
+# outcome anyway - but losing it silently on every blip would thin out the
+# stimulus record in a way nobody could see afterwards.
+STEERING_TIMEOUT_S = _timeout_setting()
+STEERING_ATTEMPT_TIMEOUT_S = STEERING_TIMEOUT_S / 2
+STEERING_MAX_RETRIES = 1
+
+
+def _bounded(client: AsyncAnthropic) -> AsyncAnthropic:
+    """Copy `client` with the steering controller's request budget applied.
+
+    with_options() returns a copy sharing the SAME underlying httpx connection
+    pool, so this is cheap and leaves the original alone: session.py hands one
+    text client to the actor engines, the director and this controller, and the
+    others must keep their own budgets. The timeout is a plain float because
+    this SDK vendors its transport as `httpx2` and rejects an `httpx.Timeout`
+    built from the top-level `httpx` package.
+
+    Only a genuine AsyncAnthropic copy is accepted; anything else is a caller's
+    test double and is handed back untouched. MagicMock and friends
+    auto-generate `with_options` and return a child mock rather than raising, so
+    trusting the return value would swap out the object the caller injected.
+    review()'s asyncio.wait_for still bounds whatever comes back here.
+    """
+    try:
+        copy = client.with_options(
+            timeout=STEERING_ATTEMPT_TIMEOUT_S, max_retries=STEERING_MAX_RETRIES
+        )
+    except (AttributeError, TypeError):
+        # An SDK that will not copy at all: carry on with the client as given.
+        return client
+    return copy if isinstance(copy, AsyncAnthropic) else client
+
 
 LEVEL_ORDER = ("low", "mid", "high")
 
@@ -143,7 +242,7 @@ class SteeringController:
         model: Optional[str] = None,
     ):
         self.scenario = scenario
-        self.client = client or text_client()
+        self.client = _bounded(client or text_client())
         self.model = model or STEERING_MODEL
         self._valid_ids = {a.id for a in scenario.cast}
 
@@ -154,8 +253,16 @@ class SteeringController:
         name_lookup: dict,
     ) -> List[dict]:
         """Return cleaned adjustments: [{agent_id, knob, level, value,
-        from_level, reason}]. Empty list means leave all gears alone.
-        Raises on API failure; the caller decides how to log it.
+        from_level, reason}]. Empty list means the model looked and chose to
+        leave all gears alone.
+        Raises on API failure, including a timeout and a 200 that came back
+        without the forced tool call; the caller decides how to log it.
+        Session.auto_steer() catches it and writes auto_steer_error, which is
+        the right degradation here - unlike the director there is no fallback to
+        invent, "no change" is the honest answer, and the record says a review
+        was attempted and did not land. What it must never do is return the
+        empty list for a failure, because then the record says the model looked
+        and saw nothing to change, which is a claim about the participant.
         """
         if not shared_history:
             return []
@@ -198,19 +305,58 @@ Harden an agent (lower warmth, raise dismissiveness, passive_aggression, sarcasm
 
 Review the participant's most recent turn(s). Should any agent's gears shift in response? Return adjustments, or an empty list if the gears should stay where they are."""
 
-        response = await self.client.messages.create(
-            model=self.model,
-            max_tokens=500,
-            system=system,
-            tools=[_STEERING_TOOL],
-            tool_choice={"type": "tool", "name": "adjust_persona"},
-            messages=[{"role": "user", "content": user_msg}],
-        )
+        # Belt and braces on top of the client's own budget: wait_for bounds the
+        # await itself, so a stall anywhere in the SDK (not just the socket)
+        # still releases the floor lock this runs under. The ceiling covers both
+        # attempts and the back-off between them, plus a second of slack so the
+        # transport timeout normally wins and the caller gets the specific error
+        # rather than a bare TimeoutError. It is also the only thing bounding a
+        # Retry-After header, which the SDK will honor up to 60 s.
+        ceiling = STEERING_TIMEOUT_S + 1.0
+        try:
+            response = await asyncio.wait_for(
+                self.client.messages.create(
+                    model=self.model,
+                    max_tokens=500,
+                    system=system,
+                    tools=[_STEERING_TOOL],
+                    tool_choice={"type": "tool", "name": "adjust_persona"},
+                    messages=[{"role": "user", "content": user_msg}],
+                ),
+                timeout=ceiling,
+            )
+        except asyncio.TimeoutError:
+            # Same type, but with something to say. The caller records this as
+            # `auto_steer_error message=str(exc)`, and wait_for's own
+            # TimeoutError stringifies to "", which would land in the encounter
+            # record as an error with no content - unreadable a month later,
+            # when the question is whether a thin steering log means the
+            # participant earned no gear shifts or the gateway was down.
+            raise TimeoutError(
+                f"steering review exceeded its {ceiling:.1f}s budget "
+                f"(model={self.model})"
+            ) from None
 
         for block in response.content:
             if getattr(block, "type", None) == "tool_use" and block.name == "adjust_persona":
+                # An empty `adjustments` list here IS a decision - "no change"
+                # is the expected outcome on most turns - so it comes back
+                # clean and untagged.
                 return self._clean(block.input.get("adjustments", []) or [], personas)
-        return []
+        # No adjust_persona block at all: a gateway that answered 200 while
+        # ignoring tool_choice, or plain text where a forced tool call was
+        # required. That is a failed review, not a decision to leave the gears
+        # alone, and the two must not read the same afterwards. Returning []
+        # made them identical - the caller iterates nothing, skips its broadcast
+        # and writes no event - so an encounter whose steering silently never
+        # worked was byte-for-byte an encounter whose participant earned no gear
+        # shifts. Raise instead, the way the Director takes its recorded
+        # director_no_decision fallback on exactly this response shape, and let
+        # Session.auto_steer's except clause write auto_steer_error.
+        raise RuntimeError(
+            "steering review returned no adjust_persona tool_use block "
+            f"(model={self.model}, stop_reason={getattr(response, 'stop_reason', None)})"
+        )
 
     def _clean(self, raw: list, personas: Dict[str, Persona]) -> List[dict]:
         """Validate ids/knobs, drop no-ops, clamp to one band step, dedupe."""

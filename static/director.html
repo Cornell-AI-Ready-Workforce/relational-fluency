@@ -1,5 +1,12 @@
 <!doctype html>
 <meta charset="utf-8">
+<link rel="icon" type="image/png" href="/static/favicon.png" />
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+<!-- Without this a phone or tablet lays the page out at a fixed ~980px and
+     scales it down, so the 820px breakpoint below never fires and a researcher
+     on a half-screen or tablet gets a shrunken two-column layout instead of the
+     stacked one it was written for. The other four pages all carry it. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Steering, Relational Fluency</title>
 <style>
   :root {
@@ -17,7 +24,12 @@
   @media (max-width:820px){ main{ grid-template-columns:1fr; } }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; }
   .list { max-height:78vh; overflow:auto; }
-  .enc { padding:10px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  /* A <button>, not a clickable <div>: keyboard reach, Enter/Space, a focus
+     ring and a screen-reader role, for the resets below and no JS change. */
+  .enc { padding:10px 12px; border-bottom:1px solid var(--line); cursor:pointer;
+         display:block; width:100%; text-align:left; font:inherit; color:inherit;
+         background:none; border-top:0; border-left:0; border-right:0; }
+  .enc:focus-visible { outline:2px solid var(--red); outline-offset:-2px; }
   .enc:hover { background:#f6f6f5; }
   .enc.sel { background:var(--dirbg); border-left:3px solid var(--dir); }
   .enc .sid { font:11px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted); }
@@ -73,16 +85,25 @@ const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;'
 let encounters = [], selected = null;
 
 async function loadList() {
-  const r = await fetch(q('/api/encounters'));
-  encounters = await r.json();
-  document.getElementById('count').textContent = `${encounters.length} encounters`;
   const el = document.getElementById('list');
+  let data;
+  try {
+    const r = await fetch(q('/api/encounters'));
+    if (!r.ok) { el.innerHTML = `<div class="empty">Failed to load (HTTP ${r.status}).</div>`; return; }
+    data = await r.json();
+  } catch (err) {
+    el.innerHTML = '<div class="empty">Could not reach the server. Check your connection and reload.</div>';
+    return;
+  }
+  if (!Array.isArray(data)) { el.innerHTML = '<div class="empty">Unexpected response from server.</div>'; return; }
+  encounters = data;
+  document.getElementById('count').textContent = `${encounters.length} encounters`;
   if (!encounters.length) { el.innerHTML = '<div class="empty">No encounters yet.</div>'; return; }
   el.innerHTML = encounters.map(e => `
-    <div class="enc${e.study ? '' : ' legacy'}" data-id="${esc(e.id)}">
-      <div class="scen">${esc(e.scenario || ', ')}${e.title ? ` · ${esc(e.title)}` : ''}</div>
+    <button type="button" class="enc${e.study ? '' : ' legacy'}" data-id="${esc(e.id)}">
+      <div class="scen">${esc(e.scenario || '—')}${e.title ? ` · ${esc(e.title)}` : ''}</div>
       <div class="sid">${e.construct ? esc(e.construct.replace(/_/g, ' ')) + ' · var ' + esc(e.variant) : esc(e.id)}</div>
-    </div>`).join('');
+    </button>`).join('');
   el.querySelectorAll('.enc').forEach(n =>
     n.addEventListener('click', () => select(n.dataset.id)));
   select(encounters[0].id);
@@ -92,13 +113,30 @@ async function select(id) {
   selected = id;
   document.querySelectorAll('.enc').forEach(n =>
     n.classList.toggle('sel', n.dataset.id === id));
-  const r = await fetch(q(`/api/encounters/${encodeURIComponent(id)}/record`));
-  render(await r.json());
+  const detail = document.getElementById('detail');
+  try {
+    const r = await fetch(q(`/api/encounters/${encodeURIComponent(id)}/record`));
+    if (!r.ok) { detail.innerHTML = `<div class="empty">Could not load record (HTTP ${r.status}).</div>`; return; }
+    render(await r.json());
+  } catch (err) {
+    detail.innerHTML = '<div class="empty">Could not reach the server. Check your connection and try again.</div>';
+  }
 }
 
 function render(rec) {
   const p = rec.provenance || {}, c = rec.counts || {}, spec = rec.spec;
-  const firedIds = new Set((rec.triggers_fired || []).map(f => f.trigger_id));
+  // A trigger the runner had to prompt for is not the same evidence as one the
+  // participant walked into. The watchdog re-arms every PROBE_AFTER_SECONDS and
+  // resets the activity clock each time it probes, so a participant who says
+  // nothing at all still marches through every planted beat. Counting those the
+  // same way turned a silent encounter into a full green badge — the one record
+  // a researcher most needs to see flagged. So split the two here: `probing` is
+  // already on every entry (server/app.py builds triggers_fired), it was just
+  // being ignored. Legacy records predate the flag and read as volunteered,
+  // which is the safer direction to be wrong in for an old file.
+  const probedIds = new Set((rec.triggers_fired || []).filter(f => f.probing).map(f => f.trigger_id));
+  const volunteeredIds = new Set(
+    (rec.triggers_fired || []).filter(f => !f.probing).map(f => f.trigger_id));
   // Name each interaction from the spec, so scene headings read as the research
   // note describes them instead of "i1".
   const iMeta = {};
@@ -114,7 +152,8 @@ function render(rec) {
       const m = iMeta[scene];
       const label = m ? `${esc(m.label)}, ${esc(m.mode.replace(/_/g, ' '))}` : esc(scene);
       const plan = (m?.triggers || []).map(tr =>
-        `<span class="tag trig ${firedIds.has(tr.id) ? 'hit' : 'miss'}">${esc(tr.id)}</span>`).join('');
+        `<span class="tag trig ${volunteeredIds.has(tr.id) ? 'hit'
+          : probedIds.has(tr.id) ? 'probe' : 'miss'}">${esc(tr.id)}</span>`).join('');
       rows.push(`<div class="scene">${label}${m?.observe ? `<div class="observe">${esc(m.observe)}</div>` : ''}
         <div class="tags">${plan}</div></div>`);
     }
@@ -138,22 +177,45 @@ function render(rec) {
   }
 
   const planned = (spec?.interactions || []).flatMap(i => i.triggers.map(t => t.id));
-  const hit = planned.filter(id => firedIds.has(id));
+  // The headline number is what the participant volunteered; probe-fired beats
+  // are shown beside it rather than folded into it, so the badge only goes green
+  // when the instrument actually got what it planted for. An ESCI item reached
+  // only because the runner prompted for it is likewise not evidence the
+  // participant demonstrated the competency, so seenItems is the volunteered set
+  // and probedItems is styled separately.
+  const hit = planned.filter(id => volunteeredIds.has(id));
+  const probed = planned.filter(id => probedIds.has(id) && !volunteeredIds.has(id));
   const allItems = Object.keys(spec?.esci_items || {});
-  const seenItems = new Set((rec.triggers_fired || []).flatMap(f => f.esci || []));
+  const seenItems = new Set(
+    (rec.triggers_fired || []).filter(f => !f.probing).flatMap(f => f.esci || []));
+  const probedItems = new Set(
+    (rec.triggers_fired || []).filter(f => f.probing).flatMap(f => f.esci || []));
   const coverage = spec ? `
     <div class="meta">
-      <span>triggers <b class="${hit.length === planned.length ? 'ok' : 'warn'}">${hit.length}/${planned.length}</b></span>
-      <span>ESCI items reached <b class="${seenItems.size === allItems.length ? 'ok' : 'warn'}">${seenItems.size}/${allItems.length}</b></span>
+      <span>triggers <b class="${hit.length === planned.length ? 'ok' : 'warn'}">${hit.length}/${planned.length}</b>${
+        probed.length ? ` <span class="warn">(+${probed.length} probed)</span>` : ''}</span>
+      <span>ESCI items reached <b class="${seenItems.size === allItems.length ? 'ok' : 'warn'}">${seenItems.size}/${allItems.length}</b>${
+        probedItems.size ? ` <span class="warn">(+${[...probedItems].filter(k => !seenItems.has(k)).length} probed)</span>` : ''}</span>
       <span class="tags">${allItems.map(k =>
-        `<span class="tag ${seenItems.has(k) ? 'hit' : 'miss'}">${esc(k)}</span>`).join('')}</span>
+        `<span class="tag ${seenItems.has(k) ? 'hit' : probedItems.has(k) ? 'probe' : 'miss'}">${esc(k)}</span>`).join('')}</span>
     </div>` : '';
 
   document.getElementById('detail').innerHTML = `
     <div class="meta">
-      <span><b>${esc(rec.scenario || ', ')}</b>${spec ? ` · ${esc(spec.title)}` : ''}</span>
-      ${spec ? `<span>${esc(spec.construct.replace(/_/g, ' '))} · variant <b>${esc(spec.variant)}</b> · pair <b>${esc(spec.parallel_form || ', ')}</b></span>` : ''}
-      <span>participant <b>${esc(rec.participant_id || ', ')}</b></span>
+      <span><b>${esc(rec.scenario || '—')}</b>${spec ? ` · ${esc(spec.title)}` : ''}</span>
+      ${/* "other forms", plural, and ALL of them. This said "pair" and rendered
+            the spec's `parallel_form` scalar, which is provenance — the one
+            sibling a form was written to match — not routing. With three forms
+            per construct that named one sibling and hid the other, on the
+            surface a researcher reads mid-run to see what a retest would draw
+            from. The list comes from scenarios_v3.parallel_forms(), which is
+            the routing authority; the scalar is the fallback for a payload
+            written before the field existed. */''}
+      ${spec ? `<span>${esc(spec.construct.replace(/_/g, ' '))} · variant <b>${esc(spec.variant)}</b> · other forms <b>${
+        esc((spec.parallel_forms && spec.parallel_forms.length
+             ? spec.parallel_forms
+             : [spec.parallel_form].filter(Boolean)).join(', ') || '—')}</b></span>` : ''}
+      <span>participant <b>${esc(rec.participant_id || '—')}</b></span>
       <span>turns <b>${c.participant_turns || 0}</b> / <b>${c.agent_turns || 0}</b></span>
       <span>directions <b>${c.stage_directions || 0}</b></span>
       <span>${esc(p.realtime_model || '')} · ${esc(p.text_model || '')}</span>

@@ -20,7 +20,7 @@ class SessionLog:
         self.session_id = session_id
         self.path = LOGS_DIR / f"{session_id}.jsonl"
         self.t0 = time.time()
-        self._fh = self.path.open("a", buffering=1)  # line buffered
+        self._fh = self.path.open("a", buffering=1, encoding="utf-8")  # line buffered, utf-8
 
     def event(self, type_: str, **fields: Any) -> None:
         rec: Dict[str, Any] = {

@@ -1,18 +1,56 @@
-# Code-only image. Secrets, data, and dev artifacts stay out.
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-.env
-.env.*
-.git/
-.gitignore
-data/
-logs/
-docs/
-.DS_Store
-Dockerfile
-.dockerignore
-fly.toml
-README.md
-*.md
+# Allowlist, not a denylist. Code-only image; secrets, data and dev artefacts
+# cannot get in by accident.
+#
+# WHY the shape changed. The denylist this replaces named .venv/, __pycache__/,
+# data/, logs/, docs/ and a handful of files — and missed everything nobody had
+# thought of yet:
+#
+#   * `.terraform/` — provider binaries and module caches, "hundreds of MB" by
+#     .gitignore's own description. docs/DEPLOY-AWS.md tells the operator to run
+#     `tofu init` (step 1) and then `docker build ... .` from the repo root
+#     (step 3), so the documented order *creates* that cache and then ships it
+#     to the docker daemon on every build. On Docker Desktop for macOS and
+#     Windows the context crosses a VM boundary, which turns a fast build into a
+#     multi-minute one; people work around that rather than fix it.
+#   * `venv/` — only `.venv/` was listed, and `venv` is the spelling most
+#     Windows setups use. .gitignore already lists both.
+#   * `.pytest_cache/`, `node_modules/`.
+#   * `studies/**/data/raw/` and `reddit-analysis/data/raw/` — gitignored as raw
+#     research data, but nothing stopped them entering a build context.
+#
+# An allowlist is exact by construction and cannot drift when someone adds a new
+# large directory. The Dockerfile COPYs a short, explicit list of paths, so the
+# allowlist is just that list. Keep the two in sync; the Dockerfile/.dockerignore
+# agreement is asserted by tests/test_deploy_portability.py.
+*
+
+# --- everything the Dockerfile COPYs, and nothing else -----------------------
+!requirements.txt
+!server
+!static
+!scenarios
+!config
+
+# The ESCI item bank. server/esci.py resolves it as
+# <repo root>/studies/study1/qualtrics/esci_construct4_items.csv and raises at
+# import if it is absent, so every rating-console route needs it in the image.
+# `*` above only matches top-level entries, so re-including a nested path means
+# walking the chain down: re-include the directory, re-exclude its siblings,
+# re-include the next level.
+!studies
+studies/*
+!studies/study1
+studies/study1/*
+!studies/study1/qualtrics
+
+# --- re-excluded from inside the paths above ---------------------------------
+# Caches and stray secrets can live under server/ or config/ on a developer's
+# machine; the allowlist would otherwise carry them in.
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.DS_Store
+**/Thumbs.db
+**/.env
+**/.env.*

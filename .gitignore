@@ -37,3 +37,15 @@ studies/**/data/raw/
 *.tfstate.*
 .terraformrc
 terraform.rc
+
+# Stray artefacts from running the app or a harness FROM THE REPO ROOT.
+# DATA_DIR defaults to ./data, but a tool invoked with it unset, or with the
+# working directory wrong, writes the SQLite index and per-agent transcript
+# captures beside the source instead. Twenty-seven of those had to be removed
+# by hand before one commit; an index.db in particular is a database of
+# participant records and must never reach the remote, so it is named here
+# rather than left to whoever is looking at `git status` that day.
+/index.db
+/*.db
+/S[1-4][AB]_*.json
+/o_S[1-4][AB]_*.json

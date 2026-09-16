@@ -36,7 +36,16 @@ transcript, and video.
 
 ## Gaps, in dependency order
 
-### 1. Voice layer — single-agent DONE, group mode pending
+### 1. Voice layer — single-agent DONE, group mode DONE
+
+> **Status, 2026-09-14.** Both halves of this section are closed. Group rooms
+> run on Gemini Live through `server/group_room.py` — one realtime session per
+> character, as the recommendation in 1b proposed — and the v1 cascade is gone
+> from the codebase. The text below is kept as the record of what was measured
+> on 2026-08-19 and why the design went the way it did; the current behaviour
+> of the two realtime families, and what each one does and does not honour, is
+> in `REALTIME_FAMILIES` in `server/voice/realtime.py`, and the model question
+> is the PI's (`PI-DECISION-realtime-model.md`, alongside the repository).
 
 **Single-agent encounters now run on Gemini Live** (`server/voice/realtime.py`
 + `server/realtime_voice_session.py`), verified end to end through the real
@@ -113,9 +122,17 @@ Also different on this route:
 
 - It fires its own reply about 3.3 s after silence (the other route: ~1 s),
   so the broker waits longer before requesting one (`autofire_wait_for_model`).
-- It accepts text conversation items (the other route closes the socket on
-  them). Rooms use that: members hear only the participant's audio, and
-  each colleague's finished line is injected as text (`GroupRoom.tell`).
+- It accepts text conversation items. (This bullet used to add "the other
+  route closes the socket on them". **That is no longer true and was probably
+  never the item's fault** — see the "No longer true, 2026-09" note further
+  down: re-probed 2026-09-10 and again 2026-09-14 on a flat session config,
+  plain `nto.gemini-live-2.5-flash` accepts a user-role text item and answers
+  it, first delta 0.23 s. The 1006 belonged to the 2026-08-19 over-specified
+  session config. Nothing about the native-audio claim changes; both routes
+  take text items, and `accepts_text_items` is True for every family in
+  `REALTIME_FAMILIES` today.) Rooms use it: members hear only the
+  participant's audio, and each colleague's finished line is injected as text
+  (`GroupRoom.tell`).
   Fanning colleague audio into a native-audio member confused its turn
   detection: it reacted to colleagues with long replies and then never
   fired for the participant's next turn.
@@ -123,10 +140,72 @@ Also different on this route:
   is cancelled (`_cancel_stale_holds`), or it never answers the new turn.
 - It emits many empty responses (logged as `empty_response`); harmless.
 
+- Room members get **no tools** on this route: it calls `end_conversation`
+  constantly and every call is an empty turn. That means `END_SEGMENT_TOOL` —
+  the wiring that lets an actor end a group conversation and advance the
+  encounter — is **not available on the route production runs**, and a group
+  segment there ends the way it did before that tool existed: the director's
+  turn budget, or the participant leaving. This is a real capability loss, it
+  is per-family (`member_tools` in `REALTIME_FAMILIES`), and it is recorded
+  here rather than absorbed silently.
+
 Verified with the simulated participant: S2B 1:1 4/4 replies, ladder intact,
 ~2 s; S4A room 4 of 5 turns answered with correct name routing; S3A room with
 interjection. Switch: `actor_model = "nto.gemini-live-2.5-flash-native-audio"`
 in `terraform.tfvars`, apply, then a manual walkthrough before participants.
+
+> **Where these facts live now.** Every per-route difference above — input
+> sample rate, autofire wait, text items, colleague relay, how the floor is
+> granted, member tools, whether `response.created` alone proves a reply
+> started, the transcription language hint — is a **column on a row** in
+> `REALTIME_FAMILIES` (`server/voice/realtime.py`), one row per family, rather
+> than a substring test on the model name scattered across three modules.
+> `gemini-live-native-audio` is its own row, and it has to be: `family_of()`
+> would otherwise fold it into `gemini-live` and feed it 16 kHz, which is the
+> permanent-silence failure described at the top of this block. **Setting
+> `actor_model` and adding the row are one change, not two.**
+>
+> Two columns on the native-audio row are marked NOT PROBED and carried over
+> conservatively: `honours_session_update` (False, so the runner records a
+> stage direction as unacknowledged rather than claiming it landed) and
+> `end_of_turn` (None, so the runner's own VAD_SILENCE_MS stands, which is what
+> that route ran with in production). Probe them and say so in the row.
+>
+> **Three audio-recovery bars are also unprobed on this route**, and they are
+> not columns: `RESPONSE_STALL_S` (45 s), `AUDIO_ABSENT_S` (8 s) and
+> `REPLAY_UNANSWERED_S` (4 s) are single globals calibrated on plain flash (190
+> replies for the audio bar, 502 closed replies for the stall bar, six waves).
+> Two of the three are conservative on any route and stand as they are. The
+> third was not: 4 s is shorter than the same route's own 4.5 s autofire wait,
+> so a replayed turn was called unanswered and its session rebuilt before the
+> route was due to start speaking. `_absent_bar()` now floors the replay bar by
+> the family's `autofire_wait` for exactly that reason. If Phase 1 runs on this
+> route, re-measure all three on it.
+
+### What the per-family resolution switches OFF on the deployed route
+
+Three mechanisms measured on plain flash do not run on
+`nto.gemini-live-2.5-flash-native-audio`. None of them was deleted; each is a
+column, and each is False or overridden there because that is what that route
+was measured to need. Taken together they mean **the group path we measured is
+not the group path production runs**, which is a fact for the model decision
+rather than a bug to fix:
+
+- **`END_SEGMENT_TOOL` reaches no room member** (`member_tools=False`, above).
+  An actor cannot end a group conversation; the director's turn budget and the
+  participant's own exit are what end a segment.
+- **Colleague audio is not fanned to members** (`relay_colleagues_as_text=True`):
+  `hear()` drops those members from the audio fan and `tell()` gives them the
+  finished line as a text note instead. Our fan-out byte counters were measured
+  on the route that still fans.
+- **The floor is granted by a text nudge, not by pad-and-commit**
+  (`grant_via_text_prompt=True`). The pad-and-commit path, and the fan-out byte
+  counter that served as its `heard_something` signal, are plain-flash
+  behaviour. A grant on the deployed route injects a nudge and asks.
+
+`tests/test_origin_main_behaviours.py` holds each of these to what it was
+measured to do, in both directions — what the deployed route does, and that
+plain flash is untouched.
 
 **Fallback for the announced deprecation of `nto.gemini-live-2.5-flash`
 (verified 2026-09-08): `gpt-realtime-2.1` runs the whole platform.** The
@@ -148,7 +227,42 @@ client is model-family aware, so the switch is one setting:
   one five-turn room). The broker's own silence detector drives turns, as it
   does for Gemini.
 - The commit itself starts the reply; an explicit `response.create` on top is
-  rejected and can double the reply, so it is not sent on this route.
+  rejected and can double the reply, so it is not sent on this route. The room
+  probes for the started reply rather than deciding by model name
+  (`_gateway_answers_on_its_own`), and clears the response state after the
+  commit so a latched flag cannot mute the next grant.
+- `response.created` arrives well before the first audio delta here, so on this
+  family `created` alone is taken as proof a reply started
+  (`autofire_at_created`). On plain flash it is not: there, a `created` that
+  never becomes a delta does happen, and treating it as a reply latches the
+  auto-fire flag and mutes the encounter for good.
+
+### Which forms a participant gets, and which mechanism is in charge
+
+Two designs exist in this codebase and they are **not** reconciled here,
+because it is not a documentation question.
+
+1. **Variant A only (the default).** `DEFAULT_RUN_VARIANT=A` pins S1A, S2A,
+   S3A, S4A on every study run, with the construct order counterbalanced per
+   participant. This is what Phase 1 shipped with and it is what the merged
+   code does out of the box.
+2. **Three forms per construct, drawn per slot.** Twelve scenarios (S1A/B/C …
+   S4A/B/C), two of each construct's three forms used and the third held back
+   as a reserve so a second attempt has material the participant has not met;
+   `FORM_EXCLUSIONS` applied to the completed draw with a digest-rotated
+   replacement (2000 seeds: 50.7 / 49.3). This is reached with
+   `DEFAULT_RUN_VARIANT=random`.
+
+`DEFAULT_RUN_VARIANT` is the switch between them and it defaults to **A**, so
+the default behaviour after this merge is design 1. Design 2 is fully present
+and reachable by configuration.
+
+**The consequence the PI has to rule on:** `FORM_EXCLUSIONS` bars S1A from any
+run that also contains Teamwork (they overlap on grounded content, 1,631 shared
+groundings against 77), and its one escape hatch is "the caller pinned this
+form, honour it and say so". `DEFAULT_RUN_VARIANT=A` takes that hatch on every
+run, so under design 1 the exclusion never applies. See
+`docs/OPERATIONS.md` → "Which scenarios a participant gets".
 - Cost of the fallback: group replies take 5 to 7 s (a fresh generation per
   turn; the Gemini route plays held replies in about 1 s), the model is more
   literal about its brief (occasional meta remarks like "let me close things
@@ -198,6 +312,16 @@ all, and no error. Tried and ruled out:
 Text conversation items are not an option either: injecting one closes the
 socket with 1006.
 
+> **No longer true, 2026-09.** With the flat session config above, a user-role
+> text `conversation.item.create` followed by `response.create` is accepted by
+> the Gemini session and answered — first delta 0.23 s later, a complete reply
+> with its audio stream closed. That is exactly what the audio-recovery retry in
+> `server/voice/realtime.py` (`retry_response`) sends to revive a reply whose
+> voice the gateway dropped, and it is the only recipe measured to do so. What
+> is still untested is whether a *stage direction* sent that way is obeyed as an
+> instruction rather than answered as a line the participant said; the 1006 was
+> almost certainly the over-specified session config, not the item itself.
+
 **Recommended next step: one realtime session per character.** Open N
 connections — one per agent, each permanently briefed as its own character with
 its own voice — and have the broker fan participant audio out to all of them
@@ -211,15 +335,47 @@ gateway quota question in the cost estimate).
 Today: 13 ad-hoc scenarios (`scenarios/*.yaml`) from earlier exploration —
 `missed_deadlines`, `credit_taken`, `hidden_profile_vendor`, etc.
 
-Target: exactly four constructs, 2–3 variations each, from
-`reddit-analysis/scenarios/S{1..4}-*.yaml`:
+Target: exactly four constructs, three parallel forms each, from
+`reddit-analysis/scenarios/S{1..4}-*.yaml`. **Done — twelve forms are
+compiled into `scenarios/v3/`:**
 
-| | Competency | Variation A |
-|---|---|---|
-| S1 | Conflict Management | Taken credit |
-| S2 | Influence | Promised raise + competing offer |
-| S3 | Inspirational Leadership | After resignations over pay |
-| S4 | Teamwork | Planning an internal rollout |
+| | Competency | Form A | Form B | Form C |
+|---|---|---|---|---|
+| S1 | Conflict Management | Taken credit (barred beside S4, see below) | Hostile after-hours message | Blamed in front of the manager |
+| S2 | Influence | Promised raise + competing offer | Hybrid under an RTO mandate | Stopping the Monday pack |
+| S3 | Inspirational Leadership | After resignations over pay | After a commission cut | A system nobody asked for |
+| S4 | Teamwork | Planning an internal rollout | Preparing a client presentation | Writing up the outage |
+
+**S1-A is not assignable beside S4.** Every full session contains S4 and S4
+always involves misattributed credit, which is also S1-A's situation; running
+both in one session bleeds the Conflict Management and Teamwork constructs
+together. The canonical spec's assignment rule
+(`reddit-analysis/scenarios/scenario-specifications.md`, "Variation assignment")
+therefore requires S1 B or C in any session containing S4. The grounding data
+agrees: `reddit-analysis/situation-taxonomy.md` §3 calls blame/public
+humiliation (1,631 posts) "the best-attested S1 trigger — supporting the
+assignment rule that prefers S1-C (with S1-B) over S1-A", against 77 for credit
+misattribution. S1C is that form, compiled; S1-A still serves the one-to-one
+arm, which carries no Teamwork.
+
+Done: the rule is machine-readable and enforced. `server/runs.py` still draws
+each construct's form independently — the draw cannot see the run as a whole —
+but `FORM_EXCLUSIONS`, a construct → forbidden-form → co-occurring-construct
+table, is applied to the completed draw inside `runs.create`, and any run that
+came up S1-A alongside an S4 form has its S1 replaced with a permitted form
+before it is written, rotated across B and C on a digest of the draw so
+neither is over-served (measured over 2000 seeds: 50.7 / 49.3). The swap is
+recorded on the run document as `form_exclusions`, so an analyst can see which
+assignments were corrected rather than drawn. Adding the next exclusion is a
+row in the table, not a second special case.
+
+Also done, with the third forms: per-slot form selection, so an arm that gives
+a construct two of the four slots serves two different forms and holds the
+third back for a second attempt (`construct_pool` on the run document;
+`tests/test_reserve_draw.py`). The routing authority for "which forms are
+parallel" is `scenarios_v3.parallel_forms()`, derived from `construct`; the
+`parallel_form:` scalar in each spec is provenance, not routing — see
+`scenario-spec-v3.md`.
 
 The canonical specs are richer than the engine's schema — they carry
 `ai_partners[]` (named roles + behavior policies), `fixed_opening_prompt`,
@@ -242,6 +398,17 @@ directly from the browser via presigned URL.
 Bucket exists: `rf-study-data-540586745717` (us-east-1, currently empty).
 Credentials resolve through the AWS default chain — CLI profile locally, task
 role on Fargate. No access keys in env files.
+
+> **That bucket name is historical and is not the one the code uses.**
+> `infra/terraform/storage_secrets.tf` creates `relational-fluency-study-data`
+> and `server/video.py` defaults to it; the name above named an earlier,
+> hand-made bucket. Pointing an operator at it is the kind of mistake that
+> succeeds — the upload lands, in a bucket nothing else reads. The names that
+> are actually read, and where each one goes, are in `.env.example` and
+> [`DEPLOY-AWS.md`](DEPLOY-AWS.md#webcam-recordings-and-the-study-bucket).
+> "No access keys in env files" has also softened: a researcher running the
+> server on their own machine may put them in `.env`, which is gitignored and
+> never enters the image. On Fargate the sentence still holds exactly.
 
 ### 4. Participant flow → Connect/Qualtrics round trip
 

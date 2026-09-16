@@ -1,0 +1,1456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="icon" type="image/png" href="/static/favicon.png" />
+<title>Demo mode · Relational Fluency</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!--
+  THE DEMO DOOR.
+
+  The researcher stands in front of their lab and shows the platform. Until now
+  the only way to do that was GET /test, which mints a cohort=internal run and
+  redirects to /v2 — and from that moment nothing on the screen says "demo".
+  The encounter looks exactly like a participant's, because it IS the
+  participant's page; the only marks are a cohort field in a run file and a
+  test_ prefix on a participant key, neither of which is visible in the room and
+  neither of which the person driving can see while they drive.
+
+  This page is the door in front of that entrance. Three things it has to get
+  right, and where each of them is handled:
+
+  1. IT IS NOT A SECOND WAY INTO THE STUDY. Every live demo goes through /test
+     and nowhere else — this page never links to /start, never links to the
+     Qualtrics entrances, and never POSTs a consent. So a demo run is cohort
+     "internal" before it has an encounter, /test binds that tag onto the
+     participant record it mints (see server/app.py's _run_context: the
+     record's own tag is what stops a later run re-deriving it), and the
+     ?cohort=study form of /api/runs, /api/encounters and /api/sessions all
+     drop it. See demoName() for the second mark and the stage chrome for the
+     third.
+
+     EXCLUDED IS NOT HIDDEN, and the containment callout at the bottom of this
+     page says so now because it previously said something false: that a demo
+     appears "in /api/encounters only with study: false". `study` on that route
+     is load_spec finding a v3 scenario, not a cohort, and a demo runs v3
+     scenarios, so a demo reads study: true. Read cohort. The unfiltered lists
+     — /api/encounters, /api/sessions, the console's picker, the evidence
+     trace's session list — all show a demo, newest first, which on a machine
+     somebody has been demoing on means at the top. What this page promises
+     about those screens is what static/researcher.html and static/evidence.html
+     now actually print; tests/test_demo_honesty.py drives all three and holds
+     the promise to the print.
+
+  2. THE CONSENT RECORD STAYS HONEST. This page mints nothing. /test mints the
+     participant record with consent_given=false, /v2 does the handoff, and
+     server/storage.py's _consent_provenance sees a run tagged internal and
+     writes consent_source "internal_test" with the run id as its reference —
+     never a Qualtrics response id, because there is no Qualtrics response and
+     there never will be. The 4403 capture gate is untouched: a demo reaches a
+     microphone through exactly the same consent record every participant does,
+     and the record says what it is. Verified on this tree; see
+     tests/test_demo_door.py.
+
+  3. IT DOES NOT FAIL IN FRONT OF AN AUDIENCE. Two lanes, and the one that
+     cannot fail is first. Replay runs over encounters already on disk: no
+     gateway, no bucket, no key, nothing to go wrong live. Live runs the real
+     thing, and everything that can break it — the gateway, the bucket, the
+     microphone permission, and the steering — is checked and stated BEFORE the
+     button rather than discovered in the room. Stating a failure over a button
+     that still works is how the page comes to preside over the exact failure it
+     warned about, so the live buttons start DISABLED in the markup and are
+     switched on only by answers, never by the absence of a refusal. Three
+     things keep them off: a gateway that is not answering (the encounter cannot
+     start at all), a researcher key a gated route refuses — which is asked of
+     /api/encounters, because /health cannot tell a wrong key from a right one
+     and this page used to ask only whether a key was present — and any check
+     that has not answered yet, including one whose fetch never resolves. The
+     bucket does not gate: a dead bucket loses the webcam upload and the
+     encounter still runs.
+
+     THE KEY GATE COVERS BOTH LANES, because check_key does. /test, /evidence
+     and /api/encounters are behind the same guard, so a refused key shuts the
+     replay lane as well and this page says so in one place rather than
+     switching one lane off and leaving the other armed.
+
+  THE KEY IS NOT ON THE WALL. This is the one page in the repository whose
+  purpose is to be projected, so it takes the researcher key out of its own
+  address bar — and, because that is worth nothing if it hands the key to a
+  page that keeps it, static/researcher.html and static/evidence.html now do
+  the same for themselves, on every entrance and not just this one. GET / is
+  check_key'd too and is the participant's own screen, so the key does travel
+  there and stays visible; keyTravelNote says which link that is, before it is
+  clicked. /test carries the key and redirects to /v2 without it.
+
+  Served as a static file, at /static/demo.html, because it needs no route: it
+  is HTML and four GETs, and adding a route would mean adding a gate to it, and
+  a gate on the page that explains the gates is the wrong place for one. Every
+  door it opens is gated where it already was.
+-->
+<style>
+  :root {
+    --bg:           #ffffff;
+    --surface:      #fafaf8;
+    --surface-2:    #f1eee7;
+    --line:         #e3e0d8;
+    --line-soft:    #ecead9;
+    --fg:           #1a1a1a;
+    --muted:        #5e5e5b;
+    --accent:       #b3181b;
+    --accent-deep:  #8e1316;
+    --accent-soft:  #f7e9e9;
+    /* The demo livery. Deliberately not the study's red: the point of the
+       colour is that a screenshot of a demo cannot be mistaken for a
+       screenshot of an encounter, and two shades of the same red would be. */
+    --demo:         #6b4bb5;
+    --demo-deep:    #4a3280;
+    --demo-soft:    #f0ebfa;
+    --ok:           #2f7d4f;
+    --warn:         #9a6a00;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--fg);
+    -webkit-font-smoothing: antialiased; line-height: 1.55;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* The band that never leaves the screen. Sticky rather than fixed so it
+     scrolls with nothing and covers nothing. */
+  .demo-bar {
+    position: sticky; top: 0; z-index: 60;
+    background: var(--demo); color: #fff;
+    padding: 9px 20px; font-size: 13px; font-weight: 600;
+    letter-spacing: .01em;
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  }
+  .demo-bar .dot {
+    width: 9px; height: 9px; border-radius: 50%; background: #fff;
+    flex: none;
+  }
+  .demo-bar .sep { opacity: .55; font-weight: 400; }
+  .demo-bar .thin { font-weight: 400; opacity: .92; }
+
+  header.site {
+    border-bottom: 1px solid var(--line);
+    padding: 16px 28px;
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 16px; flex-wrap: wrap;
+  }
+  .brand-row { display: flex; align-items: center; gap: 12px; }
+  .brand-row img.logo { height: 34px; width: auto; display: block; }
+  .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+  .brand-text .name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+  .brand-text .sub { color: var(--muted); font-weight: 400; font-size: 12px; }
+  nav.site a { color: var(--fg); font-size: 14px; margin-left: 20px; font-weight: 500; }
+  nav.site a:hover { color: var(--accent); }
+
+  main { max-width: 1080px; margin: 0 auto; padding: 34px 28px 80px; }
+
+  h1 { font-size: 30px; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 12px; }
+  .lede { font-size: 16px; color: var(--muted); max-width: 74ch; margin: 0 0 30px; }
+
+  .eyebrow {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .11em;
+    font-weight: 700; color: var(--demo); margin: 0 0 8px;
+  }
+  h2.sec { font-size: 20px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .sec-lede { color: var(--muted); font-size: 14px; margin: 0 0 18px; max-width: 78ch; }
+
+  section.lane {
+    border: 1px solid var(--line); border-radius: 14px;
+    padding: 24px 24px 26px; margin: 0 0 26px; background: var(--surface);
+  }
+  section.lane.live { background: #fff; border-color: var(--line); }
+  section.lane.replay { border-color: #d8d3e8; background: #fcfbff; }
+
+  .btn {
+    font: inherit; font-weight: 600; font-size: 14px;
+    padding: 11px 20px; border-radius: 9px; border: 1px solid transparent;
+    cursor: pointer; background: var(--fg); color: #fff;
+  }
+  .btn:hover { filter: brightness(1.12); }
+  .btn.demo { background: var(--demo); }
+  .btn.secondary { background: #fff; color: var(--fg); border-color: var(--line); }
+  .btn.danger { background: var(--accent); }
+  .btn[disabled] { opacity: .45; cursor: not-allowed; filter: none; }
+  .btn.small { padding: 7px 13px; font-size: 13px; }
+
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .row.tight { gap: 8px; }
+
+  input[type=text] {
+    font: inherit; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 8px; background: #fff; color: var(--fg); min-width: 190px;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--demo); }
+  select {
+    font: inherit; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 8px; background: #fff; color: var(--fg);
+    max-width: 100%;
+  }
+  label.field { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; }
+  label.field .hint { font-weight: 400; color: var(--muted); font-size: 12px; }
+
+  /* Preflight strip */
+  .checks { display: grid; gap: 10px; margin: 0 0 6px;
+            grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); }
+  .check {
+    border: 1px solid var(--line); border-radius: 11px; padding: 13px 14px;
+    background: #fff; display: flex; gap: 11px; align-items: flex-start;
+  }
+  .check .mark { font-size: 15px; line-height: 1.25; flex: none; width: 17px; text-align: center; }
+  .check .mark.ok { color: var(--ok); }
+  .check .mark.bad { color: var(--accent); }
+  .check .mark.warn { color: var(--warn); }
+  .check .mark.wait { color: var(--muted); }
+  .check .name { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+  .check .what { font-size: 12.5px; color: var(--muted); }
+
+  .note {
+    border-left: 3px solid var(--line); padding: 2px 0 2px 14px;
+    font-size: 13.5px; color: var(--muted); margin: 16px 0 0; max-width: 80ch;
+  }
+  .note.warn { border-left-color: var(--warn); color: var(--fg); }
+  .note.bad { border-left-color: var(--accent); color: var(--fg); }
+  .note b { font-weight: 600; }
+
+  .callout {
+    border: 1px solid #e6dcc0; background: #fdf8ea; border-radius: 12px;
+    padding: 16px 18px; margin: 18px 0 0; font-size: 13.5px;
+  }
+  .callout h3 { margin: 0 0 7px; font-size: 14px; }
+  .callout p { margin: 0 0 9px; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout.quiet { border-color: var(--line); background: var(--surface-2); }
+
+  .marks { list-style: none; padding: 0; margin: 14px 0 0; font-size: 13.5px; }
+  .marks li { padding: 7px 0; border-top: 1px solid var(--line); color: var(--muted); }
+  .marks li b { color: var(--fg); font-weight: 600; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+
+  .msg { font-size: 13px; color: var(--muted); min-height: 18px; margin-top: 10px; }
+  .msg.bad { color: var(--accent); }
+  .msg.ok { color: var(--ok); }
+
+  /* The stage: the live demo, wrapped in chrome that says what it is. */
+  .stage {
+    position: fixed; inset: 0; z-index: 100; background: #241a3d;
+    display: flex; flex-direction: column;
+  }
+  .stage[hidden] { display: none !important; }
+  .stage-bar {
+    background: var(--demo); color: #fff; padding: 8px 16px;
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    font-size: 13px; font-weight: 600; flex: none;
+  }
+  .stage-bar .chip {
+    background: rgba(255,255,255,.18); border-radius: 999px;
+    padding: 2px 10px; font-size: 12px; font-weight: 600;
+  }
+  .stage-bar .spacer { flex: 1 1 auto; }
+  .stage-bar button {
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    background: rgba(255,255,255,.16); color: #fff;
+    border: 1px solid rgba(255,255,255,.32); border-radius: 7px; padding: 5px 11px;
+  }
+  .stage-bar button:hover { background: rgba(255,255,255,.28); }
+  .stage-bar a { color: #fff; text-decoration: underline; font-size: 12.5px; font-weight: 600; }
+  .stage-frame { flex: 1 1 auto; position: relative; }
+  .stage-frame iframe { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+  .stage-fallback {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    gap: 14px; align-items: center; justify-content: center; text-align: center;
+    color: #fff; padding: 40px; background: #241a3d;
+  }
+  /* A class that sets `display` outranks the browser's own
+     `[hidden] { display: none }`, so without this the fallback is painted over
+     the encounter from the moment the stage opens and never leaves: the frame
+     loads /v2 perfectly, el.hidden reads true, and the room looks at "the
+     participant page has not loaded in this frame" for the whole demo. Found by
+     opening it. The same guard is on .stage above, and for the same reason. */
+  .stage-fallback[hidden] { display: none !important; }
+  .stage-fallback p { max-width: 52ch; font-size: 14px; margin: 0; }
+  .stage-foot {
+    background: var(--demo-deep); color: #fff; font-size: 12px; padding: 6px 16px;
+    flex: none; text-align: center; letter-spacing: .02em;
+  }
+
+  @media (max-width: 720px) {
+    main { padding: 26px 18px 60px; }
+    h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Never scrolls away, never switched off. The person driving sees it and so
+     does the room; the live encounter gets its own copy in the stage chrome,
+     because that is the screen the lab is actually looking at. -->
+<div class="demo-bar">
+  <span class="dot"></span>
+  <span>DEMO MODE</span>
+  <span class="sep">·</span>
+  <span class="thin">Nothing started from this page is study data.</span>
+  <span class="sep" id="keyStrippedSep" hidden>·</span>
+  <span class="thin" id="keyStripped" hidden>Researcher key removed from the address bar.</span>
+</div>
+
+<header class="site">
+  <div class="brand-row">
+    <img src="/static/logo.png" alt="Relational Fluency logo" class="logo" />
+    <div class="brand-text">
+      <span class="name">Relational Fluency</span>
+      <span class="sub">showing the platform</span>
+    </div>
+  </div>
+  <nav class="site">
+    <a href="/" id="navHome">Participant landing page</a>
+    <a href="/researcher" id="navResearcher" target="_blank" rel="noopener">Researcher console</a>
+  </nav>
+</header>
+
+<main>
+  <h1>Show the platform to the lab.</h1>
+  <p class="lede">
+    Two ways to do it. <strong>Replay</strong> walks through encounters that are
+    already recorded — it needs no model gateway, no S3 bucket and no
+    microphone, so there is nothing in it that can fail while people are
+    watching. <strong>Live</strong> runs a real encounter on the real gateway.
+    Both are tagged so that nothing you do here can end up in the wave.
+  </p>
+  <!-- The key is NOT one of the things the replay lane does without, and this
+       page used to say it was. /evidence and /api/encounters are check_key'd,
+       exactly as /test is, so on a keyed server a wrong key shuts both lanes
+       and a right key opens both. Driven on this tree against a server keyed
+       with a value this page was not given: /api/encounters answered 401, the
+       picker went dark, and the page went on calling the replay lane the one
+       that "needs no key" while leaving the live button armed over a /test
+       that answers 401 too. -->
+  <p class="lede" style="margin-top:-18px">
+    What the replay lane does need, on a keyed server, is the same researcher
+    key the live lane needs: <span class="mono">/evidence</span> and
+    <span class="mono">/api/encounters</span> sit behind the same gate as
+    <span class="mono">/test</span>. The check below asks a gated route whether
+    this page's key opens it, so one answer covers both lanes.
+  </p>
+
+  <!-- ── Before you present ────────────────────────────────────────────── -->
+  <section class="lane">
+    <div class="eyebrow">Before you present</div>
+    <h2 class="sec">What is working on this machine right now</h2>
+    <p class="sec-lede">
+      Read off <span class="mono">/health</span> and the browser, so the things
+      that break a live demo break here, five minutes early, instead of in the
+      room. The replay lane below needs none of them.
+    </p>
+    <div class="checks" id="checks">
+      <div class="check"><div class="mark wait">…</div><div><div class="name">Checking</div>
+        <div class="what">Asking the server what it can reach.</div></div></div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn secondary small" id="micBtn">Test the microphone and camera</button>
+      <button class="btn secondary small" id="recheckBtn">Re-check the server</button>
+    </div>
+    <!-- The re-check button offered something it could not do, and the gate
+         note under the live lane sent the researcher off to do it.
+
+         server/app.py probes the gateway and the bucket ONCE, in
+         _check_gateway and _check_storage, both wired to the startup hook, and
+         /health has served those two cached dicts ever since — the route's own
+         comment says so ("storage is the startup answer, not a fresh call").
+         So a gateway that merely blipped while the server was booting reads
+         down on this page until somebody restarts the process, and the page
+         told the room to press a button instead.
+
+         Driven on this tree: server booted against a gateway that refused the
+         connection, row read "✕ Model gateway — Not answering"; the gateway was
+         then brought up and answered /v1/models 200; "Re-check the server" was
+         pressed; the row still read ✕ and the live lane was still off. Said out
+         loud here rather than left to be discovered in the room. -->
+    <p class="note" id="recheckNote">
+      <b>Two of these rows cannot be re-checked.</b> The model gateway and the
+      webcam bucket are probed once, in this server's startup hooks, and
+      <span class="mono">/health</span> has served the cached answer ever since
+      — so a gateway that was down at boot reads down here until somebody
+      restarts the server, however long it has been back up. The researcher key,
+      the encounter list and the count of live encounters are asked again every
+      time, and those three are what <em>Re-check the server</em> is for.
+    </p>
+    <!-- The one door this page cannot close, said out loud rather than left to
+         be noticed on the projector.
+
+         /evidence and /researcher are pages in this repository and they now
+         take the key out of their own address bars, exactly as this page does,
+         so the key never reaches the wall through them however they were
+         opened. GET / is check_key'd too, so the participant landing page needs
+         the key in its URL — but it is the participant's own screen, it has no
+         researcher chrome, and giving it a "your key has been removed" banner
+         would mean putting researcher furniture on the page a recruited person
+         reads. So the key travels there and stays visible, and the honest thing
+         is to name the link that does it before it is clicked. -->
+    <p class="note warn" id="keyTravelNote" hidden>
+      <b>One link keeps the key on screen.</b> The participant landing page —
+      <em>Participant landing page</em> above, and the rating console button
+      below, which goes to the rater door on it — opens with
+      <span class="mono">?key=…</span> and leaves it in its address bar, because
+      it is the participant's own page and has nothing on it that should strip a
+      researcher's credential. The researcher console and the evidence trace
+      both remove it the way this page does. If the room is watching, open the
+      landing page last.
+    </p>
+    <!-- Priming the permission is the point, not the test result. A live demo
+         opens /v2 inside a frame on this page, and the browser asks for the
+         microphone the moment it does. Granting it here means the prompt has
+         already been answered by the time the lab is watching, on the same
+         origin, and a machine that cannot get a microphone at all is something
+         to find out now. -->
+    <div class="msg" id="micMsg"></div>
+  </section>
+
+  <!-- ── Lane 1: replay ───────────────────────────────────────────────── -->
+  <section class="lane replay">
+    <div class="eyebrow">Lane 1 · cannot fail live</div>
+    <h2 class="sec">Replay a wave that is already on disk</h2>
+    <p class="sec-lede">
+      Both of these read recorded encounters out of <span class="mono">DATA_DIR</span>
+      and nothing else. No model gateway, no AWS, no microphone. If you have one
+      thing to show and one chance to show it, show this. On a keyed server both
+      still want the researcher key — same gate as the live lane — and the
+      <em>Researcher key</em> check above is the answer for both.
+    </p>
+
+    <div class="row" style="margin-bottom:6px; align-items:flex-end">
+      <label class="field" style="flex:1 1 380px">
+        Encounter
+        <span class="hint" id="encHint">Loading the encounters on this machine…</span>
+        <select id="encSelect" disabled><option>Loading…</option></select>
+      </label>
+      <button class="btn demo" id="evidenceBtn" disabled>Open the evidence trace</button>
+    </div>
+    <p class="note">
+      The evidence trace is the aligned view: the participant's turn, the stage
+      direction that shaped the reply, the actor's line, and the fidelity check
+      against the instrument. It is also where steering is visible — which
+      matters for the live lane, and is explained there.
+    </p>
+
+    <div class="row" style="margin-top:20px">
+      <button class="btn secondary" id="raterBtn">Open the rating console</button>
+      <span class="sec-lede" style="margin:0">
+        Scoring a recorded encounter on the study's 22 items.
+      </span>
+    </div>
+    <!-- Not a one-click link, and not an oversight. A rater's console opens on
+         that rater's own token and shows that rater's own queue, so there is no
+         address that opens it for everybody; a button here that minted one
+         would be a second copy of the credential path the landing page already
+         owns. This sends you to the rater door on that page, which takes a
+         token and, on a keyless development box, will get you one. -->
+    <p class="note" id="raterNote">
+      The console opens on a rater's own token. This goes to the rater door on
+      the landing page, which takes one — and on a development server will issue
+      one for you.
+    </p>
+  </section>
+
+  <!-- ── Lane 2: live ─────────────────────────────────────────────────── -->
+  <section class="lane live">
+    <div class="eyebrow">Lane 2 · the real thing</div>
+    <h2 class="sec">Run a live encounter</h2>
+    <p class="sec-lede">
+      A real conversation on the real gateway, with a real microphone and a real
+      webcam recording, through <span class="mono">GET /test</span> — the same
+      entrance the lab already uses to walk the study. What makes it a demo is
+      settled before the conversation starts, rather than sorted out afterwards:
+      <span class="mono">/test</span> mints the run
+      <span class="mono">cohort=internal</span> and writes that tag onto the
+      participant record it mints with it, so this encounter's cohort is not
+      re-derivable by anything that happens later, and every
+      <span class="mono">?cohort=study</span> export leaves it out. It is
+      excluded from the analysis set; it is not hidden from the screens. See
+      <em>Where a demo shows up afterwards</em>, below.
+    </p>
+    <p class="sec-lede" style="margin-bottom:16px">
+      Two things worth saying out loud before you press it. On the model this
+      deployment is configured for, the room will see <b>no steering at all</b>
+      — the card below says exactly what that looks like, and it is the question
+      you will be asked. And the one thing that can still carry a demo into the
+      analysis set is a person: the tag lives in files, and a rating assignment
+      handed an explicit list of session ids never consults a cohort.
+    </p>
+
+    <ul class="marks">
+      <li><b>The run is tagged <span class="mono">cohort=internal</span>.</b>
+        <span class="mono">/api/runs</span>, <span class="mono">/api/encounters</span>
+        and <span class="mono">/api/sessions</span> all drop it from
+        <span class="mono">?cohort=study</span>, and the tag reaches the
+        encounter's own manifest, so an offline tool reading the session
+        directory sees it too.</li>
+      <li><b>The participant key says so in words.</b> Whatever you type below is
+        sent with a <span class="mono">demo-</span> prefix, so the key on the run
+        reads <span class="mono" id="keyPreview">test_demo-lab_…</span> on every
+        surface that prints one. The cohort is a field somebody has to think to
+        filter on; the key is printed whether they thought of it or not.</li>
+      <li><b>The consent record says <span class="mono">internal_test</span>.</b>
+        There is no Qualtrics response behind a demo and there never will be, so
+        the record points at the internal run id instead of inventing one. It
+        never claims a survey consent, and the microphone still opens only once
+        a consent record exists — that gate is the same one every participant
+        passes.</li>
+      <li><b>The screen says DEMO for the whole encounter.</b> The participant
+        page runs inside the demo frame, with this band above it and the run id
+        beside it, so nobody watching has to be told twice.</li>
+    </ul>
+
+    <!-- Filled from /health at load. Written as a card rather than a footnote
+         because the researcher is going to be asked about it in that room, and
+         being asked about it is much better than being surprised by it. -->
+    <div class="callout" id="steerCard" hidden>
+      <h3 id="steerTitle">Steering</h3>
+      <div id="steerBody"></div>
+    </div>
+
+    <div class="row" style="margin-top:20px; align-items:flex-end">
+      <label class="field">
+        Who is driving
+        <span class="hint">Goes into the run's participant key.</span>
+        <input type="text" id="demoName" value="lab" maxlength="18"
+               autocomplete="off" spellcheck="false" />
+      </label>
+      <!-- OFF IN THE MARKUP, and switched on only by an answer.
+           These two used to carry no `disabled` attribute at all — unlike
+           encSelect and evidenceBtn two sections up — so from the moment the
+           page painted until some fetch resolved they were live, and the whole
+           preflight was a race the room could lose. The shape that loses it is
+           not a /health that fails, which the script handles: it is a /health
+           that never answers at all. Driven on this tree through a proxy whose
+           /health holds the socket open and writes nothing: the strip sat at "…
+           Checking — Asking the server what it can reach" forever, the steering
+           card stayed hidden, and both of these read disabled=false.
+           loadHealth() caps the wait now, and these start off. A check that has
+           not completed is not a pass. -->
+      <button class="btn demo" id="liveBtn" disabled>Start a live demo encounter</button>
+      <button class="btn secondary" id="liveTabBtn" disabled>Start it in its own tab</button>
+    </div>
+    <div class="msg" id="liveMsg"></div>
+    <p class="note" id="liveGateNote" hidden></p>
+  </section>
+
+  <!-- Checked against records on this tree rather than against what the code
+       was expected to do. Two of the three surfaces an earlier version named
+       were wrong, and the wrong one was reassuring: it sent the reader to
+       /api/encounters' `study` flag, which is not a cohort.
+
+       WHICH LINE WAS CHECKED WHERE, because the previous version of this
+       comment claimed one record covered all of them and two of its lines were
+       false against that record:
+
+         * The cohort lines were driven against the demo wave's
+           s_1773142745_384dad. Its manifest carries cohort "internal"; it is a
+           row in the unfiltered /api/encounters, /api/sessions and /api/runs,
+           each carrying cohort "internal"; ?cohort=study drops it from all
+           three; the console prints [INTERNAL] and the evidence trace badges
+           INTERNAL.
+
+         * The consent_source and test_demo- lines are NOT true of it, and are
+           no longer claimed of every internal encounter. s_1773142745_384dad
+           was started by GET /test?name=bjordan before this page existed: its
+           participant key is test_bjordan_1773142745, not test_demo-anything,
+           and its participant record carries no consent_source field at all.
+           Both marks belong to a run started from THIS page — demoName()
+           forces the prefix, and storage's _consent_provenance writes
+           internal_test when /v2 takes the handoff — so that is what the
+           sentence says they are about now. Driven by pressing this page's own
+           live button against a copy of the demo wave and reading the
+           participant record it minted. -->
+
+  <div class="callout quiet">
+    <h3>Where a demo shows up afterwards</h3>
+    <p>
+      <b>Excluded, not hidden.</b> A demo is a row in every unfiltered list —
+      <span class="mono">/api/encounters</span>,
+      <span class="mono">/api/sessions</span>, the researcher console's session
+      picker, the evidence trace's session list — sitting beside the study's,
+      newest first, which usually means at the top. What removes it is the
+      cohort filter: <span class="mono">?cohort=study</span> on
+      <span class="mono">/api/runs</span>,
+      <span class="mono">/api/encounters</span> and
+      <span class="mono">/api/sessions</span> all leave it out, and that is the
+      analysis set.
+    </p>
+    <p>
+      <b>Where the mark is.</b> The manifest, <span class="mono">/api/runs</span>,
+      <span class="mono">/api/encounters</span> and
+      <span class="mono">/api/sessions</span> all carry
+      <span class="mono">cohort: "internal"</span>. The researcher console
+      prints <span class="mono">[INTERNAL]</span> at the head of the row. The
+      evidence trace badges it <span class="mono">INTERNAL</span> where a study
+      encounter reads <span class="mono">STUDY</span>.
+    </p>
+    <p>
+      <b>Two more marks, and they belong to this page.</b> A demo started from
+      this page carries a participant key beginning
+      <span class="mono">test_demo-</span> — the field above forces that prefix
+      — and a consent record reading
+      <span class="mono">consent_source: "internal_test"</span> with the
+      internal run id as its reference, which is what the handoff to
+      <span class="mono">/v2</span> writes. An internal run started some other
+      way — <span class="mono">GET /test</span> with a name of its own, which is
+      how the internal encounter already on this tree was made — carries the
+      cohort tag and neither of these two. Read
+      <span class="mono">cohort</span> for the question "is this study data";
+      these two are for recognising a demo at a glance.
+    </p>
+    <p>
+      <b>One field here does not mean cohort.</b>
+      <span class="mono">/api/encounters</span> also returns
+      <span class="mono">study: true</span> or
+      <span class="mono">study: false</span>, and that flag answers only whether
+      the scenario is one of the eight v3 study scenarios. A demo runs those
+      same scenarios — that is what makes it a demo of the study — so a demo
+      encounter reports <span class="mono">study: true</span>. Read
+      <span class="mono">cohort</span>. Never read
+      <span class="mono">study</span> to tell a demo from a participant.
+    </p>
+    <p>
+      If you want a demo gone rather than merely excluded, delete its run file
+      and its session directory. Nothing here does that for you, on purpose:
+      this page starts things, and a page that also deletes recorded encounters
+      is one misclick from deleting somebody's.
+    </p>
+  </div>
+</main>
+
+<!-- The stage. The participant page, unchanged, inside chrome that cannot be
+     mistaken for it. -->
+<div class="stage" id="stage" hidden>
+  <div class="stage-bar">
+    <span class="dot" style="width:9px;height:9px;border-radius:50%;background:#fff;display:inline-block"></span>
+    <span>DEMO ENCOUNTER</span>
+    <!-- READ, OR NOT PRINTED. This chip was the literal string
+         "cohort: internal" and the strip at the foot the literal "Demo run ·
+         cohort internal · excluded from the study dataset · consent recorded as
+         internal_test" — four assertions about a run, painted before the run
+         existed and left standing when it never did. Driven on this tree: this
+         page opened with a key the server refuses, the live button armed (see
+         the key check), the stage opened full-screen over the room with
+         "cohort: internal" in the bar and "consent recorded as internal_test"
+         along the bottom, and the frame under them held
+         {"detail":"Bad or missing key"}. No run, no cohort, no consent record,
+         and the chrome said all three. Both are filled by namePresentRun from
+         /api/runs now, and say they have not been read until they have. -->
+    <span class="chip" id="stageCohort">cohort: reading…</span>
+    <span class="chip mono" id="stageRun">run …</span>
+    <span class="spacer"></span>
+    <a href="#" id="stagePopout" target="_blank" rel="noopener">Open in its own tab</a>
+    <button id="stageClose">End the demo</button>
+  </div>
+  <div class="stage-frame">
+    <!-- Delegated explicitly, and only these three. A same-origin frame does
+         NOT inherit the microphone or the camera without being granted them
+         here, and a participant page that cannot open either is a demo that
+         dies at the first click. Nothing else is delegated: this frame has no
+         business with the screen or the location. -->
+    <iframe id="stageFrame" title="Demo encounter"
+            allow="microphone; camera; autoplay"></iframe>
+    <!-- Shown when the frame has not painted anything after a few seconds. A
+         demo that dies inside a frame with no way out is precisely the failure
+         this page exists to prevent, so the way out is on the screen before
+         anybody has to look for it. -->
+    <div class="stage-fallback" id="stageFallback" hidden>
+      <p id="stageFallbackMsg">The participant page has not loaded in this frame.</p>
+      <button class="btn demo" id="stageFallbackOpen">Open it in its own tab instead</button>
+    </div>
+  </div>
+  <div class="stage-foot" id="stageFoot">
+    Demo run · the run record has not been read yet
+  </div>
+</div>
+
+<script>
+/* ──────────────────────────────────────────────────────────────────────────
+   The researcher key, and why it does not stay in the address bar.
+
+   On a deployed server /test, /evidence and /api/encounters are all gated on
+   SESSION_KEY, so this page has to carry it — and this is the one page in the
+   repository whose whole purpose is to be projected onto a wall. A key sitting
+   in the URL bar in front of a room is a key that has been handed to the room.
+
+   So it is read once, kept in a variable, and removed from the address bar with
+   replaceState. Reload still works (the key is gone, and the page says which
+   doors that closes) and every door below still gets it. What is deliberately
+   NOT done is stashing it in localStorage to survive the reload: a credential
+   that outlives the tab is a credential left on a shared demo machine.
+   ────────────────────────────────────────────────────────────────────────── */
+const params = new URLSearchParams(location.search);
+const KEY = params.get('key') || '';
+const keyFirst = KEY ? `?key=${encodeURIComponent(KEY)}` : '';
+const keyMore  = KEY ? `&key=${encodeURIComponent(KEY)}` : '';
+const $ = (id) => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+if (KEY) {
+  try {
+    params.delete('key');
+    const q = params.toString();
+    history.replaceState(null, '', location.pathname + (q ? '?' + q : ''));
+    $('keyStripped').hidden = false;
+    $('keyStrippedSep').hidden = false;
+  } catch (e) { /* a browser that will not rewrite the bar still gets the page */ }
+  // Both are check_key routes on a keyed server, the landing page included, so
+  // a nav link without the key is a 401 with the demo bar still on the screen.
+  $('navResearcher').href = '/researcher' + keyFirst;
+  $('navHome').href = '/' + keyFirst;
+  // And the one destination that will keep it. Shown only when there is a key
+  // to keep: on a loopback server with no SESSION_KEY there is nothing here to
+  // warn about, and a warning about a credential that does not exist teaches
+  // the room to ignore the next one.
+  $('keyTravelNote').hidden = false;
+}
+
+/* The name that goes onto the run, and the second mark on every demo.
+
+   /test builds the run's participant key as test_<name>_<epoch>, and that key
+   is printed by the researcher console, /api/runs, the encounter manifest and
+   every export. cohort=internal is the mark an analyst filters on; this is the
+   mark an analyst SEES without filtering on anything, which is what stops a
+   demo encounter being read as a participant's six months from now.
+
+   Forced, not suggested: the prefix is added whatever is typed, and a field
+   left empty still produces demo-anon. /test truncates the whole thing at 24
+   characters, so the slug is cut to fit rather than cut by the server. */
+function demoName() {
+  const raw = ($('demoName').value || '').trim().toLowerCase();
+  const slug = raw.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 12);
+  return 'demo-' + (slug || 'anon');
+}
+function paintKeyPreview() {
+  $('keyPreview').textContent = `test_${demoName()}_…`;
+}
+$('demoName').addEventListener('input', paintKeyPreview);
+paintKeyPreview();
+
+/* ── preflight ─────────────────────────────────────────────────────────── */
+
+/* A fetch that cannot hang.
+
+   `fetch` has no timeout. A server that refuses the connection rejects and a
+   server that answers 500 resolves, and this page handled both; a server that
+   accepts the socket and then writes nothing does neither, forever, and every
+   `await` below it waits forever with it. That is not a hypothetical shape —
+   it is what a wedged process, a half-open connection through a VPN, or a
+   proxy that has lost its upstream all look like from the browser — and it was
+   the one state in which this page's preflight never finished and therefore
+   never decided anything.
+
+   Driven on this tree through a proxy whose /health holds the socket open: the
+   strip sat at "… Checking" and the steering card stayed hidden for as long as
+   the page was open. Ten seconds because /health on a server that is going to
+   answer answers in milliseconds, the same order the server's own gateway
+   probe allows itself, and because the cost of being wrong is one press of
+   Re-check rather than anything written down. */
+const ANSWER_WITHIN_MS = 10000;
+
+function answerWithin(makeRequest, ms) {
+  const ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+  let timer = null;
+  const capped = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      // Abort as well as reject: rejecting frees this page, aborting frees the
+      // socket. A demo machine that has done this four times should not be
+      // holding four dead requests open behind the encounter.
+      if (ctl) { try { ctl.abort(); } catch (e) {} }
+      reject(new Error('no answer within ' + ms + 'ms'));
+    }, ms);
+  });
+  return Promise.race([makeRequest(ctl ? { signal: ctl.signal } : undefined), capped])
+    .finally(() => clearTimeout(timer));
+}
+
+let health = null;
+/* Whether /health has SETTLED, which is not the same as whether it answered.
+   `health === null` is two different states — "not asked yet" and "asked, and
+   the answer was nothing" — and the strip and the live lane owe them different
+   words. Without this the picker's own call to paintChecks, which usually wins
+   the race, painted "Server unreachable" over a server that was answering
+   fine. */
+let healthSettled = false;
+
+/* Whether this page's researcher key WORKS, asked of a door rather than of a
+   description.
+
+   The row this replaces was computed from `keyed && !KEY`: it asked whether a
+   key was PRESENT. /health cannot answer the other question — its own
+   docstring says an absent or wrong key "is never an error here, it just gets
+   the narrow answer", because refusing the probe would take the task out of
+   service — so a page that reads only /health cannot tell a right key from a
+   wrong one and this one did not try.
+
+   /api/encounters is the question, and it is the right question because it is
+   check_key'd by the same check_key that guards /test and /evidence. Its
+   answer is therefore the answer for BOTH lanes at once, which is the other
+   half of what was broken here: on a wrong key the page disabled the encounter
+   picker and the evidence button — the lane it calls the one that cannot fail
+   — and left the live button armed over a /test that answers 401. Exactly
+   backwards.
+
+   true  the route answered 200 for whatever key this page has, or for none
+   false it answered 401/403 — there is a gate here and this page is outside it
+   null  nothing has answered yet, or the answer was neither of those. Not a
+         pass. */
+let keyProbe = null;
+let keyProbeStatus = 0;
+
+function check(mark, cls, name, what) {
+  return `<div class="check"><div class="mark ${cls}">${mark}</div><div>`
+       + `<div class="name">${esc(name)}</div>`
+       + `<div class="what">${what}</div></div></div>`;
+}
+
+/* Which realtime family REALTIME_MODEL belongs to.
+
+   A mirror of server/voice/realtime.py's family_of, matched on the same two
+   substrings, because the gateway carries several members of each family and an
+   exact list would go stale the week a new one lands. A name that matches
+   nothing is "", which is a real answer here and not a default: it means
+   REALTIME_FAMILIES has no row for this model, so nobody has checked what it
+   does with a mid-session session.update and this page must not guess.
+
+   tests/test_demo_door.py pins this against family_of itself, for the same
+   reason tests/test_final_preflight.py pins the model table against the modules
+   that read it: a copy of a rule in a second language drifts silently. */
+function familyOf(model) {
+  const name = String(model || '').toLowerCase();
+  if (name.includes('gemini') && name.includes('live')) {
+    // Order matters, exactly as in family_of(): the native-audio sibling
+    // matches the gemini-live test too, and the server gives it a row of its
+    // own because folding it in feeds it 16 kHz and it then never speaks.
+    if (name.includes('native-audio')) return 'gemini-live-native-audio';
+    return 'gemini-live';
+  }
+  if (name.includes('realtime') && (name.includes('gpt') || name.includes('openai'))) return 'gpt-realtime';
+  return '';
+}
+
+/* What the lab will and will not see, on the model this deployment is
+   configured for. Three answers, mirroring the three the runner's own ack has:
+   the family honours a mid-session session.update, the family demonstrably does
+   not, or nothing has checked. */
+function paintSteering(model) {
+  const card = $('steerCard');
+  card.hidden = false;
+  // `null` is the fourth case and it is not a model name: the page could not
+  // read /health, so it does not know what this deployment runs. Saying nothing
+  // is the one answer this card must never give — the card was hidden until
+  // /health answered, so on the machine already failing its own preflight the
+  // page went silent about steering, which is the question the researcher is
+  // about to be asked whatever the preflight did.
+  if (model === null) {
+    $('steerTitle').textContent = 'This page cannot tell you what steering will do.';
+    $('steerBody').innerHTML =
+      `<p><span class="mono">/health</span> did not answer, so this page does `
+      + `not know which voice model the deployment is configured for, and `
+      + `therefore cannot say whether a stage direction sent mid-encounter `
+      + `reaches the actor. On this study's configured model it does not. `
+      + `Do not promise the room live steering from here.</p>`
+      + `<p>The replay lane needs none of this: the evidence trace shows `
+      + `steering that is already on the record.</p>`;
+    return;
+  }
+  const fam = familyOf(model);
+  const m = `<span class="mono">${esc(model || 'unset')}</span>`;
+  // Both gemini rows get this card: neither has a measurement saying a
+  // mid-session session.update is honoured (the native-audio row carries
+  // honours_session_update False because nobody probed it, which is the
+  // same promise to the researcher either way).
+  if (fam === 'gemini-live' || fam === 'gemini-live-native-audio') {
+    $('steerTitle').textContent = 'A live demo on this model shows no steering. Say so first.';
+    $('steerBody').innerHTML =
+      `<p>The voice model configured here is ${m}. `
+      + `On that family the opening brief lands — the actor really is the `
+      + `character — and every stage direction after it does not. Probed on the `
+      + `Cornell gateway on 2026-09-10: three mid-session `
+      + `<span class="mono">session.update</span> frames, zero acknowledgements, `
+      + `no error frame either. The direction reaches a socket and nothing `
+      + `beyond it.</p>`
+      + `<p>So what the room will see is a conversation that runs, transcribes `
+      + `and sounds right, with the study's independent variable not reaching `
+      + `the actor. The steering panel will still move. The runner records it: `
+      + `one <span class="mono">steer_unacked</span> event per encounter, and a `
+      + `red line on the researcher console saying the model is not accepting `
+      + `stage directions.</p>`
+      + `<p><b>Show the steering from the replay lane instead.</b> `
+      + `The evidence trace above puts each stage direction beside the line it `
+      + `produced, on encounters where it did land. That is the part of the `
+      + `platform this model cannot demonstrate live.</p>`;
+  } else if (fam === 'gpt-realtime') {
+    $('steerTitle').textContent = 'Steering will be visible live.';
+    $('steerBody').innerHTML =
+      `<p>The voice model configured here is ${m}, which acknowledges `
+      + `mid-session <span class="mono">session.update</span> frames — two out `
+      + `of two on the 2026-09-10 probe — so stage directions reach the actor `
+      + `during the conversation and the record says they were delivered.</p>`;
+  } else {
+    $('steerTitle').textContent = 'Nobody has checked whether this model can be steered.';
+    $('steerBody').innerHTML =
+      `<p>The voice model configured here is ${m}, which belongs to no row in `
+      + `<span class="mono">REALTIME_FAMILIES</span>. Whether it honours a `
+      + `mid-session <span class="mono">session.update</span> is unknown, and `
+      + `unknown is not the same as yes. Do not promise the room live steering `
+      + `on it; the replay lane shows steering that is on the record.</p>`;
+  }
+}
+
+/* Where the live lane sits while a check is still in flight, and where it sits
+   in the markup: off, with the reason on screen. Called before the first fetch
+   and again on every re-check, so a re-check that hangs cannot leave the
+   buttons enabled from the answer before it. */
+function liveLaneWaiting() {
+  $('liveBtn').disabled = true;
+  $('liveTabBtn').disabled = true;
+  const note = $('liveGateNote');
+  note.hidden = false;
+  note.className = 'note warn';
+  note.innerHTML = 'The live lane is off until the checks above have answered. '
+    + 'A check that has not completed is not a pass, and this is where the page '
+    + 'waits rather than where it gives up.';
+}
+
+function paintChecks() {
+  const box = $('checks');
+  const note = $('liveGateNote');
+  // The picker's own call usually arrives first. Nothing here can be decided
+  // before /health has settled, and the strip already says what it is doing.
+  if (!healthSettled) return;
+  if (!health) {
+    // "Neither lane will work until it can" was printed here, and the note this
+    // same branch writes four lines below said "The replay lane reads recorded
+    // encounters off disk and is unaffected" — two sentences two sections apart
+    // on one screen, contradicting each other, and the first of them false.
+    // Driven on this tree through a proxy answering /health 503 while proxying
+    // everything else: the strip read "Neither lane will work until it can"
+    // while the picker under it read "28 recorded on this server, 26 of them
+    // study data" with both of its controls enabled.
+    box.innerHTML = check('✕', 'bad', 'Server unreachable',
+      'The page could not read <span class="mono">/health</span> — no answer, or '
+      + 'not one in ' + Math.round(ANSWER_WITHIN_MS / 1000) + ' seconds — so it '
+      + 'can tell you nothing about the gateway, the bucket or the key. '
+      + '<b>The live lane below is off.</b> The replay lane does not use '
+      + '<span class="mono">/health</span>: the encounter picker says for itself '
+      + 'whether it is working.');
+    // And the button goes with it. This branch used to return before touching
+    // the live lane, so a page that could not reach its own server printed
+    // "Neither lane will work" over two buttons that were still live — the
+    // exact shape of failure this page exists to prevent, reached through the
+    // page's own preflight.
+    $('liveBtn').disabled = true;
+    $('liveTabBtn').disabled = true;
+    note.hidden = false;
+    note.className = 'note bad';
+    note.innerHTML = 'The live lane is switched off because this page could not read '
+      + '<span class="mono">/health</span>. Nothing here knows whether the gateway, '
+      + 'the bucket or the key is in place, and unknown is not the same as working. '
+      + 'The replay lane reads recorded encounters off disk and is unaffected.';
+    paintSteering(null);
+    return;
+  }
+  const g = health.gateway || {};
+  const s = health.storage || {};
+  const keyed = health.session_key_configured === true;
+  const active = Number(health.active_sessions || 0);
+  let out = '';
+
+  out += g.ok
+    ? check('✓', 'ok', 'Model gateway', 'Answering, and serving the models this deployment is configured for. A live encounter can run.')
+    : check('✕', 'bad', 'Model gateway',
+        'Not answering, or serving a model this deployment is not configured for'
+        + (g.status ? ` (HTTP ${esc(g.status)})` : '')
+        + '. <b>A live encounter will fail.</b> Use the replay lane.');
+
+  out += s.ok
+    ? check('✓', 'ok', 'Webcam bucket', 'Readable and writable. A live demo’s recording will upload.')
+    : check('!', 'warn', 'Webcam bucket',
+        'Not usable'
+        + (s.error_code ? ` (<span class="mono">${esc(s.error_code)}</span>)` : '')
+        + '. A live encounter still runs and still transcribes; the webcam upload at the end fails, visibly, in front of the room.');
+
+  /* The key row, answered by a door rather than by a description of one. See
+     keyProbe above for why /health cannot answer this and /api/encounters can.
+
+     The unkeyed case is a WARNING and not a green tick, and that is the other
+     thing this row got wrong. It read "Not configured, so this is a loopback
+     server and every door below is open. Nothing here is reachable from
+     anywhere else." — in green, on the one page in this repository designed to
+     be projected in a room. An unset SESSION_KEY is not a reassuring fact: it
+     is the researcher surface unauthenticated. And the second sentence is
+     something this page cannot know. It has no way to see which interface the
+     process bound; server/app.py's own refusal reads HOST to decide exactly
+     that, and nothing of that reaches /health. "No key is configured" is what
+     this page can see; "nobody else can get here" is a guess wearing a tick. */
+  // "No key at all" and "a key this server refuses" are the same 401 and two
+  // different things to do about it, so the wording below reads both facts.
+  // This is all `keyed && !KEY` is good for: it used to be the whole gate, and
+  // a gate that asks only whether a credential is PRESENT cannot tell a right
+  // one from a wrong one. keyProbe decides now; this only picks the sentence.
+  const keyMissing = keyed && !KEY;
+  if (keyProbe === true && keyed)
+    out += check('✓', 'ok', 'Researcher key',
+      'This server is keyed, and <span class="mono">/api/encounters</span> accepted '
+      + 'the key this page was opened with — the same <span class="mono">check_key</span> '
+      + 'that guards <span class="mono">/test</span> and <span class="mono">/evidence</span>. '
+      + 'Every door below carries it.');
+  else if (keyProbe === true)
+    out += check('!', 'warn', 'No researcher key',
+      '<span class="mono">SESSION_KEY</span> is not set, so <span class="mono">check_key</span> '
+      + 'waves everyone through: <span class="mono">/test</span>, '
+      + '<span class="mono">/evidence</span>, the encounter list and the whole dataset '
+      + 'answer anyone who can reach this server. This page cannot see which interface '
+      + 'the server bound, so it cannot tell you who that is. Usual on a development '
+      + 'box; check it before projecting anything on a machine you did not start.');
+  else if (keyProbe === false)
+    out += check('✕', 'bad', 'Researcher key ' + (keyMissing ? 'missing' : 'refused'),
+      '<span class="mono">/api/encounters</span> answered '
+      + (keyProbeStatus ? `HTTP ${esc(keyProbeStatus)}` : '401')
+      + (keyMissing
+          ? ' and this page was opened without a key.'
+          : ' for the key this page was opened with, so it is not the key this server '
+            + 'accepts. A key that is present is not a key that works, and this row used '
+            + 'to say only that one was present.')
+      + ' <b>Both lanes are shut: <span class="mono">/test</span> and '
+      + '<span class="mono">/evidence</span> are behind the same gate.</b> Re-open this '
+      + 'page as <span class="mono">/static/demo.html?key=…</span> with the right key.');
+  else
+    out += check('…', 'wait', 'Researcher key',
+      'Not answered yet. Nothing has told this page whether its key opens a gated route, '
+      + 'and until something does it is holding the live lane off rather than guessing.');
+
+  out += active > 0
+    ? check('!', 'warn', 'Live encounters', `${active} running on this server right now. Starting a demo is safe; restarting the server is not.`)
+    : check('✓', 'ok', 'Live encounters', 'None running. Nothing you do here can interrupt a participant.');
+
+  box.innerHTML = out;
+
+  /* The one thing the checks cannot say for themselves: whether pressing the
+     button will produce an encounter or a failure in front of the room.
+
+     It is decided from the same facts the strip above has just printed, and
+     there are two of them. The key gate was here already. The gateway gate was
+     not, and it was the whole point of the strip: with the gateway down the row
+     above read "Not answering … A live encounter will fail. Use the replay
+     lane." and the button under it stayed live, so pressing it opened the stage
+     and minted a run against a gateway that cannot answer — the page telling
+     the room the demo will fail and then letting it fail anyway.
+
+     `g.ok !== true`, and the difference from `!g.ok` is the point: /health
+     reports `ok: null, checked: false` for a process that never ran its startup
+     hooks, which is a genuine unknown rather than a working gateway. Unknown is
+     not the same as yes — the rule the steering card below already applies to a
+     model nobody has probed.
+
+     The bucket is deliberately NOT a gate. A dead bucket loses the webcam
+     upload at the end; the encounter still runs and still transcribes, so the
+     warning row is the right response and switching the lane off would be
+     removing a demo that works. */
+  const gatewayDown = g.ok !== true;
+  const keyRefused = keyProbe === false;
+  const keyUnknown = keyProbe === null;
+  const blocked = gatewayDown || keyRefused || keyUnknown;
+  $('liveBtn').disabled = blocked;
+  $('liveTabBtn').disabled = blocked;
+  note.hidden = !blocked;
+  note.className = 'note bad';
+  // Every reason that applies, not the first one. They need different things
+  // done about them — one is a URL to re-open this page with, one is somebody
+  // else's server, one is a server restart — and a note that named only the
+  // first would send the researcher off to fix one thing and come back to a
+  // button that is still off.
+  const why = [];
+  if (gatewayDown)
+    why.push('the model gateway is not answering (see the check above), so '
+      + '<span class="mono">GET /test</span> would mint a run for an encounter '
+      + 'that cannot start');
+  if (keyRefused)
+    why.push(keyMissing
+      ? 'this server requires the researcher key and this page was not given '
+        + 'one, so <span class="mono">GET /test</span> would answer 401 — the gate '
+        + 'working, not a fault'
+      : 'this server refused the researcher key this page was opened with, so '
+        + '<span class="mono">GET /test</span> would answer 401 and the room would '
+        + 'watch the demo stage open onto it');
+  if (keyUnknown)
+    why.push('nothing has told this page whether its key opens a gated route — '
+      + '<span class="mono">/api/encounters</span> has not answered — and a check '
+      + 'that has not completed is not a pass');
+  note.innerHTML = 'The live lane is switched off because '
+    + why.join(', and because ')
+    + '. '
+    + (keyRefused || keyUnknown
+        ? 'The replay lane is behind the same gate, so it is shut too: sorting the '
+          + 'key out opens both.'
+        : 'The replay lane reads recorded encounters off disk and needs no gateway, '
+          + 'so present that.')
+    + ' '
+    // And the sentence that used to be false. "Re-check the server once this is
+    // sorted out" cannot work for the gateway: /health serves the boot-time
+    // preflight, so the row does not move until the process does. See
+    // #recheckNote above, which was driven.
+    + (gatewayDown
+        ? 'The gateway row is this server\'s boot-time preflight and pressing '
+          + '<em>Re-check the server</em> will not move it — once the gateway is '
+          + 'answering again, the server has to be restarted.'
+        : 'Re-open this page with the right key and press <em>Re-check the server</em>; '
+          + 'the key is asked again every time.');
+
+  paintSteering(g.realtime_model || '');
+}
+
+async function loadHealth() {
+  try {
+    health = await answerWithin(async (opts) => {
+      const r = await fetch('/health' + keyFirst, opts);
+      return r.ok ? await r.json() : null;
+    }, ANSWER_WITHIN_MS);
+  } catch (e) { health = null; }
+  healthSettled = true;
+  paintChecks();
+}
+
+/* The microphone and camera, primed rather than merely tested.
+
+   The stage runs /v2 in a same-origin frame, and the browser prompts for the
+   microphone the first time it asks. Answering that prompt here means it is
+   already answered when the lab is watching, and a machine with no working
+   input device is something to discover now rather than at the top of an
+   encounter.
+
+   The tracks are stopped the instant they are granted. This page has no use for
+   a live camera and should not be one of the things holding the webcam light on
+   while somebody talks. */
+$('micBtn').addEventListener('click', async () => {
+  const msg = $('micMsg');
+  const btn = $('micBtn');
+  btn.disabled = true;
+  msg.className = 'msg';
+  msg.textContent = 'Asking the browser…';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    stream.getTracks().forEach(t => t.stop());
+    msg.className = 'msg ok';
+    msg.textContent = 'Microphone and camera granted, and released again. '
+      + 'The live demo will not stop to ask.';
+  } catch (e) {
+    msg.className = 'msg bad';
+    // Named, because "denied" and "there is no camera on this machine" need
+    // two different things done about them and both arrive here as an
+    // exception.
+    const name = (e && e.name) || 'error';
+    msg.textContent = name === 'NotAllowedError'
+      ? 'The browser refused. A live demo cannot record until this is allowed '
+        + '— fix it in the site permissions, or present the replay lane.'
+      : name === 'NotFoundError'
+        ? 'This machine has no microphone or camera the browser can see. The '
+          + 'replay lane needs neither.'
+        : `The browser could not open them (${name}). The replay lane needs neither.`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* Re-check asks BOTH probes again, not just /health.
+
+   The key row is now answered by /api/encounters, so a re-check that only
+   reloaded /health would leave the one row this button can actually change
+   showing the answer from before the researcher fixed it. The gateway and the
+   bucket rows are the two it cannot change at all — #recheckNote says so on the
+   page, and the gate note says it again over the button it affects. */
+$('recheckBtn').addEventListener('click', () => {
+  $('checks').innerHTML = check('…', 'wait', 'Checking', 'Asking the server again.');
+  healthSettled = false;
+  keyProbe = null;
+  keyProbeStatus = 0;
+  liveLaneWaiting();
+  loadHealth();
+  loadEncounters();
+});
+
+/* ── the replay lane ───────────────────────────────────────────────────── */
+
+/* The encounter picker.
+
+   Ordered newest first by the API, and split into study data and everything
+   else, because the first thing a demo of the evidence trace has to do is open
+   on an encounter that actually has something in it — and because the newest
+   encounter on a machine somebody has been demoing on is a demo. Any run
+   started from this page lands in the second group, which is the same
+   separation working from the other end. */
+async function loadEncounters() {
+  const sel = $('encSelect');
+  const hint = $('encHint');
+  // Back to where the markup starts them, so a re-check cannot leave the
+  // previous answer's controls enabled over a list that is now closed.
+  sel.disabled = true;
+  $('evidenceBtn').disabled = true;
+  let rows = [];
+  try {
+    const r = await answerWithin(
+      (opts) => fetch('/api/encounters' + keyFirst, opts), ANSWER_WITHIN_MS);
+    if (!r.ok) {
+      // The one route on this page that is check_key'd AND returns data, so its
+      // status is what tells the live lane whether this page's key works. See
+      // keyProbe. 401/403 is the gate; anything else is a server fault and
+      // leaves the key question unanswered rather than answered no.
+      keyProbeStatus = r.status;
+      keyProbe = (r.status === 401 || r.status === 403) ? false : null;
+      sel.innerHTML = '<option>unavailable</option>';
+      hint.textContent = keyProbe === false
+        ? (KEY
+            ? `This server refused the key this page was opened with (HTTP ${r.status}), `
+              + 'so the encounter list is closed. Re-open this page with the right key.'
+            : 'This server is keyed and this page has no key, so the encounter list '
+              + 'is closed. Re-open this page with ?key=…')
+        : `The server answered HTTP ${r.status} for the encounter list.`;
+      paintChecks();
+      return;
+    }
+    rows = await r.json();
+    keyProbeStatus = r.status;
+    keyProbe = true;
+  } catch (e) {
+    keyProbe = null;
+    keyProbeStatus = 0;
+    sel.innerHTML = '<option>unavailable</option>';
+    hint.textContent = 'No answer from the server for the encounter list. '
+      + 'Press Re-check the server.';
+    paintChecks();
+    return;
+  }
+  if (!Array.isArray(rows) || !rows.length) {
+    sel.innerHTML = '<option>none on this server</option>';
+    hint.textContent = 'There are no recorded encounters in this server’s DATA_DIR. '
+      + 'Point it at a wave to use the replay lane.';
+    // An empty wave is a 200: the key worked, there is just nothing behind it.
+    // This must not read as a key failure and shut the live lane — the live
+    // lane is exactly what an empty server is for.
+    paintChecks();
+    return;
+  }
+  sel.innerHTML = '';
+  /* Two groups, and the cohort at the head of every row that is not study data.
+
+     The mark used to be " · internal" appended to the row. ONE of the eight v3
+     scenarios is titled "Planning an internal rollout" — S4A — and on the demo
+     wave it is four of the 27 recorded encounters, so the picker showed five
+     rows containing the word "internal", four of which are study data and one
+     of which is the demo. (An earlier version of this comment said four of the
+     eight SCENARIOS carried that title. Counted on this tree: the eight v3
+     titles are all different, and it is the encounter count that makes four.
+     The arithmetic on the screen was right and the sentence explaining it was
+     not.) A mark that a title can imitate is not a mark.
+
+     So: a bracketed cohort at column one, where a title cannot reach, and the
+     two sets in separate <optgroup>s so the count is readable without reading
+     any row at all. 'study' carries no mark — it is the common case, and
+     marking 26 rows to find one is how a mark stops being seen.
+
+     AND AN ENCOUNTER WITH NO COHORT AT ALL IS MARKED TOO, which this comment
+     claimed and the code did not do: `!c` fell into the same branch as 'study'
+     and returned the empty string, so a manifest with no cohort field —
+     recorded before the tag existed, or started outside a run — landed in the
+     "Not study data" group looking exactly like a study row. Driven on this
+     tree by putting one such manifest in a wave: it sorted newest-first to the
+     top of that group and read "S4A — Planning an internal rollout", which is
+     the title four of the study rows above it also carry. No ?cohort= filter
+     returns it, so it is not study data and the row has to say so. */
+  const mark = (c) => c === 'study' ? ''
+    : c ? `[${String(c).toUpperCase()}] `
+        : '[NO COHORT] ';
+  const label = (row) =>
+    `${mark(row.cohort)}${row.scenario || '?'} — ${row.title || row.id}`;
+  const isStudy = (row) => row.cohort === 'study';
+  const group = (name, list) => {
+    if (!list.length) return;
+    const g = document.createElement('optgroup');
+    g.label = name;
+    list.forEach(row => {
+      const o = document.createElement('option');
+      o.value = row.id;
+      o.textContent = label(row);
+      g.appendChild(o);
+    });
+    sel.appendChild(g);
+  };
+  // Study first, because it is the demo you meant to give; the other group is
+  // right underneath and says what it is.
+  group('Study data', rows.filter(isStudy));
+  group('Not study data — demos and unattributed arrivals',
+        rows.filter(r => !isStudy(r)));
+  sel.disabled = false;
+  $('evidenceBtn').disabled = false;
+  const study = rows.filter(r => r.cohort === 'study').length;
+  hint.textContent = `${rows.length} recorded on this server, ${study} of them study data.`;
+  paintChecks();   // the key row above was waiting on this answer
+}
+
+$('evidenceBtn').addEventListener('click', () => {
+  const id = $('encSelect').value;
+  if (!id) return;
+  window.open(`/evidence?session=${encodeURIComponent(id)}${keyMore}`, '_blank', 'noopener');
+});
+
+// The rater door on the landing page, deep-linked so it opens on arrival. One
+// copy of the token path, on the page that owns it.
+$('raterBtn').addEventListener('click', () => {
+  window.open('/' + keyFirst + '#rater', '_blank', 'noopener');
+});
+
+/* ── the live lane ─────────────────────────────────────────────────────── */
+
+/* /test mints the run and redirects to /v2, so this hands the frame the
+   entrance rather than the destination: the run id and the participant record
+   id are the server's to decide, and a page that built the /v2 URL itself would
+   be a second place that has to know how a run is started.
+
+   The cost is that this page does not know the run id until the frame has
+   followed the redirect — and it cannot read the frame's URL to find out,
+   because the frame navigates and same-origin or not, watching it is a race.
+   So the chip is filled from /api/runs afterwards, and says so while it waits.
+   A chip that guessed would be worse than a chip that is honest about being a
+   moment behind. */
+function testUrl() {
+  return `/test?name=${encodeURIComponent(demoName())}${keyMore}`;
+}
+
+let stageTimer = null;
+
+function openStage() {
+  const url = testUrl();
+  // Back to "nothing read yet" on every open, so the second demo of the
+  // afternoon cannot wear the first one's run id, cohort and foot while its own
+  // frame is still loading — or keep them if it never loads at all.
+  $('stageRun').textContent = 'starting…';
+  $('stageCohort').textContent = 'cohort: reading…';
+  $('stageFoot').textContent = 'Demo run · the run record has not been read yet';
+  $('stagePopout').href = url;
+  $('stageFallback').hidden = true;
+  $('stage').hidden = false;
+  document.body.style.overflow = 'hidden';
+  $('stageFrame').src = url;
+  $('stageClose').focus();
+
+  // If nothing has loaded after eight seconds the frame is the problem, and the
+  // way out goes on the screen without anybody having to think of it.
+  clearTimeout(stageTimer);
+  stageTimer = setTimeout(() => { $('stageFallback').hidden = false; }, 8000);
+}
+
+// Bound once, at load. Bound inside openStage it stacked a fresh listener on
+// every demo, so the third demo of the afternoon fired namePresentRun three
+// times per navigation — and the frame navigates twice on every start, because
+// /test is a redirect.
+$('stageFrame').addEventListener('load', () => {
+  if ($('stage').hidden) return;          // the about:blank of a close
+  clearTimeout(stageTimer);
+  $('stageFallback').hidden = true;
+  namePresentRun();
+});
+
+function closeStage() {
+  clearTimeout(stageTimer);
+  $('stage').hidden = true;
+  // Cut the frame loose rather than leaving it running behind a hidden div: it
+  // holds a microphone, a webcam and a websocket, and a demo that is "over"
+  // must not still be recording.
+  $('stageFrame').src = 'about:blank';
+  document.body.style.overflow = '';
+  $('liveBtn').focus();
+  loadEncounters();   // the encounter that was just recorded belongs in the list
+}
+
+/* Which run the frame is actually on. Asked of the server, not of the frame:
+   /api/runs is the same list an analyst reads, so a chip filled from it is
+   showing the room the same record the dataset will show later. Newest internal
+   run whose key carries this demo's name. */
+/* What the chrome says when the run has not been read.
+
+   The three pieces of chrome around the frame are the only thing the room can
+   see about this run, so they say what has been read and nothing else. A frame
+   that never started a run — a 401 behind a refused key, a gateway that died
+   between the preflight and the click — leaves them here rather than leaving
+   four assertions standing over an error page. */
+function stageUnread(what) {
+  $('stageRun').textContent = what;
+  $('stageCohort').textContent = 'cohort: not read';
+  $('stageFoot').textContent =
+    'Demo run · this page could not read the run record, so nothing on this '
+    + 'screen is a statement about this run';
+}
+
+async function namePresentRun() {
+  const want = demoName();
+  try {
+    const r = await answerWithin(
+      (opts) => fetch('/api/runs?cohort=internal' + keyMore, opts), ANSWER_WITHIN_MS);
+    if (!r.ok) { stageUnread(`run record unavailable (HTTP ${r.status})`); return; }
+    const rows = await r.json();
+    const mine = (Array.isArray(rows) ? rows : [])
+      .filter(x => String(x.participant_id || '').includes(want))
+      .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
+    if (!mine) { stageUnread('no run found under this name'); return; }
+    // Read off the row, not asserted: the filter is how the run is FOUND, the
+    // field is what is PRINTED, and if the two ever disagree the screen shows
+    // what the record says.
+    const cohort = mine.cohort || '(none)';
+    $('stageRun').textContent = `run ${mine.run_id} · ${mine.participant_id}`;
+    $('stageCohort').textContent = `cohort: ${cohort}`;
+    $('stageFoot').textContent = cohort === 'study'
+      ? `Demo run · run ${mine.run_id} · /api/runs reports cohort study for it — `
+        + 'stop and check this before anybody rates it'
+      : `Demo run · run ${mine.run_id} · cohort ${cohort}, read from /api/runs · `
+        + 'dropped by ?cohort=study on /api/runs, /api/encounters and /api/sessions';
+  } catch (e) {
+    stageUnread('run record unavailable');
+  }
+}
+
+$('liveBtn').addEventListener('click', openStage);
+$('stageClose').addEventListener('click', closeStage);
+$('stageFallbackOpen').addEventListener('click', () => {
+  const url = $('stagePopout').href;
+  closeStage();
+  window.open(url, '_blank', 'noopener');
+});
+$('liveTabBtn').addEventListener('click', () => {
+  // The escape hatch, offered before it is needed rather than after. Some
+  // machines will not give a framed page a microphone, and finding that out at
+  // the top of a demo is exactly the failure this page is for. The tab has no
+  // demo band around it — the run is still cohort internal and its key still
+  // says demo — so the stage is the better one where it works.
+  const msg = $('liveMsg');
+  msg.className = 'msg';
+  msg.innerHTML = 'Opened in a new tab. That tab is the ordinary participant '
+    + 'page with no demo band around it; the run behind it is still '
+    + '<span class="mono">cohort=internal</span> and its key still begins '
+    + `<span class="mono">test_${esc(demoName())}</span>.`;
+  window.open(testUrl(), '_blank', 'noopener');
+});
+
+// Escape closes the stage, like every other dialog in this app. Only the stage:
+// there is nothing else on this page to close.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('stage').hidden) closeStage();
+});
+
+// Off first, then ask. The markup already has both live buttons disabled; this
+// puts the reason on the screen beside them, so the page never has a moment in
+// which it is silently withholding the lane.
+liveLaneWaiting();
+loadHealth();
+loadEncounters();
+</script>
+</body>
+</html>

@@ -2,7 +2,8 @@
 
 Two groups:
   TONE_KNOBS, civility-positive personality dials (warmth, formality, etc).
-    At every value the knob contributes a fragment. The mid band is neutral.
+    A knob contributes a fragment only when it is turned OFF its neutral
+    middle. See _TONE_FRAGMENTS for why the mid band says nothing at all.
   INCIVILITY_KNOBS, workplace-incivility behaviors (condescension, sarcasm,
     dismissiveness, passive aggression) grounded in Andersson & Pearson
     (1999) and Cortina et al. (2001). At low values these contribute NO
@@ -15,8 +16,12 @@ on knowing exactly what was injected into the prompt at each turn.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Callable, Dict, List, Optional
+# Import only what this module uses. `field` and `Optional` were the only two
+# pyflakes findings in the whole server/tests/tools/agents tree; a linter that
+# reports two known-harmless lines forever is a linter nobody reads, and the
+# next real finding would arrive in that noise.
+from dataclasses import dataclass, asdict
+from typing import Callable, Dict, List
 
 
 TONE_KNOBS = ("warmth", "formality", "agreeableness", "verbosity", "restraint")
@@ -34,37 +39,58 @@ def _band(value: float, low: str, mid: str, high: str) -> str:
 
 
 # --- Tone (civility-positive) knobs ---
+#
+# The MID band of every tone knob returns EMPTY STRING, the same way the
+# incivility knobs do at their neutral low band, and for a sharper reason.
+# Every tone knob defaults to 0.5, so the mid band is what nearly every
+# character gets: the five mid sentences rendered as the last content block
+# before the speech rules, byte-identical for all sixteen characters in the
+# v3 bank, in every prompt. Two of them were actively wrong there.
+# "Match the length the person seems to want. Don't lecture." was a fourth
+# competing length rule (see engine.SPEECH_RULES). "Leave a little space.
+# Don't always be the one to move things forward." is chatbot-assistant
+# coaching, and it arrived last — after Dan has been told to talk over Priya
+# and Riley to be the pressure and not the fix — where it reads as the
+# closing instruction contradicting the brief.
+#
+# A knob sitting at its neutral setting has nothing to say about the
+# character. Saying it anyway spent prompt on the one block guaranteed to
+# carry no information, and spent it in the position the model weighs most.
+_MID_IS_SILENT = ""
 
 _TONE_FRAGMENTS: Dict[str, Callable[[float], str]] = {
     "warmth": lambda v: _band(
         v,
         "Speak in a cool, matter-of-fact register. Avoid warmth-signalling words.",
-        "Be cordial and present, but not effusive.",
+        _MID_IS_SILENT,
         "Be visibly warm, your care for the person should come through in word choice and tone.",
     ),
     "formality": lambda v: _band(
         v,
         "Use casual, contraction-heavy speech. It's fine to be a little messy.",
-        "Use plain, neutral speech.",
+        _MID_IS_SILENT,
         "Use careful, considered phrasing, closer to written prose than chat.",
     ),
     "agreeableness": lambda v: _band(
         v,
         "Be willing to disagree, push back, or hold your own view when you have one. Don't be contrarian, but don't soften everything either.",
-        "Agree when you genuinely agree; disagree when you don't. No special tilt either way.",
+        _MID_IS_SILENT,
         "Default to supporting the person's framing unless it would mislead them.",
     ),
     "verbosity": lambda v: _band(
         v,
-        "Keep replies very short, one or two sentences. Resist the urge to add caveats or context.",
-        "Match the length the person seems to want. Don't lecture.",
-        "It's fine to go into some depth when the moment invites it, but don't info-dump.",
+        # No word or sentence count here: engine.SPEECH_RULES owns the length
+        # of a turn for every character. This knob only says whether this
+        # particular person volunteers more than the question asked for.
+        "Answer what was asked and stop. Don't add caveats or context nobody asked for.",
+        _MID_IS_SILENT,
+        "Volunteer a little more than you were asked for, an example or a piece of backstory, rather than a bare answer.",
     ),
     "restraint": lambda v: _band(
         v,
         "Fill silence comfortably. Offer thoughts, ask follow-ups, keep momentum.",
-        "Leave a little space. Don't always be the one to move things forward.",
-        "Be willing to sit with silence. Often a short acknowledgment is more present than a full reply. Don't info-dump.",
+        _MID_IS_SILENT,
+        "Be willing to sit with silence. Often a short acknowledgment is more present than a full reply.",
     ),
 }
 
@@ -84,8 +110,8 @@ _INCIVILITY_FRAGMENTS: Dict[str, Callable[[float], str]] = {
     "condescension": lambda v: _band(
         v,
         "",
-        "Occasionally talk down to the user, phrases like 'as I'm sure you know' or 'in my experience' positioned to imply more expertise than they have.",
-        "Consistently talk down to the user. Frame your points as if educating them. Use phrases like 'well actually,' 'the experienced view here is…,' or 'you may not have seen this before, but…' The effect should be that the user feels small without being able to point to a single line that crossed a line.",
+        "Occasionally talk down to them, phrases like 'as I'm sure you know' or 'in my experience' positioned to imply more expertise than they have.",
+        "Consistently talk down to them. Frame your points as if educating them. Use phrases like 'well actually,' 'the experienced view here is…,' or 'you may not have seen this before, but…' The effect should be that they feel small without being able to point to a single line that crossed a line.",
     ),
     "sarcasm": lambda v: _band(
         v,
@@ -96,8 +122,8 @@ _INCIVILITY_FRAGMENTS: Dict[str, Callable[[float], str]] = {
     "dismissiveness": lambda v: _band(
         v,
         "",
-        "Subtly minimize what the user says. Move past their points quickly. 'Right, anyway…' or 'sure, sure'. Don't engage substantively unless pressed.",
-        "Actively dismiss the user's contributions. Cut them off with 'okay, but'; redirect immediately to your own agenda; respond to substantive points with 'yeah, I get it' and move on. Treat their input as something to be processed past, not engaged with.",
+        "Subtly minimize what they say. Move past their points quickly. 'Right, anyway…' or 'sure, sure'. Don't engage substantively unless pressed.",
+        "Actively dismiss what they contribute. Cut them off with 'okay, but'; redirect immediately to your own agenda; respond to substantive points with 'yeah, I get it' and move on. Treat their input as something to be processed past, not engaged with.",
     ),
     "passive_aggression": lambda v: _band(
         v,
@@ -146,7 +172,10 @@ class Persona:
             setattr(self, k, float(v))
 
     def tone_fragments(self) -> List[str]:
-        return [_TONE_FRAGMENTS[k](getattr(self, k)) for k in TONE_KNOBS]
+        # Empties are dropped for the same reason incivility_fragments drops
+        # its low band: a neutral knob contributes nothing, and an empty
+        # bullet in the prompt is a line the actor still has to read.
+        return [f for f in (_TONE_FRAGMENTS[k](getattr(self, k)) for k in TONE_KNOBS) if f]
 
     def incivility_fragments(self) -> List[str]:
         out = []

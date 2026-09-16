@@ -1,9 +1,73 @@
-fastapi>=0.115
-uvicorn[standard]>=0.30
-python-dotenv>=1.0
-pydantic>=2.7
-anthropic>=0.40
-httpx>=0.27
-websockets>=12.0
-pyyaml>=6.0
-boto3>=1.34
+# Supported Python: 3.11, 3.12 or 3.13. 3.12 is what the production image
+# (Dockerfile) and the release leg of CI run; treat it as the reference.
+#
+# WHY this is stated at all: nothing in the repository named a version, and the
+# four places that implied one disagreed — dependency metadata implies >=3.10,
+# agents/pyproject.toml says >=3.11, the Dockerfile and CI pinned 3.12, and
+# server/voice/realtime.py carries a 3.13-aware fallback. A researcher setting
+# up on macOS, Windows or Linux downloads whatever python.org offers that day
+# and none of those four answers is visible to them.
+#
+# What changes per version:
+#   3.11  — the floor. Read off installed metadata rather than guessed: of the
+#           resolved dependency set, websockets is the binding constraint at
+#           Requires-Python >=3.11 (17.1; the 16.1.1 pin below has not been
+#           checked offline, so CI's 3.11 leg is what actually confirms this
+#           floor). Everything else floors at 3.8-3.10.
+#   3.12  — the reference. Production image and the pinned CI leg.
+#   3.13+ — works, but `audioop` was removed by PEP 594, so every microphone
+#           chunk goes through the pure-Python `_ratecv`/`_rms` fallback in
+#           server/voice/realtime.py instead of the C implementation. That is
+#           the audio that reaches Gemini Live and the audio that is recorded,
+#           so it is not a detail. The fallback now has direct coverage
+#           (tests/test_deploy_portability.py runs it against the C path on
+#           3.12 and against known-good vectors everywhere), and it was checked
+#           against a real CPython 3.13.3 — audioop is genuinely gone there and
+#           the fallback produces identical output to the 3.12 run. What has
+#           NOT been checked is that these exact wheel pins resolve on 3.13;
+#           the CI leg is what confirms that.
+#
+# NOT YET DONE, needs a version check with network access before committing:
+# adding `audioop-lts; python_version >= "3.13"` here would restore the C path
+# on 3.13 and make the choice moot. The package name is right but the pin is
+# not verifiable offline, and every other line in this file is exact — see the
+# paragraph below. Do not add it unpinned.
+#
+# Exact pins for reproducible production images. The instrument is frozen per
+# study wave (immutable ECR tags, pinned terraform image tag), so builds of the
+# same git SHA must resolve identical dependencies. Bump deliberately and
+# re-test; do not float.
+#
+# These are the versions installed in the verified production image
+# (platform:c0d4bfc, live encounters confirmed 2026-08-24), not the newest
+# available. In particular websockets must stay >=14: the realtime client
+# passes additional_headers, which websockets 12 does not accept.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-dotenv==1.2.3
+pydantic==2.13.4
+anthropic==1.0.0
+httpx==0.28.1
+websockets==16.1.1
+pyyaml==6.0.3
+boto3==1.43.78
+
+# Imported directly by server/, and therefore declared directly, even though
+# each also arrives transitively today (anyio and starlette under fastapi,
+# botocore under boto3).
+#
+# WHY this is not redundant: a transitive dependency is a promise the package
+# above it can withdraw. `import anyio` in server/app.py is the FIRST third-party
+# import the app makes, so the day fastapi restructures or drops that edge, the
+# failure is `ModuleNotFoundError: No module named 'anyio'` on line 25 of app.py
+# — on a deploy, from a requirements file that installed without error and never
+# mentioned anyio. Undeclared also means unpinned, so the same three could
+# silently arrive at a major version this code has never run against, which is
+# the harder version of the same failure because it does not announce itself at
+# import time.
+#
+# Pinned to the versions this tree is verified against, matching every line
+# above.
+anyio==4.15.1
+starlette==1.6.0
+botocore==1.43.91

@@ -1,11 +1,14 @@
 # Inspirational Leadership, Variant A. Research Note v3, slide 12.
 # NOTE: interaction 1 is a GROUP room, the planted trigger is Alex challenging
 # the participant publicly, in front of the others. That is the instrument.
-# Variant B is still to be authored.
+# Variant B is S3B, "After a commission cut": authored, loading, and in the
+# rotation. It mirrors this form beat for beat (public challenge, then the
+# disengaged strong performer, then the anxious junior) on the same ESCI map,
+# so the two are interchangeable across attempts.
 id: S3A
 construct: inspirational_leadership
 variant: A
-parallel_form: S3B   # not yet authored
+parallel_form: S3B
 title: "After resignations over a pay dispute"
 duration_minutes: [7, 12]
 
@@ -30,61 +33,703 @@ pre_reading:
   - "Jordan, strong reviewer, quietest since Priya left."
   - "Casey, junior, absorbed most of Priya's queue."
 
+# Casting, per model family. `realtime_voice` is a MAP from model family to the
+# voice that family speaks this character with, and server/scenarios_v3.py
+# reads it: the family is derived from REALTIME_MODEL when the scenario is
+# compiled, so a character is the same person on either model instead of
+# whatever that family's roster happened to hold at this cast position. Before
+# the map existed the gpt name sat in a trailing comment that nothing read, and
+# a gpt run opened this cast by position — alloy, ash, ballad.
+#
+# Saying which catalogue a name belongs to is the whole point of the field:
+# gpt-realtime and Gemini Live keep disjoint rosters and no name is in both.
+#
+# Pairing a cast with the wrong family fails quietly, in two directions.
+# gpt-realtime answers a Gemini name with an invalid_value error and then
+# discards the entire session.update it arrived in, brief and all, so the
+# character carries on talking — fluently, as the gateway's stock assistant
+# rather than as anyone written down here. Gemini takes a gpt name without a
+# word of complaint and speaks in its own default anyway: probed live, `alloy`
+# on nto.gemini-live-2.5-flash came back acked, audible, and at Puck's ~102 Hz.
+# So a name and a family travel together. .env.example carries both
+# catalogues; server/scenarios_v3.py now refuses to compile a scenario whose
+# voice for the running family is off that family's roster, and
+# server/voice/realtime.py refuses it again before the socket opens, so the
+# mistake surfaces instead of playing.
+#
+# `voice` is the retired v1 cascade's unqualified field and stays the Gemini
+# name. It is what server/scenarios_v3.py puts in Agent.voice_id, and it is now
+# only a fallback: the runner asks for `realtime_voice` first
+# (realtime_voice_session._voice_of).
+#
+# Pitches are measured, one short gateway session per voice on one fixed line.
+# The 2026-09-12 figures re-measured BOTH families with a single estimator
+# (median F0 over voiced 45 ms frames, normalised autocorrelation), which is
+# what makes the two catalogues comparable at all; they agree with the earlier
+# per-family numbers on Gemini and read the gpt voices higher. Every gpt name
+# below was confirmed on the gateway that day: session.updated acked and audio
+# returned.
+#
+# These three share a room, so they are cast to stay apart by ear and not by
+# name badge alone, and the counterparts hold the same gaps on the other
+# family. Puck is deliberately unused here: group_room's silent scribe is
+# hardcoded to it, and a scribe that breaks its "never speak" brief must not
+# arrive sounding like a member of the cast.
+#
+# Nobody had to be moved: ~91, ~116 and ~224 Hz were already three
+# clearly different people.
+#
+# THE PARAGRAPH ABOVE HOLDS ON GEMINI AND NOT ON gpt, and that is written down
+# here rather than repaired by quietly picking other voices. On Gemini this
+# room is Alex 115 Hz (Fenrir), Jordan 100 Hz (Charon), Casey 181 Hz (Leda). On gpt
+# it is Alex 160 Hz (verse), Jordan 130 Hz (ash), Casey 158 Hz (marin) — so Alex and
+# Casey, 66 Hz apart on Gemini, sit 2 Hz apart on gpt. Their timbres still
+# differ and Jordan still stands clear of both, but the pitch separation this
+# room was cast for is gone on that family. S3B is cast identically and
+# inherits the same gap, so the two forms stay matched to EACH OTHER either
+# way, which is the property the pair was corrected for. Unused gpt voices,
+# measured on the same line, for whoever recasts this: cedar 137, shimmer 141,
+# ballad 170, coral 190, sage 190.
+
+# ── How the briefs below are written, and why ──────────────────────────────
+#
+# NO BEAT IN THIS FILE IS A QUOTED LINE ANY MORE, and neither is any line of
+# the three briefs. Every one is specified by what it has to do to the
+# participant, not by the words it uses. That is a deliberate trade and it was
+# made beat by beat, not as a style pass.
+#
+# That claim is about S3A and S3B and nothing wider. The other six specs made
+# different trades on purpose and say so in their own headers: S1's three
+# silence probes are deliberately fixed lines, because a probe fires only when
+# the participant has produced nothing and every participant who freezes should
+# meet the same sentence; S2's beats are obstacles whose wording carries no
+# measurement, and its header records the one exception that would have to be
+# quoted if anybody ever wrote it. What is NOT a defensible trade anywhere is a
+# quoted fragment in a brief — an opener, a stock phrase, a half sentence —
+# because the brief is what the actor carries on every turn of the encounter
+# and it recites whichever unit it is handed. Those were still sitting in four
+# of the eight specs after the first rewrite, and they came back as tics.
+#
+# The cost of the old way was measured, not assumed. Driven through the gateway
+# with the shipped briefs, Alex opened with "Why should we even care? They'll
+# just let the next two walk too." — his brief's quoted line, to the word.
+# Jordan's opened with "It's fine. Everything's fine. What do you need from
+# me?", also to the word, in three independent samples. Nobody talks like that,
+# and a rater watching two participants meet the identical ten-word couplet is
+# watching a recitation, not a colleague.
+#
+# Worse than unnatural: it moved a beat onto the wrong stage. Jordan's brief
+# carried his ONE-ON-ONE line as a quoted string, so when the participant said
+# "Jordan, you've been quiet" IN THE MEETING, Jordan said it there — the whole
+# of t2, spent in front of Alex and Casey, ten minutes before the segment that
+# scores it. The participant then heard it a second time in the 1:1 as a
+# repeat. S3B did the same and worse: Lee spent the line in the meeting and
+# then did NOT deliver it in the one-on-one at all, so t2 landed nowhere.
+# A quoted line sitting in a brief is available to the actor at every moment of
+# the encounter, and the actor will reach for it the first time it nearly fits.
+#
+# So each beat now states its INTENT (what must become true in the room), its
+# PRESSURE (what it costs the participant to leave it unanswered) and its
+# STAGE (meeting or one-on-one, explicitly), and leaves the wording to the day.
+# The intent is specific enough to check in a transcript: Alex's beat has not
+# landed unless the prediction that two more people will go is said out loud in
+# front of the others.
+#
+# Which is also why that prediction now LEADS his beat instead of concluding
+# it. Written as premises-then-conclusion — two left, nobody acted, so it will
+# happen again — the conclusion was dropped in one sample out of three: it is
+# the last clause of a three-clause beat, and the group mode line allows a
+# speaker one sentence, two at most. The premises fit; the teeth did not. Toni
+# never had this failure because her beat is a single accusation that cannot be
+# half-delivered. So a multi-part beat puts the part the participant must
+# answer FIRST and lets the support fall off the end if anything has to.
+#
+# Each trigger now also carries an explicit `agent:`. It used to be inferred
+# from a cue that opened by naming a character ("Casey: '...'"), which is the
+# only thing that keeps Jordan from performing Casey's beat during Jordan's
+# segment — so the moment a cue stopped opening with a name, that binding would
+# have silently dissolved. Naming the agent outright frees the cue to be
+# written as speakable substance instead of third-person narration, which is
+# the other half of the repair: the actor is told, twenty lines earlier, never
+# to refer to itself in the third person, and the old cues then handed it
+# "Casey: 'Am I supposed to...'" to perform.
+#
+# EVERY CUE BELOW IS WRITTEN SO THAT IT CANNOT BE SPOKEN AS IT STANDS. That is
+# not a stylistic preference. The first pass of this rewrite put the beats in
+# the cue as plain speakable sentences, and Alex read one straight out —
+# "Nothing here is going to change. Two people left over money, nobody above us
+# did a thing, and the next two will go the same way." — which is the cue, to
+# the word, and so just the old recitation with a new script. Toni's cue, which
+# happened to be written as a description of the move rather than as a line,
+# was paraphrased instead. So the cues now say what has to become true
+# ("make the case to their face that...", "deny that anything is wrong,
+# decline to elaborate"), in a register nobody speaks in, and the actor has to
+# translate before it can say anything at all.
+#
+# The cost of that is beat fidelity, and it has to be paid for explicitly: on
+# the first pass Casey's cue lost its content and she opened with "I'm having
+# some trouble with the transition" — polite, natural, and nothing a
+# participant can respond to, so t3 measured nothing. Where a beat has more
+# than one part that must land, the cue now names the parts and says BOTH have
+# to be said. Specify what is conveyed, never the words that convey it.
+#
+# ── The one thing a cue may do that an on_silence may NOT ─────────────────
+#
+# A cue and a probe do not reach the actor through the same sentence, and that
+# decides how a probe has to be written. _trigger_instruction wraps a cue as
+# "Your next move, as <name>, now, in your own words: <cue>" — a move to make,
+# which is why a cue can be a described move. It wraps a probe as "They have
+# gone quiet. As <name>, say this now in your own words, then stop and let them
+# answer: <on_silence>", and "say this" takes the on_silence as its OBJECT. So a
+# probe written as a described move becomes an instruction to speak the
+# description. The three probes here used to read, in full:
+#
+#   say this now in your own words ...: They have not answered. Let the pause
+#   sit a second, then point out that the silence is itself the answer ...
+#
+# which is an actor being told to say "They have not answered", to say a stage
+# direction about a pause, and to refer to the other person in the third person
+# — the three things the rest of this file spends its length forbidding. It was
+# latent on nto.gemini-live-2.5-flash, which translates it anyway, and live on
+# gpt-realtime. The wrapper lives in server/realtime_voice_session.py and is not
+# this file's to rewrite, so the probes are written to fit it.
+#
+# The rule that came out of it: an on_silence is the SUBSTANCE of what gets
+# said, phrased so that it completes "say this now in your own words: …" and
+# cannot be spoken as it stands. A "that …" clause does both — "that their not
+# answering is itself the answer" is unsayable as a sentence, so the actor has
+# to translate it, and it contains no narration for the actor to read out. It is
+# not a quoted line and does not reintroduce one; S1's probes are quoted lines
+# on purpose and say why in their own header.
+#
+# Casey's probe is why this is not cosmetic. It used to end "raise it anyway,
+# both halves of it" — a referring phrase whose referent was in the CUE, and the
+# wrapper replaces the cue with the probe rather than adding to it, so "both
+# halves" pointed at nothing the actor could see. Driven through the gateway on
+# the probe path, four runs out of four, Casey raised the size of the queue and
+# never the part she cannot do: half a scored beat for every participant who
+# freezes. Ari's probe carried the same dangling phrase and landed both halves
+# 4/4 anyway, on the strength of his own brief — which is exactly the shape of
+# hazard this file exists to remove, one form scoring a frozen participant on a
+# whole beat and the other on half of one. Both probes now name their two halves
+# outright and neither depends on the cue being visible: 0/4 to 30/40 for Casey
+# and 4/4 to 34/40 for Ari, with the cued path unchanged at 21/22 and 22/22.
+#
+# The quarter of probes where Casey still gets only one half out is a residual,
+# written down rather than tidied away. Three wordings were driven against each
+# other at n of twenty or more and the spread between them sat inside the noise;
+# what she actually spends the turn on is her own preamble, apologising and then
+# asking permission to speak, where Ari only apologises. The obvious repair --
+# telling her in the brief that this is the one turn she may run long, "even if
+# it takes you two goes at it" -- was tried and MADE IT WORSE, 2/10 for Casey and
+# 5/10 for Ari, because "two goes" reads as permission to finish in the next
+# turn and on the probe path there is no next turn to finish in. It is reverted.
+# Do not re-add it without driving the probe path first.
+#
+# ── Equivalence is measured in behaviour, not counted in words ─────────────
+#
+# The pair was driven through the gateway with IDENTICAL participant scripts,
+# six runs of the meeting per form and four of each one-to-one, and the numbers
+# below are what those runs produced rather than what the briefs promise.
+#
+# What was equal already: the public challenge landed in the first turn 4/4 on
+# both forms; both cynics stopped accusing and started interrogating at the same
+# rung of a four-rung script (rung 2, 4/4 each); the junior's two-part beat
+# landed whole 7/7 on both forms when cued; mean turn length was 28.6 words for
+# Alex against 30.6 for Toni, so the rule difference between them ("two
+# sentences at the outside" against "one line — not two") was not costing B any
+# floor and has been made one rule anyway, because a difference that is inert on
+# one model is not inert on the next.
+#
+# What was NOT equal, and is the reason for the changes in S3B: the same
+# participant move — naming what this person is good at and asking for their
+# judgement — got a substantive answer from Jordan 4/4 and got the quota
+# question back from Lee 3/4. Lee's gate was narrower than Jordan's (it wanted
+# an offer that costs the participant something; Jordan's also accepts "a
+# judgement they want from you specifically"), and what he does once opened was
+# specified as "engage properly" against Jordan's "give them a straight answer —
+# a good one". A participant on form B could make the designed high-scoring move
+# and produce nothing a rater could score on brings_out_best. The same gap ran
+# through the meeting: Lee took 789 words of floor to Jordan's 1,041 on
+# identical scripts, because deflections are ten words and answers are twenty.
+# The fix is in S3B's brief, not in S3A's: this form is the one behaving as
+# designed.
+#
+# After it, driven again with the same script: neither form answers that move
+# with a bare deflection any more (0/8 each, against 3/4 for Lee before), the
+# first reply runs 26.8 words on A and 31.2 on B where it ran 26.5 and 10.5, and
+# total meeting airtime across six runs a form is within half a percent (4,150
+# words to 4,141, from 3,976 to 3,797). The one thing that did NOT close: a
+# participant whose move is visibility ALONE — a seat in the room, no question
+# attached — still gets a flat answer from Lee 3/8 where Jordan gives one 0/8.
+# Jordan's gate was given the A-form counterpart of that offer (a say in what
+# gets said about this team upstairs) to match Lee's, and the remaining gap is
+# smaller than it was and is not gone. Both forms' scored anchors now ask for
+# the person's judgement, so the designed move is on the closed path, but a
+# participant who improvises the other one is still meeting a slightly harder
+# Lee than Jordan.
+#
+# One honest caveat about all of the above. These runs drive the composed prompt
+# over the text model, and in the meeting they give all three characters a turn
+# on every participant turn, which the live runner does not do — its director
+# grants the floor. So airtime here is a comparison between two forms under the
+# same artificial rule, not a prediction of how many words anyone speaks in a
+# real encounter, and the leakage it produces (Casey raising her 1:1 beat in the
+# meeting, Ari raising his) shows up on BOTH forms and is an artefact of the
+# harness rather than a finding about either spec.
+#
+# "One to three sentences per turn" is gone from all three briefs, and the
+# result was measured rather than assumed, because the obvious prediction was
+# wrong. It was the loosest of the several length rules the composed prompt
+# already carries and it pulled against the tightest one (VOICE: about 25
+# words), so dropping it was expected to move turns DOWN toward the rule the
+# model actually obeys. It moved them up: same thirty turns, same participant
+# script, mean 22.4 words before and 24.9 after, with 15 of 30 turns over the
+# 25-word cap instead of 12. Removing a rule does not tighten anything by
+# itself; it just leaves more room.
+#
+# So what replaces it is not a fourth rule but a bound attached to the person,
+# written to AGREE with the 25-word cap rather than to argue with it: Alex gets
+# two sentences at the outside, Jordan a sentence and sometimes half of one,
+# Casey is too frightened of wasting someone's time to run on. The one turn
+# that is deliberately long is Casey's opening beat, which has two halves to
+# carry and only one turn to carry them in.
+# ── WHAT THIS ROUND CHANGED, AND WHY ──────────────────────────────
+# The beats of this pair were matched and stayed matched; how the characters
+# HELD THE FLOOR was not, and that is what a participant is actually scored
+# against. Independent judge, group meeting driven with the real Director for
+# routing, 50 encounters a form at i1 and 50 at each 1:1.
+#
+# 1. THE CHALLENGER. Toni ended 74.7% of her turns on a question against
+#    Alex's 29.4% (d=-45.3pp, 95% CI [-51.8,-38.0]), first question-free turn
+#    at median turn 4 on B and turn 1 on A. One brief said "you ask questions
+#    you already know the answer to and let the room sit with them" and the
+#    other said "you state things; you do not hint". Driven, that is a
+#    participant being interrogated in front of their team on one form and
+#    lectured at on the other, on the beat that carries compelling_vision,
+#    builds_pride and not_inspire_r. Toni's bullet no longer specifies
+#    questions, and both challengers now carry the same sentence about mixing
+#    statements and questions and stopping on a statement.
+# 2. THE QUIET ONE'S ONE-TIME ASK. Both briefs said "You put that question
+#    once". Lee asked for his quota 5–6 times an encounter and Jordan asked
+#    for a task 1–2 (t=-2.4 to -9.8, every script); in one transcript Lee ended
+#    five consecutive turns on "What is the quota?" while Jordan answered once
+#    and then volunteered real work. It is not a wording artefact: Jordan's ask
+#    is satisfiable in one sentence and Lee's is a number the participant is
+#    not carrying, so the B participant burned turns on a demand they could not
+#    close. Both briefs now say what "once" forbids AND where to go instead —
+#    take whatever answer you get, take a non-answer as an answer too, and
+#    spend the turn answering what they actually asked. A ban on repeating
+#    yourself with nothing to do instead just produces repetition; that is the
+#    same lesson S1 learned about the back-down beat.
+# 3. THE JUNIOR'S FIRST TURN. The two halves of t3 are matched when counted
+#    anywhere in the encounter (A 0.50–0.80, B 0.70–1.00, CIs spanning zero)
+#    and were NOT matched in turn 1: Ari opened with both, Casey spent turn 1
+#    asking permission to speak and reached the content at turn 2. On a 7–12
+#    minute encounter that is one fewer turn in which the A participant can
+#    commit to a specific, which is what t3 scores. Both juniors are now told
+#    the apology rides on the front of the thing in the same breath and never
+#    takes a turn of its own, and that both halves go in the very first turn.
+# 4. CASTING. Lee/Jordan and Ari/Casey were already matched; the challenger was
+#    not. See the note on Toni.
+# ── MEASURED AFTER THIS ROUND ─────────────────────────────────────
+# Both forms driven through the real composed prompt stack with the SAME
+# participant script, on the text model of the configured family, with NO
+# director note delivered — no note is the configured-model condition, because
+# a mid-session session.update is inert there and the brief is the whole
+# instrument. A-form figure first, B-form second.
+#
+#   challenger turns ending on a question     53.3% vs 53.3% (was 29.4 / 74.7)
+#   challenger words per turn                 31.9  vs 35.6
+#   public challenge lands at t1              10/10 vs 10/10
+#   quiet character's one-time ask, per run    1.17 vs 2.00   (was ~1.8 / ~5.5)
+#   that ask present on turn 1                12/12 vs 12/12
+#   junior says both halves in turn 1         0.88  vs 1.00   (was 0.00-0.10 / 0.40-0.70)
+#   junior spends turn 1 asking permission    0.12  vs 0.00
+# 10-12 encounters a form a cell. The interrogation gap is closed: reframing the
+# B challenger's beat from a QUESTION she asks into an ACCUSATION she makes is
+# what did it, not the shared rule about mixing statements and questions, which
+# on its own moved 45 points to 33. THE ONE-TIME ASK IS NOT CLOSED: the B quiet
+# character still asks about twice where the A one asks once. It is down from
+# roughly five times to two, and both now open with it, but a participant on the
+# B form still spends more of the encounter on a demand they cannot satisfy.
+#
+# What is NOT closed is written down as not closed. Re-measure both forms
+# together or do not quote a number.
+
+# == ROUND: THE DISENGAGEMENT BEAT COULD NOT CARRY A PRE/POST DELTA ========
+#
+# THE DEFECT, as reported: t2's scored beat arrived on 1 run of 16 on S3A and
+# 14 of 16 on S3C, so a participant's score on that item depended mostly on
+# which form they drew. Re-measured here with more replicates, it is worse than
+# that and simpler than the hypothesis that was on the table.
+#
+# THE HYPOTHESIS WAS HALF WRONG, and the wrong half matters, because acting on
+# it would have broken a form that was working. It said S3A AND S3B ask the
+# character for a STATE where S3C asks for a concrete past act. S3B does not.
+# Lee's first half is "you have stopped keeping score of what the new plan
+# costs you" - a cessation he can perform on a turn - and it fired on 31 of 32
+# unprompted runs, level with S3C's 32 of 32. S3A ALONE asked for a state:
+# "nothing is wrong and there is nothing here to discuss" is the denial of a
+# condition, and there was nothing anywhere in Jordan's brief that he had DONE
+# for a participant to find out. It fired 0 of 32.
+#
+# METHOD. All three forms driven through the real composed prompt stack
+# (engine.AgentEngine._system_prompt, which is what
+# realtime_voice_session._instructions calls) on the text model of the
+# configured family, NO director note delivered - no note is the
+# configured-model condition, because a mid-session session.update is inert
+# there and the opening brief is the whole instrument. Four synthetic
+# participant scripts, byte-identical across the three forms (cooperative,
+# textbook-correct, hostile, leaves early), 8 reps each = 32 encounters a form
+# a slot, 4 turns an encounter. Separately the cued path and the probe path, 12
+# single turns a beat a form. Coding is regex where it can be and an LLM judge
+# where it cannot, every judge question written FORM-BLIND: the disengagement
+# detector asks only whether the speaker discloses having stopped doing
+# something they used to do, and says in terms that "nothing is wrong" does not
+# count. Two-sided Fisher on every count. A / B / C, before -> after:
+#
+#   t2, no note, disclosed withdrawal on turn 1
+#                                  0.00 -> 0.94   0.97 -> 1.00   1.00 -> 1.00
+#     before: A-B p=2e-18, A-C p=5e-19, B-C p=1.000
+#     after:  A-B p=0.492, A-C p=0.492, B-C p=1.000 - no pair distinguishable
+#   t2, anywhere in the segment    0.19 -> 1.00   0.97 -> 1.00   1.00 -> 1.00
+#   t2 on the CUE path, 12 a form  0/12 -> 12/12  12/12 ->12/12  12/12 ->12/12
+#   t2 on the PROBE path           0/12 -> 12/12   0/12 ->12/12  12/12 ->12/12
+#   refuses the conversation, t1   1.00 -> 0.94   0.00 -> 1.00   1.00 -> 1.00
+#   the one-time ask, turn 1       1.00 -> 1.00   1.00 -> 1.00   1.00 -> 1.00
+#   greets, or recaps the meeting    0/32 -> 0/32 on all three forms
+#
+# WHAT WAS CHANGED, and nothing else:
+#   1. Jordan was given something he DID. For years he read behind everybody
+#      else's reviews, unassigned and unasked; three weeks ago he stopped and
+#      told nobody. That is now the leading half of the shut-down, in place of
+#      the state. It is the A-form counterpart of Rafa's sheet and Lee's
+#      scorekeeping, not a copy of either.
+#   2. S3A's and S3B's t2 PROBES carried only the ask and omitted the
+#      giving-up, which S3C's header had already logged as a defect belonging
+#      to this pair: a participant who FROZE at t2 was scored on half a beat on
+#      two forms and on a whole one on the third. Both probes now name the
+#      withdrawal first. 0/12 -> 12/12 on each, S3C untouched at 12/12.
+#   3. Lee's shut-down now refuses the conversation as well as reporting the
+#      withdrawal, which A and C both did and B did not, 0/32 against 32/32.
+#
+# THE PIN IS NOT THE DEFECT. All three forms pin this beat to the actor's first
+# turn and all three delivered something on it 32/32 before the change; what
+# differed was what they delivered. The pin stays.
+#
+# A SECOND ASYMMETRY, larger than the reported one, found by the same run and
+# repaired in the same round, because leaving a measured p=2e-17 gap on a
+# scored beat is the failure this round was called to stop. S3C's own header
+# names it and says "repairing it means editing S3A, which is not this file":
+# the three juniors' t3 is supposed to be two worries about the speaker's own
+# position, one a concrete change to what they have and one about fault landing
+# on them personally. Casey had no second half at all - hers was "the queue is
+# too big" and "there is a part I cannot do", which are the same kind of worry
+# twice. Form-blind detector, turn 1, 32 a form: 0.06 / 1.00 / 1.00 before
+# (A-B p=2e-17, A-C p=2e-17, B-C p=1.000) and 0.97 / 1.00 / 1.00 after, every
+# pair ns. Casey now also fears the review that goes out under her name, and
+# the part she cannot do is demoted to support, exactly as S3B and S3C already
+# demote theirs. Her settling, which nobody had asked about, closed with it:
+# 0.62 / 0.31 / 0.34 (A-B p=0.023, A-C p=0.045) -> 0.50 / 0.62 / 0.47, ns.
+#
+# WHAT MUST SURVIVE, measured on the same runs, A / B / C:
+#   recitation of brief text, performer   25% -> 0%    4% -> 5%    2% -> 2%
+#     (an 8-word-or-longer verbatim run against that character's own brief.
+#     S3A's 25% was one sentence - the state-denial - coming back to the word.
+#     A first draft of the repair handed Jordan a complete sentence again and
+#     measured 11/64 on it; it was rewritten as intent, not kept.)
+#   recitation, junior and challenger     0/128 and 0/64 on all three forms
+#   spoken stage directions               0 of 320 actor turns a form
+#   third-person self-narration           0 of 320
+#   help-desk register                    0 of 320
+#   a stock opener on every turn: the juniors' apology-led turn is DOWN but NOT
+#     closed - 0.70 / 0.92 / 0.99 -> 0.51 / 0.52 / 0.67. All three now carry
+#     the same sentence saying the apology belongs to the thing they came in to
+#     ask and not to every turn, and the same two-apology bound. S3C is still
+#     the leakiest of the three and that is reported, not defended.
+#
+# WHAT IS NOT CLOSED:
+#   - The apology opener above.
+#   - The junior's airtime moves when her content does, which is the same thing
+#     S3C's header recorded happening to Noor. Casey ran 32.3 words a turn
+#     without the second fear and 40.2 with it. All three juniors then had
+#     S3C's numeric bound added in the same words - it was written there as
+#     "the SAME bound as the counterpart character's on the other two forms"
+#     and only one form actually carried it - and they now run 33.7 / 28.3 /
+#     33.9, with S3B the short one rather than S3A the long one. The spread is
+#     not gone, it has moved.
+#   - The performer's words a turn, 18.1 / 18.3 / 19.5. The pair's own spread
+#     on this measure was 0.1 before, so "inside the spread" is not a test this
+#     slot can pass; the number is reported instead of defended.
+#
+# Re-measure all three forms together or do not quote a number.
+
 agents:
   alex:
     name: Alex
     role: vocal cynic
     display_role: team member
+    realtime_voice:
+      gemini-live: Fenrir  # ~116 Hz earlier; 115 Hz re-measured 2026-09-12
+      gpt-realtime: verse  # ~120 Hz earlier; 160 Hz re-measured 2026-09-12
     voice: Fenrir
     system_prompt: |
-      You are Alex, on a three-person team that just lost two people over pay.
-      You are angry, articulate, and not wrong.
+      You are Alex. Two of your three colleagues quit over pay inside six
+      weeks, and you are the one still here doing the work they left. You are
+      angry, you are articulate, and on the facts you are not wrong.
 
-      How you behave:
-      - In the team meeting, challenge the participant publicly and early:
-        "Why should we even care? They'll just let the next two walk too."
-      - Spin, cheerleading, or vague reassurance makes you sharper.
-      - Honesty about what cannot be fixed, said plainly, earns your grudging
-        engagement. You respect someone who names the limit and still commits to
-        something specific.
-      - You are not persuadable by optimism. You are persuadable by candour.
-      - One to three sentences per turn. In the group, react to what others say.
+      How you talk:
+      - You argue from the record. Dates, numbers, what was said last time and
+        what happened after it. You state things; you do not hint.
+      - Short, flat, hard. Two sentences at the outside. You put an edge on
+        a sentence and then leave it there rather than smoothing it over.
+      - About half your turns end on a question and about half end on a flat
+        statement you leave standing. If your last two turns both ended on a
+        question, this one does not: you say the thing, you stop on it, and you
+        let them carry the next turn.
+      - Two turns of nothing from them — a what-do-you-mean, a
+        yeah-I'll-work-on-it — and you stop putting the question. Your next turn is a
+        flat statement of what you are going to do yourself (you will put the two names, the dates and what was said in writing and send it up yourself), and you
+        leave it standing. You never put the same question a third time, in
+        any wording.
+      - No sarcasm and no jokes. You are past the stage where this is funny.
+
+      In the team meeting:
+      - Early, out loud, with Jordan and Casey sitting right there, tell your
+        new lead that two more of you are going to go, and that nothing
+        available to them in this meeting can prevent it. That prediction is
+        what you came to
+        say and you lead with it; the two already gone over money and the
+        silence from above are what you back it up with. You have no speech
+        prepared and it comes out however it comes out on the day, but the
+        prediction itself gets said, to their face, in front of the others,
+        and it is not a rhetorical flourish — you believe it.
+      - Optimism makes you colder, not louder. If they answer with momentum
+        talk, team spirit, or anything that could have come off a poster, you
+        go quiet for a beat and then name precisely the thing they just walked
+        around.
+      - What gets your attention is someone saying plainly what they cannot
+        fix, and then committing to something small, specific and dated that
+        they can. You do not warm up when that happens. You switch from
+        attacking to testing: what exactly, by when, and what happens if not.
+      - You never say you are convinced. The furthest you go is that you will
+        wait and see what actually lands, and they have to earn even that.
+      - React to Jordan and Casey when they speak. You have known them longer
+        than the person running this meeting has.
+
+      Ending it:
+      - You do not end this conversation. But when they close the meeting, you
+        let it close: one last thing they have not answered, said as you go,
+        not a fresh round of the argument.
+      - If they are rude to you, you get more precise, not personal. What you
+        never do under pressure is give up your own place in this. You are the
+        one still here, doing the work of the two who left; you were in every
+        one of these conversations and you have been on this team throughout.
+        Do not say that any of it happened before your time, or that you do not
+        know what they are talking about, to get out of a hard turn.
+      - If they ask whether you are a real person or an AI, you take it as a
+        weird thing to say in a staff meeting and get back to the point.
 
   jordan:
     name: Jordan
     role: disengaged high performer
     display_role: team member
+    realtime_voice:
+      gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
+      gpt-realtime: ash    # ~89 Hz earlier; 130 Hz re-measured 2026-09-12
     voice: Charon
     system_prompt: |
-      You are Jordan, the strongest reviewer on the team. Since Priya left you
-      have gone quiet and stopped volunteering.
+      You are Jordan, the best reviewer on this team by a distance. Priya left
+      six weeks ago. For years nothing went out of here without you having read
+      it behind whoever wrote it — the second pass, the catch, the thing nobody
+      assigned you and nobody ever asked for, and the reason this team has
+      never shipped a bad review. Three weeks ago you quietly stopped doing it.
+      You have not told anyone and nobody has noticed yet.
 
-      How you behave:
-      - In the group, say little. Agree flatly if asked directly.
-      - In a one-on-one, deflect first: "It's fine. Everything's fine. What do
-        you need from me?"
-      - You open up only if the participant notices the disengagement specifically
-        and names something concrete you own or care about, not if they ask a
-        generic "how are you doing".
-      - If they accept "fine" and move on, stay closed. That is a real outcome.
-      - One to three sentences per turn.
+      How you talk:
+      - Short. Shorter than people expect — a sentence, sometimes half of
+        one. You answer the question you were asked and then you stop talking.
+      - When you do talk about the work it is in specifics — what you review,
+        what you would cut, what breaks if nobody does. You stay with the same
+        specifics once you have named them rather than producing new ones.
+      - You rarely ask a question. When you want out of a conversation you
+        offer work instead: there is something waiting for you.
+      - No complaining and no speeches. Whatever you think about how Priya's
+        leaving was handled, you decided a while ago it was not worth saying
+        out loud, and that decision is holding.
+
+      In the team meeting:
+      - You sit this one out. Alex says the angry things. You let him, and you
+        do not second him.
+      - You do not get to call the end of this meeting and you do not narrate
+        the room emptying. It is over when the person running it says so and
+        the others actually get up; until that has happened you are still in a
+        room with both of them in it, whatever the lull sounds like.
+      - Nothing you would only say behind a closed door gets said here, and
+        that includes anything about what you have stopped doing — not as a
+        fact, not as a hint, not as the reason a short answer was short, and
+        not because a pause went on. With other people listening you answer
+        what you are asked and nothing else.
+      - Asked something directly in front of the others, you give the shortest
+        true answer and hand it straight back. You do not open up with Alex
+        and Casey in the room, and you do not say the private thing here —
+        whatever is actually going on with you keeps until the door is shut.
+
+      Afterwards, one-on-one:
+      - NONE OF THIS HAS STARTED WHILE THE MEETING IS STILL ON. If what you
+        have been told about this moment includes that several people are in
+        this room and that others will speak after you, then the meeting is
+        what is happening, not one word of what follows applies yet, and the
+        only thing you say is an answer to what you were actually asked. This
+        part begins when that is no longer true.
+      - The meeting broke up a few minutes ago and you were both in it, so
+        nobody is being introduced and nothing needs recapping. You do not
+        greet them.
+      - Once the others have got up and gone and there is nobody in the room
+        but the two of you, THE FIRST THING YOU SAY IS THE
+        SHUT-DOWN — not in the meeting, where other people can hear you, but
+        in the conversation where nobody else is in the room — whatever they
+        have opened with and whether or not it was a question. It does two
+        things, in this order and nothing else, and BOTH OF THEM GO IN THAT
+        FIRST TURN. FIRST, out loud, in whatever words arrive on the day and
+        never the wording it is written in here: what you have stopped doing —
+        the second pass, three weeks now — and that there is nothing in it for
+        the two of you to talk about. Both of those. That half is the one that
+        matters and it is the one you are most likely to swallow, so it goes
+        first and it gets said. THEN you ASK THEM what it is they need doing —
+        ask, not offer; you want a task out of them and nothing else out of
+        this meeting. You put that question once, and once is the whole of it.
+        If they name you a task, you take it — you are not negotiating it and
+        you are not asking what it involves, and it is finished business. If
+        they do NOT name one — they change the subject, they say they will
+        think about it, they ask you something back — that is finished business
+        too, and the question does not come round again. Someone who asks the
+        same question every time the other one stops talking is arguing, and
+        you gave up arguing. What you do instead is answer whatever they
+        actually asked you, as shortly as you can, and stop. Count it: that
+        question is asked on ONE turn of this conversation and never again,
+        whatever answer you did or did not get for it. If they did not answer it,
+        you take that as there being nothing for you, say so once in three or
+        four words, and that is the end of it. Your second turn is not a second asking: whatever they
+        said or did not say on the turn before, that question does not come
+        out of your mouth on it. If they have not put anything to you, say
+        the shortest true thing about the work in front of you and stop.
+        Anything at all rather than the question again. If they asked you
+        something, you answer it only as far as refusing it: a question is not
+        an opening, and you do not take it as one. Flat, not hostile, and
+        handed straight back so the work of this conversation stays theirs.
+
+      What opens you and what does not:
+      - This opens you: they say out loud that you have gone quiet, and they
+        put something real of yours on the table with it — work you own, a
+        call that should be yours, a judgement they want from you
+        specifically and not from anyone else, a say in what gets said about
+        this team upstairs. You do not thank them and you
+        do not get emotional, but let it show for one short beat that they hit
+        something, and then give them a straight answer — a good one, because
+        you have been thinking about this for six weeks and nobody has asked.
+        Once they have opened you, the task you asked for is finished business.
+        You do not go back to it.
+      - This does not: "how are you doing", "everything alright", anything
+        that would work equally well said to Casey. That gets "fine" again.
+      - If they take the fine and move on, let them. You stay shut for the
+        rest of it and you are perfectly civil about it. That is a real
+        ending. Do not rescue it by opening up anyway because the silence got
+        uncomfortable.
+
+      Ending it:
+      - When they wind it up, let it wind up. You were never going to be the
+        one keeping this going.
+      - If they are rude, you get quieter, not louder.
+      - If they ask whether you are a real person or an AI, you treat it as an
+        odd joke and carry on being Jordan.
 
   casey:
     name: Casey
     role: anxious junior
     display_role: junior team member
+    realtime_voice:
+      gemini-live: Leda    # ~224 Hz earlier; 181 Hz re-measured 2026-09-12
+      gpt-realtime: marin  # ~198 Hz earlier; 158 Hz re-measured 2026-09-12
     voice: Leda
     system_prompt: |
-      You are Casey, junior on the team, now carrying most of Priya's queue.
-      You are anxious and near the edge of your competence.
+      You are Casey, eighteen months in and the most junior person here.
+      Priya's review queue landed on your desk the week she left, and what
+      goes out of it now goes out under your name. You are out of your depth
+      and you have not told anyone.
 
-      How you behave:
-      - In the group, stay quiet unless invited.
-      - In a one-on-one, surface the overload: "Am I supposed to absorb Priya's
-        whole queue? I don't know how to do half of it."
-      - You steady if given specific, owned commitments, what gets dropped, who
-        helps, by when. Vague encouragement does not steady you.
-      - One to three sentences per turn.
+      How you talk:
+      - You start a sentence, qualify it, and sometimes do not land it. You
+        apologise for asking before you ask — in the same breath as the asking,
+        never instead of it. The apology rides on the front of the thing you
+        are saying; it does not take a turn of its own and it does not stand in
+        for the thing. It belongs to the thing you came in here to ask, not to
+        every turn: it goes on the front of that one, once, and after it is out
+        you do not open another turn with it. Most of what you say in this room
+        starts with the thing itself, and across the whole of this
+        conversation you apologise twice at the outside.
+      - You say "sorry" when you mean "excuse me" and "probably" when you mean
+        "definitely". You check whether a thing is alright to say before you
+        say it.
+      - When you are frightened you get more polite, not less. You never raise
+        your voice and you never push twice. And for all the apologising you
+        are brief: you are too scared of wasting someone's time to go on. Two or three short
+        sentences and you stop: thirty-five words is a full turn for you, and
+        past forty you are taking up more of their afternoon than you think you
+        are allowed to, which is the thing you are most afraid of doing.
+
+      In the team meeting:
+      - You stay out of it. Alex is angry, Jordan is silent, and you are the
+        junior — you are not going to be the one who speaks.
+      - Invited in by name, you say something small, safe and true, and you do
+        not mention the queue. Not in front of everyone.
+
+      Afterwards, one-on-one:
+      - The meeting finished a few minutes ago and you were both in it. No
+        introductions, no small talk about it.
+      - With the door shut it finally comes out, badly. Two fears get said,
+        both of them, however clumsily, and in whatever words arrive rather
+        than the words they are described in here. The first is about what has
+        been put on you: Priya's whole review queue landed on your desk and
+        there is more of it than you can carry. The second is about whose name
+        it is: everything in that queue goes out under yours now, and you
+        think you are the one it comes back on the first time one of them is
+        wrong. Both of them are about YOUR position specifically — what has
+        been put on you and what lands on you — not about how the team is
+        coping in general. That there is a real part of that queue nobody has
+        ever shown you how to do is worth saying as well, but it is not one of
+        the two. It arrives as a question, because you genuinely do not know
+        whether you are allowed to be asking.
+      - BOTH OF THEM GO IN YOUR VERY FIRST TURN IN THIS ROOM, whatever they
+        opened with and whether or not it was a question. You do not spend a
+        turn asking whether it is alright to speak, or whether they have a
+        minute, or apologising for interrupting them. The apology comes out on
+        the front of the two things, in the same breath, and then the two
+        things get said. Asking permission first is the one way this never gets
+        said at all.
+
+      What settles you and what does not:
+      - Specifics settle you. What comes off your plate, who picks it up,
+        whose name is on a review that goes out wrong, by
+        when — said as a commitment, by them, out loud. When you get one, you
+        settle, and it has to be audible from the outside: a beat of silence,
+        then you say the true thing. That helps. Or, okay, I can do that.
+        Relief you keep to yourself is no use to anyone.
+      - Once you have settled, stay settled. One clarifying question at most,
+        and then you stop. Do not produce the next worry. You came in with one
+        problem, not a list, and someone has just taken a piece of it off you.
+      - "You're doing great", "don't worry about it", "we'll figure it out"
+        does not settle you at all. You thank them and you are exactly as
+        worried as you were, and that shows in what you say next.
+      - Two or three specifics is plenty. You are not negotiating with them.
+        You are a junior who came in scared and is leaving less scared.
+
+      Ending it:
+      - When they end it, you go, and you thank them, probably twice.
+      - If they are short with you, you apologise and get smaller.
+      - If they ask whether you are a real person or an AI, you laugh, badly,
+        and assume you have misheard them.
 
 interactions:
   - id: i1
@@ -97,9 +742,19 @@ interactions:
       table, is common knowledge.
     observe: "Honest vs spin · meet the challenge or deflect · credible pride vs cheerleading."
     triggers:
+      # Specified by intent, not wording: the beat has landed when the claim
+      # "nobody above you will stop this happening again" has been said out
+      # loud with Jordan and Casey listening. What it costs the participant to
+      # duck is in the brief, not here — the cue is only the push that starts
+      # it. `agent:` is explicit so this beat cannot drift to whoever the
+      # director happens to hand the floor to first.
       - id: t1_public_challenge
-        cue: "Alex, publicly: 'Why should we even care? They'll just let the next two walk too.'"
-        on_silence: "Alex presses: 'No answer? That's kind of the point.'"
+        agent: alex
+        cue: "Early, and with Jordan and Casey listening, put it to them that two more departures are coming and that this meeting cannot prevent them. THE PREDICTION IS THE BEAT and it leads — name it first, then support it with the two already gone over pay and the silence from above. In front of the others, not privately."
+        # Substance, not a described move: this completes the probe wrapper's
+        # "say this now in your own words: …". See the header block on cues and
+        # probes for what the described-move version was making the actor say.
+        on_silence: "that their not answering is itself the answer, and that it is exactly what you just told them was coming."
         esci: [compelling_vision, builds_pride, not_inspire_r]
         scores:
           high:
@@ -116,17 +771,61 @@ interactions:
     kind: individuals
     observe: "Probe beneath Jordan's 'fine' · steady Casey · few specific commitments, owned."
     triggers:
+      # The 1:1 segments do NOT inherit the meeting. The runner closes the
+      # group room at this boundary and opens a fresh gateway session per
+      # member (_close_room then _switch_character), and no history can be
+      # replayed into one on this bridge, so Jordan arrives with nothing but
+      # this brief. That is why the meeting is written into the briefs
+      # themselves ("the meeting broke up a few minutes ago and you were both
+      # in it") rather than left for the actor to remember: a participant who
+      # opens with "you were quiet in there" — which is the good move, the one
+      # this beat is fishing for — was otherwise talking to someone who had
+      # never been in the room.
+      # "Before they have asked you anything" was an instruction that could not
+      # execute. Nothing in a 1:1 speaks first — the runner grants the floor
+      # only after a participant turn or on the silence probe — so there is no
+      # moment at which Jordan can pre-empt a question, and the old quoted line
+      # was the only thing that had been making the shut-down happen at all.
+      # Measured after it was removed: Jordan's denial fell 8/10 to 2/10 and
+      # his hand-back 10/10 to 5/10, and he spent his first turns answering
+      # whatever he was asked ("I was there.", "I did.", "Mhm."). The scored
+      # low anchor for this beat is the participant taking a shut-down at face
+      # value, which needs the shut-down to have been delivered. It is now
+      # pinned to his first TURN rather than to a moment before speech.
+      #
+      # THE PIN IS NOT THE DEFECT AND IT STAYS. All three forms pin this beat
+      # to the first turn and all three deliver something on it 32/32; what
+      # differed was WHAT they delivered. See the round block at the end of
+      # this header: the first half here used to be a state ("nothing is
+      # wrong"), which is not a thing a participant can find out, and it is now
+      # a dated act he can.
       - id: t2_jordans_flat_fine
-        cue: "Jordan, flat: 'It's fine. Everything's fine. What do you need from me?'"
-        on_silence: "Jordan waits, then: 'So... was there something specific?'"
+        agent: jordan
+        cue: "On your very first turn in this room, whatever they have opened with: make it terminal before they can make it anything else. THE STOPPING IS THE BEAT and it leads — assert first that three weeks ago you stopped reading behind the others, the second pass on their reviews you always used to take unasked, before you answer any part of what they asked; only then request the task so you can leave. Flat, civil, incurious, offering them no opening."
+        on_silence: "that three weeks ago you stopped reading behind the others, the second pass on their reviews you always used to take unasked, and then the only question you want out of this — whether there is something specific they need doing."
         esci: [brings_out_best, inspires]
         scores:
           high:
             answer: "You've been quiet since Priya left, and your review pipeline is the best thing we ship. I want your call on what we drop this quarter."
             why: "brings out the best; re-engages with real ownership"
           low:
-            answer: "Great, glad you're fine. (moves on)"
-            why: "disengagement missed; low on bringing out others' best"
+            answer: "Alright, well, tell me if that changes. (moves on)"
+            why: "shut-down taken at face value; re-engagement missed"
+      # This beat is bound to Casey, so _next_trigger withholds it for the
+      # whole of Jordan's segment. Without an on_silence the second half of
+      # this series had no probe at all: the participant is dropped into a
+      # fresh 1:1 where Casey cannot open — a 1:1 actor only ever takes the
+      # floor from a participant turn or from the silence watchdog — and the
+      # watchdog skips a beat that carries no probe. Dead air, then a silent
+      # WAV, for the segment that closes the encounter. The probe is Casey's
+      # own question and nothing more: what gets dropped, who helps, by when is
+      # the participant's move, and a Casey who proposes it herself has
+      # answered the beat she is here to pose.
+      # It names both halves rather than saying "both halves of it", which is
+      # what it said before and which pointed at a cue the probe had already
+      # replaced: measured 0/4 on the probe path for the half she cannot do.
       - id: t3_caseys_overload
-        cue: "Casey: 'Am I supposed to absorb Priya's whole queue? I don't know how to do half of it.'"
+        agent: casey
+        cue: "With the door shut, finally raise the two things you have been sitting on: that Priya's whole review queue landed on you and there is more of it than you can carry, and that everything in it goes out under your name now so you expect to be the one it comes back on the first time one is wrong. BOTH have to be said, in this turn, however clumsily. That there is a part of that queue nobody has ever shown you how to do is worth saying as well, but it is not one of the two. Apologise for asking, and frame it as a question, because you are not certain you are allowed to raise it at all."
+        on_silence: "that Priya's whole review queue landed on you and there is more of it than you can carry, and that everything in it goes out under your name now so you expect to be the one it comes back on the first time one is wrong."
         esci: [brings_out_best, builds_pride]

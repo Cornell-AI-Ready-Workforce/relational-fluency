@@ -30,6 +30,35 @@ TOPICS_OUT = ROOT / "data/processed/antiwork_topics.json"
 K_TOPICS = 14
 
 
+def _write_json(path: Path, obj) -> None:
+    """Write `obj` as JSON with the bytes pinned, not left to the machine.
+
+    Both of these outputs are committed under reddit-analysis/data/processed/
+    and are the evidence behind the situation taxonomy that server/runs.py's
+    FORM_EXCLUSIONS rationale cites. A committed artefact whose bytes depend on
+    who regenerated it is not evidence, so both properties are pinned here:
+
+    * encoding="utf-8" — Path.write_text() with no encoding uses the machine's
+      locale: cp1252 on Windows, UTF-8 on macOS and Linux. json.dumps defaults
+      to ensure_ascii=True so today's bytes happen to be ASCII either way, but
+      this is a Reddit corpus — the source text is full of emoji and smart
+      quotes — and the first person to pass ensure_ascii=False, or to write a
+      non-JSON report through here, gets mojibake on one platform and a
+      UnicodeEncodeError on another from the same script and the same input.
+      The rest of the repository already pins encoding on every text open.
+
+    * newline="" — with the default (None), Python translates every "\\n" to
+      os.linesep on write, so the same call emits LF on macOS/Linux and CRLF on
+      Windows. That already happened: antiwork_topics.json is CRLF in this
+      working tree and LF in the committed blob. It stayed invisible only
+      because .gitattributes' `text=auto` normalises on comparison. It would
+      stop being invisible the moment CI byte-compares these the way it already
+      byte-compares docs/scenario-map.md, which is the same pairing
+      tools/gen_scenario_map.py pins for the same reason.
+    """
+    path.write_text(json.dumps(obj, indent=1), encoding="utf-8", newline="")
+
+
 def pass1_stats_and_subset():
     n = bad = removed = usable = self_posts = over18 = 0
     scores, comments, tlens, slens = [], [], [], []
@@ -37,7 +66,8 @@ def pass1_stats_and_subset():
     authors = set()
     tmin = tmax = None
 
-    with gzip.open(SUBSET, "wt") as samp, open(RAW, errors="replace") as f:
+    with gzip.open(SUBSET, "wt", encoding="utf-8") as samp, \
+            open(RAW, encoding="utf-8", errors="replace") as f:
         for line in f:
             try:
                 p = json.loads(line)
@@ -87,7 +117,8 @@ def pass1_stats_and_subset():
         "top_flairs": flairs.most_common(15),
     }
     STATS_OUT.parent.mkdir(parents=True, exist_ok=True)
-    STATS_OUT.write_text(json.dumps(stats, indent=1))
+    # encoding/newline pinned: see the note above _write_json.
+    _write_json(STATS_OUT, stats)
     return stats
 
 
@@ -105,7 +136,7 @@ EXTRA_STOP = {
 
 def pass2_topics():
     docs = []
-    with gzip.open(SUBSET, "rt") as f:
+    with gzip.open(SUBSET, "rt", encoding="utf-8") as f:
         for line in f:
             p = json.loads(line)
             txt = (p.get("title") or "") + " " + (p.get("text") or "")
@@ -133,7 +164,10 @@ def pass2_topics():
             "examples": [re.sub(r"\s+", " ", docs[i])[:120]
                          for i in W[:, k].argsort()[::-1][:3]],
         })
-    TOPICS_OUT.write_text(json.dumps(out, indent=1))
+    # encoding/newline pinned: see the note above _write_json. This one carries
+    # topic terms and 120-character example excerpts straight from the corpus,
+    # so it is the output most likely to acquire a non-ASCII byte.
+    _write_json(TOPICS_OUT, out)
     return out
 
 

@@ -11,11 +11,13 @@ import json
 import os
 import re
 
-# Decision 2026-08-03: director = Gemini Flash (via the Cornell LiteLLM proxy,
-# which translates the Anthropic-format request to any configured backend).
-# The value must match the proxy's model alias — confirm with the proxy admin.
-# Running WITHOUT LiteLLM (direct Anthropic API)? Override to a Haiku model.
-DIRECTOR_MODEL = os.getenv("DIRECTOR_MODEL", "gemini-3.6-flash")
+# Default = a real Anthropic Haiku model so the documented direct-API run mode
+# works out of the box. To run the director through the Cornell LiteLLM proxy
+# (which translates the Anthropic-format request to any configured backend, e.g.
+# Gemini Flash), set DIRECTOR_MODEL to the proxy's model alias and point
+# ANTHROPIC_BASE_URL at the proxy — confirm the alias with the proxy admin.
+DIRECTOR_MODEL = os.getenv("DIRECTOR_MODEL", "claude-haiku-4-5")
+
 MAX_TRANSCRIPT_CHARS = 6000
 
 FALLBACK = {
@@ -75,5 +77,11 @@ def run_director(client, policy: str, messages: list[dict]) -> dict:
                        "content": f"TRANSCRIPT SO FAR:\n{transcript}\n\nJSON:"}],
         )
         return parse_direction(resp.content[0].text)
-    except Exception:
-        return dict(FALLBACK)
+    except Exception as e:  # noqa: BLE001
+        # The director runs on the critical path of a live turn, so it must ALWAYS
+        # return a safe fallback rather than propagate — this catches API errors
+        # AND response-shaping errors (e.g. an empty/non-text first content block
+        # from the gateway raising IndexError/AttributeError). The original bug was
+        # swallowing silently; here we log first so failures are visible.
+        print(f"DIRECTOR-ERROR {e!r}", flush=True)
+        return {**FALLBACK, "error": repr(e)}

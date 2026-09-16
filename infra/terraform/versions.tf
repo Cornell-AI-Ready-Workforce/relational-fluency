@@ -8,8 +8,6 @@ terraform {
     }
   }
 
-  # After first apply, migrate state to the created S3 bucket:
-  # terraform init -migrate-state  (uncomment and fill in)
   # Shared state, so more than one person can deploy. The bucket and lock
   # table are created by infra/scripts/add-deployer.sh; migrate an existing
   # local state with `tofu init -migrate-state`.

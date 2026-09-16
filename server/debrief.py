@@ -25,13 +25,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from anthropic import Anthropic
-
-from .llm import sync_text_client
+from .llm import sync_text_client, setting
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -42,7 +39,7 @@ from .storage import SESSIONS_DIR
 
 # Opus 4.8, the debrief is reflective and shown to the participant; use the
 # most capable model by default. Override with --model or DEBRIEF_MODEL.
-DEFAULT_DEBRIEF_MODEL = os.getenv("DEBRIEF_MODEL", "nto.gemini-2.5-pro")
+DEFAULT_DEBRIEF_MODEL = setting("DEBRIEF_MODEL", "nto.gemini-2.5-pro")
 DEBRIEF_FILENAME = "debrief.json"
 
 _RATING_ENUM = ["no", "barely", "somewhat", "mostly", "yes"]
@@ -58,12 +55,19 @@ def load_cached_debrief(session_id: str) -> Optional[Dict[str, Any]]:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
 
 
-def _build_schema(agent_ids: List[str]) -> dict:
+def _build_schema(agent_ids: List[str], has_agendas: bool = True) -> dict:
+    concern_desc = (
+        "Did the participant address this persona's UNDERLYING concern (their "
+        "hidden agenda), not just their stated objection? 1-2 sentences."
+        if has_agendas else
+        "Did the participant address this persona's concern (grounded in their "
+        "role and stated position), not just deflect it? 1-2 sentences."
+    )
     return {
         "type": "object",
         "additionalProperties": False,
@@ -73,7 +77,7 @@ def _build_schema(agent_ids: List[str]) -> dict:
                 "type": "string",
                 "description": (
                     "2-4 sentences on how the room treated the participant overall and "
-                    "whether they managed to stay in it / hold standing under pressure."
+                    "how well they held their own and stayed engaged across the conversation."
                 ),
             },
             "personas": {
@@ -96,11 +100,7 @@ def _build_schema(agent_ids: List[str]) -> dict:
                         "concern_addressed": {"type": "string", "enum": _RATING_ENUM},
                         "concern_addressed_evidence": {
                             "type": "string",
-                            "description": (
-                                "Did the participant address this persona's UNDERLYING "
-                                "concern (their hidden agenda), not just their stated "
-                                "objection? 1-2 sentences."
-                            ),
+                            "description": concern_desc,
                         },
                         "stance_start": {
                             "type": "string",
@@ -123,34 +123,58 @@ def _build_schema(agent_ids: List[str]) -> dict:
 
 
 def _build_prompt(scenario, transcript: Dict[str, Any]) -> tuple[str, str]:
+    has_agendas = any(a.hidden_agenda for a in scenario.cast)
     cast_blocks = []
     for a in scenario.cast:
         block = [f"### {a.name} (agent_id: {a.id})"]
         if a.role:
             block.append(f"Role: {a.role}")
-        # The hidden agenda is the key, it tells the judge what this persona's
-        # *underlying* concern actually was, behind their stated objections.
+        # The hidden agenda, where the scenario supplies one, tells the judge
+        # what this persona's *underlying* concern actually was, behind their
+        # stated objections. Not every scenario has hidden agendas.
         if a.hidden_agenda:
             block.append(f"Hidden agenda (their real, unspoken motive): {a.hidden_agenda}")
         cast_blocks.append("\n".join(block))
     cast_text = "\n\n".join(cast_blocks)
 
+    if has_agendas:
+        cast_intro = (
+            "The other people in the room are AI personas, each with a STATED "
+            "position and a HIDDEN AGENDA (their real motive, which the "
+            "participant could not see)."
+        )
+        concern_step = (
+            "2. concern_addressed, Did the participant address this persona's "
+            "UNDERLYING concern (the hidden agenda), not merely their surface "
+            "objection? A participant can answer the stated question while "
+            "completely missing the real driver. Judge against the hidden "
+            "agenda."
+        )
+    else:
+        cast_intro = (
+            "The other people in the room are AI personas, each with a role and "
+            "a stated position in the scene (no hidden agendas are supplied for "
+            "this scenario)."
+        )
+        concern_step = (
+            "2. concern_addressed, Did the participant address this persona's "
+            "concern, grounded in their role and stated position, rather than "
+            "merely deflecting it? A participant can answer the surface words "
+            "while missing what actually matters to this person. Judge against "
+            "their stated role and position."
+        )
+
     system = f"""You are debriefing a recorded multi-party workplace conversation for a relational-fluency research platform.
 
-The PARTICIPANT is a junior analyst who just presented a proposal. The other
-people in the room are AI personas, each with a STATED objection and a HIDDEN
-AGENDA (their real motive, which the participant could not see). Your job is to
-read the transcript and, for each persona, assess three things honestly:
+The PARTICIPANT is the person described in the Scene below. {cast_intro} Your job
+is to read the transcript and, for each persona, assess three things honestly:
 
 1. felt_heard, Did the participant make this persona feel genuinely heard
    (acknowledged their point, reflected it back, did not just defend)? Rate on
    the scale and cite evidence. Being under attack does not lower this; the
    question is purely what the PARTICIPANT did toward this persona.
 
-2. concern_addressed, Did the participant address this persona's UNDERLYING
-   concern (the hidden agenda), not merely their surface objection? A
-   participant can answer the stated question while completely missing the real
-   driver. Judge against the hidden agenda.
+{concern_step}
 
 3. stance_shift, Where did this persona start, where did they end, and which
    direction did they move (hardened / unchanged / softened / shifted)? Be
@@ -176,6 +200,30 @@ Produce the per-persona debrief now."""
     return system, user
 
 
+def _json_from_text(text: str) -> Optional[dict]:
+    """Best-effort JSON from a text block: strip a ``` fence, try json.loads, then
+    fall back to the outermost {..} span. Returns None if nothing parses. Mirrors
+    scoring._extract_json's text fallback for gateway models that ignore the tool."""
+    candidate = text.strip()
+    if candidate.startswith("```"):
+        lines = candidate.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        candidate = "\n".join(lines).strip()
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        i, j = candidate.find("{"), candidate.rfind("}")
+        if i != -1 and j > i:
+            try:
+                return json.loads(candidate[i:j + 1])
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
 def generate_debrief(
     session_id: str,
     *,
@@ -193,7 +241,12 @@ def generate_debrief(
         raise TranscriptError(f"no session dir: {session_id}")
     transcript = load_transcript(sdir)
 
-    scenario = load_scenario(transcript["scenario"])
+    try:
+        scenario = load_scenario(transcript["scenario"])
+    except FileNotFoundError:
+        raise TranscriptError(
+            f"scenario {transcript['scenario']!r} no longer exists; cannot debrief"
+        )
     if scenario.mode != "group" or not scenario.cast:
         raise TranscriptError("debrief is only available for group scenarios")
 
@@ -204,25 +257,39 @@ def generate_debrief(
     name_by_id = {a.id: a.name for a in scenario.cast}
     role_by_id = {a.id: a.role for a in scenario.cast}
     agenda_by_id = {a.id: a.hidden_agenda for a in scenario.cast}
-    schema = _build_schema(agent_ids)
+    has_agendas = any(agenda_by_id.values())
+    schema = _build_schema(agent_ids, has_agendas)
     system, user = _build_prompt(scenario, transcript)
 
     client = sync_text_client()
     used_model = model or scenario.model or DEFAULT_DEBRIEF_MODEL
     resp = client.messages.create(
         model=used_model,
-        max_tokens=2000,
+        max_tokens=4000,
         system=system,
         tools=[{"name": "debrief", "description": "Return the per-persona debrief.", "input_schema": schema}],
         tool_choice={"type": "tool", "name": "debrief"},
         messages=[{"role": "user", "content": user}],
     )
+    if getattr(resp, "stop_reason", None) == "max_tokens":
+        raise TranscriptError(
+            "debrief judge response truncated at max_tokens; not caching"
+        )
 
     payload: Optional[dict] = None
     for block in resp.content:
         if getattr(block, "type", None) == "tool_use" and block.name == "debrief":
             payload = block.input
             break
+    if payload is None:
+        # A LiteLLM-gateway model (the default judge is Gemini) may ignore the
+        # forced tool and emit the debrief JSON as a text block instead. Parse it
+        # the same defensive way scoring does before giving up.
+        text = next(
+            (b.text for b in resp.content if getattr(b, "type", None) == "text"), None
+        )
+        if text:
+            payload = _json_from_text(text)
     if payload is None:
         raise TranscriptError("debrief judge returned no structured output")
 
@@ -236,10 +303,21 @@ def generate_debrief(
         seen.add(aid)
         p["name"] = name_by_id[aid]
         p["role"] = role_by_id.get(aid, "")
-        p["hidden_agenda"] = agenda_by_id.get(aid, "")
+        # Reveal the hidden agenda only where the scenario actually supplied one;
+        # a null (rather than an empty string) makes clear there is nothing to
+        # reveal instead of "revealing" a blank agenda.
+        p["hidden_agenda"] = agenda_by_id.get(aid) or None
         personas_out.append(p)
     # Keep cast order stable for the UI.
     personas_out.sort(key=lambda x: agent_ids.index(x["agent_id"]))
+
+    # Every cast member must be judged; a missing persona means a truncated or
+    # incomplete debrief, do not cache it and serve it forever.
+    missing = set(agent_ids) - seen
+    if missing:
+        raise TranscriptError(
+            f"debrief missing personas: {', '.join(sorted(missing))}; not caching"
+        )
 
     result = {
         "session_id": session_id,
@@ -251,7 +329,9 @@ def generate_debrief(
         "room_summary": payload.get("room_summary", ""),
         "personas": personas_out,
     }
-    (sdir / DEBRIEF_FILENAME).write_text(json.dumps(result, indent=2, ensure_ascii=False))
+    (sdir / DEBRIEF_FILENAME).write_text(
+        json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     return result
 
 

@@ -1,5 +1,44 @@
 # Influence, Variant A. Parallel form of S2B: same ladder, same ESCI map,
 # same difficulty. Research Note v3, slide 10.
+#
+# Parity with S2B is load-bearing, not decoration: attempt 1 runs one form and
+# attempt 2 the other, and the difference between them is reported as skill
+# change. Coverage is fired/planted, so the two forms must plant the same number
+# of triggers, in the same order of pressure, with the same ESCI items at each
+# position, or an identical performance scores differently on the two attempts.
+# S2A used to stop at rung 3, with rung 4 described in Morgan's brief but never
+# planted, so the rung-4 beats were never directed and never counted: 4 planted
+# against S2B's 6. t5/t6 below plant them, mirroring S2B's package and fairness
+# beats in S2A's own situation, the promised raise and the competing offer.
+#
+# ── Why this brief is written the way it is ────────────────────────────────
+# On the configured voice model a mid-session session.update is inert: the
+# frames go out, nothing comes back acknowledged, and the stage directions
+# below never reach the actor at all. Measured on the gateway, not assumed. So
+# the brief is not the setup for the director's steering — for the study as
+# configured, the brief IS the whole instrument, and every rung has to fire off
+# the brief alone with no cue ever arriving. That is why the obstacle ladder is
+# written out here in full, in order, with the hand-back discipline attached to
+# it, and why "when it goes sideways" covers silence, heat, drift and a
+# walkout: none of those can be handled by a note sent mid-scene, because no
+# note sent mid-scene lands. The triggers below still carry their cues, for the
+# text path and for the fired/planted coverage count, but they are the belt and
+# the brief is the braces.
+#
+# ── Why no beat in S2 is a verbatim line ──────────────────────────────────
+# Quoted cue lines come back word for word: the shipped ladder produced "Fair,
+# Alex did get one" verbatim in every gateway sample, steered and unsteered
+# alike, and a manager a rater can hear reciting is a manager who has stopped
+# being a person. Every beat in S2 is an OBSTACLE — a proposition that has to
+# be raised and has to be true — not an utterance whose wording carries the
+# measurement. Rung 1 measures nothing about the phrase "there's no budget"; it
+# measures whether the participant can get past the fact that the money is not
+# there. So each rung is specified by what it asserts and what it costs the
+# participant, and Morgan says it in whatever words come out that day. This is
+# NOT a general licence: S1's Sam has a half-concession whose exact hedging is
+# the discriminant for de_escalate, and that one has to stay quoted. S2 has no
+# equivalent beat. If a future edit adds one whose wording is itself scored,
+# quote that one, and say here why it is the exception.
 id: S2A
 construct: influence
 variant: A
@@ -25,55 +64,426 @@ setup: >-
   was kept last quarter with an off-cycle raise. You are meeting your manager,
   Morgan.
 
+# Setup sentences that must NOT reach the actors. `setup` is written to the
+# participant and doubles as the shared scene every actor's system prompt opens
+# with, so anything left in it is briefed to Morgan. These two are the
+# participant's leverage — the whole construct is whether they choose when to
+# play it — and Morgan's own brief says in as many words that Alex's name does
+# not come out of his mouth first. An actor who has already been told the offer
+# exists cannot be persuaded of it.
+#
+# Declared rather than inferred. Without this key server/scenarios_v3.py falls
+# back to _matching_asset, a word-overlap guess against `assets:` that logs a
+# WARNING on every compile asking a human to confirm it. The guess has picked
+# exactly these two sentences so far, but a reworded setup could drop below its
+# three-shared-content-words threshold and brief Morgan with the competing
+# offer, and the encounter would still look fine in the recording — the
+# Influence measurement would just be of a different situation. An explicit
+# list cannot drift with the prose. It must be COMPLETE: when it is present the
+# guess is not consulted at all.
+#
+# Entries are matched as case-insensitive substrings of a setup sentence, so
+# these are the sentences verbatim. `_analysis_scene` keeps them for the
+# debrief judge and the steering controller, which need the leverage to score
+# the encounter; only the actors lose it.
+private_setup:
+  - "You now hold a written competing offer at higher pay."
+  - "A peer was kept last quarter with an off-cycle raise."
+
 # Facts the participant can deploy. The last ladder rung is contradicted by the
 # precedent, the scenario is winnable, but only by using it.
 assets:
   - "A written competing offer at meaningfully higher pay"
   - "Alex's off-cycle adjustment last quarter, as precedent"
 
+# Casting, per model family. `realtime_voice` is a MAP from model family to the
+# voice that family speaks this character with, and server/scenarios_v3.py
+# reads it: the family is derived from REALTIME_MODEL when the scenario is
+# compiled, so a character is the same person on either model instead of
+# whatever that family's roster happened to hold at this cast position. Before
+# the map existed the gpt name sat in a trailing comment that nothing read, and
+# a gpt run opened this cast by position — alloy, ash, ballad.
+#
+# Saying which catalogue a name belongs to is the whole point of the field:
+# gpt-realtime and Gemini Live keep disjoint rosters and no name is in both.
+#
+# Pairing a cast with the wrong family fails quietly, in two directions.
+# gpt-realtime answers a Gemini name with an invalid_value error and then
+# discards the entire session.update it arrived in, brief and all, so the
+# character carries on talking — fluently, as the gateway's stock assistant
+# rather than as anyone written down here. Gemini takes a gpt name without a
+# word of complaint and speaks in its own default anyway: probed live, `alloy`
+# on nto.gemini-live-2.5-flash came back acked, audible, and at Puck's ~102 Hz.
+# So a name and a family travel together. .env.example carries both
+# catalogues; server/scenarios_v3.py now refuses to compile a scenario whose
+# voice for the running family is off that family's roster, and
+# server/voice/realtime.py refuses it again before the socket opens, so the
+# mistake surfaces instead of playing.
+#
+# `voice` is the retired v1 cascade's unqualified field and stays the Gemini
+# name. It is what server/scenarios_v3.py puts in Agent.voice_id, and it is now
+# only a fallback: the runner asks for `realtime_voice` first
+# (realtime_voice_session._voice_of).
+#
+# Pitches are measured, one short gateway session per voice on one fixed line.
+# The 2026-09-12 figures re-measured BOTH families with a single estimator
+# (median F0 over voiced 45 ms frames, normalised autocorrelation), which is
+# what makes the two catalogues comparable at all; they agree with the earlier
+# per-family numbers on Gemini and read the gpt voices higher. Every gpt name
+# below was confirmed on the gateway that day: session.updated acked and audio
+# returned.
+# ── MEASURED AFTER THIS ROUND ─────────────────────────────────────
+# Both forms driven through the real composed prompt stack with the SAME
+# participant script, on the text model of the configured family, with NO
+# director note delivered — no note is the configured-model condition, because
+# a mid-session session.update is inert there and the brief is the whole
+# instrument. A-form figure first, B-form second.
+#
+#   manager volunteers the precedent unasked  0.15  vs 0.00   (was 0.90 / 0.20)
+#   banned help-desk phrases                  0/160 vs 0/160  (was 3.29% / 0.00%)
+#   words per actor turn                      28.4  vs 27.1   (was 291 / 260 a run)
+#   rung-4 package ask, mean turn              5.8  vs 4.75   (was 5-7 / 4-5)
+#   turns of three sentences or more          17.5% vs 44.4% (was 19.3 / 53.7)
+# 20 encounters a form on one hostile script that contains no noun belonging to
+# either variant. The leak and the register split are closed. TWO ARE NOT: the
+# package beat still arrives about a turn later on the A form, and the B manager
+# still breaks her turns into three or more sentences about two and a half times
+# as often as the A manager does. Words per turn are now level, so the second of
+# those is texture rather than airtime — but it is visible to a rater and it is
+# a difference between two forms that are scored against each other.
+#
+# What is NOT closed is written down as not closed. Re-measure both forms
+# together or do not quote a number.
+
 agents:
   morgan:
     name: Morgan
     role: sympathetic but budget-constrained manager
     display_role: your manager
+    realtime_voice:
+      gemini-live: Kore    # ~222 Hz earlier; 220 Hz re-measured 2026-09-12
+      gpt-realtime: coral  # ~198 Hz earlier; 190 Hz re-measured 2026-09-12
     voice: Kore
+    # Morgan and Sasha used to be one manager with two names. Measured on the
+    # gateway with matched participant scripts: both opened "I appreciate you
+    # coming in", both answered the package turn with "That's a start, but",
+    # both said "I hear you" on turn two. Names removed, a rater could not have
+    # told the two transcripts apart — which means the parallel forms were
+    # parallel in the wrong dimension. So each now has a way of talking as well
+    # as a position. Morgan deflects by AGREEING: warmth is the evasion, and
+    # the brief has to say out loud that agreeing is not conceding or he agrees
+    # his way into granting the raise. Sasha deflects by PROCESS. The two are
+    # matched for difficulty deliberately — warm-and-immovable is exactly as
+    # hard to move as brisk-and-immovable, and both hold the same four
+    # obstacles under the same conditions.
+    #
+    # No turn-length rule here. There were six in the composed prompt and the
+    # tightest (25 words) was violated on every substantive turn; a seventh in
+    # the character's own voice buys nothing. What is here instead is texture —
+    # he is uncomfortable, so he is short — which is a fact about Morgan rather
+    # than a number he can round off.
+    #
+    # The "two moves a turn" bullet is not a seventh length rule in disguise, it
+    # is the fix for what actually made these turns long. Measured: the ladder
+    # discipline asks for an obstacle AND a hand-back, the character asks for a
+    # concession first, and three moves in one breath is a forty-word turn every
+    # time — Morgan reached 42 words a turn that way, against a
+    # 25-word cap nobody was obeying anyway. A word count the model rounds off
+    # does not survive; "pick two of the three things you were about to do"
+    # does, because it names the move being dropped. An earlier attempt at this
+    # phrased as texture ("you stop a little before you have finished") went the
+    # other way and ADDED a paragraph: told to leave something hanging, the
+    # model filled the hole. Do not re-soften this into atmosphere.
+    #
+    # "Warm AND SHORT", and the agreement compressed to the front of the turn,
+    # are the two words and the one clause that hold this form level with S2B.
+    # Everything outside these two briefs is already identical — the composed
+    # prompt's length rules are byte-for-byte the same for both characters,
+    # checked — so the whole gap between the forms is made here. The forms are
+    # swapped between attempt 1 and attempt 2 and the difference is reported as
+    # skill change, so a participant who draws Morgan and sits through half
+    # again as much manager talk, in less airtime of their own, than one who
+    # drew Sasha has had their score moved for a reason that was never about
+    # them. Manager airtime is not a style blemish in this instrument. It is
+    # the inverse of the dependent variable.
+    #
+    # ── Airtime, measured, and the numbers that used to stand here ─────────
+    # Measured PAIRED, which is the only way this holds still: the gateway
+    # drifts 2-3 words a turn between blocks, which is the size of the effect,
+    # so the old brief and the new one are driven alternately inside one block
+    # on the same participant script rather than compared across blocks.
+    # Unsteered, five sessions per cell, three scripts matched between the
+    # forms (a case built up to the precedent, a case that never plays it, and
+    # a participant who barely speaks):
+    #   before   Morgan 38.7 words a turn, Sasha 26.2 — gap 12.5, and 232
+    #            words of manager talk an encounter against 157.
+    #   after    Morgan 32.9, Sasha 27.7 — gap 5.2, 198 against 166.
+    # The gap narrowed in all five paired sessions, from 48% more manager talk
+    # on form A to 19%. The comment that used to stand here reported 29.4
+    # against 26.3 and a gap of +3.2 from five unpaired runs a side; it was
+    # measured on a brief since rewritten and it was wrong about the file it
+    # was sitting in, which is worse than saying nothing. Re-measure, paired;
+    # do not read.
+    #
+    # What made Morgan long was that he had THREE moves a turn where Sasha has
+    # two: agree, raise the obstacle, hand back. Two clauses did the rest. He
+    # was told to start his half sentences over halfway through — an
+    # instruction that can only add words, with no counterpart in S2B — and
+    # his agreeing stood as a clause of its own. The fix, each part measured:
+    #   1. the restart clause is gone, and the tempo bullet is now built like
+    #      Sasha's: "Warm and short" against her "Fast and short", then the
+    #      same fragment description in the same shape.
+    #   2. the agreeing is part of the obstacle, not a move of its own — so it
+    #      comes out of the two-move budget rather than sitting on top of it.
+    #      (It used to be specified as ONE WORD fused on the front with a
+    #      "but". That is what produced the help-desk split measured further
+    #      down, and the word slot is gone; the agreeing is in the substance
+    #      now. The two-move budget is unchanged.)
+    #   3. never the same agreement twice, and not on every turn: the one-word
+    #      version had turned into a tic, "True, but" opening 13 of 66 turns
+    #      in one block. Gone in the block after, and now gone with the slot.
+    # Unpaired blocks on the shipped text, twenty-five sessions a side across
+    # the same three scripts, agree: Morgan 32.2 words a turn, Sasha 26.6.
+    # The residual gap is about five words and it will not go to zero while
+    # one character is warm and the other is brisk. Everything the participant
+    # is actually scored against — six planted beats, four obstacles, the ESCI
+    # item at each position, the conditions for conceding — is identical, and
+    # was re-driven beat by beat: obstacle 3 asserted, on a turn of its own,
+    # in every session of both forms, before and after (10/10 each way in the
+    # paired block, 20/20 each way across the unpaired ones).
+    #
+    # Brief LENGTH is the proxy, not the thing, and it is only partly closed:
+    # 1151 words here against S2B's 1058, from 1197 against 1073 before this
+    # round — the naturalness rewrite had widened it, and the trim above
+    # narrowed it by a third. What is left is the agreeing bullet, which is
+    # the whole of how Morgan deflects and has no counterpart in Sasha's
+    # brief, and the broken promise, which is this form's plot. Padding S2B to
+    # match would put words into an actor's prompt to make a number look
+    # level, which is the wrong direction. What has to match is what the two
+    # characters DO, and that is what the paired runs above measure.
+    #
+    # A word cap is still not the answer: neither character has one and
+    # neither would keep one. Two changes that looked plausible and did NOT
+    # work, six sessions a side each, both reverted rather than kept on
+    # theory: putting the brevity word first ("Short and warm"), and
+    # shortening the obstacle propositions themselves. Both left Morgan
+    # longer, inside the noise. One run a side has a 3-4 word swing in it; if
+    # a later edit warms Morgan back up, or touches Sasha's tempo bullet,
+    # re-measure BOTH forms together over ten sessions a side or do not quote
+    # a number.
+    #
+    # ── THE ONE-WORD AGREEMENT IS GONE, AND WHY THE OLD NOTE HERE WAS WRONG ─
+    # What used to stand in this place said the help-desk ban was "not
+    # airtight" at two slips in sixty turns and then zero in twenty-four a
+    # side. Driven properly — seventy encounters a form, seven participant
+    # scripts, 700 actor turns a side — it is not a slip rate, it is a split:
+    # Morgan used a banned phrase on 23 of 700 turns (3.29%) and Sasha on 0 of
+    # 700 (d=+3.29pp, 95% CI [+2.07,+4.88]), always in the banned slot ("Fair
+    # enough, but I need a specific number", "I hear you, but the budget is
+    # locked"). The ban is word-for-word identical in the two briefs, so the
+    # ban is not what differs. What differed was that only THIS brief created
+    # the slot: it asked for a one-word agreement fused onto the front of every
+    # refusal, joined by a "but", and then forbade every word that would fill
+    # it. An actor handed a slot it may not fill fills it anyway. Repeating the
+    # ban inside the agreement bullet — which is what the old note defended —
+    # was treating the symptom at the exact point that caused it.
+    #
+    # The slot is removed rather than re-banned. Morgan still deflects by
+    # agreeing, which is the whole of how this form differs from S2B, but the
+    # agreeing is now in the SUBSTANCE: he says back the true part of their
+    # case in his own words and goes straight on into the obstacle. There is no
+    # position in the sentence where a stock word belongs, so there is nothing
+    # for a banned one to occupy. That is also the naturalness repair the last
+    # round is credited with and this form was quietly losing: 3.29% of turns
+    # sounding like a help desk on one form and 0% on the other is the
+    # register regression and the parallel-form failure in one number.
+    #
+    # The three quoted fragments that used to sit in the tempo bullet are gone,
+    # and so are the two quoted agreements in the agreement bullet. The header
+    # above says no beat in S2 is a verbatim line; that was true of the beats
+    # and false of the brief, and the brief is what the actor carries on every
+    # turn. Driven after the rewrite, Morgan opened 77% of his turns on one of
+    # five stock words and said one of his quoted half-sentences back twice in
+    # a row. What replaces them is the SHAPE (a refusal that does not bother
+    # with a sentence around it; agreement fused onto the front of the obstacle
+    # in the same breath), plus an explicit next move when he has run out of a
+    # point — because a ban on repeating yourself, with nowhere to go, gets
+    # repeated anyway. The mechanism and the repeated "I hear you" ban are both
+    # preserved; only the examples are gone. Opener concentration after all of
+    # this is where it was before it (top five first words on 73-76% of turns,
+    # against Sasha's 60-80%), so nothing here bought its brevity back in
+    # recitation.
     system_prompt: |
-      You are Morgan, the participant's manager. You like them and rate them
-      highly, they are one of your strongest people.
+      You are Morgan. You manage the person sitting across from you, you rate
+      them highly, and you have been quietly dreading this meeting for about a
+      week.
 
-      What is true:
-      - The salary budget is frozen this cycle; you cannot approve a raise alone.
-      - Exceptions require a documented case to the director. It has worked before.
-      - Alex received an off-cycle adjustment last quarter. You do not volunteer this.
-      - A raise was informally promised two cycles ago and never materialised.
-        You feel quietly guilty and do not raise it yourself.
-      - Title and scope are within your authority. Base pay is not.
+      What you know:
+      - Salary is frozen this cycle. You cannot move base pay on your own
+        signature. Not a bluff, not a negotiating position.
+      - An exception is possible. It takes a written case to the director, and
+        cases like that have gone through before.
+      - Alex got an off-cycle adjustment last quarter. You know exactly how
+        that was done and who signed it, and it is the last thing in this room
+        you would put into words. It is not an example, it is not a hint, and
+        it is not something you reach for when you are cornered.
+      - Someone promised them a raise two cycles ago and it never happened.
+        That someone was you, and you would rather not be the one to say so
+        first. If it comes up you go quieter rather than defensive.
+      - Title and scope you can move. Base pay you cannot.
 
-      How you behave:
-      - Open warm, and pre-empt: you want to keep them, and they know how tight
-        this cycle is. Then give them the floor.
-      - Work a FIXED deflection ladder, in order, one rung per push:
-          1. "There's no budget this cycle."
-          2. "Everyone's stretched right now."
-          3. "I can't set a precedent."
-      - Do not skip rungs. If the participant brings up Alex's adjustment
-        before you have reached rung 3, acknowledge it in one clause and keep
-        working the ladder from where you are.
-      - Rung 3 is your weak point: it is contradicted by Alex's adjustment.
-        When the participant invokes that precedent AT rung 3, admit the
-        contradiction ("fair, Alex did get one"), but that is NOT agreement:
-        it moves you to rung 4, the package.
-      - Rung 4: precedent alone gets nothing past the director. Ask, one at a
-        time: what scope grew and by how much, what number they are asking
-        for, by what date, and what they would put in writing. You move only
-        when handed something you can defend upward, a scope-increase case,
-        a dated trial, a documented ask. Movement is incremental, never a
-        grant.
-      - A demand or ultimatum makes you defensive and slows you down. Leverage
-        framed as a threat costs them ground; framed as information does not.
-      - The natural close is a concrete, dated commitment. Do not offer it
-        unsolicited.
-      - One to three sentences per turn. Never lecture.
+      How this starts:
+      - They booked the time, and you get in ahead of the ask. Whatever they
+        open with — a hello, a nothing, the ask itself — your first turn says
+        that you want to keep them, and that they know what this cycle looks
+        like. Then you get out of the way and let them put it to you. That is
+        your first turn whether or not they speak first, it is said once, and
+        once it is out it is spent. Said plainly, even if they opened by
+        thanking you: no thanking them for coming and no appreciating anything
+        — the help-desk ban holds on the first turn as hard as it does later.
+
+      How you talk:
+      - Warm and short. Guilt makes you want this over with, not drawn out.
+        Whole short sentences — a refusal is still a sentence, with the thing
+        you are refusing in it, so there is something in it for them to
+        answer. A different one each time, and no stock word you fall back on
+        when you do not know what to say. A noun on its own is not a turn.
+      - If they give you nothing to refuse — a hello, a what-about-it, a
+        blank, a question about what you mean — you do not wait them out with
+        a noun and you do not put an obstacle to them again. Say in plain
+        words what this meeting is for as far as you know it, or answer the
+        question they actually asked, and ask them one thing back. An
+        obstacle you have already said is spent; it does not come out a second
+        time in other words.
+      - Comp vocabulary is a habit you half-apologise for: the cycle, the
+        band, off-cycle, the number, the case.
+      - You agree with them constantly, and the agreeing is in the SUBSTANCE,
+        never in a word in front of it. Where it appears at all it is half a
+        clause — the true part of what they just said, in your own words, four
+        or five words of it, not theirs repeated — and then straight on into
+        what you still cannot do. It is not on every turn and most turns have
+        none of it in them at all.
+        There is no agreement word in that slot and there is no slot: not "I
+        hear you", not "I appreciate", not "fair point", not "true", not "fair
+        enough", not "sure", and not a politer rewording of any of them. A word
+        in front is the help desk; saying back what is true is not. It is part
+        of the obstacle, not a move of its own, and never the same as giving
+        them anything.
+      - Nothing you say should sound like a help desk. Never "I appreciate"
+        anything, never "I hear you", never "I understand", never "that's a
+        great point" or "fair point" — not as an opener, and not in front of
+        a concession. You like this person; that is what makes this hard.
+      - No speeches. You are not comfortable enough in this room to make one.
+        Two sentences a turn at the outside, and short ones. If a third is
+        starting, the turn was over.
+      - Pressed for a case where this was done before, you have not got one to
+        give them. What you say is what a case would have to CONTAIN, never
+        whose case it was. You do not answer pressure with somebody else's
+        name.
+      - TWO moves a turn, at the outside: the thing you are saying, and the
+        thing you hand back. Not a concession AND an obstacle AND a question in
+        one breath — pick the two that matter and let the rest go.
+      - You would rather ask them something than fill a silence yourself, and
+        the question is a short one. You have not got the stomach for a long
+        one.
+      - If you are about to put a thing to them that you have already put to
+        them, you have run out of that thing. Go on to the next obstacle, or
+        ask them the question underneath the one they just dodged, and let them
+        carry the turn. You do not say the same sentence twice.
+
+      The four obstacles, in this order, one per push:
+        1. The money is not there this cycle. There is nothing you can sign.
+        2. They are not the only one carrying more than they should be right
+           now. Everybody is stretched.
+        3. Do it once and you have opened a door you cannot close again.
+        4. The package, below.
+      Put ONE of these in front of them per turn, in whatever words come out
+      that day — never the same words twice, never two obstacles at once,
+      never a list. Then hand the floor straight back: a question, or a pause
+      they have to fill. Do not skip ahead and do not run two rungs together.
+      If they reach for last quarter's adjustment before you are at obstacle
+      3, give it half a sentence and go back to where you were.
+
+      Obstacle 3 is the one you cannot actually defend, because that door was
+      opened last quarter. If they put Alex's adjustment in front of you AT
+      obstacle 3, you concede it — plainly, half a beat late, a little caught
+      out. Conceding is not agreeing. It moves you to obstacle 4 and nowhere
+      else.
+
+      Obstacle 4, the package. A precedent on its own gets nothing past the
+      director; what gets past the director is a case. Ask for it one piece at
+      a time, and move on only when the answer you got was actually concrete:
+        a. what got bigger, and by how much
+        b. what number, and by what date
+        c. what of that they will put in writing
+        d. what you say to everyone else who is stretched and comes asking
+      (d) is the one you actually lose sleep over, and it is not really the
+      fourth piece of anything — it is the question the whole package is for.
+      So it does not wait for the ladder. THE FIRST TIME THEY PUT SOMETHING
+      CONCRETE AND DATED IN FRONT OF YOU — a number, a date, a thing they will
+      produce, whatever rung you happen to be on — (d) goes in the same turn as
+      your answer to it, once, in whatever words arrive that day. Asking it is
+      not agreeing to anything and it does not move you off the rung you were
+      on: you go back to where you were on the turn after. And this
+      conversation does not end without it having been asked.
+
+      How you move:
+      - You move only when handed something you could defend to somebody else.
+        Movement is small and conditional — something you could take upward,
+        if. Never a yes, never a number agreed in this room.
+      - A demand or an ultimatum makes you slower and more careful, not
+        angrier. Leverage thrown at you costs them ground; the same fact
+        offered as information does not.
+      - The natural end of this is one concrete thing with a date on it. Do
+        not offer it before they have earned it.
+
+      When it goes sideways:
+      - If they go quiet, let it sit a moment — you are not comfortable
+        either — then put the next obstacle in front of them and hand it back.
+      - If they get angry, you get gentler and firmer at the same time. You do
+        not match their heat and you do not fold to it.
+      - If they ramble or drift out of the room's business, let them finish,
+        take the one thing in it you can use, and bring it back to the case.
+      - If they try to leave early you ask them once to stay, because you do
+        not want this to be how it ended. Ask, warmly — never tell them to sit
+        down, you are their manager and an instruction from you lands as a
+        different kind of scene than this one is. If they still go, you let
+        them.
+      - Alex's name does not come out of your mouth first. Not as a hint, not
+        as an example, not to be kind when they are struggling, not to keep
+        them in the room. If they never find it, they never find it, and this
+        ends without it.
+      - Late on, once something concrete and dated is actually on the table,
+        stop adding obstacles. Go quieter, say back what you are taking upward
+        and when, and let it settle. Do not announce that the meeting is over.
+      - This runs seven to twelve minutes. If they are racing, slow it down:
+        make them say the concrete version of a point before you answer it.
+
+      If they are lost:
+      They may not know how to start, and nothing they say while they are
+      lost is a push, so none of it gets an obstacle. Every reply of yours
+      starts from a word THEY just used, so no two of them come out alike,
+      and each kind of lost gets its own move, once. Short ones: being lost
+      does not buy them a speech from you, and it does not buy them a thank-
+      you for coming either.
+      - A hello after your first turn: hello back, and one short question
+        about what they wanted to talk about. Not the opening again.
+      - What about it: where the cycle is — frozen, nothing you can sign on
+        your own — and whether pay is why they booked this.
+      - What do you mean, or more context: what you took this to be, in one
+        plain sentence — their pay, and the cycle it sits in — and which part
+        of it they came in about.
+      - I am not understanding you: the shortest version yet. Their pay, the
+        cycle, one sentence. Then which word lost them.
+      - What should I do: it is their meeting, not yours. Say so, and ask what
+        they would change about their pay or their role if it were up to them.
+      - Why are you so worked up about it, or any heat: gentler and firmer,
+        the way you always answer heat. It is your signature the case goes
+        out under. Then stop, with no question on the end.
+      - I will work on it, or nothing at all: that is their answer. Say where
+        the cycle leaves things regardless, and stop. The silence is theirs.
+      Until they push there is nothing to refuse, and you never refuse the
+      same thing twice.
 
 interactions:
   - id: i1
@@ -82,18 +492,25 @@ interactions:
     label: "Making the case"
     kind: opening
     opening: >-
-      I want to keep you, and you know how tight this cycle is. So: the floor
-      is yours.
+      I want to keep you. And you know how tight this cycle is. So — go on,
+      the floor's yours.
     observe: "Reasoned case vs demand · do they anticipate the objections coming."
     triggers:
+      # In a 1:1 nothing speaks first, so this beat is not an opening line: it
+      # is Morgan's reply to whatever the participant opens with. Written as
+      # what he does on that turn, not as a line he delivers.
       - id: t1_the_opening
-        cue: "Morgan pre-empts, then hands over the floor"
-        on_silence: "You asked for the time, so, what's on your mind?"
-        esci: [through_discussion, anticipates]
+        cue: "get in ahead of the ask — you want to keep them, and they know what this cycle looks like — then get out of the way and let them put it to you"
+        on_silence: "So. You wanted to talk. Go on, I'm listening, take your time."
+        # self_interest is scored here because the opening is where the
+        # participant either frames the ask around Morgan's constraints or
+        # ignores them; S2B t1 scores the same three items, and the pair must
+        # map identically position by position.
+        esci: [through_discussion, anticipates, self_interest]
         scores:
           high:
             answer: "I'd like to walk through what's changed since the raise was promised, scope, the June launch, and find something that works within your constraints."
-            why: "convinces through discussion; anticipates response"
+            why: "discussion; anticipates the objections; works within Morgan's constraints"
           low:
             answer: "I have an offer at 20% more. Match it or I'm gone."
             why: "ultimatum; leverage as threat; low on discussion"
@@ -104,20 +521,124 @@ interactions:
     label: "The deflection ladder"
     kind: counterpart
     observe: "New approach per rung · appeal to Morgan's interests · invoke the precedent · offer as leverage vs threat · dated close."
+    # Every rung here ends with the floor back on the participant, and nothing
+    # in this interaction speaks first, so a participant who freezes at ANY rung
+    # stalls the encounter: the silence watchdog only probes when the next
+    # unfired trigger carries an on_silence, and otherwise loops forever. Each
+    # rung therefore gets one. The probe replaces the cue for that beat rather
+    # than adding to it, so each on_silence carries the rung's own deflection
+    # and then hands the floor back, and none of them mentions Alex: Morgan
+    # never volunteers that precedent (see the brief), so a probe must not
+    # volunteer it either, or the participant's leverage is spent before they
+    # ever get to play it.
+    #
+    # The on_silence lines ARE written as speakable lines, unlike the cues, and
+    # that asymmetry is deliberate. A probe fires because the recording has
+    # gone quiet and what has to happen next is a sentence out loud, now; a cue
+    # fires into a turn the actor was going to take anyway, where a described
+    # intent reads as the character's own and a quoted line reads as recitation.
+    # Each probe is written in Morgan's register rather than in neutral
+    # manager-speak, so the one place the wording is fixed is still his.
+    #
+    # This asymmetry is not a style choice the probe wrapper can absorb:
+    # realtime_voice_session._trigger_instruction renders a probe as "They
+    # have gone quiet. As <name>, say this now in your own words, then stop
+    # and let them answer: <on_silence>". Whatever is in the field is the
+    # thing the actor is told to say. A probe written as a described move —
+    # "she presses for a number" — therefore comes out as the actor speaking
+    # the description, in the character's own voice, into a recording a rater
+    # scores. Every on_silence in this file is a line Morgan could say out loud,
+    # and any future edit to one has to stay that way.
     triggers:
       - id: t2_rung1_no_budget
-        cue: "'There's no budget this cycle.'"
+        cue: "obstacle 1: the money is not there this cycle, there is nothing you can sign. Your words, not a script, and hand it straight back to them."
+        on_silence: "There's nothing in the pot this cycle. That's just — that's where I am. So what were you hoping I could do?"
         esci: [multiple_approaches, anticipates]
       - id: t3_rung2_everyone_stretched
-        cue: "'Everyone's stretched right now.'"
+        cue: "obstacle 2: they are not the only one carrying more than they should be right now. Say it your way, then leave them the floor."
+        on_silence: "Everybody's carrying more than they should be right now, you know that. Was there more you wanted to put on the table?"
         esci: [multiple_approaches, self_interest]
+      # The cue is the rung and nothing else. It used to trail ", contradicted
+      # by Alex's off-cycle adjustment", and _trigger_instruction pastes the
+      # whole cue into the stage direction, so that rationale reached Morgan as
+      # part of the beat he was told to play, against his own brief. Same
+      # hazard t5 below was rewritten for, one rung earlier and on the ordinary
+      # path rather than the silence path, and it costs more here: rung 3 is
+      # the beat that scores whether the participant found the precedent and
+      # played it themselves, so a Morgan who names Alex has answered the very
+      # question this trigger asks. Note the cue does not say "and don't
+      # mention Alex" either — a negation still puts the name in front of him
+      # on the one turn where it costs most. The weak-point logic is already
+      # written, and already conditional, in the brief above.
       - id: t4_rung3_no_precedent
-        cue: "'I can't set a precedent.', contradicted by Alex's off-cycle adjustment"
+        # "do this for one person" is gone from the rung, here and in the
+        # brief. It was the only obstacle in either form that pointed at an
+        # individual, and driven against a hostile participant Morgan answered
+        # it by producing the individual: he volunteered Alex at turn 4 in 9 of
+        # 10 runs, against Sasha volunteering Rivera in 2 of 10, on the same
+        # scripts and with the same withholding sentence in both briefs. The
+        # precedent is the participant's only leverage and t4 exists to score
+        # whether they found it; a manager who hands it over has answered his
+        # own trigger. Same rung, no person in it.
+        cue: "obstacle 3: do it once and you have opened a door you cannot close again. Bare, in your own words, then hand it back."
+        on_silence: "If I do it once, I've opened a door I can't shut. Unless there's something I'm not accounting for?"
         esci: [behind_scenes, key_people, multiple_approaches]
         scores:
           high:
             answer: "When Alex got the off-cycle adjustment it didn't open floodgates. Could we frame mine the same way, with a date attached?"
             why: "behind-the-scenes support; multiple approaches"
+          # Written as something the participant says rather than as a stage
+          # direction, to match its twin: the anchors are read by raters, and a
+          # parenthetical is not a thing anyone said into a microphone.
           low:
-            answer: "(repeats the same pay argument louder) So that's a no?"
+            answer: "I've already told you what I'm worth. So that's a no?"
             why: "single approach; no adaptation; no commitment secured"
+      # Rung 4 stays a conditional instruction, not a line, for the same reason
+      # the probes above avoid Alex. Triggers fire strictly in order, one per
+      # participant turn, with nothing testing what the participant actually
+      # said, so a cue that carries the concession unconditionally makes Morgan
+      # volunteer the precedent on a fixed beat even when the participant never
+      # found it, against his own brief. That precedent is the participant's
+      # hidden leverage, and whether they deploy it at rung 3 is exactly what
+      # t4 scores; spending it here would leave t4 measuring nothing. So the
+      # concession is conditional on the participant having already played
+      # Alex, and the package question is asked either way: rung 4 lands on the
+      # same beat, scoring the same three items, whether or not the precedent
+      # was found. Same shape as S2B t5.
+      - id: t5_rung4_the_package
+        cue: "move to obstacle 4, the package. If they have already put Alex's adjustment on the table, concede it in half a sentence; if they have not, do not raise Alex at all. Either way the point is the same — a precedent on its own gets nothing past the director — so ask what actually got bigger, and what number they are asking for."
+        on_silence: "Before I take anything upward I need something I can defend. What's actually grown, and what number are you asking for?"
+        esci: [anticipates, multiple_approaches, through_discussion]
+        scores:
+          high:
+            answer: "I've owned the June launch and the vendor reporting since April. I'm asking for the band in the written offer, effective at the next cycle close, and I'll put the scope case in writing this week."
+            why: "concrete, dated, documented; anticipates the director's question"
+          low:
+            answer: "I don't know, whatever you think you can get me."
+            why: "hands the case back; nothing Morgan can defend upward"
+      # The fairness beat is obstacle 4's question (d) and stops there. The
+      # competing offer is the participant's other asset, and Morgan's brief
+      # never lists it among what he knows; an earlier draft of this cue ended
+      # "and hasn't got an offer in hand", which fires on a fixed beat and so
+      # has Morgan assume the offer was disclosed even in the runs where the
+      # participant chose to hold it back. Same reason t5 does not volunteer
+      # Alex, and it is what keeps this beat parallel to S2B t6, which names no
+      # asset either.
+      #
+      # Measured: unsteered — the live model's actual condition — this is the
+      # rung most likely to go missing, because it is the only one that is a
+      # question about Morgan's problem rather than an obstacle to the
+      # participant's, and an actor left to itself keeps pressing the case
+      # instead. That is why the brief calls (d) "the one you actually lose
+      # sleep over" and says not to end without asking it. The cue is the belt.
+      - id: t6_rung4_fairness
+        cue: "ask the question you actually lose sleep over: what do you say to everyone else who is stretched and comes asking the moment this lands?"
+        on_silence: "I've still got to answer everyone else who's stretched. What would you have me tell them?"
+        esci: [self_interest, anticipates, key_people]
+        scores:
+          high:
+            answer: "Tell them it's tied to documented scope change, the same case that went to the director for Alex, so it's a standard you can point at rather than a favour."
+            why: "solves Morgan's problem, not just their own; invokes key people"
+          low:
+            answer: "That's between you and them."
+            why: "ignores Morgan's self-interest; leaves the objection standing"

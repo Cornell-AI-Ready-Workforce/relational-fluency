@@ -1,33 +1,118 @@
 # Consent text shown to participants before mic activates.
-# Edit this for your study's IRB / institutional language.
 #
-# `version` is recorded with each participant so you can track which
-# consent wording they saw.
+# THIS IS A DRAFT AND REQUIRES IRB REVIEW BEFORE FIELDING. It is not approved
+# text and nobody has reviewed it. It was written from what this platform
+# actually does, because the wording it replaces described a smaller study than
+# the one that runs: one conversation instead of four, and no statement at all
+# that the participant's live microphone audio leaves Cornell for a model
+# provider. Treat what follows as a checklist of what the approved text has to
+# cover, not as language you may put in front of a participant.
+#
+# Every "[FILL IN: ...]" marks a fact this repository does not know — the
+# people, the protocol number, the retention period, the money, the eligibility
+# rule. Inventing any of them would be worse than leaving them blank, so they
+# are left visible, and server/consent_check.py refuses to field a form that
+# still carries one.
+#
+# `version` is recorded with each participant as consent_text_version, so it is
+# the only way to tell afterwards which wording somebody actually agreed to.
+# Bump it whenever this text changes. It must not stay a "draft" string once the
+# text is approved; the guard checks that too, so a wave cannot be collected
+# under a version that reads like a placeholder.
+#
+# The page appends the `contact:` block to the end of `body` when it renders the
+# form, and uses the same values on the withdrawal, decline and closing cards.
+# Do not also type contact details into `body`: one source is what stops a
+# screen from naming a person the form does not carry, which is exactly what
+# those cards used to do.
+#
+# "Where your voice goes" names Google and Cornell's gateway because that is
+# what this deployment runs: REALTIME_MODEL defaults to a Gemini live model and
+# LITELLM_BASE_URL to api.ai.it.cornell.edu (server/llm.py). Point either
+# somewhere else and this paragraph becomes a false statement to a participant
+# about where their speech went — nothing in the code can catch that, because
+# the guard can only see whether SOME provider is named, so it is a thing to
+# change here by hand when the model changes.
 
-version: "v0.1-2026-06"
-title: "Conversational AI study — consent"
+version: "v0.2-2026-09-draft"
+
+# Set `reviewed: true` only when the text below IS the IRB-approved wording for
+# this protocol. Nothing in the system can tell approved language from a
+# plausible draft, so this is the human act that says so, and the fielding guard
+# does not pass without it.
+irb_status:
+  reviewed: false
+  reviewed_by: ""
+  reviewed_on: ""
+
+contact:
+  pi_name: "[FILL IN: principal investigator's name]"
+  email: "[FILL IN: study contact email address]"
+  irb_protocol: "[FILL IN: IRB protocol number]"
+
+title: "Conversational AI study: consent"
 body: |
-  In this session you'll have a voice conversation with an AI partner about a
-  workplace scenario. We are studying how AI can support relational skills
-  such as perspective taking, emotional regulation, apology, and creating
-  psychological safety.
+  **What this is.** We are studying how conversations with an AI partner can
+  support relational skills at work: perspective taking, emotional
+  regulation, apology, and creating psychological safety.
+  [FILL IN: the lab, department and institution running the study.]
+
+  **What you will do.** You will have four separate voice conversations with
+  an AI partner, each about a different workplace situation. Each conversation
+  runs about 7 to 12 minutes. Before each one you read a short description of
+  the situation, and after each one you are shown automatic feedback on how it
+  went. Allow about 45 minutes to an hour in total.
+  [FILL IN: confirm the total time commitment stated in your protocol.]
 
   **What we record:**
-  - Your microphone audio for the duration of the session
-  - The AI's spoken responses
-  - A transcript of the conversation
-  - Session metadata (scenario, timing, settings)
+  - Your microphone audio for the whole of every conversation
+  - Webcam video of you during every conversation, so that trained human
+    raters can score non-verbal conduct (if you do not allow camera access,
+    the conversation still runs and only the audio is recorded)
+  - What the AI partner says, and a written transcript of both sides
+  - Session metadata (which situation, timing, settings)
+
+  **Where your voice goes.** The AI partner is a speech model operated by
+  Google (Gemini). It is reached through Cornell's own AI gateway at
+  api.ai.it.cornell.edu rather than by contacting Google directly. While you
+  are speaking, your microphone audio is transmitted live to that Google model,
+  that is how it hears you and answers. Your transcript is sent through the
+  same gateway to a language model to produce the feedback you see between
+  conversations. Your webcam video is never transmitted to any AI model
+  provider; it is seen only by the research team and the human raters.
+  [FILL IN: what Google and the gateway may do with audio and text sent to
+  them, and for how long they hold it, in the terms your IRB requires.]
 
   **How it's used:**
   - To analyze conversational dynamics for research purposes
   - To improve the AI partner's behavior
-  - Audio and transcripts are stored locally on a research machine
+  - Your audio, webcam video, and transcripts are stored securely in Cornell
+    AWS cloud storage, accessible only to the research team and to the trained
+    human raters who score the conversations
+  [FILL IN: whether recordings are ever shown or shared outside the research
+  team, and in what form results are published.]
+
+  **How long we keep it.** [FILL IN: retention period for audio, video and
+  transcripts, and what happens to them at the end of it.]
+
+  **Payment.** When you finish, this page shows you a completion code. Take it
+  back to the survey you came from. That code is how your participation is
+  credited. You are shown it even if a recording failed to upload, and if you
+  stop early you are shown the code for the conversations you did complete.
+  [FILL IN: the compensation, and what someone who stops part way is paid.]
+
+  **Who can take part.** [FILL IN: age minimum and any other eligibility
+  criteria.]
 
   **Your rights:**
-  - You may stop at any time by clicking Stop
-  - You can request that your session data be deleted by contacting the
-    researcher
   - Participation is voluntary
+  - You may end a conversation whenever you want with "End conversation", and
+    you may leave the whole study with "Stop and leave the study". You will
+    not then be asked to do the remaining conversations
+  - You can request that your recordings and transcripts be deleted, using the
+    contact details below
+  - [FILL IN: what declining or stopping means for compensation, and for any
+    course credit or standing you have with the researchers.]
 
   By checking the box below you confirm that you have read and understood
   the above and that you consent to participate.

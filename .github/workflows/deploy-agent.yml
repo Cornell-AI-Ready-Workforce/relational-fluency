@@ -1,5 +1,10 @@
 # Builds the legacy agents/ image and pushes it to ECR.
 #
+# This is NOT the image participants talk to. The live platform image (the root
+# Dockerfile, run by the ECS `platform` container) is built by
+# build-platform-image.yml — if you are here to cut a release, that is the
+# workflow you want.
+#
 # Manual-only on purpose. The agents/ service is the retired ElevenLabs
 # custom-LLM packaging (see agents/README.md) and is not on the live path, so
 # it should not build on every push — a docs edit under agents/ was enough to
@@ -48,4 +53,4 @@ jobs:
           SHA=${GITHUB_SHA::7}
           docker build -t $REPO:$SHA agents/
           docker push $REPO:$SHA
-          echo "Pushed $REPO:$SHA — deploy with: terraform apply -var container_image=$REPO:$SHA"
+          echo "Pushed $REPO:$SHA (legacy agents image — do NOT set container_image to this; the ECS platform service runs the platform image from relational-fluency/platform)"

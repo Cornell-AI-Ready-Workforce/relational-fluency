@@ -9,12 +9,16 @@ Regenerate with `python tools/gen_scenario_map.py`.
 |---|---|---|---|---|---|---|
 | `S1A` | conflict management | A | `S1B` | Riley, Sam | **1:1** — Riley corners you (Riley) | **1:1** — Hallway run-in with Sam (Sam) |
 | `S1B` | conflict management | B | `S1A` | Mel, Drew | **1:1** — Mel pings you first thing (Mel) | **1:1** — Coffee-machine run-in with Drew (Drew) |
+| `S1C` | conflict management | C | `S1A` | Nadia, Wes | **1:1** — Nadia catches you about Tuesday (Nadia) | **1:1** — Wes stops by your desk (Wes) |
 | `S2A` | influence | A | `S2B` | Morgan | **1:1** — Making the case (Morgan) | **1:1** — The deflection ladder (Morgan) |
 | `S2B` | influence | B | `S2A` | Sasha | **1:1** — Making the case (Sasha) | **1:1** — The deflection ladder (Sasha) |
+| `S2C` | influence | C | `S2B` | Imani | **1:1** — Making the case (Imani) | **1:1** — The deflection ladder (Imani) |
 | `S3A` | inspirational leadership | A | `S3B` | Alex, Jordan, Casey | **group** — Team meeting (Alex + Jordan + Casey) | **1:1 series** — Brief one-on-ones (Jordan + Casey) |
 | `S3B` | inspirational leadership | B | `S3A` | Toni, Lee, Ari | **group** — Team meeting (Toni + Lee + Ari) | **1:1 series** — Brief one-on-ones (Lee + Ari) |
+| `S3C` | inspirational leadership | C | `S3A` | Bex, Rafa, Noor | **group** — Team meeting (Bex + Rafa + Noor) | **1:1 series** — Brief one-on-ones (Rafa + Noor) |
 | `S4A` | teamwork | A | `S4B` | Dan, Priya, Chris | **group** — Working session (Dan + Priya + Chris) | **group** — The close, who owns what (Dan + Priya + Chris) |
 | `S4B` | teamwork | B | `S4A` | Dan, Priya, Chris | **group** — Working session (Dan + Priya + Chris) | **group** — The close, speaking roles & credit (Dan + Priya + Chris) |
+| `S4C` | teamwork | C | `S4A` | Hugo, Yara, Finn | **group** — Working session (Hugo + Yara + Finn) | **group** — The close, who chairs and whose name is on it (Hugo + Yara + Finn) |
 
 ## Planted triggers → ESCI items
 
@@ -27,34 +31,55 @@ high/low sample answers from the research note, used as judge anchors.
 |---|---|---|---|---|
 | `S1A` | `i1` | `t1_retaliation_fork` | resolve_not_fester, bring_into_open, fester_r | probe scored |
 | `S1A` | `i2` | `t2_the_opening` | talk_openly, bring_into_open, fester_r | probe scored |
-| `S1A` | `i2` | `t3_defensiveness` | de_escalate, talk_openly |  |
-| `S1A` | `i2` | `t4_half_concession` | de_escalate, resolve_not_fester |  |
+| `S1A` | `i2` | `t3_defensiveness` | de_escalate, talk_openly | probe |
+| `S1A` | `i2` | `t4_half_concession` | de_escalate, resolve_not_fester | probe |
 | `S1B` | `i1` | `t1_retaliation_fork` | resolve_not_fester, bring_into_open, fester_r | probe scored |
 | `S1B` | `i2` | `t2_the_opening` | talk_openly, bring_into_open, fester_r | probe scored |
-| `S1B` | `i2` | `t3_defensiveness` | de_escalate, talk_openly |  |
-| `S1B` | `i2` | `t4_half_concession` | de_escalate, resolve_not_fester |  |
-| `S2A` | `i1` | `t1_the_opening` | through_discussion, anticipates | probe scored |
-| `S2A` | `i2` | `t2_rung1_no_budget` | multiple_approaches, anticipates |  |
-| `S2A` | `i2` | `t3_rung2_everyone_stretched` | multiple_approaches, self_interest |  |
-| `S2A` | `i2` | `t4_rung3_no_precedent` | behind_scenes, key_people, multiple_approaches | scored |
+| `S1B` | `i2` | `t3_defensiveness` | de_escalate, talk_openly | probe |
+| `S1B` | `i2` | `t4_half_concession` | de_escalate, resolve_not_fester | probe |
+| `S1C` | `i1` | `t1_retaliation_fork` | resolve_not_fester, bring_into_open, fester_r | probe scored |
+| `S1C` | `i2` | `t2_the_opening` | talk_openly, bring_into_open, fester_r | probe scored |
+| `S1C` | `i2` | `t3_defensiveness` | de_escalate, talk_openly | probe |
+| `S1C` | `i2` | `t4_half_concession` | de_escalate, resolve_not_fester | probe |
+| `S2A` | `i1` | `t1_the_opening` | through_discussion, anticipates, self_interest | probe scored |
+| `S2A` | `i2` | `t2_rung1_no_budget` | multiple_approaches, anticipates | probe |
+| `S2A` | `i2` | `t3_rung2_everyone_stretched` | multiple_approaches, self_interest | probe |
+| `S2A` | `i2` | `t4_rung3_no_precedent` | behind_scenes, key_people, multiple_approaches | probe scored |
+| `S2A` | `i2` | `t5_rung4_the_package` | anticipates, multiple_approaches, through_discussion | probe scored |
+| `S2A` | `i2` | `t6_rung4_fairness` | self_interest, anticipates, key_people | probe scored |
 | `S2B` | `i1` | `t1_the_opening` | through_discussion, anticipates, self_interest | probe scored |
-| `S2B` | `i2` | `t2_rung1_company_wide` | multiple_approaches, anticipates |  |
-| `S2B` | `i2` | `t3_rung2_one_exception` | multiple_approaches, self_interest |  |
-| `S2B` | `i2` | `t4_rung3_director_wont_sign` | behind_scenes, key_people, multiple_approaches | scored |
+| `S2B` | `i2` | `t2_rung1_company_wide` | multiple_approaches, anticipates | probe |
+| `S2B` | `i2` | `t3_rung2_one_exception` | multiple_approaches, self_interest | probe |
+| `S2B` | `i2` | `t4_rung3_director_wont_sign` | behind_scenes, key_people, multiple_approaches | probe scored |
+| `S2B` | `i2` | `t5_rung4_the_package` | anticipates, multiple_approaches, through_discussion | probe scored |
+| `S2B` | `i2` | `t6_rung4_fairness` | self_interest, anticipates, key_people | probe scored |
+| `S2C` | `i1` | `t1_the_opening` | through_discussion, anticipates, self_interest | probe scored |
+| `S2C` | `i2` | `t2_rung1_only_look` | multiple_approaches, anticipates | probe |
+| `S2C` | `i2` | `t3_rung2_how_it_reads` | multiple_approaches, self_interest | probe |
+| `S2C` | `i2` | `t4_rung3_the_coo_asks` | behind_scenes, key_people, multiple_approaches | probe scored |
+| `S2C` | `i2` | `t5_rung4_the_package` | anticipates, multiple_approaches, through_discussion | probe scored |
+| `S2C` | `i2` | `t6_rung4_fairness` | self_interest, anticipates, key_people | probe scored |
 | `S3A` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe scored |
 | `S3A` | `i2` | `t2_jordans_flat_fine` | brings_out_best, inspires | probe scored |
-| `S3A` | `i2` | `t3_caseys_overload` | brings_out_best, builds_pride |  |
+| `S3A` | `i2` | `t3_caseys_overload` | brings_out_best, builds_pride | probe |
 | `S3B` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe scored |
 | `S3B` | `i2` | `t2_resignation_in_place` | brings_out_best, inspires | probe scored |
-| `S3B` | `i2` | `t3_anxious_junior` | brings_out_best, builds_pride |  |
+| `S3B` | `i2` | `t3_anxious_junior` | brings_out_best, builds_pride | probe |
+| `S3C` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe scored |
+| `S3C` | `i2` | `t2_stopped_maintaining` | brings_out_best, inspires | probe scored |
+| `S3C` | `i2` | `t3_worthless_and_blamed` | brings_out_best, builds_pride | probe |
 | `S4A` | `i1` | `t1_priya_interrupted` | solicits_input, encourages_participation, not_cooperate_r | probe scored |
-| `S4A` | `i1` | `t2_idea_relabelled` | respectful, encourages_cooperation |  |
-| `S4A` | `i1` | `t3_decisions_close_with_priya_silent` | encourages_participation, solicits_input |  |
+| `S4A` | `i1` | `t2_idea_relabelled` | respectful, encourages_cooperation | probe |
+| `S4A` | `i1` | `t3_decisions_close_with_priya_silent` | encourages_participation, solicits_input | probe |
 | `S4A` | `i2` | `t4_dan_claims_the_writeup` | supportive, respectful, encourages_cooperation | probe scored |
 | `S4B` | `i1` | `t1_priya_interrupted` | solicits_input, encourages_participation, not_cooperate_r | probe scored |
-| `S4B` | `i1` | `t2_idea_relabelled` | respectful, encourages_cooperation |  |
-| `S4B` | `i1` | `t3_runthrough_without_priya` | encourages_participation, solicits_input |  |
+| `S4B` | `i1` | `t2_idea_relabelled` | respectful, encourages_cooperation | probe |
+| `S4B` | `i1` | `t3_runthrough_without_priya` | encourages_participation, solicits_input | probe |
 | `S4B` | `i2` | `t4_dan_claims_the_walkthrough` | supportive, respectful, encourages_cooperation | probe scored |
+| `S4C` | `i1` | `t1_the_point_talked_past` | solicits_input, encourages_participation, not_cooperate_r | probe scored |
+| `S4C` | `i1` | `t2_idea_relabelled` | respectful, encourages_cooperation | probe |
+| `S4C` | `i1` | `t3_close_over_the_silence` | encourages_participation, solicits_input | probe |
+| `S4C` | `i2` | `t4_the_chair_claimed` | supportive, respectful, encourages_cooperation | probe scored |
 
 ## ESCI item keys
 
