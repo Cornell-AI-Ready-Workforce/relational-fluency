@@ -960,6 +960,9 @@ async def api_runs_export(key: Optional[str] = None, cohort: Optional[str] = Non
                 # rather than drawn, so an analyst who sees one variant
                 # over-represented can tell design from chance.
                 "form_exclusions": run.get("form_exclusions", []),
+                # How the construct order was chosen (Williams square row), so
+                # position effects can be modelled without re-deriving the row.
+                "order": run.get("order"),
                 # Which entry link this participant came in on, and what that
                 # link's arm excluded. Flat `arm` because that is the column an
                 # analysis groups by; the whole record beside it because the arm

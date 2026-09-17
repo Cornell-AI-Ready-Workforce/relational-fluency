@@ -1,3 +1,6 @@
+# RESERVED FOR A LATER STUDY. Study 1 fields form A only (DEFAULT_RUN_VARIANT=A);
+# this form stays in the bank so `variant=B` internal test links and a later
+# parallel-form retest have it, and is not served to Study 1 participants.
 # Conflict Management, Variant B. Parallel form of S1A: same trigger sequence
 # (push → opening/probe → defence → half-concession), same ESCI map, same
 # difficulty. Research Note v3, slide 9.

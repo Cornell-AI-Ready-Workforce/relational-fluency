@@ -98,6 +98,58 @@ CONSTRUCT_ORDER = [
 # than being len(CONSTRUCT_ORDER) by coincidence.
 ENCOUNTERS_PER_RUN = 4
 
+# Construct order across participants: a balanced 4x4 Latin square (Williams
+# design). Each construct appears in each position once per row, and each
+# construct is immediately followed by each other construct exactly once
+# across the four rows, so with participants assigned rows in rotation both
+# position effects and carry-over effects balance out every four participants.
+# Rows index into the constructs in CONSTRUCT_ORDER. Decision 2026-09-17
+# (docs/study1-plan.md, E2.8); replaces the seeded shuffle, which balanced
+# only in expectation.
+WILLIAMS_4 = ((0, 1, 3, 2), (1, 2, 0, 3), (2, 3, 1, 0), (3, 0, 2, 1))
+ORDER_SCHEME = "williams_4x4"
+
+
+def _next_order_row(cohort: str) -> int:
+    """The next row of the square for this cohort, rotating.
+
+    A small counter file beside the runs, one per cohort, so internal test
+    traffic does not eat the study's rows. Read-increment-write is not atomic
+    across two arrivals in the same instant; that costs one repeated row in a
+    hundred, which the analysis tolerates, and a lock here would be a second
+    thing to fail on a shared volume. Not a `*.json`, so no run scan picks it up.
+    """
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    p = RUNS_DIR / f".order_counter.{cohort}"
+    try:
+        n = int((p.read_text(encoding="utf-8").strip() or "0"))
+    except (OSError, ValueError):
+        n = 0
+    _write_atomic(p, str(n + 1))
+    return n % len(WILLIAMS_4)
+
+
+def _counterbalance(order: List[str], rng: "random.Random", seed: Optional[int],
+                    cohort: str, order_row: Optional[int]):
+    """(constructs in the order this run serves them, the record of how).
+
+    Four constructs: a row of WILLIAMS_4 — the caller's `order_row` if given
+    (a second attempt keeps attempt 1's row), otherwise drawn from the seed
+    when there is one (so a seeded run rebuilds itself exactly), otherwise the
+    cohort's next row in rotation. Any other pool size cannot use the square
+    and falls back to the seeded shuffle, and the record says so.
+    """
+    if len(order) != len(WILLIAMS_4):
+        rng.shuffle(order)
+        return order, {"scheme": "shuffle", "row": None}
+    if order_row is not None:
+        row = int(order_row) % len(WILLIAMS_4)
+    elif seed is not None:
+        row = rng.randrange(len(WILLIAMS_4))
+    else:
+        row = _next_order_row(cohort)
+    return [order[i] for i in WILLIAMS_4[row]], {"scheme": ORDER_SCHEME, "row": row}
+
 
 def _interaction_modes(scenario_id: str) -> List[str]:
     """The `mode` of each planned interaction in one scenario spec.
@@ -542,6 +594,7 @@ def create(
     raw_participant_key: Optional[str] = None,
     arm: Optional[str] = None,
     constructs: Optional[List[str]] = None,
+    order_row: Optional[int] = None,
 ) -> dict:
     """Assign four encounters, one per construct, in counterbalanced order.
 
@@ -616,7 +669,9 @@ def create(
     allowed, pool_record = _resolve_pool(arm, constructs)
 
     order = [c for c in CONSTRUCT_ORDER if c in pool and c in allowed]
-    rng.shuffle(order)  # counterbalance construct order across participants
+    # Counterbalance construct order across participants: Williams square row
+    # (see WILLIAMS_4); `order_row` lets a second attempt keep attempt 1's row.
+    order, order_record = _counterbalance(order, rng, seed, cohort, order_row)
 
     # Always four encounters, however many constructs the arm left standing. The
     # participant is promised four and paid for four, and the completion code is
@@ -881,6 +936,10 @@ def create(
         # added. Recorded for the same reason form_exclusions is: an assignment
         # that was steered has to look steered in the data.
         "construct_pool": pool_record,
+        # How the construct order was chosen: {"scheme": "williams_4x4", "row": r}
+        # on the study run; {"scheme": "shuffle", "row": null} on a pool the
+        # square cannot cover. An analyst grouping by position needs the row.
+        "order": order_record,
     }
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     _write_atomic(_path(run["run_id"]), json.dumps(run, indent=2))
@@ -1536,6 +1595,9 @@ def sibling_run(run_id: str, participant_id: Optional[str] = None) -> Optional[d
         raw_participant_key=run.get("raw_participant_key"),
         arm=prior.get("arm"),
         constructs=prior.get("requested_constructs"),
+        # Attempt 2 keeps attempt 1's row of the square, so the pre/post delta
+        # is not confounded with a change of position.
+        order_row=(run.get("order") or {}).get("row"),
         # SEEDED ON ATTEMPT 1'S RUN ID, so the whole of attempt 2 is a function
         # of attempt 1 and not of system entropy. The docstring's headline claim
         # is that a given attempt 1 always yields the same attempt 2; without a

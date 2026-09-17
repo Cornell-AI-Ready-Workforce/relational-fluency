@@ -153,7 +153,7 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
   mentions.
 - AC: `python -m pytest` green; CI's scenario job expects the eight.
 
-**2.8 Encounter order** — S · app + JL
+**2.8 Encounter order** — S · app + JL — ✅ done 2026-09-17 (`WILLIAMS_4` in `server/runs.py`, `order` on the run document, tests in `tests/test_order_counterbalance.py`)
 - Decision (2026-09-17): **balanced 4×4 Latin square (Williams design)** —
   each construct appears in each position equally often and each construct
   follows each other construct equally often; participants are assigned rows

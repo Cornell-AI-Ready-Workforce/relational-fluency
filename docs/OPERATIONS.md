@@ -380,8 +380,12 @@ yet; do it by hand, confirm each of the three, and write down what was removed.
 
 ## Which scenarios a participant gets
 
-Phase 1 uses variant A only: every study run is S1A, S2A, S3A, S4A in a
-counterbalanced order (shuffled per participant). This is the code default
+Phase 1 uses variant A only: every study run is S1A, S2A, S3A, S4A, in an
+order taken from a balanced 4×4 Latin square (Williams design, `WILLIAMS_4` in
+`server/runs.py`): participants are assigned the square's rows in rotation per
+cohort, so each construct sits in each position equally often and follows each
+other construct equally often. The row is recorded on the run as
+`order.row` and exported by `/api/runs`. This is the code default
 (`DEFAULT_RUN_VARIANT=A`); set it to `B` to pin the other form or `random`
 for a per-construct coin flip. An explicit `variant=` on an internal test
 link still overrides it, and the RCT's second attempt always flips forms.
