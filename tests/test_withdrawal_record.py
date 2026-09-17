@@ -14,7 +14,6 @@ are not eight bugs. They are one bug with eight exits:
     for them;
   * POST /api/sessions/{id}/video-uploaded wrote into their trail, touching S3
     not at all, so it succeeded on a host with no credentials;
-  * POST /api/sessions/{id}/score and /debrief spent gateway budget on them;
   * POST /api/consent minted a SECOND record carrying no withdrawal, and the
     voice socket opened on it;
   * an unreadable run file turned a withdrawal back into consent, because the
@@ -261,38 +260,6 @@ def test_the_camera_absence_report_is_refused_after_a_withdrawal(pair, client):
                             "no_camera": "NotAllowedError"})
     assert r.status_code == 200, r.text
     assert [e["type"] for e in _events(pair["live_dir"])] == ["video_absent"]
-
-
-# --- the paid calls ----------------------------------------------------------
-
-@pytest.mark.parametrize("route", ["score", "debrief"])
-def test_the_paid_calls_are_refused_after_a_withdrawal(pair, client, monkeypatch,
-                                                       route):
-    """Lowest blast radius of the eight and still worth closing at the same
-    seam: a withdrawn participant's encounter must not spend the study's gateway
-    budget, and must not gain a feedback artefact written after they stopped.
-
-    /debrief is the neighbour the reported list did not name. It is the same
-    route with a different scorer behind it, which is exactly why the question
-    is asked once, in one helper, rather than route by route."""
-    spent = []
-
-    def _never(*a, **kw):
-        spent.append(a)
-        return {"ok": True}
-
-    monkeypatch.setattr("server.scoring.score_session", _never, raising=False)
-    monkeypatch.setattr("server.debrief.generate_debrief", _never, raising=False)
-
-    r = client.post(f"/api/sessions/{WITHDRAWN_SID}/{route}",
-                    params={"participant_id": pair["gone_pid"]})
-    assert r.status_code == 403, r.text
-    assert spent == [], f"the {route} call was made for a withdrawn participant"
-
-    r = client.post(f"/api/sessions/{LIVE_SID}/{route}",
-                    params={"participant_id": pair["live_pid"]})
-    assert r.status_code == 200, r.text
-    assert spent, f"a live participant could no longer reach the {route}"
 
 
 # --- re-consent --------------------------------------------------------------

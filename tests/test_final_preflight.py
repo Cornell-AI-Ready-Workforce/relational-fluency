@@ -88,8 +88,6 @@ EXPECTED_ROLES = (
     ("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite", "the director", True),
     ("STEERING_MODEL", "nto.gemini-3.1-flash-lite", "the steering reviewer", True),
     ("REALTIME_MODEL", "nto.gemini-live-2.5-flash", "the voice socket", True),
-    ("DEBRIEF_MODEL", "nto.gemini-2.5-pro", "the debrief writer, offline", False),
-    ("JUDGE_MODEL", "nto.gemini-2.5-pro", "the offline judge", False),
     ("TRANSCRIBE_MODEL", "nto.gemini-2.5-pro", "the re-transcriber, offline", False),
 )
 ROLE_OF = {name: role for name, _, role, _ in EXPECTED_ROLES}
@@ -278,17 +276,17 @@ def test_a_wildcard_allowlist_serves_everything(gateway, monkeypatch):
 
 
 def test_an_offline_tool_model_does_not_take_the_gateway_down(gateway, monkeypatch):
-    """JUDGE_MODEL is read by the offline scorer. Getting it wrong costs a
-    scoring run that can be re-run, not a wave that cannot be re-collected, and
+    """TRANSCRIBE_MODEL is read by the offline re-transcriber. Getting it wrong
+    costs a run that can be repeated, not a wave that cannot be re-collected, and
     docs/OPERATIONS.md tells an operator that gateway.ok false means no
     encounter will work. Say it, do not escalate it."""
-    set_model(monkeypatch, "JUDGE_MODEL", "nto.gemini-2.5-prooo")
+    set_model(monkeypatch, "TRANSCRIBE_MODEL", "nto.gemini-2.5-prooo")
 
     result = llm.preflight()
 
     assert result["ok"] is True, "an offline tool must not stop encounters"
     assert "model_problems" not in result
-    assert "JUDGE_MODEL" in result["model_warnings"][0]
+    assert "TRANSCRIBE_MODEL" in result["model_warnings"][0]
 
 
 @pytest.mark.parametrize("body", [

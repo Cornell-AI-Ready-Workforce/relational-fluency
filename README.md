@@ -576,26 +576,6 @@ code is 0 only when every encounter passes.
   A turn with `stage_direction: null` ran unsteered — distinguishable from a
   direction that went unrecorded.
 
-## Scoring
-
-An offline judge scores a saved transcript against the rubric for that
-scenario's construct: per-turn behavioral codes plus construct-level 1–5
-dimensions with anchors, evidence quotes, strengths, and growth edges. Codebook
-and anchors are in `server/rubrics.py`, grounded in `docs/REFERENCES.md`.
-
-```bash
-python -m server.scoring <session_id>     # cached to score.json
-python -m server.scoring --all --force    # re-score everything
-```
-
-Scoring never runs in the live conversation path. Results are written to
-`data/sessions/{sid}/score.json` and exposed at
-`GET`/`POST /api/sessions/{id}/score`. The researcher page has a score panel,
-currently hidden behind `SHOW_SCORE = true` in `static/researcher.html`.
-
-This offline judge is the seed of the Phase 3 scorer, which will be benchmarked
-against human ICC/κ on the ESCI items rather than these interim rubrics.
-
 ## Phase 2 — human rating and reliability
 
 The human ICC/κ that benchmark is measured against comes from here. Two to three
@@ -736,7 +716,7 @@ the encrypted S3 bucket under the IRB data-management plan, never in the repo.
 Cornell LiteLLM gateway; ElevenLabs and Deepgram are gone from the codebase
 entirely. Scenarios play as consecutive 1:1 conversations. Researcher steering
 with per-agent knobs and notes. Dataset capture with separate participant and
-agent WAVs, SQLite index, and manifest. Offline scoring across the constructs.
+agent WAVs, SQLite index, and manifest.
 
 Deployed on ECS/Fargate behind an ALB at
 `rf.ai-ready-workforce.ai.cornell.edu`. Next, in dependency order: set the four

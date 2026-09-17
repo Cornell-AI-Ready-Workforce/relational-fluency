@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import re
 
-from anthropic import Anthropic, AsyncAnthropic
+from anthropic import AsyncAnthropic
 from dotenv import dotenv_values
 
 # .env wins over ambient environment for these, deliberately.
@@ -297,13 +297,8 @@ def redact_key(text: str) -> str:
 
 
 def text_client() -> AsyncAnthropic:
-    """Client for the text models, director, steering, judge, debrief."""
+    """Client for the text models: director and steering."""
     return AsyncAnthropic(base_url=gateway_base_url(), api_key=gateway_api_key())
-
-
-def sync_text_client() -> Anthropic:
-    """Blocking client for the offline scorer and debrief CLIs."""
-    return Anthropic(base_url=gateway_base_url(), api_key=gateway_api_key())
 
 
 def provenance() -> dict:
@@ -333,8 +328,8 @@ def provenance() -> dict:
 # `blocks` is the difference between "no encounter can run" and "a report will
 # fail later". The first four are the encounter path and they turn `ok` false,
 # which is what docs/OPERATIONS.md tells an operator `gateway.ok` means. The
-# last three are offline tooling - the debrief writer, the offline judge, the
-# re-transcriber - and a typo there costs a scoring run rather than a wave, so
+# last one is offline tooling - the re-transcriber - and a typo there costs a
+# re-transcription run rather than a wave, so
 # it is named without taking the gateway "down" for something no participant
 # will ever touch. A warning that fires for a harmless reason is a warning that
 # gets ignored for the harmful one.
@@ -350,8 +345,6 @@ _MODEL_ROLES = (
     ("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite", "the director", True),
     ("STEERING_MODEL", "nto.gemini-3.1-flash-lite", "the steering reviewer", True),
     ("REALTIME_MODEL", "nto.gemini-live-2.5-flash", "the voice socket", True),
-    ("DEBRIEF_MODEL", "nto.gemini-2.5-pro", "the debrief writer, offline", False),
-    ("JUDGE_MODEL", "nto.gemini-2.5-pro", "the offline judge", False),
     ("TRANSCRIBE_MODEL", "nto.gemini-2.5-pro", "the re-transcriber, offline", False),
 )
 

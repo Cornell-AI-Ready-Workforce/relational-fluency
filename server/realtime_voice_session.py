@@ -3145,7 +3145,7 @@ class RealtimeVoiceSessionRunner:
             # record exists the flag is gone and the line reads as
             # `role=participant`. rater_packet then shows the AI character's own
             # sentence to a human rater as something the participant said,
-            # scoring.load_transcript gives it a U-index for the LLM judge, and
+            # an offline judge would give it a U-index, and
             # app._count_user_turns counts it towards the encounter being
             # non-empty. A turn withheld here is a gap that names itself; an
             # echo written as participant speech is a fabricated turn that

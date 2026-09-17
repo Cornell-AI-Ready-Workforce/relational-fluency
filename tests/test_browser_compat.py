@@ -221,7 +221,7 @@ def test_the_recorder_teardown_is_not_a_race():
     """The comment already said 'tracks stop after onstop fires'; the code
     stopped them three statements later, synchronously."""
     src = _src(V2)
-    body = src[src.index("function endSession("):src.index("// ---------- debrief ----------")]
+    body = src[src.index("function endSession("):src.index("$('startBtn').addEventListener('click', startSession);")]
     assert "finishVideoRecording(() => {" in body, \
         "endSession no longer hands finishVideoRecording a teardown callback"
     # The two lines that destroy the recorder's inputs must not run here.
@@ -894,7 +894,7 @@ function boot(cfg) {
     { match: '/video-uploaded', fn: () => b.net.res(200, { ok: true, bytes: 4096 }) },
   ]);
 
-  b.ctx.endSession({ debrief: false });
+  b.ctx.endSession();
 
   // Synchronously after endSession the recorder has been asked to stop and has
   // not yet flushed. Its inputs must still be alive.
@@ -923,7 +923,7 @@ function boot(cfg) {
       { match: 'https://s3.invalid/', fn: () => c.net.res(200, {}) },
       { match: '/video-uploaded', fn: () => c.net.res(200, { ok: true }) },
     ]);
-    c.ctx.endSession({ debrief: false });
+    c.ctx.endSession();
     await c.clock.advance(30000);
     assert.strictEqual(cam2.stopped, true,
       'a recorder that never fired onstop left the camera running');
@@ -1402,7 +1402,6 @@ function boot() {
   b.run("sessionsCache = [{ id: 's_1', status: 'active', title: 't', turn_count: 0 }];");
   b.net.route([
     { match: '/files', fn: () => b.net.res(200, { files: [] }) },
-    { match: '/score', fn: () => b.net.res(200, {}) },
     { match: '/api/', fn: () => b.net.res(200, []) },
   ]);
   b.ctx.connect('s_1');

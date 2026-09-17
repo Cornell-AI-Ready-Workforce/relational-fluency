@@ -56,7 +56,7 @@ class Agent:
     name: str
     system_prompt: str
     role: str = ""  # short title shown under the name in the UI (e.g. "Product Manager")
-    hidden_agenda: str = ""  # internal, never sent to the participant pre/in-session; revealed at debrief
+    hidden_agenda: str = ""  # internal, never sent to the participant
     photo: str = "initials"  # "initials" or filename under static/agents/
     voice_id: Optional[str] = None
     defaults: Dict[str, float] = field(default_factory=dict)
@@ -71,14 +71,14 @@ class Scenario:
     skill: str = ""
     # Shared situation context. engine.AgentEngine._system_prompt prepends it as
     # a "## Scene" block for EVERY agent, single and group alike, and the
-    # director, steering and debrief prompts embed it too. So it is read by the
+    # director and steering prompts embed it too. So it is read by the
     # AI characters, never by the participant: it must be written about the
     # participant in the third person and must not contain anything the
     # participant is supposed to reveal in their own time. The participant's own
     # second-person briefing text is `intro`.
     scene: str = ""
     # The same context for the prompts that reason ABOUT the encounter rather
-    # than act in it, the debrief judge and the steering controller. They are
+    # than act in it, the steering controller. They are
     # not in the scene, so the withholding that `scene` exists to do is only a
     # blindfold on them: for the influence encounters the participant's leverage
     # is the thing being scored. Empty means there is nothing extra to see and

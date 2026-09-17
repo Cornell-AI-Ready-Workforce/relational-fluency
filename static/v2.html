@@ -288,77 +288,6 @@
     .situation-card .situation-img { width: 100%; margin: 0; }
   }
 
-  /* End-of-session debrief overlay. */
-  /* -webkit- first: Safari only shipped backdrop-filter unprefixed at 18, so
-     without it the scrim behind this overlay is flat on every earlier Mac.
-     The rgba background is the real fallback and already correct. */
-  .debrief-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.5);
-                     -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
-                 display: flex; align-items: flex-start; justify-content: center; z-index: 60; padding: 28px 16px;
-                 overflow-y: auto; }
-  .debrief-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 16px;
-                 max-width: 720px; width: 100%; padding: 28px 30px; margin: auto;
-                 box-shadow: 0 24px 60px rgba(47,47,47,0.22); }
-  .debrief-card h2 { font-size: 19px; margin: 0 0 4px; }
-  .debrief-card .label { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
-                 color: var(--accent); margin: 0 0 12px; }
-  .debrief-card .room-summary { font-size: 15px; line-height: 1.6; color: var(--fg);
-                 background: var(--accent-soft); border-radius: 10px; padding: 14px 16px; margin: 0 0 22px; }
-  .persona-card { border: 1px solid var(--line-soft); border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
-  .persona-card .pc-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-  .persona-card .pc-avatar { width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; object-fit: cover;
-                 display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 600; font-size: 15px; }
-  .persona-card .pc-name { font-size: 15px; font-weight: 600; }
-  .persona-card .pc-role { font-size: 12px; color: var(--muted); }
-  .persona-card .agenda { font-size: 13px; line-height: 1.55; color: var(--fg);
-                 border-left: 3px solid var(--accent); padding: 4px 0 4px 12px; margin: 0 0 12px; background: #faf6f6; }
-  .persona-card .agenda b { color: var(--accent); }
-  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  .metric { background: var(--bg); border-radius: 9px; padding: 10px 11px; }
-  .metric .m-label { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-  .metric .m-val { font-size: 14px; font-weight: 600; margin: 3px 0 4px; text-transform: capitalize; }
-  .metric .m-val.r-no, .metric .m-val.r-barely { color: var(--accent); }
-  .metric .m-val.r-somewhat { color: #9a7b1e; }
-  .metric .m-val.r-mostly, .metric .m-val.r-yes, .metric .m-val.softened { color: #2f7d4f; }
-  .metric .m-val.hardened { color: var(--accent); }
-  .metric .m-val.unchanged { color: var(--muted); }
-  .metric .m-ev { font-size: 11px; line-height: 1.4; color: var(--muted); }
-  .debrief-card .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
-  .debrief-loading { font-size: 14px; color: var(--muted); padding: 8px 0; }
-
-  /* ---------- Feedback page (post-attempt, 4D-style) ---------- */
-  .fb-intro { font-size: 13.5px; line-height: 1.55; color: var(--muted); margin: 0 0 18px; }
-  .fb-hero { display: flex; align-items: center; gap: 18px; background: var(--accent-soft);
-             border-radius: 12px; padding: 16px 18px; margin: 0 0 20px; }
-  .fb-hero .score-ring { flex-shrink: 0; width: 64px; height: 64px; border-radius: 50%;
-             display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700;
-             color: #fff; }
-  .fb-hero .score-ring small { font-size: 12px; font-weight: 600; opacity: 0.85; }
-  .fb-hero .summary { font-size: 14px; line-height: 1.55; color: var(--fg); }
-  .fb-dim { border: 1px solid var(--line-soft); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
-  .fb-dim .head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
-  .fb-dim .dim-name { font-size: 15px; font-weight: 600; }
-  .fb-dim .dim-score { font-size: 13px; font-weight: 700; padding: 2px 10px; border-radius: 999px; color: #fff; }
-  .fb-dim .rationale { font-size: 13px; line-height: 1.5; color: var(--fg); margin: 0; }
-  .fb-dim .ev { font-size: 12px; color: var(--muted); font-style: italic; margin-top: 6px; }
-  /* score colors (shared by hero ring + dim pill) */
-  .s1, .s2 { background: var(--accent); }
-  .s3 { background: #9a7b1e; }
-  .s4, .s5 { background: #2f7d4f; }
-  .fb-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; }
-  .fb-col { border-radius: 12px; padding: 14px 16px; }
-  .fb-col.well { background: #eef6f0; border: 1px solid #cfe6d8; }
-  .fb-col.improve { background: #fbf3ef; border: 1px solid #f0d8cd; }
-  .fb-col h4 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
-  .fb-col.well h4 { color: #2f7d4f; }
-  .fb-col.improve h4 { color: var(--accent); }
-  .fb-col ul { margin: 0; padding-left: 18px; }
-  .fb-col li { font-size: 13px; line-height: 1.5; margin-bottom: 6px; }
-  @media (max-width: 640px) { .fb-cols { grid-template-columns: 1fr; } }
-  @media (max-width: 640px) {
-    .metrics { grid-template-columns: 1fr; }
-    .debrief-card { padding: 20px 18px; }
-  }
   .consent-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.45);
                      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
                       display:flex; align-items:center; justify-content:center; z-index: 50; padding: 20px; }
@@ -557,30 +486,6 @@
     <button id="leaveBtn" class="secondary" style="display:none">Stop and leave the study</button>
   </div>
 </header>
-
-<div class="debrief-overlay" id="debriefOverlay" style="display:none">
-  <div class="debrief-card">
-    <div class="label">Debrief</div>
-    <h2 id="debriefTitle">How the room really saw it</h2>
-    <div id="debriefContent"></div>
-    <div class="actions">
-      <button class="secondary" id="debriefClose">Close</button>
-      <button id="toFeedback">See my feedback &rarr;</button>
-    </div>
-  </div>
-</div>
-
-<div class="debrief-overlay" id="feedbackOverlay" style="display:none">
-  <div class="debrief-card feedback-card">
-    <div class="label">Your feedback</div>
-    <h2 id="feedbackTitle">How you handled the room</h2>
-    <div id="feedbackContent"></div>
-    <div class="actions">
-      <button class="secondary" id="feedbackClose">Close</button>
-      <button id="feedbackRetry">Try another attempt</button>
-    </div>
-  </div>
-</div>
 
 <main>
   <div class="grid" id="grid"></div>
@@ -1105,7 +1010,7 @@
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
   let sessionId = null;      // server session id once connected
   let sessionMode = 'single';// 'single' | 'group'
-  let userTurns = 0;         // committed participant turns this session (gates debrief)
+  let userTurns = 0;         // committed participant turns this session
   let ws = null;
   let audioCtx = null;
   let micNode = null;
@@ -1150,7 +1055,6 @@
   let micLevelRaf = null;  // rAF handle for the mic-level meter loop
   let timerInt = null;     // conversation elapsed-time ticker
   let timerStartMs = 0;
-  let feedbackSid = null;  // session id for the post-attempt feedback page
 
   // ---------- avatars ----------
   function initialsOf(name) {
@@ -3409,9 +3313,9 @@
       } else if (m.type === 'user_transcript') {
         // Build one consolidated bubble: interim updates live, finals commit.
         // Count a committed participant turn here: user_transcript with
-        // final:true is a message the voice server actually sends, and it gates
-        // the end-of-session debrief. (The voice server never emits a
-        // 'director_routed' message, so we deliberately do not depend on one.)
+        // final:true is a message the voice server actually sends. (The voice
+        // server never emits a 'director_routed' message, so we deliberately do
+        // not depend on one.)
         if (m.final) {
           // A transcript in the wrong script is the transcriber's error, not
           // the participant's; show a neutral caption rather than the script.
@@ -3539,7 +3443,7 @@
         // so the participant is no longer captured behind the completion overlay
         // and the recording is never lost when the page navigates on to the next
         // encounter. Then advance the run.
-        endSession({ debrief: false });
+        endSession();
         onEncounterComplete();
       } else if (m.type === 'assistant_retry') {
         // The current reply's voice was lost upstream and is being re-spoken
@@ -3773,7 +3677,7 @@
       : 'The connection dropped. Click Reconnect to start this part of the conversation again.';
     $('transcript').appendChild(line);
     $('transcript').scrollTop = $('transcript').scrollHeight;
-    endSession({ debrief: false });
+    endSession();
     setTurnState(fatal ? 'Encounter stopped' : 'Connection lost', '');
     // Every branch writes the card, so no state is left wearing another's
     // wording. Static strings only: nothing the server sent reaches innerHTML.
@@ -3973,11 +3877,7 @@
     await startSession();
   });
 
-  function endSession(opts = {}) {
-    const { debrief = true } = opts;
-    // Capture before teardown clears state.
-    const sid = sessionId;
-    const wantDebrief = debrief && sessionMode === 'group' && userTurns > 0 && !!sid;
+  function endSession() {
 
     // The recorder's INPUT tracks — the camera track it is recording and the
     // recDest audio track that is the other half of the recorded stream — are
@@ -4061,74 +3961,6 @@
     setActiveSpeaker(null);
     const selfTile = $('tile-self'); if (selfTile) selfTile.classList.remove('cam-on');
 
-    if (wantDebrief) showDebrief(sid);
-  }
-
-  // ---------- debrief ----------
-  const RATING_TEXT = { no: 'No', barely: 'Barely', somewhat: 'Somewhat', mostly: 'Mostly', yes: 'Yes' };
-  const DIR_TEXT = { hardened: 'Hardened', unchanged: 'Unchanged', softened: 'Softened', shifted: 'Shifted' };
-
-  async function showDebrief(sid) {
-    feedbackSid = sid;
-    $('debriefContent').innerHTML = `<div class="debrief-loading">Reading the room back to you, analyzing how each person responded…</div>`;
-    $('debriefOverlay').style.display = 'flex';
-    try {
-      // Send participant_id so the server can confirm this is the participant's
-      // own session (the endpoint refuses a paid debrief on someone else's).
-      const pidQ = participantId
-        ? (keyParamFirst ? '&' : '?') + 'participant_id=' + encodeURIComponent(participantId)
-        : '';
-      const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/debrief` + keyParamFirst + pidQ, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-      });
-      if (!r.ok) {
-        const msg = (await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`;
-        $('debriefContent').innerHTML = `<div class="debrief-loading">We couldn’t put together your summary just now. Please try again.</div>`;
-        return;
-      }
-      renderDebrief(await r.json());
-    } catch (e) {
-      $('debriefContent').innerHTML = `<div class="debrief-loading">Something went wrong while preparing your summary. Please try again.</div>`;
-    }
-  }
-
-  function renderDebrief(d) {
-    // Use the shared top-level esc: it also escapes " (this valKey is
-    // interpolated into a double-quoted class attribute) and coerces non-string
-    // LLM values via String(...) instead of throwing on .replace.
-    const metric = (label, valKey, val, ev) => `
-      <div class="metric">
-        <div class="m-label">${label}</div>
-        <div class="m-val r-${esc(valKey)} ${esc(valKey)}">${esc(val)}</div>
-        <div class="m-ev">${esc(ev)}</div>
-      </div>`;
-    let html = '';
-    if (d.room_summary) html += `<div class="room-summary">${esc(d.room_summary)}</div>`;
-    (d.personas || []).forEach(p => {
-      const a = cast.find(c => c.id === p.agent_id) || {};
-      const hasPhoto = a.photo && a.photo !== 'initials';
-      const avatar = hasPhoto
-        ? `<img class="pc-avatar" src="${photoUrl(a.photo)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'pc-avatar',style:'background:${colorFor(p.name)}',textContent:'${initialsOf(p.name)}'}))" />`
-        : `<div class="pc-avatar" style="background:${colorFor(p.name)}">${initialsOf(p.name)}</div>`;
-      const stanceVal = `${esc(p.stance_start)} → ${esc(p.stance_end)}`;
-      html += `
-        <div class="persona-card">
-          <div class="pc-head">
-            ${avatar}
-            <div>
-              <div class="pc-name">${esc(p.name)}</div>
-              <div class="pc-role">${esc(p.role || '')}</div>
-            </div>
-          </div>
-          <div class="agenda"><b>Hidden agenda you couldn't see:</b> ${esc(p.hidden_agenda)}</div>
-          <div class="metrics">
-            ${metric('Felt heard', p.felt_heard, RATING_TEXT[p.felt_heard] || p.felt_heard, p.felt_heard_evidence)}
-            ${metric('Real concern addressed', p.concern_addressed, RATING_TEXT[p.concern_addressed] || p.concern_addressed, p.concern_addressed_evidence)}
-            ${metric('Stance', p.stance_direction, DIR_TEXT[p.stance_direction] || p.stance_direction, stanceVal + (p.stance_note ? ', ' + p.stance_note : ''))}
-          </div>
-        </div>`;
-    });
-    $('debriefContent').innerHTML = html || '<div class="debrief-loading">No persona data.</div>';
   }
 
   $('startBtn').addEventListener('click', startSession);
@@ -4168,7 +4000,7 @@
       } else {
         if (!confirm('Finish this conversation and move on?')) return;
       }
-      endSession({ debrief: false });
+      endSession();
       onEncounterComplete();
     } else {
       endSession();
@@ -4189,7 +4021,7 @@
     // Capture goes off first, before any network call: whatever happens to the
     // withdrawal record, the microphone and camera must stop the moment they
     // ask to stop.
-    if (started) endSession({ debrief: false });
+    if (started) endSession();
     // A 'encounter_complete' or socket event racing in behind this must not
     // quietly advance the run of someone who has just left it.
     advancing = true;
@@ -4199,8 +4031,7 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId || '',
-          // The record id this page was handed at /start, sent the same way
-          // /score and /debrief already send it. It is how the server tells the
+          // The record id this page was handed at /start. It is how the server tells the
           // person whose study this ends from anybody who learned the run id —
           // the run id is in this page's own address bar, so it cannot be the
           // credential for ending the run. Empty only for an arrival whose
@@ -4221,76 +4052,6 @@
           'would like that on file, please say so using the contact below.</p>'),
       run?.completion_code || '');
   });
-  $('debriefClose').addEventListener('click', () => { $('debriefOverlay').style.display = 'none'; });
-
-  // ---------- feedback page (post-attempt, scored) ----------
-  const scoreClass = (s) => 's' + (Number(s) || 3);
-
-  async function showFeedback(sid) {
-    $('debriefOverlay').style.display = 'none';
-    $('feedbackContent').innerHTML = `<div class="debrief-loading">Scoring how you handled the room… this takes a moment.</div>`;
-    $('feedbackOverlay').style.display = 'flex';
-    try {
-      // Send participant_id so the server can confirm ownership before running
-      // the paid scorer (see the debrief call above).
-      const pidQ = participantId
-        ? (keyParamFirst ? '&' : '?') + 'participant_id=' + encodeURIComponent(participantId)
-        : '';
-      const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/score` + keyParamFirst + pidQ, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-      });
-      if (!r.ok) {
-        const msg = (await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`;
-        $('feedbackContent').innerHTML = `<div class="debrief-loading">We couldn’t put together your feedback just now. Please try again.</div>`;
-        return;
-      }
-      renderFeedback(await r.json());
-    } catch (e) {
-      $('feedbackContent').innerHTML = `<div class="debrief-loading">Something went wrong while preparing your feedback. Please try again.</div>`;
-    }
-  }
-
-  function renderFeedback(d) {
-    // Use the shared top-level esc (escapes quotes, coerces non-strings safely).
-    const ov = d.overall || {};
-    const skill = d.skill || 'this skill';
-    let html = `
-      <div class="fb-intro">Your relational-fluency feedback for <b>${esc(skill)}</b>, keeping a tense room feeling safe to speak. You're scored 1 to 5 on each part of the skill, based on what you actually said and did.</div>
-      <div class="fb-hero">
-        <div class="score-ring ${scoreClass(ov.score)}">${ov.score != null ? esc(String(ov.score)) : '–'}<small>/5</small></div>
-        <div class="summary">${esc(ov.summary)}</div>
-      </div>`;
-    (d.dimensions || []).forEach(dim => {
-      const ev = (dim.evidence && dim.evidence[0]) ? `<div class="ev">&ldquo;${esc(dim.evidence[0])}&rdquo;</div>` : '';
-      html += `
-        <div class="fb-dim">
-          <div class="head">
-            <span class="dim-name">${esc(dim.label)}</span>
-            <span class="dim-score ${scoreClass(dim.score)}">${dim.score != null ? esc(String(dim.score)) : '–'} / 5</span>
-          </div>
-          <p class="rationale">${esc(dim.rationale)}</p>
-          ${ev}
-        </div>`;
-    });
-    const list = (arr) => (arr && arr.length)
-      ? '<ul>' + arr.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>'
-      : '<p class="rationale" style="color:var(--muted)">Nothing noted for this attempt.</p>';
-    html += `
-      <div class="fb-cols">
-        <div class="fb-col well"><h4>What you did well</h4>${list(ov.strengths)}</div>
-        <div class="fb-col improve"><h4>Ways to improve</h4>${list(ov.growth_edges)}</div>
-      </div>`;
-    $('feedbackContent').innerHTML = html;
-  }
-
-  $('toFeedback').addEventListener('click', () => { if (feedbackSid) showFeedback(feedbackSid); });
-  $('feedbackClose').addEventListener('click', () => { $('feedbackOverlay').style.display = 'none'; });
-  $('feedbackRetry').addEventListener('click', () => {
-    $('feedbackOverlay').style.display = 'none';
-    $('debriefOverlay').style.display = 'none';
-    $('transcript').innerHTML = '';   // clear for a fresh attempt; press Start to go again
-  });
-
 
   async function loadBrief() {
     try {

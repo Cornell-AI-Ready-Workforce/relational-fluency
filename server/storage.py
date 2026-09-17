@@ -183,7 +183,7 @@ def init_storage() -> None:
 
       * an import must not mint storage. `import server.app` used to create
         DATA_DIR, sessions/, participants/ and index.db as a side effect, so the
-        offline tools (verify_record, scoring, retranscribe), every pytest
+        offline tools (verify_record, retranscribe), every pytest
         process and the CI matrix's `python -c "import server.app"` each left a
         schema-only data directory behind them, and an import on a read-only
         filesystem raised before anything had asked for anything.

@@ -375,7 +375,7 @@ def _copresent_names(spec: dict, key: str) -> List[str]:
 # has not been annotated, the ones a word-overlap guess reads as restating an
 # `assets` entry.
 #
-# The redaction is for the actors. The debrief judge and the steering controller
+# The redaction is for the actors. The steering controller
 # reason ABOUT the encounter rather than perform in it, and the leverage the
 # encounter is built around is exactly what they have to see, so they read
 # `analysis_scene` instead: the same retelling with nothing removed.
@@ -578,7 +578,7 @@ def _analysis_scene(spec: dict) -> str:
     """The scene as the analysers need it: third person, nothing redacted.
 
     `_actor_scene` hides the participant's leverage because an actor who knows
-    it cannot play the encounter honestly. The debrief judge rating felt_heard
+    it cannot play the encounter honestly. A judge rating felt_heard
     and stance_shift, and the steering controller deciding which persona gear to
     shift, are in the opposite position: for S2A and S2B the competing offer and
     the Rivera precedent are the whole point of the encounter, and a judge that

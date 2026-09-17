@@ -137,7 +137,7 @@ from . import video as _video
 # Both used to run on import. That made `import server.app` do an httpx GET to
 # the gateway, two S3 calls and a put_object into the study bucket, which is
 # wrong three times over. It is slow (a black-holed S3 path costs ~6 s per call
-# and the gateway probe another 10 s) on a module that verify_record, scoring,
+# and the gateway probe another 10 s) on a module that verify_record and
 # retranscribe and every pytest process import. It fails, noisily and for no
 # reason, wherever there are no credentials — which is every offline tool run.
 # And it PUT an object into an IRB bucket as a side effect of running a report:
@@ -291,7 +291,7 @@ def _refuse_unprotected_public_start() -> Optional[str]:
     A non-loopback bind plus either a public hostname or an empty (= anything)
     allowlist is a deployment somebody else can reach. Returning a string rather
     than raising keeps a plain import side-effect-free, which the offline tools
-    (verify_record, scoring, retranscribe) and the test suite depend on; the
+    (verify_record, retranscribe) and the test suite depend on; the
     startup hook below is what actually refuses. The preflights are held to the
     same rule and for the same reason — see run_preflights: an import decides
     nothing, contacts nothing and writes nothing.
@@ -2612,108 +2612,6 @@ async def api_session_zip(session_id: str, key: Optional[str] = Query(None)):
     )
 
 
-@app.get("/api/sessions/{session_id}/score")
-async def api_get_score(session_id: str, key: Optional[str] = Query(None)):
-    """Return the cached relational-fluency score for a session, if scored."""
-    check_key(key)
-    _session_dir(session_id)  # validates id / existence
-    from .scoring import load_cached_score
-    score = load_cached_score(session_id)
-    if score is None:
-        raise HTTPException(404, "not scored yet")
-    return score
-
-
-@app.post("/api/sessions/{session_id}/score")
-async def api_post_score(
-    session_id: str,
-    force: bool = Query(False),
-    model: Optional[str] = Query(None),
-    participant_id: Optional[str] = Query(None),
-    key: Optional[str] = Query(None),
-):
-    """Run (or re-run with force=1) the offline scorer. Blocking Claude call,
-    so it runs in a threadpool to keep the event loop free."""
-    # The /v2 feedback overlay lets a participant score their OWN session
-    # (keyless in production), so gate on ownership-or-key: this is a paid Claude
-    # call and must not be triggerable against arbitrary session ids.
-    sdir = _session_dir(session_id)
-    _require_owner_or_key(sdir, participant_id, key)
-    # A paid gateway call and a feedback artefact dated after they stopped. The
-    # smallest of the eight exits the withdrawal had, closed at the same seam as
-    # the other seven so it cannot drift away from them. See _refuse_if_withdrawn.
-    _refuse_if_withdrawn(_session_owner(sdir) or participant_id, key,
-                         action="scoring")
-    from starlette.concurrency import run_in_threadpool
-    from .scoring import TranscriptError, score_session
-    try:
-        return await run_in_threadpool(
-            score_session, session_id, force=force, model=model
-        )
-    except TranscriptError as e:
-        # Redacted like the 500 below: this one quotes the judge's own reply
-        # back ("judge did not return valid JSON; got: ..."), and a gateway that
-        # answers an auth failure with a body naming the key it was sent puts
-        # that key in the quoted text.
-        raise HTTPException(422, redact_key(str(e)))
-    except Exception as e:
-        # A participant scores their own session from the /v2 feedback overlay,
-        # so this body goes to a recruited member of the public. The scorer's
-        # first act is a call to the model gateway, and both credential-carrying
-        # exception shapes (see redact_key) arrive here as `e`.
-        raise HTTPException(
-            500, redact_key(f"scoring failed: {type(e).__name__}: {e}")
-        )
-
-
-@app.get("/api/sessions/{session_id}/debrief")
-async def api_get_debrief(session_id: str, key: Optional[str] = Query(None)):
-    """Return the cached per-persona debrief for a group session, if generated."""
-    check_key(key)
-    _session_dir(session_id)
-    from .debrief import load_cached_debrief
-    debrief = load_cached_debrief(session_id)
-    if debrief is None:
-        raise HTTPException(404, "not debriefed yet")
-    return debrief
-
-
-@app.post("/api/sessions/{session_id}/debrief")
-async def api_post_debrief(
-    session_id: str,
-    force: bool = Query(False),
-    model: Optional[str] = Query(None),
-    participant_id: Optional[str] = Query(None),
-    key: Optional[str] = Query(None),
-):
-    """Run (or re-run with force=1) the per-persona debrief. Blocking Claude
-    call, so it runs in a threadpool to keep the event loop free."""
-    # Participant-invoked from the /v2 debrief overlay (keyless in production);
-    # gate on ownership-or-key like the scorer so this paid call can't be run
-    # against arbitrary sessions.
-    sdir = _session_dir(session_id)
-    _require_owner_or_key(sdir, participant_id, key)
-    # The neighbour the reported list did not name: same shape, same cost, same
-    # question. Asked through the one helper for exactly that reason.
-    _refuse_if_withdrawn(_session_owner(sdir) or participant_id, key,
-                         action="debriefing")
-    from starlette.concurrency import run_in_threadpool
-    from .debrief import generate_debrief
-    from .scoring import TranscriptError
-    try:
-        return await run_in_threadpool(
-            generate_debrief, session_id, force=force, model=model
-        )
-    except TranscriptError as e:
-        raise HTTPException(422, redact_key(str(e)))
-    except Exception as e:
-        # Same sink as the scorer: participant-invoked from the /v2 debrief
-        # overlay, and the debrief's first act is a gateway call.
-        raise HTTPException(
-            500, redact_key(f"debrief failed: {type(e).__name__}: {e}")
-        )
-
-
 @app.get("/api/consent")
 async def api_get_consent(key: Optional[str] = None):
     check_participant(key)
@@ -3458,7 +3356,7 @@ def api_video_uploaded(session_id: str, participant_id: Optional[str] = None,
 #
 # An unusable value warns and falls back rather than raising. This is module
 # level, and this module's rule is that an import decides nothing and breaks
-# nothing: verify_record, scoring, retranscribe and every pytest process import
+# nothing: verify_record, retranscribe and every pytest process import
 # it, and a stray MAX_VIDEO_UPLOAD_BYTES=512MB would otherwise stop all of them
 # with a ValueError naming nothing anyone would connect to a webcam upload.
 _DEFAULT_VIDEO_UPLOAD_BYTES = 512 * 1024 * 1024
@@ -4369,7 +4267,7 @@ def _run_context(participant_id: Optional[str], run_id: Optional[str] = None) ->
     participant key on its own manifest, the only link from a session back to
     its run was the entry the browser POSTs to /api/run/{id}/advance, so an
     encounter whose client never reported back was orphaned, and no offline tool
-    (verify_record, scoring, retranscribe) could tell internal test traffic from
+    (verify_record, retranscribe) could tell internal test traffic from
     study data.
 
     The socket carries the participant *record* id, so the run is looked up from
@@ -5996,7 +5894,7 @@ if __name__ == "__main__":
 
     # Refuse to serve a public hostname with no researcher credential. Checked
     # here rather than at import so pytest and the offline tools (verify_record,
-    # scoring, retranscribe) can still load this module on a laptop with no
+    # retranscribe) can still load this module on a laptop with no
     # SESSION_KEY set; `python -m server.app` is how the container starts, so
     # this is the door.
     _refusal = _refuse_unprotected_public_start()

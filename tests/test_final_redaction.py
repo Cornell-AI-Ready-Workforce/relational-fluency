@@ -169,7 +169,7 @@ def test_a_credential_in_any_of_these_variables_is_redacted(clean_env, monkeypat
                                                             var, value):
     """The gateway key is not the only live credential in this process.
 
-    The realtime bridge signs S3 URLs and the debrief CLI reads a second
+    The realtime bridge signs S3 URLs and the offline CLIs read a second
     provider variable, and all of them end up in the same error strings.
     """
     monkeypatch.setenv(var, value)

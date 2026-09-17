@@ -31,8 +31,6 @@ transcript, and video.
   scenarios run rooms with several characters — required for S3 (three team
   members) and S4 (four-person group task).
 - **Encounter UI.** `static/v2.html` is the Zoom-style participant view.
-- **Scoring/debrief scaffolding.** `server/rubrics.py`, `scoring.py`,
-  `debrief.py` are the seed of the Phase 3 scorer.
 
 ## Gaps, in dependency order
 

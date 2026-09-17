@@ -262,33 +262,6 @@
               border: 1px solid var(--line-soft); border-radius: 7px;
               padding: 6px 9px; margin: 0 0 10px; }
   .keystrip[hidden] { display: none !important; }
-  .score { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
-  .score-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px;
-                padding:10px 12px; background:var(--surface); border:1px solid var(--line-soft);
-                border-radius:8px; border-left:3px solid var(--accent); }
-  .score-head .construct { font-weight:600; font-size:13px; }
-  .score-head .overall { font-size:20px; font-weight:700; color:var(--accent);
-                         font-variant-numeric:tabular-nums; white-space:nowrap; }
-  .score-summary { font-size:12px; color:var(--fg); line-height:1.5; padding:2px; }
-  .score-sub { font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted);
-               margin:12px 0 5px; font-weight:600; }
-  .dim { margin:9px 0; }
-  .dim-label { display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px; }
-  .dim-label .s { color:var(--muted); font-variant-numeric:tabular-nums; }
-  .dim-bar { height:6px; background:var(--surface-2); border-radius:3px; overflow:hidden; }
-  .dim-bar > span { display:block; height:100%; background:var(--accent); }
-  .dim-rationale { font-size:11px; color:var(--muted); line-height:1.45; margin-top:4px; }
-  .dim-quote { font-size:11px; color:var(--muted); font-style:italic;
-               border-left:2px solid var(--line); padding-left:6px; margin-top:3px; }
-  .behaviors { display:flex; flex-wrap:wrap; gap:5px; margin-top:4px; }
-  .bchip { font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--line-soft);
-           background:var(--surface); color:var(--muted); }
-  .bchip.pos { border-color:#3a7d44; color:#2f6b39; }
-  .bchip.neg { border-color:var(--accent); color:var(--accent-deep); }
-  .bchip .ct { font-variant-numeric:tabular-nums; opacity:0.8; }
-  .score-list { margin:5px 0 0; padding-left:18px; font-size:12px; line-height:1.5; color:var(--fg); }
-  .score-list li { margin:2px 0; }
-  .score-meta { font-size:10px; color:var(--muted); font-family:ui-monospace,Menlo,monospace; margin-top:10px; }
 </style>
 </head>
 <body>
@@ -317,22 +290,6 @@
         <button id="refreshFiles" class="secondary" title="Refresh file list">↻ files</button>
       </div>
       <div class="files" id="fileList"><div class="files-empty">No session selected.</div></div>
-    </div>
-
-    <!-- Relational fluency score panel. Hidden for now: flip SHOW_SCORE to
-         true in the script below to bring it back. The scoring backend
-         (server/scoring.py, server/rubrics.py, /api/sessions/{id}/score)
-         stays fully functional either way, including the CLI:
-         python -m server.scoring <session_id> -->
-    <div id="scoreSection" style="display:none">
-      <h2>Relational fluency score</h2>
-      <div class="score" id="scorePanel">
-        <div class="dataset-row">
-          <button id="scoreBtn">Score session</button>
-          <button id="rescoreBtn" class="secondary" title="Re-run the judge from scratch">↻ re-score</button>
-        </div>
-        <div id="scoreBody"><div class="files-empty">No session selected.</div></div>
-      </div>
     </div>
 
     <h2>Transcript</h2>
@@ -766,93 +723,6 @@
   const esc = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-  function renderScore(d) {
-    if (!d) {
-      $('scoreBody').innerHTML = '<div class="files-empty">Not scored yet. Click "Score session" to run the judge.</div>';
-      return;
-    }
-    const ov = d.overall || {};
-    const dims = (d.dimensions || []).map(dim => {
-      const pct = dim.score ? (dim.score / 5 * 100) : 0;
-      const quotes = (dim.evidence || []).slice(0, 2)
-        .map(q => `<div class="dim-quote">&ldquo;${esc(q)}&rdquo;</div>`).join('');
-      return `<div class="dim">
-        <div class="dim-label"><span>${esc(dim.label)}</span><span class="s">${dim.score == null ? '–' : dim.score}/5</span></div>
-        <div class="dim-bar"><span style="width:${pct}%"></span></div>
-        <div class="dim-rationale">${esc(dim.rationale)}</div>${quotes}
-      </div>`;
-    }).join('');
-
-    const rates = d.behavior_rates || {};
-    const chips = Object.keys(rates).filter(k => rates[k].count > 0)
-      .sort((a, b) => rates[b].count - rates[a].count)
-      .map(k => {
-        const b = rates[k];
-        const cls = b.polarity === '+' ? 'pos' : 'neg';
-        return `<span class="bchip ${cls}">${esc(b.label)} <span class="ct">×${b.count}</span></span>`;
-      }).join('');
-
-    const list = (arr) => (arr && arr.length)
-      ? `<ul class="score-list">${arr.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
-    const when = d.scored_at ? new Date(d.scored_at * 1000).toLocaleString() : '';
-
-    $('scoreBody').innerHTML = `
-      <div class="score-head">
-        <span class="construct">${esc(d.construct_name)}</span>
-        <span class="overall">${ov.score == null ? '–' : ov.score}<span style="font-size:12px;color:var(--muted)">/5</span></span>
-      </div>
-      <div class="score-summary">${esc(ov.summary)}</div>
-      <div class="score-sub">Dimensions</div>${dims}
-      ${chips ? `<div class="score-sub">Behaviors observed</div><div class="behaviors">${chips}</div>` : ''}
-      ${ov.strengths && ov.strengths.length ? `<div class="score-sub">Strengths</div>${list(ov.strengths)}` : ''}
-      ${ov.growth_edges && ov.growth_edges.length ? `<div class="score-sub">Growth edges</div>${list(ov.growth_edges)}` : ''}
-      <div class="score-meta">judge ${esc(d.judge_model)} · ${d.n_user_turns} turns${when ? ' · ' + esc(when) : ''}</div>
-    `;
-  }
-
-  // Score panel visibility switch. The judge, endpoints, and CLI keep working
-  // regardless; this only controls the researcher UI.
-  const SHOW_SCORE = false;
-  if (SHOW_SCORE) $('scoreSection').style.display = 'block';
-
-  async function refreshScore(sessionId) {
-    if (!SHOW_SCORE) return;
-    if (!sessionId) { renderScore(null); return; }
-    try {
-      const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/score${keyParamFirst}`);
-      if (r.status === 404) { renderScore(null); return; }
-      if (!r.ok) { $('scoreBody').innerHTML = `<div class="files-empty">Could not load score (HTTP ${r.status}).</div>`; return; }
-      renderScore(await r.json());
-    } catch (e) {
-      $('scoreBody').innerHTML = `<div class="files-empty">Error: ${esc(e.message)}</div>`;
-    }
-  }
-
-  async function runScore(force) {
-    if (!SHOW_SCORE || !currentSessionId) return;
-    const btn = $('scoreBtn'), reBtn = $('rescoreBtn');
-    btn.disabled = true; reBtn.disabled = true;
-    $('scoreBody').innerHTML = '<div class="files-empty">Scoring… the judge is reading the transcript (this can take ~20-40s).</div>';
-    try {
-      const q = force ? '?force=1' : '';
-      const sep = q ? '&' : '?';
-      const url = `/api/sessions/${encodeURIComponent(currentSessionId)}/score${q}${key ? sep + 'key=' + encodeURIComponent(key) : ''}`;
-      const r = await fetch(url, { method: 'POST' });
-      if (!r.ok) {
-        let msg = `HTTP ${r.status}`;
-        try { msg = (await r.json()).detail || msg; } catch {}
-        $('scoreBody').innerHTML = `<div class="files-empty">Scoring failed: ${esc(msg)}</div>`;
-        return;
-      }
-      renderScore(await r.json());
-      refreshFiles();  // score.json is now a downloadable artifact
-    } catch (e) {
-      $('scoreBody').innerHTML = `<div class="files-empty">Error: ${esc(e.message)}</div>`;
-    } finally {
-      btn.disabled = false; reBtn.disabled = false;
-    }
-  }
-
   // ---------- launch: configure gears first, then start ----------
   const LAUNCH_MODEL_OPTIONS = [
     ['nto.gemini-2.5-flash', 'Gemini 2.5 Flash'],
@@ -1275,7 +1145,6 @@
     const meta = sessionsCache.find(s => s.id === sessionId);
     currentSessionStatus = meta ? meta.status : null;
     refreshFiles();
-    refreshScore(sessionId);
     if (currentSessionStatus !== 'active') {
       // Closed session: show transcript snapshot from events.jsonl if we can,
       // but no WebSocket and no steering.
@@ -1562,8 +1431,6 @@
     ws.send(JSON.stringify({ type: 'set_auto_steering', enabled: !state.auto_steering }));
   });
   $('refreshFiles').addEventListener('click', refreshFiles);
-  $('scoreBtn').addEventListener('click', () => runScore(false));
-  $('rescoreBtn').addEventListener('click', () => runScore(true));
   $('downloadZip').addEventListener('click', () => {
     if (!currentSessionId) return;
     window.location.href = `/api/sessions/${encodeURIComponent(currentSessionId)}/download.zip${keyParamFirst}`;

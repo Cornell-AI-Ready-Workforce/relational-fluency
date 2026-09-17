@@ -179,7 +179,7 @@ def test_declared_private_setup_leaves_the_actor_scene(v3, sid, caplog):
         assert core not in sc.scene.lower(), (
             f"{sid}: {entry!r} reached the actor scene"
         )
-    # The debrief judge and the steering controller need the leverage; only the
+    # The steering controller needs the leverage; only the
     # actors lose it. This is the half a blunt "strip the assets" fix breaks.
     assert "competing offer" in sc.analysis_scene.lower() or "rivera" in sc.analysis_scene.lower()
 

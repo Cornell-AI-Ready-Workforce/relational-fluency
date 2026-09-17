@@ -61,10 +61,9 @@ out — an actor who knows it cannot play the encounter honestly.
 
 None of the three is required and none is validated, so a spec loads and compiles
 without them; today none of the twelve defines `actor_setup`. Note also that
-authoring one changes only what the *actors* see. The debrief judge and the
-steering controller read the unredacted retelling of `setup` instead, because
-they reason about the encounter rather than perform in it, and the leverage is
-exactly what they need in order to score it.
+authoring one changes only what the *actors* see. The steering controller
+reads the unredacted retelling of `setup` instead, because it reasons about the
+encounter rather than performing in it, and the leverage is what it needs.
 
 **Silence is data, not a gap.** Each encounter is two interactions with an
 ordered set of planted triggers, each tied to specific ESCI items. *If the

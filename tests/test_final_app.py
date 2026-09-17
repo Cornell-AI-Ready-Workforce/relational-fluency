@@ -258,45 +258,6 @@ def test_a_gateway_401_echoing_the_key_does_not_reach_the_text_socket(
     assert "<redacted>" in logged[0]["message"]
 
 
-@pytest.mark.parametrize("route,label", [
-    ("api_post_score", "scoring failed"),
-    ("api_post_debrief", "debrief failed"),
-])
-def test_the_500_a_participant_can_provoke_does_not_carry_the_key(
-        route, label, tmp_path, monkeypatch, live_key):
-    """/score and /debrief are invoked by the participant's own feedback overlay.
-
-    Both call the model gateway as their first act, so the credential-carrying
-    exception arrives as the `e` this route interpolates into an HTTP 500 body.
-    """
-    monkeypatch.setitem(llm._FILE, "LITELLM_API_KEY", FLAT_KEY)
-    failure = _anthropic_401_echoing_the_key(FLAT_KEY)
-
-    sessions = tmp_path / "sessions"
-    sid = "s_1772460300_44c9a2"
-    (sessions / sid).mkdir(parents=True)
-    monkeypatch.setattr(appmod, "SESSIONS_DIR", sessions)
-    monkeypatch.setattr(appmod, "SESSION_KEY", "")
-
-    from server import debrief, scoring
-
-    def boom(*a, **k):
-        raise failure
-
-    monkeypatch.setattr(scoring, "score_session", boom)
-    monkeypatch.setattr(debrief, "generate_debrief", boom)
-
-    with pytest.raises(HTTPException) as caught:
-        asyncio.run(getattr(appmod, route)(
-            sid, force=False, model=None, participant_id=None, key=None,
-        ))
-
-    assert caught.value.status_code == 500
-    assert label in caught.value.detail
-    assert not _leaks(caught.value.detail, FLAT_KEY)
-    assert "<redacted>" in caught.value.detail
-
-
 # The AWS documentation's own example secret, which is the shape a real one has:
 # 40 characters of base64 alphabet and no vendor prefix to recognise it by.
 AWS_SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
