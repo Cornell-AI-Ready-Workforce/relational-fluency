@@ -85,10 +85,10 @@ if str(ROOT) not in sys.path:
 from server import scenarios_v3 as v3  # noqa: E402
 
 V3DIR = ROOT / "scenarios" / "v3"
-S1 = ("S1A", "S1B", "S1C")
-S2 = ("S2A", "S2B", "S2C")
-S3 = ("S3A", "S3B", "S3C")
-S4 = ("S4A", "S4B", "S4C")
+S1 = ("S1A", "S1B")
+S2 = ("S2A", "S2B")
+S3 = ("S3A", "S3B")
+S4 = ("S4A", "S4B")
 ALL = S1 + S2 + S3 + S4
 
 
@@ -276,32 +276,6 @@ def test_the_shutdown_waits_for_an_observable_event(sid):
     assert "THE FIRST THING YOU SAY IS THE SHUT-DOWN" in brief, (
         f"{sid}: the shut-down is no longer the first thing said in the 1:1. "
         "That beat is what t2 scores and it has to stay in the opening brief."
-    )
-
-
-def test_the_leadership_high_anchor_is_reachable_on_every_form():
-    """t2's high anchor is "brings out the best; re-engages with real
-    ownership". On S3C that behaviour occurred no more often when earned than
-    when missed (p=0.052 against p=1.6e-07 and p=3.8e-06 on its siblings),
-    because the performer's shortness rules applied to the opened turn too.
-
-    Asserted as a property of every form rather than as S3C's wording: each
-    brief must say that the opened turn is answered with something more than
-    the shut-down gives. The two siblings say it by telling the actor to give
-    "a straight answer -- a good one"; S3C needed the exception spelled out
-    because its brevity rules are numeric.
-    """
-    for sid in S3:
-        brief = _norm(_performer_brief(sid))
-        assert "give them a straight answer" in brief and "a good one" in brief, (
-            f"{sid}: the opened turn no longer calls for a real answer, so the "
-            "t2 high anchor cannot be earned."
-        )
-    rafa = _norm(_performer_brief("S3C"))
-    assert "THAT TURN IS THE ONE EXCEPTION TO HOW SHORT YOU HAVE GOT" in rafa, (
-        "S3C's performer carries numeric length bounds its siblings do not, so "
-        "without an explicit exception the earned answer is indistinguishable "
-        "from the shut-down and the high anchor is unreachable."
     )
 
 

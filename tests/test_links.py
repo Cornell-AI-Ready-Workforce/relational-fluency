@@ -183,8 +183,8 @@ def test_a_second_attempt_never_flips_into_the_pairing_the_first_one_avoided(run
         assert teamwork & set(ids), (ids, sorted(teamwork))
         assert "S1A" not in ids, (seed, _ids(first), ids)
         # And it is a real flip, not a repeat of attempt 1's conflict form.
-        assert (set(_ids(first)) & {"S1A", "S1B", "S1C"}
-                != set(ids) & {"S1A", "S1B", "S1C"}), (seed, _ids(first), ids)
+        assert (set(_ids(first)) & {"S1A", "S1B"}
+                != set(ids) & {"S1A", "S1B"}), (seed, _ids(first), ids)
 
 
 @pytest.mark.usefixtures("per_slot_draw")
@@ -195,30 +195,6 @@ def test_the_cross_construct_exclusion_still_holds_on_a_full_run(runs_mod):
         ids = _ids(runs_mod.create(f"P_X{seed}", seed=seed))
         if any(i.startswith("S4") for i in ids):
             assert "S1A" not in ids, (seed, ids)
-
-
-@pytest.mark.usefixtures("per_slot_draw")
-def test_the_unrestricted_arm_now_has_a_conflict_management_contrast(runs_mod):
-    """What S1 C was written for, stated as the fact it is.
-
-    FORM_EXCLUSIONS bars S1 A from any run containing Teamwork and every full
-    run contains Teamwork, so before S1 C existed the unrestricted arm served
-    exactly one Conflict Management form — S1 B, to every participant. A
-    construct measured on one form in the arm that carries the whole study has
-    no A/B contrast at all: no form effect can be estimated and no participant
-    can be given an unseen form on a second attempt.
-    """
-    seen = {}
-    for seed in range(200):
-        for sid in set(_ids(runs_mod.create(f"P_CTR{seed}", seed=seed))):
-            if sid.startswith("S1"):
-                seen[sid] = seen.get(sid, 0) + 1
-    assert set(seen) == {"S1B", "S1C"}, seen
-    # Both forms reach a usable share. The split is uneven and that is the
-    # exclusion pass showing through, not a bug: a draw that lands on S1 A is
-    # corrected to the first permitted form, which is S1 B, so S1 B collects
-    # both its own draws and the corrected ones.
-    assert min(seen.values()) >= 40, seen
 
 
 # --- 2. three routes, all Qualtrics-shaped -----------------------------------

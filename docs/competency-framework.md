@@ -77,11 +77,9 @@ Assignment rule: S4 always involves misattributed credit, so S1 runs as Variatio
 C in the same session (avoids construct bleed between Conflict Management and Teamwork).
 
 The table above is the IRB overview's wording. As **compiled** in `scenarios/v3/`
-(twelve forms, all three per construct), the C forms are: S1C *Blamed in front of
-the manager*, S2C *Stopping the Monday pack* (the participant asks to stop a weekly
-report, not for resources), S3C *A system nobody asked for*, S4C *Writing up the
-outage*. The compiled bank is the source of truth for what a participant meets;
-`docs/scenario-map.md` is generated from it.
+the bank holds forms A and B of each construct (the C forms were retired in
+2026-09 for Study 1, which fields form A only). The compiled bank is the source of
+truth for what a participant meets; `docs/scenario-map.md` is generated from it.
 
 Instead of separate empathy/org-awareness cue lists, each scenario defines 4–5
 **pressure points** — pre-defined moments the AI steers toward, each mapped to the

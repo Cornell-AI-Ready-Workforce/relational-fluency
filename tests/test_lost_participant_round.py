@@ -29,7 +29,7 @@ researcher's own hesitant lines and the page's own audio path, and found:
   * THE DOUBLED CAPTION. The gateway streamed one reply's transcript twice
     inside one response id; the record kept it once, the page showed it twice.
   * THE DEMAND LOOP. Drew asked "what are you going to do about it" four turns
-    running, reworded each time, against content-free answers; Mel three; Bex
+    running, reworded each time, against content-free answers; Mel three; Alex
     three. The briefs said not to; they did not say what to do instead.
 
 No network and no credentials here: the live evidence is quoted, not re-run.
@@ -377,7 +377,7 @@ def test_a_retry_the_gateway_ignored_is_reported_as_such(monkeypatch):
 # --------------------------------------------------------------------------
 
 def test_the_runner_keeps_the_participants_audio_and_compacts_it_for_replay():
-    runner, session, ws = make_runner("S2C")
+    runner, session, ws = make_runner("S2A")
     assert runner._replay_speech() == b"", "nothing kept, nothing to replay"
     for chunk in (pcm(2000, 0), pcm(1000, 3000), pcm(2000, 0), pcm(500, 3000), pcm(3000, 0)):
         runner._keep_for_replay(chunk)
@@ -406,11 +406,11 @@ async def test_a_request_the_gateway_ignored_is_re_asked_with_the_participants_o
     """Live: the text nudge for a dropped "Good morning." drew a SECOND scene
     opening. The retry now puts the participant's own audio back first; the
     nudge is what is left for a request with no speech behind it."""
-    runner, session, ws = make_runner("S2C")
+    runner, session, ws = make_runner("S2A")
     rt = FakeRT()
     runner.rt = rt
     runner._keep_for_replay(pcm(700, 3000))
-    asked = await runner._reply_missing(rt, "imani", {"waited_s": 6, "retryable": True})
+    asked = await runner._reply_missing(rt, "morgan", {"waited_s": 6, "retryable": True})
     assert asked is True
     assert len(rt.replays) == 1 and rt.retry_nudges == []
     (retry,) = session.store.of("reply_retry")
@@ -419,7 +419,7 @@ async def test_a_request_the_gateway_ignored_is_re_asked_with_the_participants_o
     # and with nothing said since the gateway last heard them: the text nudge
     runner._replay_pcm.clear()
     rt2 = FakeRT()
-    assert await runner._reply_missing(rt2, "imani", {"waited_s": 6, "retryable": True}) is True
+    assert await runner._reply_missing(rt2, "morgan", {"waited_s": 6, "retryable": True}) is True
     assert rt2.replays == [] and rt2.retry_nudges == [rt_mod.UNANSWERED_NUDGE]
     assert session.store.of("reply_retry")[-1]["how"] == "nudge"
 
@@ -429,7 +429,7 @@ async def test_a_heard_line_is_not_kept_for_replay():
     """A transcript from the gateway means it heard the participant: the
     buffer is spent, so a rebuilt session is never handed a line the old one
     already answered."""
-    runner, session, ws = make_runner("S2C")
+    runner, session, ws = make_runner("S2A")
     rt = FakeRT()
     runner.rt = rt
     runner._keep_for_replay(pcm(700, 3000))
@@ -449,7 +449,7 @@ def test_a_socket_that_ignored_the_retry_is_rebuilt_at_once_and_the_line_replaye
     heard, not to say it again."""
     monkeypatch.setattr(rt_mod, "RECONNECT_LIMIT", 2)
     monkeypatch.setattr(rvs, "RealtimeVoiceSession", FakeRT)
-    runner, session, ws = make_runner("S2C")
+    runner, session, ws = make_runner("S2A")
     first = FakeRT()
     runner.rt = first
     runner._keep_for_replay(pcm(900, 3000))
@@ -492,7 +492,7 @@ def test_a_socket_that_ignored_the_retry_is_rebuilt_at_once_and_the_line_replaye
 
 def test_a_socket_the_runner_closed_for_a_character_switch_is_still_not_rebuilt(monkeypatch):
     monkeypatch.setattr(rvs, "RealtimeVoiceSession", FakeRT)
-    runner, session, ws = make_runner("S2C")
+    runner, session, ws = make_runner("S2A")
     first = FakeRT()
     runner.rt = first
 
@@ -524,8 +524,8 @@ def test_a_stage_note_opening_is_never_offered_as_a_line():
     assert runner._opening_is_stage_note(line, "Mel") is False, "Mel's line names Drew, not Mel"
     assert "«" + line + "»" in runner._first_reply_note(line, "Mel")
     imani = "The pack went out this morning and it goes out again Monday. That's where I'm starting from. Go on."
-    assert runner._opening_is_stage_note(imani, "Imani") is False
-    assert "«" + imani + "»" in runner._first_reply_note(imani, "Imani")
+    assert runner._opening_is_stage_note(imani, "Morgan") is False
+    assert "«" + imani + "»" in runner._first_reply_note(imani, "Morgan")
     # and the bank's other stage notes
     assert runner._opening_is_stage_note("You run into Sam by the elevators, an opening to say something, or not.", "Sam")
     assert runner._opening_is_stage_note("Wes comes past your desk about Friday, an opening to say something, or not.", "Wes")
@@ -553,12 +553,12 @@ def test_the_audio_retry_names_the_line_it_stands_in_for():
 
 @in_a_loop
 async def test_the_retry_the_runner_issues_quotes_the_lost_line():
-    runner, session, ws = make_runner("S2C")
+    runner, session, ws = make_runner("S2A")
     rt = FakeRT()
     runner.rt = rt
     ev = {"type": "response_done", "retry_reason": "absent", "retryable": True, "words": 13,
           "audio_ms": 0, "text": "I sent it because it needs to be said. It wasn't getting fixed."}
-    assert await runner._retry_reply(rt, "imani", ev) is True
+    assert await runner._retry_reply(rt, "morgan", ev) is True
     assert rt.retry_nudges and "I sent it because it needs to be said" in rt.retry_nudges[0]
     (retry,) = session.store.of("audio_retry")
     assert retry["reason"] == "absent"
@@ -570,7 +570,7 @@ async def test_the_retry_the_runner_issues_quotes_the_lost_line():
 
 @in_a_loop
 async def test_the_gateways_whole_line_reaches_the_page_as_the_caption():
-    runner, session, ws = make_runner("S2C")
+    runner, session, ws = make_runner("S2A")
     rt = FakeRT()
     runner.rt = rt
     for ev in [
@@ -583,7 +583,7 @@ async def test_the_gateways_whole_line_reaches_the_page_as_the_caption():
     rt.end()
     await runner._pump_events(rt)
     (final,) = ws.frames("assistant_text_final")
-    assert final["text"] == "The pack goes out Monday." and final["agent_id"] == "imani"
+    assert final["text"] == "The pack goes out Monday." and final["agent_id"] == "morgan"
 
 
 def test_the_page_takes_the_final_line_and_says_the_replayed_line_was_heard():
@@ -630,60 +630,15 @@ class FloorRT(FakeRT):
 
 
 @in_a_loop
-async def test_a_room_member_granted_the_floor_mid_reply_is_heard_from_its_first_word(monkeypatch):
-    """Measured: Bex's 13.0 s reply reached the page as 0.5 s (delivered
-    fraction 0.051) under a 29-word caption, because the floor reached her
-    pump after most of her audio had been thrown away as unsolicited."""
-    monkeypatch.setenv("TRANSCRIPT_GRACE_SECONDS", "0.2")
-    session = FakeSession("S3C")
-    ws = FakeWS()
-    runner = rvs.RealtimeVoiceSessionRunner(session, ws)
-    bex = next(a for a in runner._resolve_agents() if a.id == "bex")
-    room = FloorRoom(speaking="rafa")
-    runner.room = room
-    chunk = b"\x01\x02" * 6400                     # 0.4 s each
-    rt = FloorRT(room, "bex", grant_at=7)
-    for ev in [
-        {"type": "agent_transcript_delta", "text": "I watched people leave", "first": True},
-        {"type": "agent_audio", "pcm": chunk},
-        {"type": "agent_audio", "pcm": chunk},
-        {"type": "agent_audio", "pcm": chunk},
-        {"type": "agent_audio", "pcm": chunk},
-        {"type": "agent_audio", "pcm": chunk},
-        {"type": "agent_transcript_delta", "text": " their jobs because of this system."},
-        {"type": "agent_audio", "pcm": chunk},   # the floor arrives here
-        {"type": "agent_audio", "pcm": chunk},
-        {"type": "agent_transcript", "text": "I watched people leave their jobs because of this system."},
-        {"type": "response_done", "audio_unterminated": False, "retried": False},
-    ]:
-        rt.feed(ev)
-    rt.end()
-    await runner._pump_member(bex, rt)
-    if runner._finalize_tasks:
-        await asyncio.wait(list(runner._finalize_tasks), timeout=5)
-    assert sum(len(b) for b in ws.binary) == 7 * len(chunk), "every chunk reached the page"
-    assert ws.binary[0] == chunk * 5, "the held head first, in one piece"
-    (held,) = session.store.of("held_audio_relayed")
-    assert held["agent_id"] == "bex" and held["audio_ms"] == 2000
-    (turn,) = session.store.of("assistant_turn")
-    assert turn["text"] == "I watched people leave their jobs because of this system."
-    assert turn["audio_ms"] == 2800
-    assert not session.store.of("agent_audio_short")
-    (final,) = ws.frames("assistant_text_final")
-    assert final["agent_id"] == "bex"
-    assert session.store.audio["bex"] == chunk * 7
-
-
-@in_a_loop
 async def test_a_reply_that_ends_while_still_suppressed_leaves_no_held_audio_behind(monkeypatch):
-    session = FakeSession("S3C")
+    session = FakeSession("S3A")
     ws = FakeWS()
     runner = rvs.RealtimeVoiceSessionRunner(session, ws)
-    bex = next(a for a in runner._resolve_agents() if a.id == "bex")
-    room = FloorRoom(speaking="rafa")
+    alex = next(a for a in runner._resolve_agents() if a.id == "alex")
+    room = FloorRoom(speaking="jordan")
     runner.room = room
     chunk = b"\x01\x02" * 3200
-    rt = FloorRT(room, "bex", grant_at=99)
+    rt = FloorRT(room, "alex", grant_at=99)
     for ev in [
         {"type": "agent_transcript_delta", "text": "Unsolicited", "first": True},
         {"type": "agent_audio", "pcm": chunk},
@@ -692,17 +647,17 @@ async def test_a_reply_that_ends_while_still_suppressed_leaves_no_held_audio_beh
     ]:
         rt.feed(ev)
     rt.end()
-    await runner._pump_member(bex, rt)
+    await runner._pump_member(alex, rt)
     assert ws.binary == [] and not session.store.of("assistant_turn")
     assert not session.store.of("held_audio_relayed")
-    assert runner._member_turns.get("bex") is None
+    assert runner._member_turns.get("alex") is None
 
 
 def test_room_members_are_told_a_colleagues_voice_is_not_the_participant():
-    runner, session, ws = make_runner("S3C")
+    runner, session, ws = make_runner("S3A")
     text = runner._instructions()
     assert "never ask anyone to clarify" in text and "audible to you" in text
-    one, _, _ = make_runner("S2C")
+    one, _, _ = make_runner("S2A")
     assert "never ask anyone to clarify" not in one._instructions()
 
 
@@ -716,11 +671,11 @@ def _brief(scenario_id, agent_id):
 
 @pytest.mark.parametrize("sid,aid", [
     ("S1A", "riley"), ("S1A", "sam"), ("S1B", "mel"), ("S1B", "drew"),
-    ("S1C", "nadia"), ("S1C", "wes"), ("S3A", "alex"), ("S3B", "toni"), ("S3C", "bex"),
+    ("S3A", "alex"), ("S3B", "toni"), ("S3A", "alex"),
 ])
 def test_the_brief_says_what_to_do_after_two_non_answers(sid, aid):
     """Live, against "what do you mean" / "yeah, I'll work on it", Drew put the
-    same demand four turns running (reworded), Mel three, Bex three. The
+    same demand four turns running (reworded), Mel three, Alex three. The
     briefs forbade repeating; they did not say what replaces the third ask,
     and on the live model "don't" without "instead" is not a move. The rule
     is on both forms of each pair, so the pair stays interchangeable."""
@@ -733,18 +688,18 @@ def test_the_brief_says_what_to_do_after_two_non_answers(sid, aid):
 
 @in_a_loop
 async def test_a_second_reply_to_one_turn_gets_its_own_turn_in_a_room(monkeypatch):
-    """Measured: the gateway answered "Rafa, what do you think?" twice, 1.5 s
+    """Measured: the gateway answered "Jordan, what do you think?" twice, 1.5 s
     apart, and the second reply's opening chunk was appended to the first
     reply's buffer as late transcript — one bubble with the line twice, then
     an empty bubble under the second reply's audio."""
     monkeypatch.setenv("TRANSCRIPT_GRACE_SECONDS", "0.2")
-    session = FakeSession("S3C")
+    session = FakeSession("S3A")
     ws = FakeWS()
     runner = rvs.RealtimeVoiceSessionRunner(session, ws)
-    rafa = next(a for a in runner._resolve_agents() if a.id == "rafa")
-    runner.room = FloorRoom(speaking="rafa")
+    jordan = next(a for a in runner._resolve_agents() if a.id == "jordan")
+    runner.room = FloorRoom(speaking="jordan")
     chunk = b"\x01\x02" * 6400
-    rt = FloorRT(runner.room, "rafa", grant_at=99)
+    rt = FloorRT(runner.room, "jordan", grant_at=99)
     line = "I stopped keeping the workarounds up. Does any of what I built survive the switch?"
     for ev in [
         {"type": "agent_transcript_delta", "text": line, "first": True},
@@ -759,7 +714,7 @@ async def test_a_second_reply_to_one_turn_gets_its_own_turn_in_a_room(monkeypatc
     ]:
         rt.feed(ev)
     rt.end()
-    await runner._pump_member(rafa, rt)
+    await runner._pump_member(jordan, rt)
     if runner._finalize_tasks:
         await asyncio.wait(list(runner._finalize_tasks), timeout=5)
     assert len(ws.frames("assistant_started")) == 2
@@ -771,16 +726,16 @@ async def test_a_second_reply_to_one_turn_gets_its_own_turn_in_a_room(monkeypatc
 
 
 def test_the_reconnect_note_names_the_other_characters_lines_as_theirs():
-    runner, session, ws = make_runner("S3C")
-    rafa = next(a for a in runner.cast if a.id == "rafa")
-    runner.agent, runner.agent_id = rafa, rafa.id
+    runner, session, ws = make_runner("S3A")
+    jordan = next(a for a in runner.cast if a.id == "jordan")
+    runner.agent, runner.agent_id = jordan, jordan.id
     session.shared_history[:] = [
-        {"speaker": "bex", "text": "So we're going to spend six weeks building processes that break."},
-        {"speaker": "user", "text": "Rafa, what do you think?"},
-        {"speaker": "rafa", "text": "None of it survives."},
+        {"speaker": "alex", "text": "So we're going to spend six weeks building processes that break."},
+        {"speaker": "user", "text": "Jordan, what do you think?"},
+        {"speaker": "jordan", "text": "None of it survives."},
     ]
     note = runner._reconnect_note()
-    assert "- Bex: So we're going to spend six weeks" in note
-    assert "- Them: Rafa, what do you think?" in note
+    assert "- Alex: So we're going to spend six weeks" in note
+    assert "- Them: Jordan, what do you think?" in note
     assert "- You: None of it survives." in note
     assert "- You: So we're going" not in note

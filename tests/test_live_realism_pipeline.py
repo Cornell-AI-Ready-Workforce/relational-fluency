@@ -303,7 +303,7 @@ def test_a_session_the_runner_opens_on_gemini_sends_the_window_and_a_bare_one_do
     the gpt row's `turn_detection: null` wins over any window somebody sets,
     because that null is what keeps a gpt participant's turn in one piece."""
     on_model(GEMINI)
-    runner, _, _ = make_runner("S2C")
+    runner, _, _ = make_runner("S2A")
     rt = runner._new_session(instructions="be imani", voice="Kore")
     assert rt._session_payload()["turn_detection"] == MEASURED_WINDOW
 
@@ -350,11 +350,11 @@ def test_the_runner_holds_a_turn_end_for_the_familys_window_on_gemini(on_model):
     family with a 1500 ms gateway window a 1:1 turn end is HELD for the
     remaining 600 ms of quiet. On gpt nothing is held."""
     on_model(GEMINI)
-    runner, _, _ = make_runner("S2C")
+    runner, _, _ = make_runner("S2A")
     assert runner.vad.silence_ms == 900
     assert runner._end_of_turn_confirm_ms() == 600
     on_model(GPT)
-    runner, _, _ = make_runner("S2C")
+    runner, _, _ = make_runner("S2A")
     assert runner._end_of_turn_confirm_ms() == 0
 
 
@@ -364,7 +364,7 @@ def test_a_mid_thought_pause_inside_the_window_does_not_end_the_participants_tur
     when speech resumes and ONE turn is committed, at the real end. A genuine
     2000 ms silence still ends it: end-of-turn detection is widened, not off."""
     on_model(GEMINI)
-    session = FakeSession("S2C")
+    session = FakeSession("S2A")
     ws = ScriptedWS(frames_of(HESITANT_LINE))
     runner = rvs.RealtimeVoiceSessionRunner(session, ws)
     runner.vad.noise_margin = 0     # the fixed bar; the room floor is not under test
@@ -384,7 +384,7 @@ def test_the_gpt_path_is_left_exactly_as_it_was(on_model):
     """No window on gpt, so the same line is closed by the runner's own bar
     each time it fires — the behaviour the earlier rounds measured and pinned."""
     on_model(GPT)
-    session = FakeSession("S2C")
+    session = FakeSession("S2A")
     ws = ScriptedWS(frames_of(HESITANT_LINE))
     runner = rvs.RealtimeVoiceSessionRunner(session, ws)
     runner.vad.noise_margin = 0
@@ -448,14 +448,14 @@ def test_the_first_reply_framing_is_folded_into_the_connect_brief_on_gemini(on_m
     reads is the connect brief, so that is where the framing goes — as a
     first-reply note, because in a 1:1 the participant speaks first."""
     on_model(GEMINI)
-    runner, session, _ = make_runner("S2C")
+    runner, session, _ = make_runner("S2A")
     opening = str(runner._interaction()["opening"]).strip()
     assert runner._fold_opening(runner.agent, group=False) is True
     brief = runner._instructions()
     assert opening in brief
     assert "FIRST REPLY" in brief and "never say any of this out loud" in brief
     (rec,) = session.store.of("opening_framing")
-    assert rec["via"] == "connect_brief" and rec["agent_id"] == "imani"
+    assert rec["via"] == "connect_brief" and rec["agent_id"] == "morgan"
     assert rec["honours_session_update"] is False
 
 
@@ -464,7 +464,7 @@ def test_on_a_family_that_honours_updates_the_existing_path_stays_and_is_recorde
     t1 beat's cue carries the framing through a session.update the gateway
     acknowledges. The record still says which way it went."""
     on_model(GPT)
-    runner, session, _ = make_runner("S2C")
+    runner, session, _ = make_runner("S2A")
     opening = str(runner._interaction()["opening"]).strip()
     assert runner._fold_opening(runner.agent, group=False) is False
     assert opening not in runner._instructions()
@@ -476,7 +476,7 @@ def test_run_opens_the_first_session_with_the_framing_in_its_brief(on_model, mon
     """Not just buildable: the session run() actually connects carries it."""
     on_model(GEMINI)
     monkeypatch.setattr(rvs, "RealtimeVoiceSession", FakeRT)
-    runner, session, _ = make_runner("S2C")
+    runner, session, _ = make_runner("S2A")
     opening = str(runner._interaction()["opening"]).strip()
     asyncio.run(asyncio.wait_for(runner.run(), timeout=10))
     assert FakeRT.built, "run() opened no session"
@@ -589,10 +589,10 @@ def test_the_runner_asks_once_more_with_a_prompt_and_writes_it_down(on_model):
     """The retry is a user text item the record shows — not "say it again",
     which is the wrong prompt for a character that has said nothing."""
     on_model(GEMINI)
-    runner, session, _ = make_runner("S2C")
+    runner, session, _ = make_runner("S2A")
     rt = FakeRT()
     ev = {"type": "reply_missing", "waited_s": 10, "retryable": True}
-    assert asyncio.run(runner._reply_missing(rt, "imani", ev)) is True
+    assert asyncio.run(runner._reply_missing(rt, "morgan", ev)) is True
     assert rt.retry_nudges == [rt_mod.UNANSWERED_NUDGE]
     (missing,) = session.store.of("reply_missing")
     (retry,) = session.store.of("reply_retry")
@@ -602,7 +602,7 @@ def test_the_runner_asks_once_more_with_a_prompt_and_writes_it_down(on_model):
     # And not while the participant is talking: they are about to prompt it.
     runner.vad.speaking = True
     rt2 = FakeRT()
-    assert asyncio.run(runner._reply_missing(rt2, "imani", ev)) is False
+    assert asyncio.run(runner._reply_missing(rt2, "morgan", ev)) is False
     assert rt2.retry_nudges == []
     assert session.store.of("reply_retry")[-1]["why"] == "participant_speaking"
 
@@ -669,7 +669,7 @@ def test_recoverable_gateway_faults_reach_the_page_as_notices_not_errors(on_mode
     on_model(GEMINI)
 
     async def scenario():
-        runner, session, ws = make_runner("S2C")
+        runner, session, ws = make_runner("S2A")
         rt = FakeRT()
         runner.rt = rt
         pump = asyncio.ensure_future(runner._pump(rt))
@@ -718,9 +718,9 @@ def test_a_socket_the_gateway_closes_is_rebuilt_inside_the_encounter(on_model, m
     on_model(GEMINI)
     monkeypatch.setattr(rt_mod, "RECONNECT_LIMIT", 2)
     monkeypatch.setattr(rvs, "RealtimeVoiceSession", FakeRT)
-    runner, session, ws = make_runner("S2C")
+    runner, session, ws = make_runner("S2A")
     session.shared_history[:] = [{"speaker": "user", "text": "Hello."},
-                                 {"speaker": "imani", "text": "The pack goes out Monday."}]
+                                 {"speaker": "morgan", "text": "The pack goes out Monday."}]
     first = FakeRT()
     runner.rt = first
 
@@ -757,7 +757,7 @@ def test_a_socket_the_runner_closed_itself_is_not_rebuilt(on_model, monkeypatch)
     ordinary end of the pump and must not spawn a stranger."""
     on_model(GEMINI)
     monkeypatch.setattr(rvs, "RealtimeVoiceSession", FakeRT)
-    runner, session, ws = make_runner("S2C")
+    runner, session, ws = make_runner("S2A")
     rt = FakeRT()
     runner.rt = rt
 
@@ -778,7 +778,7 @@ def test_a_socket_the_runner_closed_itself_is_not_rebuilt(on_model, monkeypatch)
 
 def test_each_participant_utterance_is_numbered_on_the_frame_the_page_gets(on_model):
     on_model(GEMINI)
-    runner, session, ws = make_runner("S2C")
+    runner, session, ws = make_runner("S2A")
 
     async def scenario():
         await runner._record_user_turn("I need more context.")
@@ -827,7 +827,7 @@ def test_the_transcribers_placeholder_is_scrubbed_and_the_gap_is_recorded(monkey
     assert out == [("Isle Do what I can.", True), ("Yeah, I'll work on it.", False), ("", True)]
 
     on_model(GEMINI)
-    runner, session, ws = make_runner("S2C")
+    runner, session, ws = make_runner("S2A")
 
     async def record():
         await runner._record_user_turn("Isle Do what I can.", garbled=True)
@@ -859,8 +859,8 @@ def test_the_manifest_of_a_voice_encounter_names_the_realtime_model(monkeypatch)
     monkeypatch.setattr(session_mod, "text_client", lambda: object())
     monkeypatch.setattr(rt_mod, "MODEL", GEMINI)
 
-    voice = session_mod.Session("S2C", capture_audio=True)
-    text = session_mod.Session("S2C", capture_audio=False)
+    voice = session_mod.Session("S2A", capture_audio=True)
+    text = session_mod.Session("S2A", capture_audio=False)
     assert built[0].kw["model"] == GEMINI, "the voice encounter's manifest names the text model"
     assert built[1].kw["model"] == text.model != GEMINI
     start = built[0].events[0]

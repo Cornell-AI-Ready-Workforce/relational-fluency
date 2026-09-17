@@ -405,9 +405,8 @@ what they think they heard.
 >
 > This is a study-design question, not an ops setting, and it is **for the PI**:
 > either Phase 1 accepts the S1A + Teamwork pairing and says so in the analysis
-> plan, or `DEFAULT_RUN_VARIANT=random` restores the per-construct draw (and
-> with it the three-forms-per-construct bank and the held-back reserve form)
-> and the exclusion starts applying again. Both mechanisms exist in the merged
+> plan, or `DEFAULT_RUN_VARIANT=random` restores the per-construct draw and
+> the exclusion starts applying again. Both mechanisms exist in the merged
 > code; the default is A.
 
 ## The base URL also forwards participants (second route in)
@@ -570,8 +569,8 @@ import json,sys; d=json.load(sys.stdin)
 print('study scenarios:', [x['id'] for x in d if x.get('study')])"
 ```
 
-Expect all twelve: `S1A S1B S1C S2A S2B S2C S3A S3B S3C S4A S4B S4C` — three
-parallel forms per construct. Fewer means the deployed image predates a form,
+Expect all eight: `S1A S1B S2A S2B S3A S3B S4A S4B` — two parallel forms per
+construct. Fewer means the deployed image predates a form,
 or a spec stopped loading (a spec missing a required key is dropped silently
 by the loader; CI's `EXPECTED_V3` is what notices).
 

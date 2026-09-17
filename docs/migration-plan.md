@@ -244,12 +244,9 @@ because it is not a documentation question.
    S3A, S4A on every study run, with the construct order counterbalanced per
    participant. This is what Phase 1 shipped with and it is what the merged
    code does out of the box.
-2. **Three forms per construct, drawn per slot.** Twelve scenarios (S1A/B/C …
-   S4A/B/C), two of each construct's three forms used and the third held back
-   as a reserve so a second attempt has material the participant has not met;
-   `FORM_EXCLUSIONS` applied to the completed draw with a digest-rotated
-   replacement (2000 seeds: 50.7 / 49.3). This is reached with
-   `DEFAULT_RUN_VARIANT=random`.
+2. **Per-construct draw across the two forms.** Eight scenarios (S1A/B … S4A/B);
+   `FORM_EXCLUSIONS` applied to the completed draw. This is reached with
+   `DEFAULT_RUN_VARIANT=random`; the B forms are reserved for a later study.
 
 `DEFAULT_RUN_VARIANT` is the switch between them and it defaults to **A**, so
 the default behaviour after this merge is design 1. Design 2 is fully present
@@ -330,19 +327,19 @@ gateway quota question in the cost estimate).
 
 ### 2. Scenarios → the four ESCI competencies
 
-Today: 13 ad-hoc scenarios (`scenarios/*.yaml`) from earlier exploration —
-`missed_deadlines`, `credit_taken`, `hidden_profile_vendor`, etc.
+Previously: 13 ad-hoc scenarios (`scenarios/*.yaml`) from earlier exploration,
+removed 2026-09.
 
-Target: exactly four constructs, three parallel forms each, from
-`reddit-analysis/scenarios/S{1..4}-*.yaml`. **Done — twelve forms are
+Target: exactly four constructs, parallel forms each, from
+`reddit-analysis/scenarios/S{1..4}-*.yaml`. **Done — eight forms (A and B) are
 compiled into `scenarios/v3/`:**
 
-| | Competency | Form A | Form B | Form C |
-|---|---|---|---|---|
-| S1 | Conflict Management | Taken credit (barred beside S4, see below) | Hostile after-hours message | Blamed in front of the manager |
-| S2 | Influence | Promised raise + competing offer | Hybrid under an RTO mandate | Stopping the Monday pack |
-| S3 | Inspirational Leadership | After resignations over pay | After a commission cut | A system nobody asked for |
-| S4 | Teamwork | Planning an internal rollout | Preparing a client presentation | Writing up the outage |
+| | Competency | Form A | Form B |
+|---|---|---|---|
+| S1 | Conflict Management | Taken credit (barred beside S4, see below) | Hostile after-hours message |
+| S2 | Influence | Promised raise + competing offer | Hybrid under an RTO mandate |
+| S3 | Inspirational Leadership | After resignations over pay | After a commission cut |
+| S4 | Teamwork | Planning an internal rollout | Preparing a client presentation |
 
 **S1-A is not assignable beside S4.** Every full session contains S4 and S4
 always involves misattributed credit, which is also S1-A's situation; running
@@ -353,26 +350,23 @@ therefore requires S1 B or C in any session containing S4. The grounding data
 agrees: `reddit-analysis/situation-taxonomy.md` §3 calls blame/public
 humiliation (1,631 posts) "the best-attested S1 trigger — supporting the
 assignment rule that prefers S1-C (with S1-B) over S1-A", against 77 for credit
-misattribution. S1C is that form, compiled.
+misattribution.
 
 Done: the rule is machine-readable and enforced. `server/runs.py` still draws
 each construct's form independently — the draw cannot see the run as a whole —
 but `FORM_EXCLUSIONS`, a construct → forbidden-form → co-occurring-construct
 table, is applied to the completed draw inside `runs.create`, and any run that
 came up S1-A alongside an S4 form has its S1 replaced with a permitted form
-before it is written, rotated across B and C on a digest of the draw so
-neither is over-served (measured over 2000 seeds: 50.7 / 49.3). The swap is
+before it is written. The swap is
 recorded on the run document as `form_exclusions`, so an analyst can see which
 assignments were corrected rather than drawn. Adding the next exclusion is a
 row in the table, not a second special case.
 
-Also done, with the third forms: per-slot form selection, so a run that gives
-a construct two of the four slots serves two different forms and holds the
-third back for a second attempt (`construct_pool` on the run document;
-`tests/test_reserve_draw.py`). The routing authority for "which forms are
-parallel" is `scenarios_v3.parallel_forms()`, derived from `construct`; the
-`parallel_form:` scalar in each spec is provenance, not routing — see
-`scenario-spec-v3.md`.
+Per-slot form selection is in place, so a run that gives a construct two slots
+serves two different forms (`construct_pool` on the run document). The routing
+authority for "which forms are parallel" is `scenarios_v3.parallel_forms()`,
+derived from `construct`; the `parallel_form:` scalar in each spec is
+provenance, not routing.
 
 The canonical specs are richer than the engine's schema — they carry
 `ai_partners[]` (named roles + behavior policies), `fixed_opening_prompt`,

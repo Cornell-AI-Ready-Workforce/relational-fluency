@@ -216,7 +216,7 @@ def _briefing_for(scenario_id: str) -> dict:
     return compile_scenario(scenario_id, "k_round9").briefing
 
 
-@pytest.mark.parametrize("scenario_id", ["S3A", "S3B", "S3C", "S4A", "S4B", "S4C"])
+@pytest.mark.parametrize("scenario_id", ["S3A", "S3B", "S4A", "S4B"])
 def test_the_group_arm_does_not_say_the_other_person(scenario_id):
     b = _briefing_for(scenario_id)
     assert any(p["mode"] == "group" for p in b["parts"]), (
@@ -229,7 +229,7 @@ def test_the_group_arm_does_not_say_the_other_person(scenario_id):
         f"{scenario_id} no longer says who hears the participant: {howto!r}")
 
 
-@pytest.mark.parametrize("scenario_id", ["S1A", "S1B", "S1C", "S2A", "S2B", "S2C"])
+@pytest.mark.parametrize("scenario_id", ["S1A", "S1B", "S2A", "S2B"])
 def test_the_one_to_one_arm_still_says_the_other_person(scenario_id):
     """The control, and it is not redundant.
 

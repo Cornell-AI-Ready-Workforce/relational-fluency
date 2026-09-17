@@ -54,20 +54,18 @@ if str(ROOT) not in sys.path:
 
 from server import scenarios_v3 as v3  # noqa: E402
 
-FORMS = ("S3A", "S3B", "S3C")
+FORMS = ("S3A", "S3B")
 
 # Who plays which part on each form. This map is the only form-specific
 # knowledge in the file, and it is cast, not behaviour.
 ROLES = {
     "S3A": {"cynic": "alex", "performer": "jordan", "junior": "casey"},
     "S3B": {"cynic": "toni", "performer": "lee", "junior": "ari"},
-    "S3C": {"cynic": "bex", "performer": "rafa", "junior": "noor"},
 }
 
 PATHS = {
     "S3A": ROOT / "scenarios" / "v3" / "S3A_after_resignations.yaml",
     "S3B": ROOT / "scenarios" / "v3" / "S3B_commission_cut.yaml",
-    "S3C": ROOT / "scenarios" / "v3" / "S3C_mandated_system.yaml",
 }
 
 

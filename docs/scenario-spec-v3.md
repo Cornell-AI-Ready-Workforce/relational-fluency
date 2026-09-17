@@ -1,15 +1,15 @@
 # Scenario design (Research Note v3, 2026-08-11)
 
 Authoritative structure for the encounters. Source: *Relational Fluency
-Research Note v3*, slides 7–14. The Research Note specified eight; the bank now
-holds **twelve**, three forms per construct, and this document has been brought
-up to what is compiled.
+Research Note v3*, slides 7–14. The bank holds **eight**, two forms per
+construct (a third form per construct was authored in 2026-09 and retired the
+same month for Study 1), and this document describes what is compiled.
 
-## One skeleton per construct, three parallel forms
+## One skeleton per construct, two parallel forms
 
 Forms exist to measure improvement: **attempt 1 → feedback → attempt 2 on a form
 the participant has not met**. That only works if the forms are parallel forms
-of the same measurement task, so A, B and C share:
+of the same measurement task, so A and B share:
 
 - the same trigger sequence
 - the same ESCI item map
@@ -60,7 +60,7 @@ participant ("The participant is a senior analyst at…"), and leave their lever
 out — an actor who knows it cannot play the encounter honestly.
 
 None of the three is required and none is validated, so a spec loads and compiles
-without them; today none of the twelve defines `actor_setup`. Note also that
+without them; today none of the eight defines `actor_setup`. Note also that
 authoring one changes only what the *actors* see. The steering controller
 reads the unredacted retelling of `setup` instead, because it reasons about the
 encounter rather than performing in it, and the leverage is what it needs.
@@ -72,7 +72,7 @@ scoreable behavior rather than missing data. The runner therefore needs a
 no-speech timeout that prompts the agent to probe, not just a silence detector
 that closes turns.
 
-## The twelve encounters
+## The eight encounters
 
 Interaction mode matters: **1:1** is one character at a time; **group** is
 several characters in one live room, where the dynamics between them (talking
@@ -93,16 +93,14 @@ over, relabelling ideas) are themselves the measurement.
 | Teamwork | B | Preparing a client presentation | Priya · Dan · Chris | **group — working session** | **group — the close** |
 | Teamwork | C | Writing up the outage | Yara (excluded) · Hugo (dominates) · Finn (neutral) | **group — 4-person working session** | **group — the close** |
 
-**All twelve are authored and compiled** into `scenarios/v3/` (`S1A S1B S1C
-S2A S2B S2C S3A S3B S3C S4A S4B S4C`). Being in the bank is not the same as
-being assignable, though: **S1-A must not be served in a session that also
-contains S4.** Both turn on someone taking credit for the participant's work, so
-pairing them makes the Conflict Management and Teamwork measures bleed into each
-other. Every *full* session contains S4, so a study participant on the
-unrestricted arm gets **S1-B or S1-C** — which is what the C forms bought: while
-the bank held two, the exclusion left the unrestricted arm one Conflict
-Management form and no contrast at all. S1-A still reaches participants on the
-one-to-one arm, which carries no Teamwork. See "Variation
+**All eight are authored and compiled** into `scenarios/v3/` (`S1A S1B S2A S2B
+S3A S3B S4A S4B`; the C forms were retired in 2026-09). Being in the bank is not
+the same as being assignable, though: **S1-A must not be served in a session
+that also contains S4.** Both turn on someone taking credit for the
+participant's work, so pairing them makes the Conflict Management and Teamwork
+measures bleed into each other. Every full session contains S4, so a random
+draw gives a participant **S1-B**; Study 1 pins form A on every run and takes
+the documented escape hatch instead (see `docs/OPERATIONS.md`). See "Variation
 assignment" in `reddit-analysis/scenarios/scenario-specifications.md`. The rule
 is enforced rather than left on paper: `FORM_EXCLUSIONS` in `server/runs.py`
 carries it as data and `runs.create` corrects any draw that violated it, noting

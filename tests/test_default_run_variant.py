@@ -168,9 +168,9 @@ def test_an_explicit_variant_still_beats_the_default(monkeypatch):
 # 3. The twelve-form bank is still there under the default.
 # ---------------------------------------------------------------------------
 
-def test_the_twelve_form_bank_still_exists_whatever_the_default_is():
+def test_the_eight_form_bank_still_exists_whatever_the_default_is():
     """A-only SELECTS one form per construct. It must not have deleted the
-    other two, or `DEFAULT_RUN_VARIANT=random` would be a switch with nothing
+    other, or `DEFAULT_RUN_VARIANT=random` would be a switch with nothing
     behind it."""
     from server import scenarios_v3 as v3
 
@@ -181,4 +181,4 @@ def test_the_twelve_form_bank_still_exists_whatever_the_default_is():
             spec["variant"].upper())
     assert len(by_construct) == 4, sorted(by_construct)
     for construct, letters in by_construct.items():
-        assert letters >= {"A", "B", "C"}, (construct, sorted(letters))
+        assert letters >= {"A", "B"}, (construct, sorted(letters))

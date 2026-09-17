@@ -290,18 +290,12 @@ jobs:
           from pathlib import Path
           from server import scenarios, scenarios_v3
 
-          # The ten study forms. This literal is the contract: if a spec stops
-          # loading, or a new one is added, CI fails until someone updates this
-          # line deliberately. A study scenario must never vanish quietly.
-          #
-          # Updated deliberately for the third form of every construct: S1 C,
-          # S2 C, S3 C and S4 C. All four constructs now carry three forms, so a
-          # second attempt can draw one the participant has not seen. This line
-          # is the thing that notices if one of them ever stops loading, and it
-          # is not the place that gets papered over -- if a form is deliberately
-          # retired, delete it here in the same commit that retires it.
-          EXPECTED_V3 = {"S1A", "S1B", "S1C", "S2A", "S2B", "S2C",
-                         "S3A", "S3B", "S3C", "S4A", "S4B", "S4C"}
+          # The eight study forms: two per construct. This literal is the
+          # contract: if a spec stops loading, or a new one is added, CI fails
+          # until someone updates this line deliberately. A study scenario must
+          # never vanish quietly. (The C forms were retired in 2026-09 for
+          # Study 1 — docs/study1-plan.md — and deleted here in the same commit.)
+          EXPECTED_V3 = {"S1A", "S1B", "S2A", "S2B", "S3A", "S3B", "S4A", "S4B"}
 
           bad = []
 

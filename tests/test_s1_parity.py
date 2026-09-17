@@ -62,7 +62,7 @@ if str(ROOT) not in sys.path:
 
 from server import scenarios_v3 as v3  # noqa: E402
 
-FORMS = ("S1A", "S1B", "S1C")
+FORMS = ("S1A", "S1B")
 V3DIR = ROOT / "scenarios" / "v3"
 
 

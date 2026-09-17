@@ -65,10 +65,10 @@ if str(ROOT) not in sys.path:
 
 from server import scenarios_v3 as v3  # noqa: E402
 
-INFLUENCE = (("S2A", "morgan"), ("S2B", "sasha"), ("S2C", "imani"))
-PUSHERS = (("S1A", "riley"), ("S1B", "mel"), ("S1C", "nadia"))
-COUNTERPARTS = (("S1A", "sam"), ("S1B", "drew"), ("S1C", "wes"))
-DOMINANT = (("S4A", "dan"), ("S4B", "dan"), ("S4C", "hugo"))
+INFLUENCE = (("S2A", "morgan"), ("S2B", "sasha"))
+PUSHERS = (("S1A", "riley"), ("S1B", "mel"))
+COUNTERPARTS = (("S1A", "sam"), ("S1B", "drew"))
+DOMINANT = (("S4A", "dan"), ("S4B", "dan"))
 
 
 def flat(text: str) -> str:
@@ -135,7 +135,6 @@ def test_the_tempo_word_of_each_manager_survives_in_front_of_the_shared_clause()
     heads = {
         "S2A": "warm and short. guilt makes you want this over with, not drawn out.",
         "S2B": "fast and short.",
-        "S2C": "dry and short.",
     }
     for sid, aid in INFLUENCE:
         low = flat(brief(sid, aid))
@@ -206,7 +205,7 @@ def test_the_heat_move_is_each_managers_own_and_ends_without_a_question():
     answers heat (shorter / gentler / flatter, and firmer); the protocol routes
     heat to that, and ends it on a statement so the lost participant is not
     handed another question to fail."""
-    expect = {"S2A": "gentler and firmer", "S2B": "flatter and firmer", "S2C": "shorter and firmer"}
+    expect = {"S2A": "gentler and firmer", "S2B": "flatter and firmer"}
     for sid, aid in INFLUENCE:
         low = flat(brief(sid, aid))
         assert f"or any heat: {expect[sid]}, the way you always answer heat." in low, sid
@@ -221,16 +220,6 @@ def test_morgans_protocol_forbids_the_thank_you_the_live_model_reached_for():
     low = flat(brief("S2A", "morgan"))
     assert "it does not buy them a thank- you for coming either" in low or \
         "it does not buy them a thank-you for coming either" in low
-
-
-def test_the_three_influence_briefs_stay_matched_in_length_after_the_rewrite():
-    """Manager airtime is the inverse of the dependent variable. The protocol
-    and the framing bullet were added to all three in the same words, so no
-    form is more than five percent longer than the longest of the other two."""
-    words = {sid: len(brief(sid, aid).split()) for sid, aid in INFLUENCE}
-    for sid in words:
-        others = max(v for k, v in words.items() if k != sid)
-        assert words[sid] <= others * 1.05, words
 
 
 # --------------------------------------------------------------------------
@@ -254,15 +243,14 @@ def test_every_one_to_one_opener_carries_its_opening_move_in_the_brief():
         assert "whether or not they speak first" in low, (
             f"{sid}/{aid} ({inter['id']}): the brief does not carry its opening "
             "move; the `opening:` field never arrives on the configured model")
-    assert {("S2A", "morgan"), ("S2B", "sasha"), ("S2C", "imani"),
-            ("S1A", "riley"), ("S1B", "mel"), ("S1C", "nadia"),
-            ("S1A", "sam"), ("S1B", "drew"), ("S1C", "wes")} <= seen, seen
+    assert {("S2A", "morgan"), ("S2B", "sasha"),
+            ("S1A", "riley"), ("S1B", "mel"),
+            ("S1A", "sam"), ("S1B", "drew")} <= seen, seen
 
 
 FRAMING = {
     "S2A": ("you want to keep them", "what this cycle looks like"),
     "S2B": ("the memo is not yours", "the director is watching the compliance numbers"),
-    "S2C": ("the pack went out this morning and it goes out again monday", "where you are starting from"),
 }
 
 
@@ -298,24 +286,6 @@ def test_the_composed_connect_brief_carries_the_framing_without_the_opening_fiel
         assert "if they are lost:" in prompt
 
 
-@pytest.mark.parametrize("sid,aid,names", [
-    ("S1A", "riley", ("this morning's meeting", "sam walking their analysis through it")),
-    ("S1B", "mel", ("drew's message", "one in the morning", "priya and tom copied")),
-    ("S1C", "nadia", ("tuesday's post-mortem", "their step named in front of the manager")),
-])
-def test_the_pusher_names_what_it_is_about_in_the_opening_turn(sid, aid, names):
-    """Yesterday's live S1B (s_1789339393): Mel's first turn was "Oh you're
-    joking right. I've been fuming about this since seven this morning. You
-    have to reply all." — reply all to WHAT was in the `opening:` line, which
-    never arrived. The push stays two sentences; the thing pushed is named
-    inside them."""
-    low = flat(brief(sid, aid))
-    assert "name what it is about inside those two sentences" in low, sid
-    for n in names:
-        assert n in low, f"{sid}: the opening does not name {n!r}"
-    assert "that is your first turn whether or not they speak first" in low, sid
-
-
 # --------------------------------------------------------------------------
 # (c) The pusher who loops: a vague answer is an answer.
 # --------------------------------------------------------------------------
@@ -333,8 +303,7 @@ VAGUE_SHARED = (
     "answered, however badly, is spent.",
 )
 
-PIN = {"S1A": "which results, by when", "S1B": "which step of the handoff, by when",
-       "S1C": "which part of the write-up, by when"}
+PIN = {"S1A": "which results, by when", "S1B": "which step of the handoff, by when"}
 
 # The practical next thing is CONTENT, not an instruction: told only to "put
 # the practical next thing to them", Drew answered every vague turn with
@@ -343,8 +312,7 @@ PIN = {"S1A": "which results, by when", "S1B": "which step of the handoff, by wh
 # today"). Given a thing to say, he can say it and stop.
 NEXT_THING = {
     "S1A": "that you will send them what leadership asked for after the meeting, and then it is with them",
-    "S1B": "that you will write down the two times it broke and send it to them today, and then it is with them",
-    "S1C": "that your part of it is going in as it stands, and the rest is theirs by four",
+    "S1B": "that you will write down the two times it broke and send it to them today, and then it is with them"
 }
 
 

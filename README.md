@@ -13,20 +13,21 @@ Four competencies from the ESCI **Relationship Management** cluster. Canonical
 scenario specs live in [`reddit-analysis/scenarios/`](reddit-analysis/scenarios/),
 grounded in an analysis of 39,301 r/antiwork posts.
 
-| | Competency | Form A | Form B | Form C |
-|---|---|---|---|---|
-| S1 | Conflict Management | Taken credit *(barred beside S4 — see below)* | Hostile after-hours message | Blamed in front of the manager |
-| S2 | Influence | Promised raise + competing offer | Hybrid under an RTO mandate | Stopping the Monday pack |
-| S3 | Inspirational Leadership | After resignations over pay | After a commission cut | A system nobody asked for |
-| S4 | Teamwork | Planning an internal rollout | Preparing a client presentation | Writing up the outage |
+| | Competency | Form A (Study 1) | Form B (reserved) |
+|---|---|---|---|
+| S1 | Conflict Management | Taken credit *(see the S4 note below)* | Hostile after-hours message |
+| S2 | Influence | Promised raise + competing offer | Hybrid under an RTO mandate |
+| S3 | Inspirational Leadership | After resignations over pay | After a commission cut |
+| S4 | Teamwork | Planning an internal rollout | Preparing a client presentation |
 
-**Twelve encounters, three parallel forms per construct**, all authored and
-compiled: the bank is `S1A S1B S1C S2A S2B S2C S3A S3B S3C S4A S4B S4C` in
+**Eight encounters, two parallel forms per construct**, all authored and
+compiled: the bank is `S1A S1B S2A S2B S3A S3B S4A S4B` in
 [`scenarios/v3/`](scenarios/v3/), and CI holds that exact set
 (`EXPECTED_V3` in `.github/workflows/ci.yml`). Forms of one construct share the
 trigger sequence, the ESCI item map and the cast's voices, so a second attempt
 can be served a form the participant has not met and the difference read as
-skill change.
+skill change. Study 1 fields the A forms only (`DEFAULT_RUN_VARIANT=A`); the
+B forms are reserved for a later study.
 The per-form trigger map is generated from the specs into
 [`docs/scenario-map.md`](docs/scenario-map.md).
 
@@ -35,10 +36,10 @@ S4 always turns on misattributed credit — which is also what S1-A is about.
 Serving both in one session lets the Conflict Management and Teamwork measures
 bleed into each other, so the canonical spec
 ([`reddit-analysis/scenarios/scenario-specifications.md`](reddit-analysis/scenarios/scenario-specifications.md),
-"Variation assignment") requires S1 **B** or **C** whenever S4 is present. That
-is what S1C bought: while the bank held two forms, the exclusion left every
-full session with one Conflict Management form and no contrast. S1-A still
-reaches the single-scenario researcher links.
+"Variation assignment") requires S1 **B** whenever S4 is present. Study 1 pins
+form A on every run, which takes the documented escape hatch (a pinned form is
+honoured and the run is stamped `exclusion not applied`); the overlap is a
+matter for the analysis plan, not the sampler — see `docs/OPERATIONS.md`.
 
 > **Enforced in the sampler.** `runs.create` still draws each construct's form
 > independently, which on its own would pair S1-A with an S4 form in about a
@@ -48,22 +49,22 @@ reaches the single-scenario researcher links.
 > drew both has its S1 form replaced with a permitted one before the run is
 > written. The correction is recorded on the run document as `form_exclusions`
 > rather than applied invisibly, because an analyst comparing forms across
-> participants will otherwise see B and C over-sampled for no stated reason. So
+> participants will otherwise see B over-sampled for no stated reason. So
 > there is nothing for an operator to filter or discard; if you want to check
 > it anyway, `form_exclusions` on a run says what was swapped and why.
 
-Two defects in the shipped forms were found while the C forms were being
-measured against their siblings, and fixed on all three forms of each
-construct at once (the figures are in the comment headers of the scenario
+Two defects in the shipped forms were found while the forms were being
+measured against their siblings, and fixed on both forms of each construct
+at once (the figures are in the comment headers of the scenario
 files, and `tests/test_s1_parity.py` / `tests/test_s3_parity.py` hold the
 repairs identical across forms):
 
 - **Conflict Management conceded unearned.** Every counterpart gave the
   half-concession to a participant who attacked and demanded an apology —
-  20 encounters of 20 on all three forms, under a brief whose next bullet said
+  20 encounters of 20 on every form, under a brief whose next bullet said
   "harden and stop giving ground" — so `de_escalate` was being scored on a
-  concession that arrived regardless. After the repair: 6/30, 4/30, 7/30 under
-  hostility against 30/30 on the cooperative script, on every form.
+  concession that arrived regardless. After the repair: 6/30 and 4/30 under
+  hostility against 30/30 on the cooperative script, on both forms.
 - **Inspirational Leadership leaked the private disclosure into the group
   room.** The 1:1 beat travels in the brief on every turn, and the S3A and S3B
   performers were both measured spending it during the team meeting. Each
@@ -388,8 +389,8 @@ describes the live experience.
   travelled only by a mid-session `session.update`, which this family ignores
   (0 acks in 21 runs), so it was never spoken. It is now folded into the
   connect-time brief on any family whose row says steering is inert, and which
-  route carried it is written to the record as `opening_framing`. S2C went from
-  a mean of 7.0 words a reply to 14.8, with a real opening line.
+  route carried it is written to the record as `opening_framing`. The Influence
+  manager went from a mean of 7.0 words a reply to 14.8, with a real opening line.
 - **Group rooms are not runnable live on this gateway.** Across four live group
   encounters: 55 character turns, 11 of them empty, and 102 replies fired by a
   character that had not been given the floor — none of which happened once
