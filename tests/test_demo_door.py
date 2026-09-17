@@ -207,15 +207,14 @@ def test_the_stage_stops_recording_when_the_demo_ends():
 def test_the_demo_door_offers_no_study_entrance():
     """Nothing here may be a way into the wave.
 
-    The three study entrances (/start, /start/one-to-one, /start/group) mint
+    The study entrance (/start) mints
     cohort=study runs against a Qualtrics response id. A demo page that linked
     to one of them would be a second, undocumented, unrecruited way into the
     dataset — and the person most likely to click it is somebody the researcher
     just handed the laptop to.
     """
     code = _code(_demo())
-    for entrance in ("/start", "/start/one-to-one", "/start/group"):
-        assert entrance not in code, f"the demo door links to the study entrance {entrance}"
+    assert "/start" not in code, "the demo door links to the study entrance /start"
     assert "/test?" in code, "the demo door does not use the internal entrance at all"
 
 

@@ -810,14 +810,8 @@ async def landing_page(request: Request, scenario: Optional[str] = None,
     to the study entry point before the researcher-key check (origin/main
     6b504f3).
 
-    WHICH ENTRY POINT, AND WHY IT MATTERS. This forwards to `/start`, which is
-    the UNRESTRICTED arm: four constructs, one encounter each. The three links
-    docs/OPERATIONS.md tells the operator to paste are the arm links
-    (/start/one-to-one, /start/group), which assign a participant
-    to an arm. A participant who arrives by the base URL therefore gets a
-    DIFFERENT assignment from one who arrives by a pasted arm link. That is a
-    study-design choice and not a routing detail; it is left as origin/main
-    shipped it, and OPERATIONS.md says plainly that the PI picks.
+    This forwards to `/start`: the study run, four constructs, one encounter
+    each — the same run the pasted link in docs/OPERATIONS.md starts.
 
     The forwarded request goes through entry_params and the link-probe filter
     like any other, which is the point: a scanner or an unfurler that fetches
@@ -1247,8 +1241,10 @@ def _entry_check_page(reason: str) -> HTMLResponse:
 async def _enter_study(arm: Optional[str], p: dict):
     """Start or resume this participant's run and redirect them into it.
 
-    The whole of /start's behaviour, with the arm as its one parameter. See
-    entry_params above for why this is a function rather than three handlers.
+    The whole of /start's behaviour. `arm` is always None (the full study run)
+    since the two-construct arm links were removed for Study 1; the parameter
+    and the arm record on the run document stay so a run still says which pool
+    it drew from.
     """
     key = p.get("key")
     pid = p.get("pid")
@@ -1753,62 +1749,13 @@ async def start_run(p: dict = Depends(entry_params)):
     return await _enter_study(None, p)
 
 
-@app.get("/start/one-to-one")
-async def start_one_to_one(p: dict = Depends(entry_params)):
-    """Entry point from Qualtrics: the two-person arm.
-
-    Four encounters drawn only from the constructs whose every interaction is a
-    two-person conversation. As the scenario set stands that is Conflict
-    Management and Influence, so this arm serves both forms of each (S1 A and B,
-    S2 A and B) rather than one encounter per construct. runs._slots_for and the
-    run's own `construct_pool` say so; the cost is real and is recorded on every
-    run this link creates, not argued about here.
-    """
-    return await _enter_study("one_to_one", p)
-
-
-@app.get("/start/group")
-async def start_group(p: dict = Depends(entry_params)):
-    """Entry point from Qualtrics: the group arm.
-
-    Four encounters drawn only from the constructs whose encounters open in a
-    group room — Inspirational Leadership and Teamwork. Same shape as the arm
-    above, including serving both forms of each construct. Note that S3's second
-    interaction is a series of two-person conversations, so "group" here means
-    the encounter begins in the group room, which is what the run records.
-    """
-    return await _enter_study("group", p)
-
-
-# The Continue button's other half, one per arm.
-#
-# Not a second way into the study and not a second implementation of it: the
-# same dependency, the same handler, the same arm. The only thing it adds is
-# that a human pressed something, which is the fact the entry check page exists
-# to establish. The query string rides along because that page's form posts to
-# action="", so ?variant=, ?qid= and ?cohort= reach these exactly as the GET
-# carried them, and every gate above applies unchanged.
-#
-# These being open costs nothing: a POST here does no more than the GET beside
-# it already does. What POST must never be is the ONLY way in — see the block
-# above entry_params for why requiring it would cost encounters.
-
 @app.post("/start")
 async def start_run_confirmed(p: dict = Depends(entry_params)):
-    """The entry check page's Continue, for the full study run."""
+    """The entry check page's Continue: the same handler as the GET, reached by
+    a human pressing the button — which is the fact the check page exists to
+    establish. Open costs nothing (it does no more than the GET); what POST must
+    never be is the ONLY way in — see the block above entry_params."""
     return await _enter_study(None, p)
-
-
-@app.post("/start/one-to-one")
-async def start_one_to_one_confirmed(p: dict = Depends(entry_params)):
-    """The entry check page's Continue, for the two-person arm."""
-    return await _enter_study("one_to_one", p)
-
-
-@app.post("/start/group")
-async def start_group_confirmed(p: dict = Depends(entry_params)):
-    """The entry check page's Continue, for the group arm."""
-    return await _enter_study("group", p)
 
 
 @app.get("/v2", response_class=HTMLResponse)

@@ -196,20 +196,6 @@ def test_the_skeleton_matches_the_sibling_position_for_position(sib):
     assert mine["skill_measured"] == theirs["skill_measured"]
 
 
-def test_both_interactions_are_group_rooms_as_in_both_siblings():
-    """Teamwork is the one construct whose SECOND interaction is also a group
-    room: the dynamic between the three characters is the measurement, and it
-    cannot be staged as consecutive 1:1s. A form that quietly made i2 a series
-    would take teamwork out of the group arm for everybody (runs.ARMS admits a
-    construct only when EVERY form of it qualifies)."""
-    modes = runs._interaction_modes(SID)
-    assert modes == ["group", "group"], modes
-    for sib in SIBLINGS:
-        assert runs._interaction_modes(sib) == modes
-        assert runs._has_group(modes) == runs._has_group(runs._interaction_modes(sib))
-        assert runs._all_one_to_one(modes) is False
-
-
 def test_the_construct_bank_now_carries_three_forms_of_teamwork():
     """The reason this file exists. Two forms meant the group arm spent both in
     attempt 1 and a second attempt was a same-form retest."""

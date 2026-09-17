@@ -201,7 +201,7 @@ def test_every_declared_embedded_field_is_named(field):
     )
 
 
-ENTRY_LINKS = ["/start/one-to-one", "/start/group"]
+ENTRY_LINKS = ["/start"]
 
 
 @pytest.mark.parametrize("link", ENTRY_LINKS)

@@ -252,26 +252,6 @@ def test_an_unusable_variant_letter_never_turns_a_participant_away(guarded,
     assert not _bad_pairing(_run_from(r, runs_mod))
 
 
-@pytest.mark.parametrize("variant", ["A", "B"])
-@pytest.mark.parametrize("arm", ["one_to_one", "group"])
-def test_a_pinned_variant_never_serves_the_same_encounter_twice(runs_mod, arm,
-                                                                variant):
-    """The half of this that is not about authorisation at all.
-
-    A restricted arm gives each of its two constructs two encounter slots, and
-    create()'s pin branch took wanted[0] for every slot — so `?variant=A` on an
-    arm link served S1 A, S2 A, S1 A, S2 A. A participant handed the same
-    conversation twice notices immediately, and the second copy is worthless as
-    data whoever asked for it. Measured over 200 seeds, as the pairing rate
-    above was."""
-    for seed in range(200):
-        run = runs_mod.create(f"RF_DUP_{arm}_{variant}_{seed}",
-                              variant=variant, seed=seed, arm=arm)
-        ids = _ids(run)
-        assert len(ids) == len(set(ids)), (
-            f"seed {seed}: arm {arm} with variant={variant} served {ids}")
-
-
 def test_pinning_a_variant_on_the_full_run_still_pins_it(runs_mod):
     """Positive control for the duplicate fix: where a construct has one slot,
     a pin is still a pin and still honoured exactly."""

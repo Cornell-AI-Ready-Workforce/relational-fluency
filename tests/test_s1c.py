@@ -213,18 +213,6 @@ def test_the_unrestricted_arm_serves_s1c_alongside_teamwork(tmp_path, monkeypatc
     assert served.get("S1B", 0) >= 20, f"S1B has been squeezed out: {served}"
 
 
-def test_conflict_management_stays_in_the_one_to_one_arm(spec):
-    """Both interactions are one_to_one, and that is structural.
-
-    runs._all_one_to_one requires EVERY mode in a spec to be one_to_one for the
-    encounter to be drawable into the 1:1 arm. One group interaction in this
-    file would drop conflict management out of that arm entirely and leave it
-    with a single construct."""
-    assert [i["mode"] for i in spec["interactions"]] == ["one_to_one", "one_to_one"]
-    assert runs._all_one_to_one([i["mode"] for i in spec["interactions"]])
-    assert "conflict_management" in runs.arm_constructs("one_to_one")[0]
-
-
 # --------------------------------------------------------------------------
 # 3. It is not a fourth S1A.
 # --------------------------------------------------------------------------

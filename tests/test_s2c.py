@@ -126,54 +126,6 @@ def test_the_third_form_loads_from_the_bank():
     assert spec()["id"] == SID
 
 
-def test_influence_stays_whole_inside_the_one_to_one_arm():
-    """A construct joins an arm only when EVERY form of it qualifies
-    (server/runs.ARMS), so one group interaction in this file would not merely
-    mis-file this form — it would take influence out of the 1:1 arm for
-    everybody, leaving that arm one construct."""
-    modes = runs._interaction_modes(SID)
-    assert modes == ["one_to_one", "one_to_one"]
-    assert runs._all_one_to_one(modes)
-    for sib in SIBLINGS:
-        assert runs._interaction_modes(sib) == modes
-    assert "influence" in runs.arm_constructs("one_to_one")[0]
-
-
-def test_the_restricted_arm_now_leaves_an_influence_form_in_reserve(tmp_path, monkeypatch):
-    """What the third form is FOR, measured over the draw rather than asserted.
-
-    The 1:1 arm has two constructs and four slots, so influence fills two of
-    them. While it carried two forms, filling two slots spent the construct and
-    `parallel_forms_spent` was true: there was no unseen encounter left for a
-    second attempt. With three, one is left over, and runs.create records which
-    one. This is the run document's own statement that a retest is possible."""
-    # Both globals are repointed, and by ATTRIBUTE rather than by environment
-    # variable. server.storage resolves DATA_DIR at import and server.runs binds
-    # RUNS_DIR off it at import, so monkeypatch.setenv("DATA_DIR", ...) inside a
-    # test is inert: the run files land in the repository's own data/runs next
-    # to real collection data, a few dozen per suite run, and nothing fails.
-    # DATA_DIR is repointed as well as RUNS_DIR because the completion-code
-    # secret is written there.
-    monkeypatch.setattr(runs, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path / "runs")
-    seen_reserve = 0
-    for seed in range(30):
-        run = runs.create(f"S2C_reserve_{seed}", seed=seed, arm="one_to_one")
-        pool = run["construct_pool"]
-        served = [s["id"] for s in run["scenarios"] if s["construct"] == "influence"]
-        assert len(served) == 2, served
-        assert len(set(served)) == 2, (
-            f"the same influence form was served twice in one run: {served}")
-        left = pool["forms_in_reserve"].get("influence") or []
-        assert set(left) == set(ALL_S2) - set(served), (
-            f"served {served} but the run says {left} is in reserve")
-        seen_reserve += bool(left)
-    assert seen_reserve == 30
-    assert not pool["parallel_forms_spent"], (
-        "the run still reports every parallel form spent, which tells the "
-        "researcher no retest is possible when one is")
-
-
 def test_the_form_letter_is_a_legal_pin():
     """`?variant=C` in a Qualtrics redirect has to mean something for influence
     too. known_variants is computed from the specs, so the letter arrives by

@@ -414,8 +414,7 @@ what they think they heard.
 
 **This is not the link this page tells you to paste.** The links to paste are
 in [The participant URL](#the-participant-url-qualtrics--app--qualtrics)
-below — three of them, one per arm. This section documents a second way in
-that now works, and the choice between them is a study-design choice.
+below. This section documents a second way in that also works.
 
 The base URL forwards a visitor to the study entry when an id is in the query,
 so this is a whole, working link on its own:
@@ -434,13 +433,8 @@ key-checked.
 
 Two things to know before choosing it:
 
-- **It selects `/start`, the unrestricted run** — four constructs, one
-  encounter each. The three links below assign the participant to an **arm**
-  (`/start/one-to-one` draws Conflict Management and Influence;
-  `/start/group` draws Inspirational Leadership and Teamwork). A wave run off
-  the base URL is therefore a **different design** from a wave run off the arm
-  links, not a different spelling of the same one. **The PI picks**; this page
-  does not.
+- **It selects `/start`, the study run** — four constructs, one encounter
+  each — the same run the pasted link below starts.
 - **`&qid=` is as mandatory here as it is there.** The forward carries the
   query through unchanged, so a base-URL link missing `${e://Field/ResponseID}`
   fails in exactly the way the warning below describes: no consent record, and
@@ -898,7 +892,7 @@ Qualtrics.
 > not available to you as a way of proving who you are — and a bare
 > `?pid=whatever` participant link is a **permanent dead end** on *"We could not
 > confirm your consent record"*, because it carries no `qid`. Appending
-> **`&cohort=internal`** to either arm's path is the way through: it satisfies
+> **`&cohort=internal`** on the `/start` link is the way through: it satisfies
 > the consent-provenance check with no `qid`, skips the seven-minute encounter
 > gate and the 180-second advance floor (both are disabled for a run whose
 > cohort is `internal`), and tags the run so every study export drops it. Both
@@ -965,10 +959,9 @@ URL](#the-participant-url-qualtrics--app--qualtrics) below.
 
 | Link | Who clicks it | Mandatory parameters |
 |---|---|---|
-| `/start/one-to-one` | A participant assigned the two-person arm | `pid=`, **`qid=`** |
-| `/start/group` | A participant assigned the group arm | `pid=`, **`qid=`** |
+| `/start` | A participant arriving from the survey | `pid=`, **`qid=`** |
 
-> **`&qid=` is mandatory on every `/start…` link**, arm or no arm. It carries
+> **`&qid=` is mandatory on the `/start` link.** It carries
 > the Qualtrics `ResponseID`, which is the only evidence this platform has that
 > anybody consented at all; without a usable one the arrival is refused, the
 > voice socket closes 4403 and **the encounter is not recorded**. The full
@@ -976,11 +969,6 @@ URL](#the-participant-url-qualtrics--app--qualtrics) below.
 > URL](#the-participant-url-qualtrics--app--qualtrics) below — read it before
 > you paste anything into the survey.
 
-
-`/start` (no arm) still exists and still works — it is the full four-construct
-run. If the wave is fielding arms, the two arm links are what goes in the
-survey; `/start` is not a synonym for either of them and a participant who
-clicks it gets a different assignment.
 
 Full linkage: the CloudResearch key ties recruitment to the survey, the
 Qualtrics response id ties the survey response to the app run, and the
@@ -1122,13 +1110,11 @@ Two things to check on the joined output before trusting it:
 
 ## The participant URL (Qualtrics → app → Qualtrics)
 
-**Put these in Qualtrics.** They go at the point where participants move from
-the WEIP survey to the encounters — whichever arm that participant is assigned.
-Copy them from here, whole.
+**Put this in Qualtrics.** It goes at the point where participants move from
+the WEIP survey to the encounters. Copy it from here, whole.
 
 ```
-https://rf.ai-ready-workforce.ai.cornell.edu/start/one-to-one?pid=${e://Field/participantId}&qid=${e://Field/ResponseID}
-https://rf.ai-ready-workforce.ai.cornell.edu/start/group?pid=${e://Field/participantId}&qid=${e://Field/ResponseID}
+https://rf.ai-ready-workforce.ai.cornell.edu/start?pid=${e://Field/participantId}&qid=${e://Field/ResponseID}
 ```
 
 - **The field is `participantId`.** Checked against the live survey, which
@@ -1152,18 +1138,12 @@ https://rf.ai-ready-workforce.ai.cornell.edu/start/group?pid=${e://Field/partici
   > that made the base URL forward participants (see
   > [the section above](#the-base-url-also-forwards-participants-second-route-in)),
   > because that forward puts `participantId` in the query. `pid=` is still the
-  > spelling to paste in these three links: it is the one every other line on
-  > this page, and every worked example, uses.
-- `/start` with no arm is the full four-construct run and still works; the two
-  arm links draw from different construct pools (`/start/one-to-one`: Conflict
-  Management and Influence; `/start/group`: Inspirational Leadership and
-  Teamwork), and each serves two of its constructs' three parallel forms,
-  holding the third back so a second attempt has material the participant has
-  not met (recorded on the run under `construct_pool`). A participant who
-  arrives at the second arm after starting the first gets a *second* run,
-  cross-linked to the first rather than resuming it.
+  > spelling to paste in the link: it is the one every other line on this page,
+  > and every worked example, uses.
+- `/start` is the full four-construct run: one encounter per construct, in a
+  counterbalanced order, recorded on the run under `construct_pool`.
 
-> **`&qid=` is mandatory on both `/start…` links.** It carries the Qualtrics
+> **`&qid=` is mandatory on the `/start` link.** It carries the Qualtrics
 > `ResponseID`, and since consent moved upstream that response id is the only
 > evidence this platform has that anybody consented at all: `server/storage.py`
 > records a study consent *only* against a usable `qid`. A link without it, or

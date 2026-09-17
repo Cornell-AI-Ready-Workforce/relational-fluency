@@ -25,7 +25,7 @@ carries names only the sibling it was *written to match*. It is provenance.
 **The routing authority is `server/scenarios_v3.parallel_forms()`**, which
 returns every other form of the construct; `server/runs.sibling_run` chooses
 from that list, rotating on attempt 1's run id so no form is unreachable, and
-pins the result PER SLOT so a restricted arm can serve a construct's unseen form
+pins the result PER SLOT so a second attempt can serve a construct's unseen form
 and one it has met rather than the same conversation twice. Nothing may route on
 `parallel_form:` and nothing may count forms from this document.
 

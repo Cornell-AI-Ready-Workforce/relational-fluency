@@ -112,70 +112,19 @@ def _interaction_modes(scenario_id: str) -> List[str]:
     return [str(i.get("mode") or "") for i in (spec.get("interactions") or [])]
 
 
-def _all_one_to_one(modes: List[str]) -> bool:
-    return bool(modes) and all(m == "one_to_one" for m in modes)
-
-
-def _has_group(modes: List[str]) -> bool:
-    return any(m == "group" for m in modes)
-
-
-# The arms the study's entry links hand out. An arm is a restriction on the
-# construct pool and nothing else: the same run, the same four encounters, the
-# same completion code, drawn from fewer constructs.
-#
-# The predicate is applied to every form of a construct, and a construct joins
-# the arm only when ALL of its forms qualify. That is deliberate. The parallel
-# forms exist so attempt 2 can be the other one, and an arm that contained S3 A
-# but not S3 B would be an arm in which half the participants cannot have a
-# second attempt — so a construct is either in an arm whole or not at all.
-#
-# Measured against scenarios/v3 as it stands: one_to_one keeps conflict
-# management and influence; group keeps inspirational leadership and teamwork.
-# Two constructs per arm, four encounters per run — see _slots_for for what that
-# costs and how the run records it.
+# The arms a run may be drawn under. Study 1 fields one: the full run, every
+# construct once. The two-construct arm links (one_to_one / group) were removed
+# in 2026-09 (docs/study1-plan.md); the record under `construct_pool` stays so
+# a run still says which pool it drew from, and `_interaction_modes` stays for
+# the same reason arm_constructs keeps its predicate branch: a future arm joins
+# by being added here, not by being re-plumbed.
 ARMS: Dict[str, dict] = {
     "full": {
         "predicate": None,
         "description": "every construct: one encounter each, counterbalanced",
     },
-    "one_to_one": {
-        "predicate": _all_one_to_one,
-        "description": "constructs whose every interaction is a two-person "
-                       "conversation",
-    },
-    "group": {
-        "predicate": _has_group,
-        "description": "constructs whose encounters open in a group room",
-    },
 }
 
-# Forms that must not be served alongside another construct, as
-# (construct, forbidden variant, construct whose presence forbids it).
-#
-# S1 variation A ("Taken credit") and both Teamwork forms turn on the same
-# situation: somebody else takes credit for the participant's work. A
-# participant who handles that well in one will look competent in the other for
-# reasons that have nothing to do with Conflict Management and Teamwork being
-# distinct constructs, so serving both in one run compromises the discriminant
-# validity of the pair. The canonical spec
-# (reddit-analysis/scenarios/scenario-specifications.md, "Variation assignment")
-# therefore requires S1 B or C wherever S4 is present, and the grounding data
-# agrees: blame/public humiliation is attested 1,631 times against 77 for credit
-# misattribution (reddit-analysis/situation-taxonomy.md §3).
-#
-# A run covers all four constructs, so Teamwork is always present and this rule
-# always applies; it only changes an assignment on the runs whose draw actually
-# landed on S1 A, which is about a THIRD of them. Re-measured on this bank, in
-# an isolated DATA_DIR: 68 of 200 seeds (0.340), 673 of 2000 (0.337), 3357 of
-# 10000 (0.336, 95% CI [0.326, 0.345]) — what three forms per construct
-# predicts, and the same 673/2000 that _apply_form_exclusions' own docstring
-# reports 200 lines below. The figure this comment used to carry, "about half
-# of them (94 of 200 seeds measured)", was measured when Conflict Management
-# had two forms; it overstated the steered share by about 40%, and it is a
-# figure a researcher sizes a wave against, so it is corrected rather than
-# left to be read off a stale line.
-# The table is written generally so the next exclusion is a line of data rather
 # than a second special case.
 FORM_EXCLUSIONS: List[Tuple[str, str, str]] = [
     ("conflict_management", "A", "teamwork"),

@@ -21,7 +21,7 @@ the hard way.
 ### 1. A participant entry link needs **both** `?pid=` and `&qid=`
 
 ```
-http://127.0.0.1:8765/start/one-to-one?pid=selftest1            ← dead end
+http://127.0.0.1:8765/start?pid=selftest1            ← dead end
 ```
 
 That link — the one you will type first, because it is the obvious one — gets
@@ -43,8 +43,7 @@ non-internal run.
 ### 2. `&cohort=internal` is your own way in
 
 ```
-http://127.0.0.1:8765/start/one-to-one?pid=selftest1&cohort=internal   ← works
-http://127.0.0.1:8765/start/group?pid=selftest2&cohort=internal        ← works
+http://127.0.0.1:8765/start?pid=selftest1&cohort=internal   ← works
 ```
 
 On a server with no `SESSION_KEY` — which is every local checkout — appending
@@ -191,10 +190,9 @@ cannot tell "we lost it" from "there was nothing to send".
 
 Both are keyed on the **run id** in `sessionStorage` (an earlier version of this
 page said per tab, which was wrong). Returning to the same participant link in
-the same tab resumes the same run and skips both; a different arm, a different
-participant id, or a new tab mints a new run and asks again. Measured: accept
-on `/start/one-to-one`, then open `/start/group` in the same tab → asked again.
-Chosen deliberately; named here so walking them twice is not read as a fault.
+the same tab resumes the same run and skips both; a different participant id
+or a new tab mints a new run and asks again. Chosen deliberately; named here so
+walking them twice is not read as a fault.
 
 ### A microphone prompt that is ignored is now bounded, and a missing microphone is named
 

@@ -353,8 +353,7 @@ therefore requires S1 B or C in any session containing S4. The grounding data
 agrees: `reddit-analysis/situation-taxonomy.md` §3 calls blame/public
 humiliation (1,631 posts) "the best-attested S1 trigger — supporting the
 assignment rule that prefers S1-C (with S1-B) over S1-A", against 77 for credit
-misattribution. S1C is that form, compiled; S1-A still serves the one-to-one
-arm, which carries no Teamwork.
+misattribution. S1C is that form, compiled.
 
 Done: the rule is machine-readable and enforced. `server/runs.py` still draws
 each construct's form independently — the draw cannot see the run as a whole —
@@ -367,7 +366,7 @@ recorded on the run document as `form_exclusions`, so an analyst can see which
 assignments were corrected rather than drawn. Adding the next exclusion is a
 row in the table, not a second special case.
 
-Also done, with the third forms: per-slot form selection, so an arm that gives
+Also done, with the third forms: per-slot form selection, so a run that gives
 a construct two of the four slots serves two different forms and holds the
 third back for a second attempt (`construct_pool` on the run document;
 `tests/test_reserve_draw.py`). The routing authority for "which forms are

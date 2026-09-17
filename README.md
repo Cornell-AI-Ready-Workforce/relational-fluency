@@ -26,12 +26,7 @@ compiled: the bank is `S1A S1B S1C S2A S2B S2C S3A S3B S3C S4A S4B S4C` in
 (`EXPECTED_V3` in `.github/workflows/ci.yml`). Forms of one construct share the
 trigger sequence, the ESCI item map and the cast's voices, so a second attempt
 can be served a form the participant has not met and the difference read as
-skill change. With two forms that was not true on the arm links — an arm gives
-a construct two of the four slots, so both forms were spent on attempt 1, and
-in the earlier sampler the *same form was served twice in one run* (measured:
-200 runs of 200 on both arms). Per-slot form selection and the C forms
-together close that: across 200 seeded runs per arm, every second attempt now
-draws material the participant has not seen (`tests/test_reserve_draw.py`).
+skill change.
 The per-form trigger map is generated from the specs into
 [`docs/scenario-map.md`](docs/scenario-map.md).
 
@@ -43,8 +38,7 @@ bleed into each other, so the canonical spec
 "Variation assignment") requires S1 **B** or **C** whenever S4 is present. That
 is what S1C bought: while the bank held two forms, the exclusion left every
 full session with one Conflict Management form and no contrast. S1-A still
-reaches participants on the one-to-one arm (`/start/one-to-one`), which carries
-no Teamwork, and the single-scenario researcher links.
+reaches the single-scenario researcher links.
 
 > **Enforced in the sampler.** `runs.create` still draws each construct's form
 > independently, which on its own would pair S1-A with an S4 form in about a
@@ -241,8 +235,7 @@ Then open:
 | | |
 |---|---|
 | Is it able to record at all? | <http://127.0.0.1:8765/health> — **check this first, every time** |
-| Walk the study yourself, two-person arm | <http://127.0.0.1:8765/start/one-to-one?pid=selftest1&cohort=internal> |
-| Walk the study yourself, group arm | <http://127.0.0.1:8765/start/group?pid=selftest2&cohort=internal> |
+| Walk the study yourself | <http://127.0.0.1:8765/start?pid=selftest1&cohort=internal> |
 | Researcher console | <http://127.0.0.1:8765/researcher> |
 | Steering trail | <http://127.0.0.1:8765/director> |
 | Evidence trace | <http://127.0.0.1:8765/evidence> |
@@ -284,7 +277,7 @@ host needs HTTPS.
 [`docs/TESTING-LOCALLY.md`](docs/TESTING-LOCALLY.md)** — including the things a
 participant sees that look like bugs and are not (a refresh restarts the
 conversation from the top; the fiction gate and the audio check are remembered
-per *run*, so a new arm or a new participant id asks again; a machine with no
+per *run*, so a new participant id asks again; a machine with no
 microphone is told so and cannot skip past it), and the things that are bugs
 and are already known.
 

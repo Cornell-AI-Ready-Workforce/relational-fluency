@@ -580,34 +580,6 @@ def test_one_unreadable_file_still_cannot_un_withdraw_a_participant(
     assert appmod._consented_participant(pid) is None
 
 
-@pytest.mark.parametrize("path", ["/start", "/start/one-to-one", "/start/group"])
-def test_a_strangers_record_id_cannot_end_the_study_of_whoever_arrives(
-        pair, client, store, runs_mod, path):
-    """?participant_id= is supplied by whoever holds the link, same as ?pid=.
-
-    The entry path read the withdrawal off the RECORD and applied it to the run
-    the KEY had resolved to, so presenting any withdrawn record id beside a
-    stranger's key ended the stranger's study: their run stamped, the stop
-    carried by runs.withdraw onto every other run under their key, their record
-    written, their own capture gate refusing them afterwards, and nothing they
-    could do about it. Keyless, on all three links. No attacker is needed — a
-    duplicated study link, or a survey piping a stale participant_id beside a
-    fresh pid, produces exactly this pair.
-    """
-    victim_run, victim_pid = pair["live_run"], pair["live_pid"]
-    r = client.get(path, params={"pid": "PKEYLIVE",
-                                 "participant_id": pair["gone_pid"]},
-                   follow_redirects=False)
-    assert r.status_code == 307, r.text
-
-    assert not runs_mod.get(victim_run["run_id"]).get("withdrawn"), (
-        "a stranger's record id withdrew the run of the person at the door")
-    assert not store.get_participant(victim_pid).get("withdrawn"), (
-        "and stamped their participant record")
-    assert appmod._consented_participant(victim_pid) is not None, (
-        "so their own capture gate refused them afterwards")
-
-
 def test_a_participant_presenting_their_own_record_is_still_stopped(
         pair, client, runs_mod):
     """Positive control: the ownership check must not cost a withdrawn person

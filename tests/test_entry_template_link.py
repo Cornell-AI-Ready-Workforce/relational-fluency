@@ -37,7 +37,7 @@ from fastapi.testclient import TestClient
 
 from server import app as appmod
 
-LINKS = ["/start", "/start/one-to-one", "/start/group"]
+LINKS = ["/start"]
 
 #: The link as it is pasted before Qualtrics has piped anything into it.
 TEMPLATE_KEY = "${e://Field/ParticipantKey}"
@@ -304,19 +304,6 @@ def test_back_button_then_continue_again_is_still_one_run(client, runs_mod):
         seen.add(_run_id(r))
     assert len(seen) == 1
     assert len(_runs(runs_mod)) == 1
-
-
-def test_the_second_press_resumes_only_within_its_own_arm(client, runs_mod):
-    """A person who reaches the group link after the 1:1 link is taking a second
-    block, not re-pressing the first one — the same rule the keyed resume
-    follows, for the same reason: the group link must never quietly serve a 1:1
-    run and record it as one."""
-    params = {"qid": "R_twoarms000001"}
-    a = client.post("/start/one-to-one", params=params,
-                    headers={"User-Agent": BROWSER}, follow_redirects=False)
-    b = client.post("/start/group", params=params,
-                   headers={"User-Agent": BROWSER}, follow_redirects=False)
-    assert _run_id(a) != _run_id(b)
 
 
 def test_an_unpiped_response_id_may_never_merge_two_people(client, runs_mod):

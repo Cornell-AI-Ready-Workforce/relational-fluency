@@ -183,20 +183,6 @@ def test_the_pre_reading_is_the_same_length_as_the_siblings(sib):
     assert len(spec()["pre_reading"]) == len(spec(sib)["pre_reading"]) == 2
 
 
-def test_the_arms_this_form_joins_are_the_arms_its_siblings_join():
-    """A construct joins an arm only when EVERY form of it qualifies
-    (server/runs.ARMS), so one interaction in the wrong mode does not just
-    mis-file this form — it takes inspirational leadership out of the group arm
-    for everybody."""
-    modes = runs._interaction_modes(SID)
-    assert runs._has_group(modes), "i1 is not a group room"
-    assert not runs._all_one_to_one(modes)
-    for sib in SIBLINGS:
-        sib_modes = runs._interaction_modes(sib)
-        assert runs._has_group(modes) == runs._has_group(sib_modes)
-        assert runs._all_one_to_one(modes) == runs._all_one_to_one(sib_modes)
-
-
 def test_the_shared_beat_id_is_shared_and_the_private_ones_are_private():
     """t1_public_challenge is the same beat in all three forms and keeps the
     same id. t2/t3 are per-form in the siblings already (S3A names Jordan and

@@ -76,9 +76,8 @@ def per_slot_draw(monkeypatch):
     monkeypatch.setenv("DEFAULT_RUN_VARIANT", "random")
 
 
-PARTICIPANT_LINKS = ["/start", "/start/one-to-one", "/start/group"]
-ARM_LINKS = {"/start": "full", "/start/one-to-one": "one_to_one",
-             "/start/group": "group"}
+PARTICIPANT_LINKS = ["/start"]
+ARM_LINKS = {"/start": "full"}
 
 
 # --- fixtures ----------------------------------------------------------------
@@ -237,109 +236,7 @@ def test_the_anonymous_text_entrance_still_opens(client, monkeypatch):
 
 # --- B7: a withdrawal is about the person, not one run document --------------
 
-def test_a_withdrawal_reaches_every_run_the_person_has(runs_mod):
-    """Two arms, one person, one decision to stop."""
-    one = runs_mod.create("RF_W_BOTH", arm="one_to_one")
-    group = runs_mod.create("RF_W_BOTH", arm="group")
-
-    runs_mod.withdraw(one["run_id"])
-
-    assert runs_mod.get(one["run_id"])["withdrawn"]
-    assert runs_mod.get(group["run_id"])["withdrawn"], \
-        "the other arm's run still reads as live for someone who withdrew"
-
-
-def test_the_other_arm_link_does_not_re_enrol_someone_who_withdrew(client, runs_mod):
-    """The reproduction, exactly: withdraw on one arm, touch the other arm's
-    link, reopen the first. That used to mint a FRESH run with withdrawn null
-    and four encounters queued, so /api/runs showed the same person withdrawn
-    and live at once and a withdrawal report read "withdrew and then carried
-    on"."""
-    first = _enter(client, "/start/one-to-one", "RF_W_ARMS")
-    # The record id /start minted, which is what the page sends with the stop.
-    assert client.post(
-        f"/api/run/{first}/withdraw",
-        json={"participant_id": runs_mod.get(first)["participant_record_id"]},
-    ).status_code == 200
-
-    second = _enter(client, "/start/group", "RF_W_ARMS")
-    third = _enter(client, "/start/one-to-one", "RF_W_ARMS")
-
-    assert third == first, "the first arm forked a fresh run after a withdrawal"
-    ids = {r["run_id"] for r in _all_runs(runs_mod)}
-    assert ids == {first}, f"a withdrawn participant was given new runs: {ids}"
-    for run_id in (first, second, third):
-        assert runs_mod.get(run_id)["withdrawn"], run_id
-
-
-def test_no_run_of_a_withdrawn_participant_reads_as_live(client, runs_mod):
-    """What an analyst sees. Every run under the key says withdrawn, or the
-    withdrawal report contradicts itself."""
-    _enter(client, "/start/one-to-one", "RF_W_LIVE")
-    first = _enter(client, "/start/one-to-one", "RF_W_LIVE")
-    client.post(f"/api/run/{first}/withdraw",
-                json={"participant_id": runs_mod.get(first)["participant_record_id"]})
-    _enter(client, "/start/group", "RF_W_LIVE")
-    _enter(client, "/start", "RF_W_LIVE")
-
-    mine = [r for r in _all_runs(runs_mod) if r["participant_id"] == "RF_W_LIVE"]
-    assert mine
-    assert all(r.get("withdrawn") for r in mine), \
-        [r["run_id"] for r in mine if not r.get("withdrawn")]
-
-
 # --- B6: a same-arm return is not a cross-arm arrival ------------------------
-
-def test_a_same_arm_return_resumes_the_run_it_belongs_to(client, runs_mod):
-    """The reproduction: a finished 1:1 run, then the group link, then the 1:1
-    link again. find_for_participant answered with the participant's NEWEST run
-    whatever arm it belonged to, so the group run failed the arm comparison and
-    the 1:1 link built a THIRD run — leaving the participant's finished code
-    unreachable from the only URL they were given."""
-    one = _enter(client, "/start/one-to-one", "RF_ARM_FORK")
-    group = _enter(client, "/start/group", "RF_ARM_FORK")
-    again = _enter(client, "/start/one-to-one", "RF_ARM_FORK")
-
-    assert again == one, "the 1:1 link minted a second 1:1 run"
-    assert group != one
-    ids = {r["run_id"] for r in _all_runs(runs_mod)}
-    assert ids == {one, group}, f"one human minted {len(ids)} runs: {ids}"
-
-
-def test_a_finished_run_is_still_the_one_that_link_hands_back(client, runs_mod):
-    """The consequence that costs the participant money: their completion code.
-
-    A forked run is done:false with a PARTIAL code, and the finished code they
-    were shown is no longer reachable from the link they hold.
-    """
-    one = _enter(client, "/start/one-to-one", "RF_ARM_CODE")
-    run = runs_mod.get(one)
-    run["index"] = len(run["scenarios"])
-    runs_mod.save(run)
-    finished_code = runs_mod.completion_code(run)
-
-    _enter(client, "/start/group", "RF_ARM_CODE")
-    again = _enter(client, "/start/one-to-one", "RF_ARM_CODE")
-
-    view = client.get(f"/api/run/{again}").json()
-    assert view["done"] is True
-    assert view["completion_code"] == finished_code
-    assert "PARTIAL" not in view["completion_code"]
-
-
-def test_a_genuine_cross_arm_arrival_is_still_cross_linked(client, runs_mod):
-    """The behaviour that must survive the fix: someone who really does arrive
-    on the other arm gets their own run, and both runs say so."""
-    one = _enter(client, "/start/one-to-one", "RF_ARM_LINK")
-    group = _enter(client, "/start/group", "RF_ARM_LINK")
-
-    assert group != one
-    a, b = runs_mod.get(one), runs_mod.get(group)
-    assert [l["run_id"] for l in a.get("other_arm_runs", [])] == [group]
-    assert [l["run_id"] for l in b.get("other_arm_runs", [])] == [one]
-    assert a["construct_pool"]["arm"] == "one_to_one"
-    assert b["construct_pool"]["arm"] == "group"
-
 
 def test_a_return_to_the_same_link_still_resumes_with_no_other_arm_in_play(client):
     """The dropped-connection case the lookup exists for, unchanged."""
@@ -454,51 +351,6 @@ def test_an_entry_link_still_honours_variant_a(client, runs_mod):
     pool = run["construct_pool"]
     assert pool["variant_pin"] == "A"
     assert pool["variant_pin_unfilled"] == [], "nothing was left unfilled here"
-
-
-@pytest.mark.parametrize("path", ["/start/one-to-one", "/start/group"])
-def test_an_arm_link_fills_what_the_variant_pin_can_and_says_what_it_could_not(
-        client, runs_mod, path):
-    """An arm link and a variant pin ask for two things that cannot both happen.
-
-    An arm restricts the run to two constructs and a run is always four
-    encounters, so each construct fills two slots; a construct has exactly one
-    form carrying a given letter. `?variant=A` on an arm link can therefore
-    cover half the run and no more, and the question is only what the other half
-    is. It used to be the same two encounters over again — S1A, S2A, S1A, S2A,
-    in 200 runs out of 200 on both arms and for both letters — which a
-    participant spots on sight and which is worth nothing as data to whoever
-    asked for the pin.
-
-    So the pin is honoured while forms carrying the letter last, the remaining
-    slots get the construct's UNSEEN form, no encounter repeats, and the run
-    document carries the shortfall as a field. The alternative to a recorded
-    shortfall is not a satisfied pin — it is the same conversation twice with
-    nothing on the run saying so.
-    """
-    r = client.get(path, params={"pid": "RF_VAR_OK", "variant": "A"},
-                   follow_redirects=False)
-    run = runs_mod.get(_run_id_from(r))
-    ids = [s["id"] for s in run["scenarios"]]
-
-    assert len(set(ids)) == len(ids), f"the same encounter twice: {ids}"
-    # Half the run is the pinned letter: one A form per construct in the arm.
-    assert sum(1 for s in run["scenarios"] if s["variant"] == "A") == 2, ids
-    # And every construct's first encounter is the letter that was asked for.
-    seen = set()
-    for s in run["scenarios"]:
-        if s["construct"] not in seen:
-            seen.add(s["construct"])
-            assert s["variant"] == "A", ids
-
-    pool = run["construct_pool"]
-    assert pool["variant_pin"] == "A"
-    unfilled = pool["variant_pin_unfilled"]
-    assert len(unfilled) == 2, unfilled
-    assert {u["requested_variant"] for u in unfilled} == {"A"}
-    assert all(u["served"] in ids for u in unfilled)
-    assert sorted(u["construct"] for u in unfilled) == \
-        sorted(pool["constructs"])
 
 
 @pytest.mark.usefixtures("per_slot_draw")

@@ -32,7 +32,7 @@ from fastapi.testclient import TestClient
 
 from server import app as appmod
 
-LINKS = ["/start", "/start/one-to-one", "/start/group"]
+LINKS = ["/start"]
 
 #: The user agents that actually did this. Slack and Teams unfurl a pasted link,
 #: Twitter/Facebook/Discord preview one, and a monitor fetches it on a timer.
