@@ -321,10 +321,8 @@ pull those recordings off the task before the next deploy. `storage.ok` false
 means **every** recording in that wave is on the task's disk, and the countdown
 is the next rollout.
 
-Neither state loses a recording by itself and neither is visible to a rater:
-`/api/rater/video/{assignment_id}` prefers a local file and falls back to the
-bucket, so the console plays the same recording either way. The difference is
-entirely about what survives a deploy.
+Neither state loses a recording by itself. The difference is entirely about
+what survives a deploy.
 
 ### The third state, which loses the recording: CORS
 
@@ -959,9 +957,9 @@ https://rf.ai-ready-workforce.ai.cornell.edu/test?name=jennie&variant=A&key=$KEY
 > filter drops. That is the reason this link, key and all, must never be the one
 > you paste into Qualtrics. Copy the participant links from the next section.
 
-### 2. The three participant-facing links
+### 2. The participant-facing links
 
-All three go into Qualtrics; the canonical wording, and what each parameter
+These go into Qualtrics; the canonical wording, and what each parameter
 must and must not carry, is [The participant
 URL](#the-participant-url-qualtrics--app--qualtrics) below.
 
@@ -969,7 +967,6 @@ URL](#the-participant-url-qualtrics--app--qualtrics) below.
 |---|---|---|
 | `/start/one-to-one` | A participant assigned the two-person arm | `pid=`, **`qid=`** |
 | `/start/group` | A participant assigned the group arm | `pid=`, **`qid=`** |
-| `/rate/start` | A Phase 2 rater arriving from the rater survey | `token=` |
 
 > **`&qid=` is mandatory on every `/start…` link**, arm or no arm. It carries
 > the Qualtrics `ResponseID`, which is the only evidence this platform has that
@@ -978,12 +975,7 @@ URL](#the-participant-url-qualtrics--app--qualtrics) below.
 > wording is in [The participant
 > URL](#the-participant-url-qualtrics--app--qualtrics) below — read it before
 > you paste anything into the survey.
->
-> `/rate/start` is the exception: its mandatory parameter is `token=`, and a
-> rater who arrives without a usable one gets a page to paste theirs into
-> rather than a refusal. `&qid=` is optional there and worth piping anyway — it
-> is carried through to the console URL, and it is the only thing joining a
-> rater's survey response to the work they then did.
+
 
 `/start` (no arm) still exists and still works — it is the full four-construct
 run. If the wave is fielding arms, the two arm links are what goes in the
@@ -1130,14 +1122,13 @@ Two things to check on the joined output before trusting it:
 
 ## The participant URL (Qualtrics → app → Qualtrics)
 
-**Put these in Qualtrics.** The first two go at the point where participants
-move from the WEIP survey to the encounters — whichever arm that participant is
-assigned — and the third goes in the rater survey. Copy them from here, whole.
+**Put these in Qualtrics.** They go at the point where participants move from
+the WEIP survey to the encounters — whichever arm that participant is assigned.
+Copy them from here, whole.
 
 ```
 https://rf.ai-ready-workforce.ai.cornell.edu/start/one-to-one?pid=${e://Field/participantId}&qid=${e://Field/ResponseID}
 https://rf.ai-ready-workforce.ai.cornell.edu/start/group?pid=${e://Field/participantId}&qid=${e://Field/ResponseID}
-https://rf.ai-ready-workforce.ai.cornell.edu/rate/start?token=${e://Field/RaterToken}
 ```
 
 - **The field is `participantId`.** Checked against the live survey, which
@@ -1155,7 +1146,7 @@ https://rf.ai-ready-workforce.ai.cornell.edu/rate/start?token=${e://Field/RaterT
   the field differently, change the text **inside** the braces and leave `pid=`
   alone. The query-parameter spellings the app accepts are `pid`,
   `participant_id`, `participantId` and `PROLIFIC_PID` (`entry_params` in
-  `server/app.py`). Same for `RaterToken` in the rater survey.
+  `server/app.py`).
   > **Changed 2026-09-15.** This bullet used to say `participantId` "is not
   > among them". It is now — it was added to `entry_params` in the same change
   > that made the base URL forward participants (see

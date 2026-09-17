@@ -297,22 +297,6 @@ def test_the_landing_page_asks_health_once():
     assert "healthPromise = fetch('/health')" in body
 
 
-def test_the_demo_door_does_not_grow_a_second_rater_token_button():
-    """One credential path, on the page that owns it.
-
-    static/landing.html's bypass mints a rater token on a keyless box. A copy of
-    it here would be a second vending machine, gated separately, drifting
-    separately — on the page most likely to be open on a projector.
-    """
-    code = _code(_demo())
-    assert "/api/raters" not in code
-    assert "#rater" in code, "the demo door has no route to the rating console at all"
-    body = _script(_landing())
-    assert "function openDoorFromHash()" in body, (
-        "the landing page has no #rater deep link, so the demo door's rating "
-        "console button opens a page with nothing on it")
-
-
 # ---------------------------------------------------------------------------
 # 3. The replay lane cannot fail live
 # ---------------------------------------------------------------------------

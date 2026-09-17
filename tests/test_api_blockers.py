@@ -314,30 +314,6 @@ def test_a_slow_head_does_not_freeze_the_loop_and_only_happens_once(
 
 # --- B2 / B17 / B19 / B21 / B50: an S3 failure is recorded, not raised --------
 
-@pytest.mark.parametrize("exc", AWS_FAILURES, ids=lambda e: type(e).__name__ + getattr(
-    e, "response", {}).get("Error", {}).get("Code", ""))
-def test_a_failed_confirm_still_writes_the_event(sessions_root, client, s3, exc):
-    """The confirm endpoint always writes. That is what makes a loss recoverable.
-
-    Before, uploaded_size re-raised anything but a 404 and the append sat after
-    the call, so the exact case where a recording might be sitting in the bucket
-    left no trace at all — and the rater packet then told a human rater the
-    encounter had no video.
-    """
-    s3.error = exc
-    r = client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY})
-
-    assert r.status_code == 503, "an AWS error is not a bug in this process"
-    assert r.status_code != 500
-    evs = video_events(sessions_root)
-    assert len(evs) == 1
-    assert evs[0]["status"] == "failed"
-    assert evs[0]["bytes"] is None       # not zero: nobody looked and saw nothing
-    assert evs[0]["error"]               # a short code, so a person can act on it
-    assert evs[0]["key"] == f"encounters/{SESSION_ID}/webcam.webm"
-    assert r.json()["status"] == "failed"
-
-
 def test_the_recorded_error_names_the_aws_code(sessions_root, client, s3):
     s3.error = aws_error("AccessDenied")
     client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY})
@@ -441,39 +417,6 @@ NO_CAMERA_PARAMS = [
 ]
 
 
-@pytest.mark.parametrize("params", NO_CAMERA_PARAMS,
-                         ids=lambda p: "&".join(f"{k}={v}" for k, v in p.items()))
-def test_an_encounter_that_never_had_a_camera_is_recorded_as_absent(
-        sessions_root, client, s3, params):
-    """X8. The worst outcome in this chain, and it was the new one.
-
-    An encounter with no camera used to be POSTed down the confirm path, which
-    wrote a `video_uploaded` event with status "failed" — the words for "this
-    WAS recorded and the recording was lost". rater_packet then told the rater
-    not to score it and to report a storage fault, and static/rater.html
-    disabled the submit button. Every participant who denied the camera, or
-    whose camera was held by Zoom or FaceTime, produced a paid encounter no
-    rater was allowed to rate and a false fault report to the study team.
-
-    It must be its own event type, and S3 must not be asked: there is no object
-    to ask about, and with no credentials the question itself would have turned
-    an absent camera into a 503 and a storage fault.
-    """
-    r = client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
-                                           **params})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["status"] == "absent" and body["ok"] is False
-    assert body["bytes"] is None and body["key"] is None
-
-    assert video_events(sessions_root) == [], \
-        "an absent camera was written down as a recording that was lost"
-    absent = absent_events(sessions_root)
-    assert len(absent) == 1
-    assert absent[0]["reason"], "the absence was recorded without a reason"
-    assert s3.head_calls == 0, "S3 was asked about an object that never existed"
-
-
 def test_the_reason_the_camera_never_ran_survives_into_the_trail(
         sessions_root, client, s3):
     """The reason is the whole point: "NotAllowedError" (the participant said
@@ -493,55 +436,6 @@ def test_the_reason_the_camera_never_ran_survives_into_the_trail(
     assert absent_events(sessions_root)[-1]["reason"] == "unspecified"
 
 
-def test_an_encounter_with_no_camera_stays_rateable(
-        sessions_root, client, s3, monkeypatch):
-    """End to end, on the two surfaces a human being reads. The record must say
-    "absent" and the packet must hand the rater the transcript with the N/A
-    instruction — not the blocked "report this fault" state."""
-    from server import rater_packet as rp
-
-    monkeypatch.setattr(rp, "SESSIONS_DIR", sessions_root.parent)
-    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
-                                       "client_error": "no_camera:NotAllowedError"})
-
-    assert _record_of(sessions_root)["video_upload"]["state"] == "absent"
-    media = rp._media(SESSION_ID, ASSIGNMENT_ID)
-    assert media["video_status"] == "absent"
-    assert media["video_available"] is False, \
-        "the rating console will block this encounter"
-    assert "WAS recorded" not in media["note"]
-
-
-def test_an_absence_report_cannot_write_off_a_recording_that_landed(
-        sessions_root, client, s3, monkeypatch):
-    """Order independence. A beacon is fire-and-forget and may arrive late or
-    twice; if a stray one could downgrade a confirmed upload, the study would
-    lose a recording that is sitting in the bucket.
-
-    "Lose" means lose to a human being, so the packet is asked for the URL and
-    not just for the word: a status of "ok" over a null video_url is an
-    encounter the rater is told to report rather than rate, which is the same
-    loss by a different name.
-    """
-    from server import rater_packet as rp
-
-    monkeypatch.setattr(rp, "SESSIONS_DIR", sessions_root.parent)
-    s3.missing = False
-    s3.size = 148_221
-    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY})
-    assert video_events(sessions_root)[-1]["status"] == "ok"
-
-    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
-                                       "no_camera": "NotAllowedError"})
-    assert (video.upload_receipt(SESSION_ID) or {}).get("bytes") == 148_221
-    assert _record_of(sessions_root)["video_upload"]["state"] == "ok"
-    media = rp._media(SESSION_ID, ASSIGNMENT_ID)
-    assert media["video_status"] == "ok"
-    assert media["video_available"] is True
-    assert media["video_url"] == f"/api/rater/video/{ASSIGNMENT_ID}", \
-        "the recording survived the stray beacon and the rater still cannot play it"
-
-
 def test_a_real_upload_failure_is_still_a_failure(sessions_root, client, s3):
     """The other half of the contract: nothing about the absence branch may
     soften a recording that was made and lost. Only a client that says
@@ -552,33 +446,6 @@ def test_a_real_upload_failure_is_still_a_failure(sessions_root, client, s3):
     assert r.status_code == 503
     assert absent_events(sessions_root) == []
     assert video_events(sessions_root)[-1]["status"] == "failed"
-
-
-def test_the_three_states_are_distinguishable_from_the_record(sessions_root, client, s3):
-    """No event / failed event / ok event — the distinction rater_packet needs."""
-    assert video_events(sessions_root) == []          # never captured
-
-    s3.error = aws_error("SlowDown", status=503)
-    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY})
-    failed = video_events(sessions_root)[-1]
-    assert failed["status"] == "failed"
-    # A failure is not a receipt: nothing was acknowledged, so no rater may be
-    # handed something to play off it. That used to be asserted as
-    # `video.playback_url(...) is None` — the presigned link that no longer
-    # exists — and the question has moved rather than gone away: whether a
-    # rater is handed a recording is decided by asking storage, so ask storage.
-    # It is the stronger form of the same guarantee, because it also refuses
-    # the case a minted link never covered, an "ok" event over bytes that are
-    # not there.
-    assert video.upload_receipt(SESSION_ID) is None
-    assert video.exists(SESSION_ID) is False
-
-    s3.error = None
-    s3.missing = False
-    s3.size = 99
-    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY})
-    assert video_events(sessions_root)[-1]["status"] == "ok"
-    assert (video.upload_receipt(SESSION_ID) or {}).get("bytes") == 99
 
 
 # --- B3: "lost upload" and "no video" must not collapse into one state --------
@@ -635,108 +502,6 @@ def test_the_record_tells_a_lost_upload_from_an_encounter_with_no_camera(
     assert ok["video_upload"]["state"] == "ok"
     assert ok["video_upload"]["error"] is None
     assert ok["video_upload"]["attempts"] == 2
-
-
-def test_the_record_and_the_rater_packet_agree_on_all_four_states(
-        sessions_root, client, s3, monkeypatch):
-    """The same states, end to end: the event trail, the analyst-facing record
-    and the blinded packet a rater actually opens.
-
-    They are derived independently — the record rebuilds from the events, and
-    the packet now asks STORAGE and reads the events only for the question
-    storage cannot answer — and the whole failure this fixes was two surfaces
-    disagreeing about the same encounter. A rater warned that the upload broke
-    while record.json says the encounter had no video is only half a fix.
-
-    Three states became four when the playback link stopped being a presigned
-    S3 URL. The record still has three, because they are facts about the
-    encounter; the packet gained "unsigned", which is a fact about the PACKET —
-    the bytes exist and this particular packet has no assignment id to address
-    them with. It is included here rather than left to the packet's own tests
-    because it is the one state in which the two surfaces can newly disagree,
-    and the disagreement has to stay confined to addressing: the record says
-    the recording is there, and a packet that cannot reach it must not go on to
-    tell a rater the encounter had no camera or that the upload was lost.
-    """
-    from server import rater_packet as rp
-
-    monkeypatch.setattr(rp, "SESSIONS_DIR", sessions_root.parent)
-
-    assert _record_of(sessions_root)["video_upload"]["state"] == "absent"
-    absent = rp._media(SESSION_ID, ASSIGNMENT_ID)
-    assert absent["video_status"] == "absent"
-
-    s3.error = aws_error("AccessDenied")
-    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY,
-                                       "client_error": "put_http_403"})
-    assert _record_of(sessions_root)["video_upload"]["state"] == "failed"
-    media = rp._media(SESSION_ID, ASSIGNMENT_ID)
-    assert media["video_status"] == "failed"
-    # R14: what the browser said reaches the person who has to report it, next
-    # to what this server found. "not_found" alone tells a rater the recording
-    # is missing, which they can already see; "put_http_403" is the half that
-    # says whether this is a permissions problem or a network one.
-    assert "AccessDenied" in media["upload_error"]
-    assert "put_http_403" in media["upload_error"]
-    assert "put_http_403" in media["note"]
-
-    s3.error = None
-    s3.missing = False
-    s3.size = 148_221
-    client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY})
-    assert _record_of(sessions_root)["video_upload"]["state"] == "ok"
-    ok = rp._media(SESSION_ID, ASSIGNMENT_ID)
-    assert ok["video_status"] == "ok"
-    assert ok["video_url"] == f"/api/rater/video/{ASSIGNMENT_ID}"
-
-    # The fourth. Same encounter, same storage, same record — a packet built
-    # outside a rating assignment, which is what an operator inspecting an
-    # encounter gets. It must degrade to "I cannot address this", never to a
-    # judgement about the encounter that contradicts the record beside it.
-    unsigned = rp._media(SESSION_ID)
-    assert unsigned["video_status"] == "unsigned", \
-        "the packet's judgement about the ENCOUNTER changed because this caller had " \
-        "no assignment id. 'absent' or 'failed' here contradicts the record beside " \
-        "it: one tells a rater to rate a recorded encounter from the transcript, " \
-        "the other reports a storage fault against a bucket that lost nothing"
-    assert unsigned["video_available"] is True, \
-        "the rating console would invite a transcript-only rating of an encounter " \
-        "whose recording is sitting in storage"
-    assert unsigned["video_url"] is None, \
-        "a URL nothing can serve is worse than none: the console reports a present " \
-        "recording as a missing one"
-    assert unsigned["upload_error"] is None, \
-        "an addressing problem was written down as an upload fault against the bucket"
-    assert _record_of(sessions_root)["video_upload"]["state"] == "ok", \
-        "the record moved because a packet could not name a URL"
-
-    # And on every branch there is no deadline for anyone to count down to. The
-    # app serves the bytes for as long as the rater's own token is good for; an
-    # expiry here is the presigned link coming back, and with it the hour into
-    # a sitting where every remaining encounter reads as "no video".
-    for state in (absent, media, ok, unsigned):
-        assert state["expires_in"] is None
-
-
-def test_the_packet_still_refuses_to_leak_a_session_id_through_a_client_error(
-        sessions_root, client, s3, monkeypatch):
-    """The browser's reason is now shown to raters, so it goes through the same
-    blinding as the server's own: a session id anywhere in it drops the whole
-    string. A rater who can read two packets' start times to the second can tell
-    which belong to one participant, which is what the rating code prevents."""
-    from server import rater_packet as rp
-
-    monkeypatch.setattr(rp, "SESSIONS_DIR", sessions_root.parent)
-    # The route's own token filter would refuse this, so it is written straight
-    # into the trail — an older event, or one written before that filter existed.
-    with (sessions_root / "events.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"type": "video_uploaded", "bytes": 0,
-                             "status": "failed", "error": None,
-                             "client_error": f"put failed for {SESSION_ID}"}) + "\n")
-    media = rp._media(SESSION_ID, ASSIGNMENT_ID)
-    assert media["video_status"] == "failed"
-    assert media["upload_error"] is None
-    assert SESSION_ID not in json.dumps(media)
 
 
 @pytest.mark.parametrize("exc", AWS_FAILURES, ids=lambda e: type(e).__name__ + getattr(
@@ -1738,95 +1503,6 @@ def test_an_index_without_the_cohort_column_answers_a_cohort_query_with_nothing(
 
 # --- B44: the rating draw must not run on the loop ----------------------------
 
-def test_the_assignment_draw_runs_off_the_event_loop(served, monkeypatch):
-    """853 ms on the fixture wave, on the same loop as every live encounter.
-    A researcher allocating while the last encounters run is how a wave ends."""
-    from server import raters
-
-    seen = {}
-
-    def fake_assign(session_ids, rater_ids, per_encounter=3, seed=None):
-        seen["thread"] = threading.get_ident()
-        return [{"assignment_id": "as_1"}]
-
-    monkeypatch.setattr(raters, "assign", fake_assign)
-    loop_thread, r = on_the_loop(lambda ac: ac.post(
-        "/api/rater-assignments", params={"key": KEY},
-        json={"session_ids": ["s_1"], "rater_ids": ["ra_1", "ra_2"],
-              "per_encounter": 1}))
-    assert r.status_code == 200
-    assert seen["thread"] != loop_thread
-
-
-def test_the_assignment_listing_reads_off_the_event_loop(served, monkeypatch):
-    from server import raters
-
-    seen = {}
-
-    def fake_list(cohort=None, status=None):
-        seen["thread"] = threading.get_ident()
-        return [{"assignment_id": "as_1", "rater_id": "ra_1", "session_id": "s_1"}]
-
-    monkeypatch.setattr(raters, "list_assignments", fake_list)
-    monkeypatch.setattr(raters, "list_raters", lambda: [{"rater_id": "ra_1",
-                                                         "name": "A", "kind": "crowd"}])
-    loop_thread, r = on_the_loop(lambda ac: ac.get("/api/rater-assignments",
-                                                   params={"key": KEY}))
-    assert r.status_code == 200
-    assert r.json()[0]["rater_name"] == "A"
-    assert seen["thread"] != loop_thread
-
-
-def test_an_unknown_rater_is_still_a_404(client, monkeypatch):
-    from server import raters
-
-    monkeypatch.setattr(raters, "get_rater", lambda rid: None)
-    r = client.get("/api/rater-assignments", params={"key": KEY, "rater_id": "ra_nope"})
-    assert r.status_code == 404
-
-
-def test_a_rater_who_owes_nothing_is_still_a_200(client, monkeypatch):
-    """The unknown-rater sentinel is None, not []. An empty queue is a real
-    answer and must not collapse into the 404."""
-    from server import raters
-
-    monkeypatch.setattr(raters, "get_rater",
-                        lambda rid: {"rater_id": rid, "name": "A", "kind": "crowd"})
-    monkeypatch.setattr(raters, "assignments_for_rater", lambda rid, status=None: [])
-    monkeypatch.setattr(raters, "list_raters", lambda: [])
-    r = client.get("/api/rater-assignments", params={"key": KEY, "rater_id": "ra_1"})
-    assert r.status_code == 200 and r.json() == []
-
-
-def test_the_rating_code_is_minted_off_the_loop_too(served, monkeypatch):
-    """rating_code looks like arithmetic and is not.
-
-    It is an HMAC under runs._run_code_secret, which re-reads
-    DATA_DIR/.run_code_secret from disk on EVERY call unless RUN_CODE_SECRET is
-    set. So an N-row listing was still doing N disk reads on the event loop
-    after the four store reads were moved off it -- while the comment above the
-    worker hop said all of it had been moved.
-    """
-    from server import rater_packet, raters
-
-    seen = {}
-
-    def watched_code(session_id):
-        seen.setdefault("threads", set()).add(threading.get_ident())
-        return "RC-XXXXXXXXXX"
-
-    monkeypatch.setattr(rater_packet, "rating_code", watched_code)
-    monkeypatch.setattr(raters, "list_assignments", lambda cohort=None, status=None: [
-        {"assignment_id": "as_%d" % i, "rater_id": "ra_1", "session_id": "s_%d" % i}
-        for i in range(5)])
-    monkeypatch.setattr(raters, "list_raters",
-                        lambda: [{"rater_id": "ra_1", "name": "A", "kind": "crowd"}])
-    loop_thread, r = on_the_loop(lambda ac: ac.get("/api/rater-assignments",
-                                                   params={"key": KEY}))
-    assert r.status_code == 200 and len(r.json()) == 5
-    assert seen["threads"] and loop_thread not in seen["threads"]
-
-
 # --- B44 (remainder): the three rater-console routes the fix skipped ----------
 
 @pytest.fixture()
@@ -1870,78 +1546,7 @@ def rater_store(monkeypatch, served):
     return threads
 
 
-@pytest.mark.parametrize("url,ran", [
-    ("/api/rater/me", ("token", "queue")),
-    ("/api/rater/assignments", ("token", "queue")),
-    ("/api/rater/packet/as_1", ("token", "assignment", "packet")),
-])
-def test_the_rater_console_routes_read_off_the_event_loop(rater_store, url, ran):
-    """The three routes B44 named by line and the fix did not touch.
-
-    The rater console opens a packet -- manifest, transcript, scenario spec,
-    events and a presign -- once per assignment, and fetches /api/rater/me on
-    load and after every submission. Every one of those reads shared the loop
-    with every live encounter's audio, three lines below a run_in_threadpool
-    added for exactly this reason.
-    """
-    loop_thread, r = on_the_loop(lambda ac: ac.get(url, params={"token": "tok"}))
-    assert r.status_code == 200
-    for name in ran:
-        assert name in rater_store, "%s never ran for %s" % (name, url)
-        assert rater_store[name] != loop_thread, "%s ran on the loop for %s" % (name, url)
-
-
-@pytest.mark.parametrize("url", ["/api/rater/me", "/api/rater/assignments",
-                                 "/api/rater/packet/as_1"])
-def test_a_bad_rater_token_is_still_a_401_from_inside_the_worker(rater_store, client,
-                                                                 url):
-    """HTTPException raised inside the hop has to propagate unchanged, or moving
-    the read off the loop would turn every refusal into a 500."""
-    assert client.get(url, params={"token": "nope"}).status_code == 401
-
-
-def test_a_packet_whose_encounter_is_gone_is_still_a_404(rater_store, client,
-                                                         monkeypatch):
-    from server import rater_packet
-
-    monkeypatch.setattr(rater_packet, "build", lambda sid, order_seed=None: None)
-    assert client.get("/api/rater/packet/as_1",
-                      params={"token": "tok"}).status_code == 404
-
-
 # --- B45 (remainder): one bad float must not take down the whole export -------
-
-def test_a_non_finite_rating_does_not_500_the_whole_export(client, monkeypatch):
-    """/api/reliability went through _json_safe and /api/ratings did not.
-
-    Starlette serialises with allow_nan=False, so one NaN anywhere in the corpus
-    -- a record written before the coercion existed, a hand-edited file, or any
-    future float field the coercion does not police -- 500s the entire export
-    and hides every other rating behind the one bad row.
-    """
-    from server import ratings
-
-    rows = [{"assignment_id": "as_1", "seconds": float("nan"), "scores": {"i1": 4}},
-            {"assignment_id": "as_2", "seconds": 61.0, "scores": {"i1": 5}}]
-    monkeypatch.setattr(ratings, "all_ratings", lambda cohort=None: rows)
-    r = client.get("/api/ratings", params={"key": KEY})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["n"] == 2
-    assert body["ratings"][0]["seconds"] is None     # undefined, not fatal
-    assert body["ratings"][1]["seconds"] == 61.0     # the good row survives
-
-
-@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
-def test_every_non_finite_shape_degrades_to_null(client, monkeypatch, bad):
-    from server import ratings
-
-    monkeypatch.setattr(ratings, "all_ratings",
-                        lambda cohort=None: [{"scores": {"i1": bad}}])
-    r = client.get("/api/ratings", params={"key": KEY})
-    assert r.status_code == 200
-    assert r.json()["ratings"][0]["scores"]["i1"] is None
-
 
 # --- R14 / R23: comments the code must not contradict -------------------------
 

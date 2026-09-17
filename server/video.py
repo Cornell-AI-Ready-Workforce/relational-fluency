@@ -9,31 +9,21 @@ container filesystem does not.
 
 Key layout matches the encounter record: encounters/{session_id}/webcam.webm.
 
-The second half of this module — exists, local_path, store_local, open_stream —
-puts the application back in the byte path, which it was deliberately kept out
-of and which cost more than it saved. Browser-PUTs-to-S3 and rater-GETs-from-S3
-means no process here ever holds a recording, and the consequences compounded:
-a playback link that expires mid-rating, a presigned URL living in the rater's
-browser history as a bearer credential, an encounter whose confirmation event
-failed being permanently unrateable while its bytes sat in the bucket, and —
-the one that matters most — no way to see a recording at all without live AWS
-credentials. Nobody had ever watched one in the rating console.
+The second half of this module — exists, local_path, store_local — is the
+local fallback: when this server cannot presign (no AWS credentials, an
+unreachable or misconfigured bucket) the browser PUTs the recording to the app
+and it lands beside the session as `webcam.webm`, which is what
+encounter_record.build and app._video_status already glob for — one name,
+whatever container is inside it, so no reader can disagree with another about
+whether a recording exists. The bytes are pulled by the study team for rating;
+nothing here streams them to a browser.
 
-Serving the bytes through the app fixes all four with one mechanism. A local
-file is preferred over S3 wherever one exists, so a researcher with no
-credentials can open a packet on a laptop and press play, and so a developer
-can drop a recording into a session directory by hand to reproduce a rater's
-report. That local name is `webcam.webm`, which is what encounter_record.build
-and app._video_status already glob for — one name, whatever container is inside
-it, so no reader can disagree with another about whether a recording exists.
-
-There is deliberately NO function here that mints a presigned GET any more.
-Playback is /api/rater/video/{assignment_id}, which streams the bytes below; a
-signed playback URL is a bearer credential for an IRB video recording that
-outlives the page it was issued to and sits in the rater's browser history and
-in every proxy log on the way. Serving the bytes closed that, and the only way
-to keep it closed is for there to be nothing in this module that can open it
-again — dead code that still works is how a removed defect comes back.
+There is deliberately NO function here that mints a presigned GET. A signed
+playback URL is a bearer credential for an IRB video recording that outlives
+the page it was issued to and sits in browser history and in every proxy log on
+the way; the only way to keep that closed is for there to be nothing in this
+module that can open it — dead code that still works is how a removed defect
+comes back.
 """
 
 from __future__ import annotations
@@ -42,10 +32,8 @@ import json
 import os
 import secrets
 import time
-from collections import OrderedDict
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Optional
 
 import boto3
 from botocore.config import Config
@@ -622,100 +610,7 @@ def upload_receipt(session_id: str) -> Optional[dict]:
 # _sniff_content_type.
 LOCAL_VIDEO_NAME = "webcam.webm"
 
-# What we serve when neither the object's own metadata nor the first bytes say.
-# WebM because that is what every browser but Safari records; a wrong guess here
-# costs the rater a black rectangle, which is why sniffing comes first.
-DEFAULT_CONTENT_TYPE = "video/webm"
-
-# Content types that carry no information. S3 stores whatever the browser
-# declared on the unsigned PUT, and a browser that declared nothing leaves
-# binary/octet-stream on the object — which a <video> element will not play at
-# all, so it must never be passed through as if it were an answer.
-_GENERIC_CONTENT_TYPES = frozenset({
-    "", "binary/octet-stream", "application/octet-stream",
-})
-
-# What a sniff cost before this, and why it is remembered.
-#
-# On the S3 branch every rater seek was three round trips: HEAD for the size,
-# GET for the bytes, and a twelve-byte GET to read the container out of the
-# object's head because the stored Content-Type is the browser's unverified word
-# on an unsigned PUT. Twenty seeks measured sixty round trips, and a rater
-# scrubbing a seven-minute encounter makes far more than twenty. The container
-# is a property of the OBJECT, not of the request, so it is worth reading once.
-#
-# WHAT INVALIDATES AN ENTRY: the object's byte count is part of the key, so an
-# encounter re-recorded to a different length re-sniffs on its next read; the
-# whole memo is dropped when the S3 client is replaced, because an entry read
-# through one client says nothing about what a different credential, bucket or
-# region would return; and the oldest entry is evicted past _SNIFF_CACHE_MAX. An
-# object overwritten with a DIFFERENT container at EXACTLY the same byte count
-# would keep the stale answer until one of those three happens — accepted
-# knowingly, because presign_upload's one-shot guard means an encounter's object
-# is written once, and two MediaRecorder containers agreeing to the byte is not
-# a thing that occurs.
-#
-# 256 entries: a wave is tens of encounters and a rater's queue is tens of
-# packets, so the working set fits many times over, while the bound is what
-# stops a long-lived process accumulating one entry per encounter it has ever
-# served. Each entry is two short strings and an int.
-_SNIFF_CACHE_MAX = 256
-_sniff_cache: "OrderedDict[tuple, str]" = OrderedDict()
-_sniff_cache_client = None
-
-# How much of a recording is in memory at once, on both the read and the write
-# side. A recording is tens of megabytes, so the whole object never fits in a
-# request handler's working set at Phase 2 concurrency: a dozen raters scrubbing
-# a 40 MB packet would be half a gigabyte of buffers.
-#
-# 256 KiB rather than something smaller or larger. Smaller (say 8 or 64 KiB)
-# multiplies the per-chunk ASGI send and, on the S3 side, the per-read overhead
-# by hundreds for every megabyte, and a seek in a <video> element is latency the
-# rater watches. Larger (1 MiB and up) buys nothing measurable on a media stream
-# and both delays the first bytes of a scrub and multiplies the per-connection
-# footprint. 256 KiB is four reads to the megabyte and a few megabytes of
-# buffers across every concurrent rater.
 CHUNK_SIZE = 256 * 1024
-
-
-class RangeNotSatisfiable(Exception):
-    """The caller asked for bytes this recording does not have.
-
-    Carries the true total, because the only correct answer to an unsatisfiable
-    range is 416 with `Content-Range: bytes */TOTAL` — the client needs the size
-    to ask again. Distinct from open_stream returning None, which means there is
-    no recording here at all: HTTP owes those two different statuses (416 and
-    404), and a rater shown one when the other is true gets a wrong explanation
-    for why the video will not play, which is the difference between "reload
-    this" and "this encounter was never filmed".
-    """
-
-    def __init__(self, total: int):
-        self.total = int(total)
-        super().__init__(f"range not satisfiable, object is {self.total} bytes")
-
-
-@dataclass
-class VideoStream:
-    """One response's worth of a recording, still on the wire.
-
-    `chunks` is an iterator and is never a materialised body — see CHUNK_SIZE.
-    `length` is the bytes in THIS response and `total` the bytes in the whole
-    object; they are equal only for a whole-object request. `start` and `end`
-    are inclusive offsets, the form Content-Range wants, so the route can write
-    the header straight out of these fields without arithmetic of its own.
-
-    Local files and S3 objects both produce this, with identical values for the
-    same request, because the route cannot tell the two apart and neither can
-    the test that pins them.
-    """
-
-    chunks: Iterator[bytes]
-    length: int
-    total: int
-    content_type: str
-    start: int
-    end: int
 
 
 def local_path(session_id: str) -> Path:
@@ -749,81 +644,6 @@ def _local_size(session_id: str) -> int:
     except (OSError, ValueError):
         return 0
     return st.st_size if st.st_size > 0 else 0
-
-
-def _sniff_content_type(head: bytes) -> Optional[str]:
-    """The container these first bytes are, or None if they are neither.
-
-    Both formats a browser MediaRecorder produces land under the one webcam.webm
-    key, so the name cannot be trusted and the bytes are the only evidence.
-    Serving Safari's fragmented MP4 as video/webm gives the rater a black
-    rectangle and NO error — the element simply never fires a frame — so this is
-    worth twelve bytes of the object.
-
-    WebM is Matroska, whose EBML magic is the first four bytes. ISO-BMFF (MP4)
-    puts a box length first and the 'ftyp' type at offset 4.
-    """
-    if head[:4] == b"\x1a\x45\xdf\xa3":
-        return "video/webm"
-    if len(head) >= 8 and head[4:8] == b"ftyp":
-        return "video/mp4"
-    return None
-
-
-def _local_content_type(path: Path) -> str:
-    try:
-        # The builtin rather than Path.open, here and in the two opens below:
-        # tests/test_deploy_portability's unpinned-text-I/O scan reads the mode
-        # out of the second positional argument, so a binary Path.open("rb")
-        # reads to it as an unpinned TEXT open and lands in a list that is
-        # asserted to only shrink. Same call, and the whole repository already
-        # spells a binary open this way.
-        with open(path, "rb") as fh:
-            head = fh.read(12)
-    except OSError:
-        return DEFAULT_CONTENT_TYPE
-    return _sniff_content_type(head) or DEFAULT_CONTENT_TYPE
-
-
-def _resolve_range(total: int, start: Optional[int],
-                   end: Optional[int]) -> tuple:
-    """Turn a requested range into inclusive absolute offsets, or refuse it.
-
-    The single place both the local and the S3 branch resolve a range, so the
-    two cannot drift into answering the same request with different offsets —
-    which the route, having no idea which branch served it, would have no way to
-    notice.
-
-    Three forms, all of them RFC 7233's:
-      both None            the whole object
-      start, end None      open-ended, `bytes=N-`: N to the end
-      start None, end set  the suffix form, `bytes=-N`: the LAST N bytes
-    An end past the object is clamped rather than refused, because that is what
-    a player sends when it guesses a window past the end of a stream, and
-    refusing it makes the recording unseekable for no reason.
-    """
-    if start is None and end is None:
-        return 0, total - 1
-    if start is None:
-        # Suffix form. A zero-length suffix is unsatisfiable by the RFC, and a
-        # suffix longer than the object is the whole object, not an error.
-        suffix = int(end)
-        if suffix <= 0:
-            raise RangeNotSatisfiable(total)
-        return max(0, total - suffix), total - 1
-    start = int(start)
-    # A start at or past the end is the one case that is genuinely a 416: there
-    # are no bytes there to send, and answering 200 with the whole object would
-    # have the player render from an offset it did not ask for.
-    if start < 0 or start >= total:
-        raise RangeNotSatisfiable(total)
-    if end is None or int(end) >= total:
-        end = total - 1
-    else:
-        end = int(end)
-    if end < start:
-        raise RangeNotSatisfiable(total)
-    return start, end
 
 
 def exists(session_id: str) -> bool:
@@ -937,181 +757,3 @@ def store_local(session_id: str, source) -> int:
         raise
     return written
 
-
-def _local_stream(session_id: str, start: Optional[int],
-                  end: Optional[int]) -> Optional[VideoStream]:
-    path = local_path(session_id)
-    total = _local_size(session_id)
-    if total <= 0:
-        return None
-    start, end = _resolve_range(total, start, end)
-    length = end - start + 1
-
-    def chunks() -> Iterator[bytes]:
-        # Opened inside the generator, not beside the stat above: a VideoStream
-        # the route builds and then abandons (a client that hangs up before the
-        # first send) would otherwise hold an open handle until the garbage
-        # collector got to it, and on Windows an open handle on either side is
-        # exactly what makes replace_with_retry spin.
-        with open(path, "rb") as fh:
-            fh.seek(start)
-            left = length
-            while left > 0:
-                buf = fh.read(min(CHUNK_SIZE, left))
-                if not buf:
-                    # The file shrank under us — a re-record during playback.
-                    # Stop rather than spin; the short body is the signal.
-                    return
-                left -= len(buf)
-                yield buf
-
-    return VideoStream(chunks=chunks(), length=length, total=total,
-                       content_type=_local_content_type(path),
-                       start=start, end=end)
-
-
-def _s3_content_type(client, key: str, declared: Optional[str],
-                     total: int) -> str:
-    """What the object says it is, or what its first bytes say it is.
-
-    The upload deliberately leaves Content-Type unsigned so Safari's MP4 and
-    everyone else's WebM both land under webcam.webm, which means the object's
-    own metadata is whatever the browser chose to declare — sometimes right,
-    sometimes binary/octet-stream, which no <video> element will play. One
-    twelve-byte ranged GET settles it, on that path only; it is a round trip a
-    rater never notices, against an unrateable packet they certainly would.
-
-    That round trip is made ONCE per object rather than once per seek — see
-    _SNIFF_CACHE_MAX for what the repeat cost and what drops an entry. `total`
-    is the object's size, already in hand from the HEAD the caller just did, and
-    is part of the cache key rather than a second thing to check.
-    """
-    global _sniff_cache_client
-    # Base type only: a stored `video/webm; codecs="vp8,opus"` is normalised to
-    # video/webm. The parameter is dropped rather than passed through because it
-    # is the browser's unverified word on the unsigned PUT — a wrong or
-    # malformed codecs list makes an element refuse a file it could have played,
-    # while every element sniffs the container itself and needs only the type.
-    declared = (declared or "").split(";")[0].strip().lower()
-    if declared and declared not in _GENERIC_CONTENT_TYPES:
-        # No round trip on this branch, so nothing to remember: the answer came
-        # out of the response the caller already had.
-        return declared
-
-    if client is not _sniff_cache_client:
-        # A different client is a different view of the bucket — other
-        # credentials, or a module re-pointed at another bucket or region — and
-        # an answer read through the old one is not evidence about the new one.
-        _sniff_cache.clear()
-        _sniff_cache_client = client
-    cache_key = (BUCKET, key, int(total))
-    cached = _sniff_cache.get(cache_key)
-    if cached is not None:
-        _sniff_cache.move_to_end(cache_key)
-        return cached
-
-    try:
-        obj = client.get_object(Bucket=BUCKET, Key=key, Range="bytes=0-11")
-        head = obj["Body"].read(12)
-        obj["Body"].close()
-    except (ClientError, BotoCoreError, KeyError, OSError):
-        # Not worth failing playback over: the object is there, we simply could
-        # not sniff it, and WebM is right for every browser but one.
-        #
-        # NOT cached, and that is the point of putting the return here rather
-        # than below: a throttled or momentarily-denied twelve-byte GET is a
-        # fact about this instant, not about the object, and remembering it
-        # would pin the fallback type on a recording for the life of the process
-        # — a Safari MP4 served as WebM plays as a black rectangle with no error
-        # for every rater who opens it afterwards.
-        return DEFAULT_CONTENT_TYPE
-    resolved = _sniff_content_type(head or b"") or DEFAULT_CONTENT_TYPE
-    # Cached including the fall-back-to-default case: the bytes were read and
-    # they were neither container, which is a settled answer about this object
-    # and not worth re-reading on every seek.
-    _sniff_cache[cache_key] = resolved
-    _sniff_cache.move_to_end(cache_key)
-    while len(_sniff_cache) > _SNIFF_CACHE_MAX:
-        _sniff_cache.popitem(last=False)
-    return resolved
-
-
-def _s3_stream(session_id: str, start: Optional[int],
-               end: Optional[int]) -> Optional[VideoStream]:
-    # head_video, not a bare head_object: it already classifies every AWS
-    # failure the way the rest of this module does and already keeps "no object"
-    # apart from "no answer", and a second way to fail here would be a second
-    # thing to keep in step with it.
-    probe = head_video(session_id)
-    total = probe["bytes"] or 0
-    if total <= 0:
-        # Includes probe["bytes"] is None — S3 would not answer at all. There is
-        # nothing to serve either way, and head_video has already logged the
-        # code with the bucket, the region and the session id.
-        return None
-    start, end = _resolve_range(total, start, end)
-    length = end - start + 1
-    key = video_key(session_id)
-    client = _client()
-    params = {"Bucket": BUCKET, "Key": key}
-    # Only send Range when one was asked for, so a whole-object read stays a
-    # plain GET: S3 answers a Range covering the whole object with a 206 and a
-    # Content-Range, and there is no reason to make the common case the odd one.
-    if not (start == 0 and end == total - 1):
-        params["Range"] = f"bytes={start}-{end}"
-    try:
-        obj = client.get_object(**params)
-        body = obj["Body"]
-    except (ClientError, BotoCoreError) as e:
-        # The object was there a moment ago at HEAD time. Log with the same
-        # coordinates head_video logs, and answer "nothing to serve" rather than
-        # letting a botocore exception out of a route that has no handler for
-        # it — a 500 tells the rater nothing they can act on.
-        print(
-            f"  WARNING: S3 GET failed for session {session_id} "
-            f"(bucket {BUCKET}, region {REGION}): {_aws_code(e)}"
-        )
-        return None
-    ctype = _s3_content_type(client, key, obj.get("ContentType"), total)
-
-    def chunks() -> Iterator[bytes]:
-        try:
-            while True:
-                buf = body.read(CHUNK_SIZE)
-                if not buf:
-                    return
-                yield buf
-        finally:
-            # A rater who scrubs abandons the stream mid-body, every time.
-            # Without this the underlying HTTPS connection is never returned to
-            # botocore's pool, and a session of ordinary seeking exhausts it —
-            # after which every S3 call in the process, not just video, blocks.
-            try:
-                body.close()
-            except Exception:  # noqa: BLE001, closing a dead socket is not news
-                pass
-
-    return VideoStream(chunks=chunks(), length=length, total=total,
-                       content_type=ctype, start=start, end=end)
-
-
-def open_stream(session_id: str, *, start: Optional[int] = None,
-                end: Optional[int] = None) -> Optional[VideoStream]:
-    """The encounter's recording as a byte stream, from local disk or from S3.
-
-    None when there is nothing to serve — no such encounter, no recording, or an
-    S3 that would not answer. RangeNotSatisfiable when the recording exists and
-    the requested bytes are not in it; see that class for why the two cannot be
-    collapsed into one answer.
-
-    LOCAL WINS, and it wins without S3 being consulted at all. That is what
-    makes a laptop with no AWS credentials able to open the rating console and
-    play a recording, which nobody has ever been able to do; it is also what
-    lets a developer drop a file into a session directory and reproduce a
-    rater's report against the real playback path rather than a mock of it.
-    """
-    if not _SESSION_ID_RE.fullmatch(session_id or ""):
-        return None
-    if _local_size(session_id) > 0:
-        return _local_stream(session_id, start, end)
-    return _s3_stream(session_id, start, end)

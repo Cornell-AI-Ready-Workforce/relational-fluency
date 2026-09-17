@@ -45,7 +45,6 @@ from test_upstream_consent import NODE_STUB  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 V2 = ROOT / "static" / "v2.html"
-RATER = ROOT / "static" / "rater.html"
 EVIDENCE = ROOT / "static" / "evidence.html"
 APP = ROOT / "server" / "app.py"
 
@@ -510,40 +509,6 @@ vm.runInContext(m[1], ctx, { filename: 'rater.html' });
 """
 
 
-def _run_rater(harness_src: str, tmp_path: Path) -> str:
-    harness = tmp_path / "harness.js"
-    harness.write_text(harness_src, encoding="utf-8")
-    proc = subprocess.run([_node(), str(harness), str(RATER)],
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=180)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    return proc.stdout
-
-
-def test_the_submit_gate_clears_on_the_second_click(tmp_path):
-    """One warning, then the rating goes in — not a warning per click forever."""
-    assert "GATE OK" in _run_rater(GATE_HARNESS, tmp_path)
-
-
-def test_the_gate_is_remembered_by_a_key_and_not_by_its_rendered_text():
-    """The structural half of the same defect.
-
-    The rendered warning carries a live clock, so any once-only test that
-    compares it is a test that never matches. Whatever the wording becomes, the
-    thing stored and compared must not be the thing displayed.
-    """
-    src = RATER.read_text(encoding="utf-8")
-    assert "if (warn && confirmPending !== warn)" not in src, (
-        "the submit gate still compares the rendered warning, which interpolates "
-        "the elapsed time and therefore differs on every click")
-    # And the thing compared is not the thing displayed.
-    gate = src[src.index("  let warn = null;"):src.index("  inFlight = true;")]
-    assert re.search(r"confirmPending\s*!==\s*warnKey", gate), (
-        "the gate does not compare a stable key")
-    assert re.search(r"\$\('submitMsg'\)\.textContent = warn;", gate), (
-        "the rater is no longer shown the sentence, only the key")
-
-
 # =========================================================================== #
 # 6. The rating console: a recording shorter than the encounter
 #
@@ -555,41 +520,6 @@ def test_the_gate_is_remembered_by_a_key_and_not_by_its_rendered_text():
 # upload renders identically to a complete one, and the rater submits believing
 # they watched the encounter.
 # =========================================================================== #
-
-def test_a_recording_shorter_than_its_encounter_is_named():
-    """The console must compare the two clocks it already holds."""
-    src = RATER.read_text(encoding="utf-8")
-    probe = src[src.index("function resolveDuration("):src.index("function videoUnplayable(")]
-    assert re.search(r"duration_s", probe), (
-        "the duration probe never compares the engine's duration with the "
-        "encounter length the packet states, so a truncated recording is "
-        "indistinguishable from a complete one")
-
-
-TRUNCATED_HARNESS = GATE_HARNESS.replace(
-    "console.log('GATE OK');",
-    r"""
-  // A packet whose recording is a fraction of the encounter. This is the shape
-  // the demo wave ships and the shape a truncated upload produces.
-  PACKET.media = { video_url: '/api/rater/video/as_gate', video_available: true, video_status: 'ok' };
-  PACKET.duration_s = 598;
-  await ctx.openAssignment('as_gate');
-  const v = els.vid;
-  assert(v, 'no <video> was built for a playable packet');
-  v.duration = 5.95;
-  v.currentTime = 0;
-  v.readyState = 1;
-  ctx.resolveDuration(v);
-  const note = (written['playNote'] || '') + ' ' + (written['playNote:text'] || '');
-  assert(/incomplete|truncat|shorter|only .*of/i.test(note),
-    'a 5.95s recording of a 9:58 encounter drew no notice at all: ' + JSON.stringify(note));
-  console.log('TRUNCATED OK');
-""")
-
-
-def test_a_truncated_recording_puts_a_notice_in_front_of_the_rater(tmp_path):
-    assert "TRUNCATED OK" in _run_rater(TRUNCATED_HARNESS, tmp_path)
-
 
 # =========================================================================== #
 # 6b. The transcript the rater reads
@@ -902,22 +832,3 @@ def test_the_boot_warnings_reach_a_redirected_log_while_the_server_runs(tmp_path
         proc.kill()
         proc.wait(timeout=20)
 
-
-def test_a_stale_rate_link_renders_a_page_not_a_json_blob(web):
-    """MEASURED: GET /rate?token=rt_bogus answered 401 with the body
-    {"detail":"Bad or missing rater token"} and no HTML at all — a raw JSON
-    blob in a rater's browser. The route's own docstring says the opposite:
-    "a stale link should say so plainly here rather than render an empty
-    console that fails on its first fetch."
-
-    The status stays 401. That is the credential boundary and three other tests
-    assert it; what changes is that the body is the recovery page /rate/start
-    already serves, which is what /rate/start itself does for an expired token.
-    """
-    for params in ({}, {"token": "rt_" + "0" * 32}):
-        r = web.get("/rate", params=params)
-        assert r.status_code == 401, params
-        ctype = r.headers.get("content-type", "")
-        assert ctype.startswith("text/html"), (params, ctype, r.text[:200])
-        assert "rater token" in r.text.lower(), (params, r.text[:300])
-        assert 'action="/rate/start"' in r.text, params

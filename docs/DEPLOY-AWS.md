@@ -627,7 +627,7 @@ afternoon somewhere:
   reaching the wrong account, look at the shell before the file.
 - **A key in `.env` reaches boto3 only in a process that imported
   `server.app`.** An offline tool that imports `server.video` or
-  `server.rater_packet` on its own never runs `load_dotenv()`, resolves no
+  `server.verify_record` on its own never runs `load_dotenv()`, resolves no
   credentials, and reports every encounter as having no recording while the
   objects sit in the bucket. Export the credentials in the shell, or use
   `~/.aws`, for anything that is not the server.
@@ -739,20 +739,16 @@ When presigning is unavailable the browser PUTs the recording to this server
 instead — `PUT /api/sessions/{id}/video` — and the bytes land next to the
 session as `webcam.webm`. That path is what makes a credential-less laptop
 usable at all: without it, every recording made on a developer machine is lost
-when the page closes, which is why nobody had ever watched a recording play in
-the rating console.
+when the page closes.
 
 It is not a second-class path. It applies the presign route's authorisation
 exactly — the same participant key check, the same session-owner check, the same
 one-shot refusal once a recording exists — and it writes the **same**
 `video_uploaded` event, with the same `type`, `key`, `bytes` and `status`
-fields, so every reader of the trail (`rater_packet`, `encounter_record`,
-`verify_record`, `video.upload_receipt`) sees one uniform fact. The only
+fields, so every reader of the trail (`encounter_record`, `verify_record`,
+`video.upload_receipt`) sees one uniform fact. The only
 difference is an additive `"via": "local"`, which is the one thing in the trail
 that tells an operator the bytes are on a task's disk rather than in the bucket.
-Playback does not care either: `/api/rater/video/{assignment_id}` prefers a
-local file and falls back to S3, so a rater plays the same recording the same
-way whichever leg carried it.
 
 Making S3 real does not retire this. It narrows what it covers, which is worth
 being exact about: the browser falls back only when the *presign* fails
@@ -906,7 +902,5 @@ Terraform that is supposed to be the source of truth.
 - Serving `api.rf.*` as a distinct backend: the record and certificate exist,
   but the ALB currently routes both hostnames to the same target group.
 - RDS for participant keys and scenario assignment (state is on the task today).
-- CloudFront in front of the bucket. Not needed for rater review any more —
-  playback is `/api/rater/video/{assignment_id}`, streamed by the application
-  from a local file or from S3, so there is no signed URL to distribute and no
-  storage credential in a rater's browser history.
+- CloudFront in front of the bucket. Not needed: recordings are pulled by the
+  study team for rating, not streamed to raters from the bucket.

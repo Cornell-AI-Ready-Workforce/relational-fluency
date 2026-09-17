@@ -27,9 +27,8 @@ Participant browser (via CloudResearch Connect → Qualtrics)
  │                              └─► S3: audio, transcript, steering log
  └─ webcam (MediaRecorder) ── presigned upload ────────► S3 recordings
 
- S3 or local disk ─► web app (/api/rater/video) ─► raters ─► Qualtrics (ESCI)
-                                     └─► gold labels ─► scorer + feedback models
-                                                          └─► Phase-4 RCT
+ S3 / volume ─► pulled by the study team ─► raters in Qualtrics (ESCI)
+                                              └─► gold labels ─► later phases
 ```
 
 One **aligned record per encounter** in S3: video, audio, transcript, and
@@ -61,13 +60,9 @@ steering log under a single encounter id, so the modalities stay joined.
    When this server cannot sign one — no AWS credentials, an unreachable or
    misconfigured bucket — the browser PUTs the recording to the app instead and
    it lands on disk beside the session. Same event, same key, same playback.
-7. Raters stream recordings from the app, at `/api/rater/video/{assignment_id}`,
-   and score 22 ESCI items in Qualtrics. Not a presigned or CloudFront-signed
-   URL: a signed media URL is a bearer credential for an IRB recording that
-   outlives the page it was issued to, it expires mid-rating, and it cannot
-   produce a frame on a machine without live AWS credentials.
-8. Ratings → reliability gates (ICC/κ) → scorer and feedback model training →
-   Phase-4 RCT.
+7. Recordings are pulled by the study team and rated in Qualtrics on the 22
+   ESCI items (`studies/study1/qualtrics/`). Rating, reliability and modelling
+   happen outside this application.
 
 ## Turn-taking is ours to implement
 

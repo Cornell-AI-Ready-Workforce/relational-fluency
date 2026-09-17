@@ -138,7 +138,6 @@ port-bound:
 |---|---|
 | Participant webcam upload | **Yes.** 8765 only. |
 | Participant voice, transcript, consent, completion | No |
-| Rating console `/rate` | No — the rater's video is proxied by the app, not fetched from S3 |
 | Evidence trace `/evidence` | No |
 | Researcher console `/researcher`, steering trail `/director` | No |
 | Landing page `/`, demo view `/static/demo.html` | No |
@@ -181,9 +180,7 @@ and 20.1 s / 3 turns — and `run.completed` stays empty.
 That is the real cost of reconnecting, and the page is honest about it: the drop
 card says the part will start again from the beginning and the other person will
 greet you afresh. (It used to say "Nothing is lost on your side", which was
-false.) The orphan fragments are no longer assignable to a rater either —
-assignment joins through the run, so only encounters a run actually completed
-can be handed out.
+false.) The orphan fragments are not part of any run's completed encounters.
 
 One residue remains: a recording lost because the server was unreachable is
 filed as `video_upload: {state: "absent", attempts: 0}` — the same record a
@@ -213,7 +210,7 @@ A machine with **no microphone at all** used to be told the microphone was
 check"* then walked it into the room to be stopped again. It now says *"No
 microphone found"*, with help that says what to plug in and that skipping will
 not get past it. Everything except a live conversation works on such a machine
-— the consoles, the demo replay lane, the rating console.
+— the consoles and the demo replay lane.
 
 An explicit **Block** is handled properly: *"Mic blocked"* with help text in the
 check, and *"We couldn't turn on your microphone. Please allow microphone access
@@ -334,8 +331,8 @@ started, and each row carries a date as well as a time.
 
 ### There is no dark mode
 
-No stylesheet on `/rate`, `/evidence`, `/researcher`, `/` or `demo.html` contains
-a `prefers-color-scheme` rule. All five render light even with the operating
+No stylesheet on `/evidence`, `/researcher`, `/` or `demo.html` contains
+a `prefers-color-scheme` rule. All four render light even with the operating
 system set to dark. A choice, not an oversight — but one worth stating rather
 than discovering in front of an audience.
 

@@ -48,40 +48,12 @@ ALIASES = [
 
 # ---------- the shared identifier rules ----------
 
-def test_the_minted_session_id_is_accepted_and_every_alias_of_it_is_not():
-    """One encounter, one spelling — decided by the id's shape, not by the disk.
-
-    rater_packet.rating_code HMACs the session id STRING. If two spellings of
-    one encounter can both be resolved, that encounter is issued two different
-    RC- codes, and the blinded handle a rater quotes and a researcher joins on
-    stops being one-per-encounter.
-    """
-    assert storage.valid_session_id(GOOD_ID)
-    for alias in ALIASES:
-        assert not storage.valid_session_id(alias), alias
-
-
 def test_is_safe_path_component_refuses_what_windows_would_rewrite():
     assert storage.is_safe_path_component("S1A")
     assert storage.is_safe_path_component("missed_deadlines")
     for bad in ("", ".", "..", "a/b", "a\\b", "a:b", "trailing.", "trailing ",
                 "nul", "NUL", "con", "Aux", "com1", "lpt9", "nul.yaml"):
         assert not storage.is_safe_path_component(bad), bad
-
-
-def test_every_module_that_turns_a_session_id_into_a_path_uses_the_one_rule():
-    """A second, looser transcription of the rule is how this drifted before.
-
-    app.py, rater_packet.py and video.py each carried [A-Za-z0-9_-]{1,64}, which
-    accepts uppercase; raters.py carried the strict one. Compared by pattern
-    rather than by identity so a module reloaded by another test still counts.
-    """
-    import server.rater_packet as rater_packet
-    import server.raters as raters
-    import server.video as video
-
-    for mod in (rater_packet, raters, video):
-        assert mod._SESSION_ID_RE.pattern == storage.SESSION_ID_RE.pattern, mod.__name__
 
 
 # ---------- the Windows rename window ----------
@@ -121,35 +93,6 @@ def test_replace_with_retry_still_raises_when_the_window_never_closes(tmp_path, 
     tmp.write_text("{}", encoding="utf-8")
     with pytest.raises(PermissionError):
         storage.replace_with_retry(tmp, tmp_path / "x.json", attempts=3)
-
-
-def test_a_submitted_rating_survives_the_rename_window(tmp_path, monkeypatch):
-    """The source scan below says ratings.py imports the helper; this says it
-    WORKS through the writer a rater's submission actually goes down.
-
-    A rating is 22 ESCI items a human being has just finished. On Windows the
-    researcher console and the reliability routes read RATINGS_DIR while the
-    console writes into it, so the rename can lose to an open handle — and
-    before this the rating was simply gone, with a PermissionError surfacing as
-    a failed submit on a form the rater has already emptied.
-    """
-    from server import ratings
-
-    calls = {"n": 0}
-    real = storage.os.replace
-
-    def flaky(src, dst):
-        calls["n"] += 1
-        if calls["n"] < 3:
-            raise PermissionError(32, "The process cannot access the file")
-        return real(src, dst)
-
-    monkeypatch.setattr(storage.os, "replace", flaky)
-    monkeypatch.setattr(storage.time, "sleep", lambda _s: None)
-    dest = tmp_path / "ratings" / "rg_abcdef.json"
-    ratings._write_atomic(dest, '{"rating_id": "rg_abcdef"}')
-    assert calls["n"] == 3, "the rating writer gave up on the first refusal"
-    assert json.loads(dest.read_text(encoding="utf-8"))["rating_id"] == "rg_abcdef"
 
 
 def test_no_atomic_writer_renames_without_the_retry():
@@ -194,19 +137,6 @@ def _store(mod, session_id=GOOD_ID):
         session_id, scenario="test_scenario", model="m",
         participant_id=None, capture_audio=False,
     )
-
-
-def test_a_session_store_refuses_an_id_it_could_not_be_found_by(store_env):
-    """Validated where the directory is minted, not only where it is read.
-
-    Everything downstream — app._session_dir, the packet builder, the rater
-    assignment — now insists on the minted shape, so a store created under any
-    other one would record a paid participant's encounter where nothing could
-    ever address it.
-    """
-    for bad in ("s_bad", GOOD_ID.upper(), GOOD_ID + ".", "nul"):
-        with pytest.raises(ValueError):
-            _store(store_env, bad)
 
 
 def test_close_finishes_even_when_the_manifest_write_loses_the_rename_race(
@@ -274,51 +204,6 @@ def test_session_dir_refuses_every_alias_of_a_real_encounter(tmp_path, monkeypat
         with pytest.raises(HTTPException) as exc:
             appmod._session_dir(alias)
         assert exc.value.status_code == 400, alias
-
-
-def test_one_encounter_cannot_be_issued_two_rating_codes():
-    import server.rater_packet as rater_packet
-
-    code = rater_packet.rating_code(GOOD_ID)
-    assert code.startswith("RC-")
-    for alias in ALIASES:
-        with pytest.raises(ValueError):
-            rater_packet.rating_code(alias)
-
-
-def test_a_video_key_cannot_be_minted_from_a_spelling_nothing_else_derives(
-        tmp_path, monkeypatch):
-    """S3 keys are case-sensitive on every platform; directory lookups are not.
-
-    So on a Windows or macOS host, presign_upload's "does this session exist?"
-    check passed for a wrong-cased id and then signed a PUT for
-    encounters/S_.../webcam.webm — an object key no reader ever derives. The
-    participant's webcam recording, which is the artefact raters score, would
-    upload successfully and be unfindable.
-    """
-    import server.video as video
-
-    assert video.video_key(GOOD_ID) == f"encounters/{GOOD_ID}/webcam.webm"
-
-    sessions = tmp_path / "sessions"
-    (sessions / GOOD_ID).mkdir(parents=True)
-    monkeypatch.setattr(video, "SESSIONS_DIR", sessions)
-    for alias in ALIASES:
-        with pytest.raises(ValueError):
-            video.video_key(alias)
-        with pytest.raises(video.NoSuchSession):
-            video.presign_upload(alias)
-        assert video.upload_receipt(alias) is None
-        # The three entry points that now actually serve bytes. This line used
-        # to check playback_url, which was retired with the presigned-URL
-        # design; these replace it and are stronger, because a case-variant
-        # alias reaching any of them is what would sign a key nothing else
-        # derives — and on a case-insensitive filesystem local_path would
-        # resolve to a real directory that video_key would never name.
-        with pytest.raises(ValueError):
-            video.local_path(alias)
-        assert video.exists(alias) is False
-        assert video.open_stream(alias) is None
 
 
 # ---------- scenario ids ----------

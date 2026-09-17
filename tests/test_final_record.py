@@ -23,7 +23,7 @@ emit (realtime_voice_session's `_record_user_turn` and `_finalize_member_inner`,
 pointed at a tmp_path. No fixture wave required.
 
 No network either, and that is now arranged rather than assumed. Every encounter
-here is built without a webcam recording, so every rater_packet.build() below
+here is built without a webcam recording, so every record built below
 asks video.exists(), which for an encounter with no local file is a HEAD against
 the real Cornell study bucket. The `sessions_root` fixture puts tests/
 conftest.py's `offline_bucket` stub in front of it.
@@ -48,7 +48,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from server import (  # noqa: E402
-    encounter_record, rater_packet, retranscribe, verify_record, video,
+    encounter_record, retranscribe, verify_record, video,
 )
 
 SESSION_ID = "s_1772546373_31268f"
@@ -165,14 +165,13 @@ def sessions_root(tmp_path, monkeypatch, offline_bucket):
     """A private SESSIONS_DIR, patched into every module that resolved it.
 
     `offline_bucket` (tests/conftest.py) is not optional. None of these
-    encounters has a webcam recording, and the packet decides whether there is
+    encounters has a webcam recording, and the record decides whether there is
     anything to play by asking storage, so without the stub every test in this
-    file that builds a packet signs a HEAD to relational-fluency-study-data —
-    from a test about transcription markers.
+    file signs a HEAD to relational-fluency-study-data — from a test about
+    transcription markers.
     """
     root = tmp_path / "sessions"
     root.mkdir()
-    monkeypatch.setattr(rater_packet, "SESSIONS_DIR", root)
     monkeypatch.setattr(video, "SESSIONS_DIR", root)
     return root
 
@@ -202,30 +201,6 @@ def test_a_garbled_participant_turn_keeps_its_flag_in_the_record(sessions_root):
     turns = [t for t in record["transcript"] if t["role"] == "participant"]
     assert [t["script_mismatch"] for t in turns] == [False, True]
     assert record["counts"]["script_mismatch_turns"] == 1
-
-
-def test_a_garbled_turn_reaches_the_rater_as_a_marked_turn(sessions_root):
-    """The rater is the reason the flag exists.
-
-    22 ESCI items are scored against this text. Unmarked, the rater reads a
-    person who said something incoherent; marked, they read a transcript the
-    platform cannot vouch for and reach for the N/A option the scale note
-    already tells them about.
-    """
-    _write_session(sessions_root, _garbled_encounter())
-    packet = rater_packet.build(SESSION_ID)
-
-    garbled = [t for t in packet["transcript"] if t["text"] == GARBLED]
-    assert len(garbled) == 1
-    turn = garbled[0]
-    assert turn["script_mismatch"] is True
-    assert turn["note"] == rater_packet.NOTE_SCRIPT_MISMATCH
-    assert packet["counts"]["script_mismatch_turns"] == 1
-
-    # And the marker is not sprayed over clean turns, which would make it noise.
-    clean = [t for t in packet["transcript"]
-             if t["role"] == "participant" and t["text"] != GARBLED]
-    assert clean and all(t["note"] is None for t in clean)
 
 
 def test_an_encounter_with_no_garbled_turn_says_so(sessions_root):
@@ -283,42 +258,6 @@ def test_the_script_check_passes_only_once_the_record_carries_the_repair(session
     ok, detail = _check(verify_record.verify(sdir)[1],
                         "participant transcript script")
     assert ok and "carried in the record" in detail
-
-
-@pytest.mark.parametrize("hq, why, says", [
-    ("{not json at all", "a cache killed mid-write is not a repair",
-     "not a readable transcript"),
-    ({"source": "user_audio.wav", "text": ""},
-     "an empty transcript repairs nothing", "produced no text"),
-    ({"source": "user_audio.wav", "text": "   "},
-     "whitespace repairs nothing", "produced no text"),
-])
-def test_a_file_that_reaches_no_reader_is_not_a_repair(sessions_root, hq, why, says):
-    """The defect, stated as a test: the check used to stat the file.
-
-    A file on disk and a record a rater can read are different claims. This is
-    the case that separates them — the file exists, and the built record carries
-    nothing — and the old check reported PASS 'repaired by retranscribe' for it.
-
-    `says` is the second half of it. All three of these once printed the same
-    line, which named the plumbing between retranscribe and the record; only one
-    of the three is actually about that plumbing, and for the other two the line
-    pointed the operator at a subsystem that is working. A permanently red check
-    whose message names the wrong cause is worse than no check, because the
-    operator learns to scroll past it. Each cause now names itself and the way
-    out of it.
-    """
-    sdir = _write_session(sessions_root, _garbled_encounter(), hq=hq)
-
-    assert encounter_record.build(sdir)["participant_transcript_hq"] is None
-    ok, detail = _check(verify_record.verify(sdir)[1],
-                        "participant transcript script")
-    assert not ok, why
-    assert says in detail
-
-    # And the rater still sees the raw turn, marked, rather than a clean one.
-    packet = rater_packet.build(SESSION_ID)
-    assert packet["counts"]["script_mismatch_turns"] == 1
 
 
 def test_an_empty_hq_cache_names_the_cause_and_the_way_out_of_it(sessions_root):
@@ -398,29 +337,6 @@ def test_a_lost_participant_channel_is_stated_in_the_record(sessions_root):
     assert record["counts"]["unheard_turns"] == 2
 
 
-def test_the_rater_is_told_the_participant_stopped_being_heard(sessions_root):
-    """The distinction the whole packet exists to preserve.
-
-    Two agent turns with no participant reply between them is a rateable
-    behaviour on several ESCI items. It is also what a dead transcription
-    channel looks like, and only one of those is a finding about the
-    participant.
-    """
-    _write_session(sessions_root, _scribe_lost_encounter())
-    packet = rater_packet.build(SESSION_ID)
-
-    unheard = [t for t in packet["transcript"] if t["participant_channel_lost"]]
-    assert len(unheard) == 2
-    assert unheard[0]["note"] == rater_packet.NOTE_CHANNEL_LOST
-    # Said once, at the turn where the loss begins: a paragraph repeated down
-    # the rest of the transcript is a paragraph nobody reads.
-    assert unheard[1]["note"] is None
-    assert packet["counts"]["unheard_turns"] == 2
-    # The count is what lets a console warn at the top instead of hoping the
-    # rater notices a marker two thirds of the way down.
-    assert packet["counts"]["participant_turns"] == 1
-
-
 def test_verify_fails_an_encounter_whose_participant_channel_ended_early(sessions_root):
     sdir = _write_session(sessions_root, _scribe_lost_encounter())
     ok, checks = verify_record.verify(sdir)
@@ -452,30 +368,6 @@ def test_a_recovered_channel_is_reported_as_recovered_not_as_intact(sessions_roo
     ok, detail = _check(verify_record.verify(sdir)[1], "participant channel")
     assert not ok
     assert "recovered at 240.0s" in detail
-
-
-def test_an_intact_channel_raises_nothing(sessions_root):
-    """The other half of a useful check: no false alarm on a healthy encounter.
-
-    1:1 encounters have no separate transcription channel to lose, so their
-    steering pairs carry no participant_channel at all — that null must not read
-    as a loss.
-    """
-    sdir = _write_session(sessions_root, _garbled_encounter())
-    record = encounter_record.build(sdir)
-    assert record["participant_channel"]["state"] == "ok"
-    assert record["participant_channel"]["untranscribed_s"] is None
-    assert record["counts"]["unheard_turns"] == 0
-    assert all(t.get("participant_channel") is None
-               for t in record["transcript"] if t["role"] == "agent")
-
-    ok, detail = _check(verify_record.verify(sdir)[1], "participant channel")
-    assert ok and detail == "intact"
-
-    packet = rater_packet.build(SESSION_ID)
-    assert packet["counts"]["unheard_turns"] == 0
-    assert all(t["participant_channel_lost"] is False
-               for t in packet["transcript"])
 
 
 # --------------------------------------------------------------------------
@@ -562,131 +454,6 @@ def test_a_loss_with_no_session_end_says_the_size_is_unknown_not_zero(
     assert "cannot be established" in detail
 
 
-def test_the_rater_is_told_about_a_loss_that_left_no_turn_to_mark(sessions_root):
-    """The packet surfaced the loss only through the turns that came after it.
-
-    There are none here, so the rater was handed a transcript that simply stops
-    — the exact reading ("the participant disengaged") the channel note exists to
-    prevent — while record["participant_channel"]["state"] said "lost" the whole
-    time. The note goes on the last turn that was still being heard, which is
-    where a rater reading down the transcript arrives at the silence.
-    """
-    _write_session(sessions_root, _scribe_lost_at_the_end())
-    packet = rater_packet.build(SESSION_ID)
-
-    # Unchanged and still honest: no agent turn was spoken after the loss.
-    assert packet["counts"]["unheard_turns"] == 0
-    assert all(t["participant_channel_lost"] is False
-               for t in packet["transcript"])
-
-    notes = [t["note"] for t in packet["transcript"] if t["note"]]
-    assert notes == [rater_packet.NOTE_CHANNEL_LOST_AT_END]
-    assert packet["transcript"][-1]["note"] == rater_packet.NOTE_CHANNEL_LOST_AT_END
-
-
-def test_a_loss_with_turns_still_below_it_does_not_say_the_transcript_ends(
-        sessions_root):
-    """S3A/S3B: a group segment whose scribe died, then a one_to_one_series.
-
-    The 1:1 writer omits participant_channel, so nothing downstream is stamped
-    and the record's state stays "lost" — but the turns are there on the page.
-    "The transcript ends here" printed above four further turns is the confident
-    false statement this whole mechanism exists to avoid.
-    """
-    evs = _scribe_lost_at_the_end(session_end=None) + [
-        {"t": 200.0, "type": "user_turn", "text": "Just the two of us then.",
-         "channel": "voice", "script_mismatch": False},
-        _agent_pair(220.0, agent_id="drew", text="What would you say to Mel?"),
-    ]
-    _write_session(sessions_root, evs)
-    packet = rater_packet.build(SESSION_ID)
-
-    assert encounter_record.build(sessions_root / SESSION_ID)[
-        "participant_channel"]["state"] == "lost"
-    notes = [t["note"] for t in packet["transcript"] if t["note"]]
-    assert notes == [rater_packet.NOTE_CHANNEL_GAP_SOMEWHERE]
-    assert packet["transcript"][-1]["note"] is None
-
-
-def test_a_bounded_hole_with_no_turn_inside_it_is_still_marked(sessions_root):
-    """The same silence, mid-encounter: the channel came back, and no agent
-    turn happened to fall inside the hole, so nothing carried the marker. The
-    participant's turns in there are missing all the same.
-    """
-    evs = _scribe_lost_at_the_end(session_end=None) + [
-        {"t": 240.0, "type": "group_room_opened", "agents": ["mel", "drew"]},
-        {"t": 250.0, "type": "user_turn", "text": "Sorry, I was saying...",
-         "channel": "voice", "script_mismatch": False},
-        _agent_pair(260.0, participant="Sorry, I was saying...",
-                    participant_channel="ok"),
-    ]
-    _write_session(sessions_root, evs)
-    packet = rater_packet.build(SESSION_ID)
-
-    notes = [(t["t"], t["note"]) for t in packet["transcript"] if t["note"]]
-    assert notes == [(60.0, rater_packet.NOTE_CHANNEL_GAP)]
-
-
-def test_a_hole_with_nothing_before_it_is_marked_without_claiming_a_position(
-        sessions_root):
-    """The channel died before anything was recorded and came back later.
-
-    There is no turn on the near side of the hole, so the two notes above would
-    both be claiming a position ("after this turn") that is false here.
-    Saying nothing would hide a hole the record knows about; saying either of
-    them would be a confident false statement about where it is. The rater gets
-    the fact without the position.
-    """
-    evs = _base_events() + [
-        {"t": 5.0, "type": "group_room_opened", "agents": ["mel", "drew"]},
-        {"t": 10.0, "type": "scribe_pump_ended", "segment": 0,
-         "interaction": "i1"},
-        {"t": 60.0, "type": "group_room_opened", "agents": ["mel", "drew"]},
-        {"t": 70.0, "type": "user_turn", "text": "Where were we?",
-         "channel": "voice", "script_mismatch": False},
-        _agent_pair(80.0, participant="Where were we?",
-                    participant_channel="ok"),
-    ]
-    sdir = _write_session(sessions_root, evs)
-    assert encounter_record.build(sdir)["participant_channel"]["state"] == "restored"
-
-    packet = rater_packet.build(SESSION_ID)
-    notes = [t["note"] for t in packet["transcript"] if t["note"]]
-    assert notes == [rater_packet.NOTE_CHANNEL_GAP_SOMEWHERE]
-    assert packet["transcript"][0]["note"] == rater_packet.NOTE_CHANNEL_GAP_SOMEWHERE
-
-
-def test_an_intact_channel_still_gets_no_note(sessions_root):
-    """The other half: this branch reads the record's own state field, so an
-    encounter that never lost the channel must come back exactly as before."""
-    _write_session(sessions_root, _scribe_lost_encounter())
-    packet = rater_packet.build(SESSION_ID)
-    # The existing shape: the note is on the first turn AFTER the loss, and the
-    # terminal-loss branch must not add a second one.
-    assert [t["note"] for t in packet["transcript"]].count(
-        rater_packet.NOTE_CHANNEL_LOST) == 1
-    assert rater_packet.NOTE_CHANNEL_LOST_AT_END not in [
-        t["note"] for t in packet["transcript"]]
-
-    _write_session(sessions_root, _garbled_encounter())
-    clean = rater_packet.build(SESSION_ID)
-    assert [t["note"] for t in clean["transcript"]
-            if t["note"] == rater_packet.NOTE_CHANNEL_LOST_AT_END] == []
-
-
 # --------------------------------------------------------------------------
 # blinding: the new fields must not widen what a rater can see
 # --------------------------------------------------------------------------
-
-def test_the_new_markers_carry_no_identifying_or_answer_key_content(sessions_root):
-    """tests/test_rater_packet.py pins the packet's blinding; this pins that the
-    three fields added here did not open a hole in it, since all three describe
-    the capture rather than the encounter's content."""
-    _write_session(sessions_root, _scribe_lost_encounter(), hq=HQ)
-    packet = rater_packet.build(SESSION_ID)
-    blob = json.dumps(packet, ensure_ascii=False)
-
-    for forbidden in ("participant_transcript_hq", "scribe_pump_ended",
-                      "stage_direction", "press on the handoff",
-                      SESSION_ID, "p_test"):
-        assert forbidden not in blob, f"the packet leaked {forbidden!r}"

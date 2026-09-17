@@ -36,16 +36,6 @@ COPY static ./static
 COPY scenarios ./scenarios
 COPY config ./config
 
-# The ESCI item bank. server/esci.py resolves it as
-# <repo root>/studies/study1/qualtrics/esci_construct4_items.csv and _load()
-# raises RuntimeError when it is missing — deliberately, because a half-loaded
-# instrument is worse than none. That import happens lazily, inside the rating
-# routes, so the image built fine and `import server.app` passed while every
-# /rate, /api/raters, /api/ratings and /api/reliability request in the deployed
-# service would 500 on the missing file. Phase 2 cannot run without this path in
-# the image. (Keep .dockerignore's allowlist in step with this COPY.)
-COPY studies/study1/qualtrics ./studies/study1/qualtrics
-
 # The volume gets mounted here. mkdir is just for first-boot when there is no
 # volume yet (local docker run, etc.).
 RUN mkdir -p /data

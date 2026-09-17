@@ -24,8 +24,7 @@ jobs:
   #
   # This job used to be one cell: ubuntu-latest × Python 3.12, an import check
   # and some scenario validation. It never ran tests/ — 17 modules and 845 tests
-  # covering the live path (the API, the voice runner, the rating console,
-  # reliability, the client blockers). Whether the participant-facing suite was
+  # covering the live path (the API, the voice runner, the client blockers). Whether the participant-facing suite was
   # green depended on who remembered to run it locally.
   #
   # The other half is the matrix. Participants are recruited from the public and
@@ -60,16 +59,15 @@ jobs:
       # Node is a real dependency of this job, so declare it instead of
       # inheriting it.
       #
-      # Three test modules drive the participant and rater pages through node
-      # (tests/test_client_blockers.py, tests/test_browser_compat.py,
-      # tests/test_rating_console.py). Each calls shutil.which("node") and
+      # Two test modules drive the participant pages through node
+      # (tests/test_client_blockers.py, tests/test_browser_compat.py). Each calls shutil.which("node") and
       # pytest.skip()s when it is absent — the right behaviour on a
       # contributor's laptop, where node is not a runtime dependency of the
       # study, and the wrong behaviour here. Until this step existed the job
       # never installed node and passed only because the GitHub runner images
       # happen to ship one. The day an image stops shipping it, every Safari
-      # -webkit guard, every MediaRecorder WebM/MP4 negotiation check and the
-      # entire rating-console harness would skip and the build would stay
+      # -webkit guard and every MediaRecorder WebM/MP4 negotiation check
+      # would skip and the build would stay
       # green: coverage disappearing without a sound, which is the failure mode
       # this suite exists to prevent (tests/conftest.py).
       #
@@ -113,8 +111,8 @@ jobs:
           if not node:
               sys.exit(
                   "node is not on PATH for python's shutil.which(), so "
-                  "tests/test_client_blockers.py, tests/test_browser_compat.py and "
-                  "tests/test_rating_console.py would skip their page harnesses and "
+                  "tests/test_client_blockers.py and tests/test_browser_compat.py "
+                  "would skip their page harnesses and "
                   "this build would go green having tested less than it claims. "
                   "Check the actions/setup-node step above."
               )
@@ -149,7 +147,7 @@ jobs:
       # `sessions` table. The app's startup hook then ran the real
       # init_storage() against it, CREATE TABLE IF NOT EXISTS left the stub
       # alone, and the CREATE INDEX on sessions(participant_id) after it raised
-      # — so 108 tests, the entire researcher and rater API surface, errored
+      # — so 108 tests, the entire researcher API surface, errored
       # during setup on any machine without the private fixture wave. That is
       # every machine here. All nine cells were red for a reason everyone had
       # stopped reading, which is exactly how the next real regression gets

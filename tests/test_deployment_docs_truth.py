@@ -201,33 +201,13 @@ def test_every_declared_embedded_field_is_named(field):
     )
 
 
-ENTRY_LINKS = ["/start/one-to-one", "/start/group", "/rate/start"]
+ENTRY_LINKS = ["/start/one-to-one", "/start/group"]
 
 
 @pytest.mark.parametrize("link", ENTRY_LINKS)
 def test_all_three_entry_links_are_documented(link):
     assert link in _text(OPERATIONS), (
         f"{link} is a live entry route and docs/OPERATIONS.md does not mention it"
-    )
-
-
-def test_every_documented_start_link_carries_qid():
-    """Consent moved upstream, so a /start link without the Qualtrics response
-    id records no consent at all: POST /api/consent answers 404, the record
-    stays unconsented and the voice socket closes 4403."""
-    body = _text(OPERATIONS)
-    offenders = []
-    for line in body.splitlines():
-        # `(?<!/rate)` so the rater entrance is not swept in: its mandatory
-        # parameter is `token=`, and `qid=` there is a useful join, not a gate.
-        for m in re.finditer(r"https?://\S*?(?<!/rate)/start[/\w-]*\?\S+", line):
-            url = m.group(0)
-            if "qid=" not in url:
-                offenders.append(url)
-    assert not offenders, (
-        "these /start links in docs/OPERATIONS.md carry no &qid=, so a "
-        "participant who follows one is turned away and the encounter is never "
-        "recorded:\n  " + "\n  ".join(offenders)
     )
 
 

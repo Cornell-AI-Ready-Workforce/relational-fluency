@@ -255,55 +255,6 @@ def raters_mod(tmp_path, monkeypatch):
     return mod
 
 
-def test_assign_refuses_a_rater_deactivated_on_disk(raters_mod):
-    """Reported as unreachable because no function writes active=False. The
-    branch is still live: the rater's JSON document is the source of truth and
-    _load_rater re-reads it every call, so an operator benching a rater by hand
-    — the only way to do it today — lands here. If this branch is ever dropped,
-    that rater keeps drawing assignments they cannot authenticate into, and the
-    plan reports those encounters as covered while they sit unrated."""
-    ids = [raters_mod.create_rater(f"Rater {i}")["rater_id"] for i in range(3)]
-    sessions = []
-    for i in range(3):
-        sid = f"s_1772460300_{i:06x}"
-        d = raters_mod.SESSIONS_DIR / sid
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "manifest.json").write_text(
-            json.dumps({"session_id": sid, "scenario": "S1B",
-                        "cohort": "study", "status": "closed"}),
-            encoding="utf-8",
-        )
-        sessions.append(sid)
-
-    path = raters_mod.RATERS_DIR / f"{ids[1]}.json"
-    rec = json.loads(path.read_text(encoding="utf-8"))
-    rec["active"] = False
-    path.write_text(json.dumps(rec), encoding="utf-8")
-
-    with pytest.raises(ValueError, match="deactivated rater"):
-        raters_mod.assign(sessions, ids, per_encounter=3, seed=1)
-
-    # And the refusal has to come before anything is written: a half-allocated
-    # wave is worse than none, because the load and overlap properties assign()
-    # guarantees are properties of a complete plan.
-    assert not list(raters_mod.ASSIGNMENTS_DIR.glob("*.json"))
-
-
-def test_a_deactivated_rater_can_still_be_issued_a_token(raters_mod):
-    """Pins the correction to _check_raters_exist's docstring, which used to
-    credit issue_token with refusing an inactive rater. It does not; the refusal
-    is at authentication. The distinction matters to an operator who benches a
-    rater and then wonders why the credential they just minted does not work."""
-    rid = raters_mod.create_rater("Bench Me")["rater_id"]
-    path = raters_mod.RATERS_DIR / f"{rid}.json"
-    rec = json.loads(path.read_text(encoding="utf-8"))
-    rec["active"] = False
-    path.write_text(json.dumps(rec), encoding="utf-8")
-
-    token = raters_mod.issue_token(rid, days=7)  # minting succeeds
-    assert raters_mod.rater_for_token(token) is None  # authentication does not
-
-
 # ---------- P4: the linter stays at zero ----------
 
 def test_persona_has_no_unused_imports():

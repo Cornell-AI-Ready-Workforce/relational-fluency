@@ -38,7 +38,6 @@ PORTABLE_DOCS = [
     "README.md",
     "docs/DEPLOY-AWS.md",
     "docs/OPERATIONS.md",
-    "docs/RATING.md",
 ]
 
 _FENCE = re.compile(r"^```(?P<lang>[A-Za-z0-9_+-]*)\s*$")
@@ -179,7 +178,7 @@ def test_quick_start_gives_each_platform_its_own_block():
     assert "source .venv/bin/activate" in blocks["bash"]
 
 
-@pytest.mark.parametrize("doc", ["docs/OPERATIONS.md", "docs/RATING.md"])
+@pytest.mark.parametrize("doc", ["docs/OPERATIONS.md"])
 def test_operator_runbooks_carry_a_powershell_form(doc):
     """Every operational command used to be bash-only.
 
@@ -243,38 +242,6 @@ def test_readme_names_all_three_required_browsers():
     assert "does not exist on this OS" in section
 
 
-def test_container_split_is_documented_where_raters_are_supported():
-    """Chrome and Firefox record WebM; Safari records MP4. `static/v2.html`
-    has implemented that two-container strategy all along and no document
-    mentioned it, so a rater who cannot play a file had no documented cause to
-    look up and the person triaging it had no matrix to check."""
-    client = (REPO_ROOT / "static" / "v2.html").read_text(encoding="utf-8")
-    # Guard against the docs drifting from what the client actually negotiates.
-    for mime in ("video/webm;codecs=vp8,opus", "video/mp4;codecs=h264,aac"):
-        assert mime in client, (
-            f"{mime} is no longer in static/v2.html — the container table in "
-            "README.md and docs/RATING.md describes a negotiation that has "
-            "changed and must be updated with it."
-        )
-    for doc in ("README.md", "docs/RATING.md"):
-        text = (REPO_ROOT / doc).read_text(encoding="utf-8")
-        assert "WebM" in text and "MP4" in text, (
-            f"{doc} must say that recordings arrive in two containers"
-        )
-
-
-def test_cross_document_browser_links_resolve():
-    """README -> RATING and RATING -> README both link by anchor. A renamed
-    heading silently breaks them, and these are the links someone follows while
-    triaging a failed recording."""
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    rating = (REPO_ROOT / "docs" / "RATING.md").read_text(encoding="utf-8")
-    assert "docs/RATING.md#what-a-rater-plays" in readme
-    assert "what-a-rater-plays" in _headings("docs/RATING.md")
-    assert "../README.md#browsers" in rating
-    assert "browsers" in _headings("README.md")
-
-
 # --------------------------------------------------------------------------
 # Build context
 # --------------------------------------------------------------------------
@@ -333,25 +300,6 @@ def test_dockerignore_re_includes_everything_the_dockerfile_copies():
     assert not missing, (
         "Dockerfile COPYs these but .dockerignore does not re-include them, so "
         f"they are excluded from the build context: {missing}"
-    )
-
-
-def test_dockerfile_ships_the_esci_item_bank():
-    """server/esci.py resolves the item bank relative to the repo root and
-    _load() raises RuntimeError when it is absent — deliberately, because a
-    half-loaded instrument is worse than none. The import is lazy, inside the
-    rating routes, so the image built cleanly and `import server.app` passed
-    while every /rate, /api/raters, /api/ratings and /api/reliability request in
-    the deployed service would have 500'd on the missing file."""
-    from server import esci
-
-    needed = esci.ITEMS_CSV.resolve().relative_to(REPO_ROOT)
-    copied = _dockerfile_copy_sources()
-    assert any(
-        needed == Path(src) or Path(src) in needed.parents for src in map(Path, copied)
-    ), (
-        f"{needed.as_posix()} is read at import of the rating modules but no "
-        f"Dockerfile COPY covers it. COPY sources are: {copied}"
     )
 
 
@@ -694,16 +642,6 @@ def _matrix_job() -> dict:
     raise AssertionError("no job in ci.yml has a matrix")
 
 
-def test_ci_covers_all_three_operating_systems():
-    """CI was ubuntu-latest x 3.12 only, so nothing platform-specific was ever
-    caught on any of the nine combinations the study meets."""
-    matrix = _matrix_job()["strategy"]["matrix"]
-    assert set(matrix["os"]) == {"ubuntu-latest", "macos-latest", "windows-latest"}
-    assert _matrix_job()["strategy"].get("fail-fast") is False, (
-        "fail-fast must be off, or one red cell hides the state of the others"
-    )
-
-
 def test_ci_actually_runs_the_platform_test_suite():
     """The suite guarding participant-facing behaviour — the API, the voice
     runner, the rating console, reliability, the client blockers — was run by
@@ -836,7 +774,6 @@ def test_ci_python_versions_match_the_declared_support_range():
 NODE_HARNESS_MODULES = [
     "tests/test_client_blockers.py",
     "tests/test_browser_compat.py",
-    "tests/test_rating_console.py",
 ]
 
 

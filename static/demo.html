@@ -394,8 +394,7 @@
          is to name the link that does it before it is clicked. -->
     <p class="note warn" id="keyTravelNote" hidden>
       <b>One link keeps the key on screen.</b> The participant landing page —
-      <em>Participant landing page</em> above, and the rating console button
-      below, which goes to the rater door on it — opens with
+      <em>Participant landing page</em> above — opens with
       <span class="mono">?key=…</span> and leaves it in its address bar, because
       it is the participant's own page and has nothing on it that should strip a
       researcher's credential. The researcher console and the evidence trace
@@ -438,23 +437,6 @@
       matters for the live lane, and is explained there.
     </p>
 
-    <div class="row" style="margin-top:20px">
-      <button class="btn secondary" id="raterBtn">Open the rating console</button>
-      <span class="sec-lede" style="margin:0">
-        Scoring a recorded encounter on the study's 22 items.
-      </span>
-    </div>
-    <!-- Not a one-click link, and not an oversight. A rater's console opens on
-         that rater's own token and shows that rater's own queue, so there is no
-         address that opens it for everybody; a button here that minted one
-         would be a second copy of the credential path the landing page already
-         owns. This sends you to the rater door on that page, which takes a
-         token and, on a keyless development box, will get you one. -->
-    <p class="note" id="raterNote">
-      The console opens on a rater's own token. This goes to the rater door on
-      the landing page, which takes one — and on a development server will issue
-      one for you.
-    </p>
   </section>
 
   <!-- ── Lane 2: live ─────────────────────────────────────────────────── -->
@@ -1300,12 +1282,6 @@ $('evidenceBtn').addEventListener('click', () => {
   const id = $('encSelect').value;
   if (!id) return;
   window.open(`/evidence?session=${encodeURIComponent(id)}${keyMore}`, '_blank', 'noopener');
-});
-
-// The rater door on the landing page, deep-linked so it opens on arrival. One
-// copy of the token path, on the page that owns it.
-$('raterBtn').addEventListener('click', () => {
-  window.open('/' + keyFirst + '#rater', '_blank', 'noopener');
 });
 
 /* ── the live lane ─────────────────────────────────────────────────────── */

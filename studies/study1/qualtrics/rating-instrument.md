@@ -8,16 +8,13 @@
 > **Proprietary instrument — items reproduced for research reference only;
 > confirm licensing/permission before fielding.**
 >
-> That sentence is the canonical wording. `server/esci.py` and `server/rater_packet.py`
-> quote it verbatim so the same warning reaches a rater's screen and every export; if you
-> reword it here, reword it there in the same commit. Licensing / permission for this use
+> That sentence is the canonical wording; `esci_items.csv` carries it on every row so
+> it reaches every export. Licensing / permission for this use
 > has **not** been confirmed in writing. Confirm it before these items are put in front of
 > a rater, paid or unpaid, or exported to anyone outside the study team.
 >
-> The warning travels with the items wherever they go, and must keep doing so: the rating
-> console prints it above the item block (`static/rater.html`), the machine-readable bank
-> carries it as a column on every row (`esci_items.csv`), and the operational guide
-> repeats it (`docs/RATING.md`). Do not strip it to tidy up an export.
+> The warning travels with the items wherever they go, and must keep doing so. Do not
+> strip it to tidy up an export.
 
 Raters take one recorded encounter at a time and rate the **participant** (not the AI
 agent) on the ESCI Relationship Management items below.
@@ -28,15 +25,14 @@ roadmap, in favour of both: the video is the only artefact that plays back as a
 conversation (the participant page mixes microphone and agent audio into it, while the WAV
 files are per-channel), and the transcript is shown alongside for search and for the
 moments the audio is unclear. An encounter whose webcam upload failed is rated from the
-transcript alone, and the console tells the rater that is what is happening — the
-transcript-only case is the degraded mode, not the design.
+transcript alone — the transcript-only case is the degraded mode, not the design.
 
 Machine-readable versions of the item bank:
 
 | File | What it is |
 |---|---|
-| `esci_construct4_items.csv` | the original four-column source file; `server/esci.py` loads it at import and it remains the source of truth |
-| `esci_items.csv` | the canonical export — adds the stable `item_id` the code and the API use (`ESCI-08`), the scale bounds, the N/A flag, and the licensing notice on every row. This is the file to import into Qualtrics |
+| `esci_construct4_items.csv` | the original four-column source file; the source of truth |
+| `esci_items.csv` | the canonical export — adds a stable `item_id` (`ESCI-08`), the scale bounds, the N/A flag, and the licensing notice on every row. This is the file to import into Qualtrics |
 
 ## Rater task
 
@@ -125,64 +121,39 @@ Empathy/organizational-awareness (Construct 3) items can be added as a block if 
 SA sensing layer should be rated directly rather than inferred — decide before
 programming the survey.
 
-## Two ways to field this
+## Where this is fielded
 
-The instrument is administered through **the platform's own rating console**, with the
-Qualtrics build kept as a supported alternative. Both present the same 22 items on the
-same scale; they differ in how the answers come back.
-
-| | Rating console (`/rate`) | Qualtrics |
-|---|---|---|
-| Route | `static/rater.html`, served by this platform | external survey |
-| Media | video + transcript in the page, from a presigned S3 GET | transcript pasted or linked; video needs its own hosting |
-| Answers come back | straight into `server/ratings.py`, per assignment | export file, ingested by `ratings.import_qualtrics(rows, mapping)` |
-| Rater identity | scoped `rt_…` token; reaches only that rater's assignments | Qualtrics panel or link |
-| Encounter identity | rating code `RC-…`, opaque and stable | must carry the same rating code as embedded data, or ratings cannot be joined |
-| Randomization | server-side; the console renders the order it is served | Qualtrics block randomization |
-| Attention checks | not implemented — see note 4 | supported natively |
-| Status | **the working path** | open, and the fallback |
-
-The console exists because the platform cannot get ratings back out of Qualtrics without
-a survey, a loop-and-merge and an API round trip that do not exist. Which of the two is
-the *route of record* for the published study is still a researchers' decision, and the
-one place where running both would cost something is reconciliation at analysis time.
-
-Full operational guide — registering raters, issuing tokens, assigning encounters, pulling
-ratings, reading the reliability report — is [`docs/RATING.md`](../../../docs/RATING.md).
+The instrument is administered in **Qualtrics**. Raters receive the recording (webcam
+video with the aligned transcript) and score the 22 items there; the export is joined to
+the encounter on the session id carried as embedded data. Randomization, attention checks
+and rater identity are Qualtrics' own. The platform's earlier rating console was removed
+in 2026-09 (Study 1 scope, `docs/study1-plan.md`); rating happens after collection, not
+in the app.
 
 ## Administration notes
 
 1. **One encounter per block**; item order randomized within competency group,
    competency-group order randomized across raters (reduces order effects on the 68-item
-   original ordering). In the console this randomization happens server-side, in
-   `server/rater_packet.py`, and the page renders the order it is handed rather than
-   shuffling again — one place to change it, and the order that was served is the order
-   that can be recorded.
+   original ordering). Use Qualtrics block randomization and record the served order.
 2. **Reverse-scored items (11, 15, 24)** presented as-is; reverse-code at analysis. Do
-   not reword — they double as straight-lining checks. The console shows them unmarked
-   for exactly that reason, and warns a rater who has given every item the same answer.
+   not reword — they double as straight-lining checks.
 3. **N/A handling:** items rated N/A are excluded pairwise; a scenario-competency cell
    with systematic N/A (e.g. leadership items in peer scenarios) is informative — report
-   N/A rates per cell. In the console N/A is a styled-apart, never-preselected button, and
-   a rating cannot be submitted until every item carries a 1–5 **or** an N/A — a blank is
-   never silently read as N/A.
+   N/A rates per cell. Require every item to carry a 1–5 **or** an explicit N/A — a blank
+   is never read as N/A.
 4. **Attention checks:** 2 instructed-response items per session ("select 'Rarely' for
-   this statement") + 1 comprehension check about the transcript's topic. **Not implemented
-   in the console**: inserting an instructed-response item into a proprietary 22-item block
-   changes what the block is, and where it goes is an instrument decision, not a UI one.
-   The console instead makes careless rating visible in the data — every submission records
-   the seconds the rater spent, and uniform-column and too-fast submissions each cost a
-   second explicit click.
+   this statement") + 1 comprehension check about the transcript's topic. Where they go
+   in a proprietary 22-item block is an instrument decision; record time-on-page so
+   too-fast and uniform-column submissions can be flagged at analysis.
 5. **Rater training/calibration:** train on 2 practice encounters with the scenario's
    `behavioral_markers` as anchor examples for 1 vs 3 vs 5; require agreement with gold
    ratings before entering the main pool. The gold ratings, the agreement level that
    admits a rater, and what happens to a rater who drifts are open.
 6. **Design:** each encounter rated by k ≥ 3 raters; raters blind to condition and to
-   the scenario's primary-competency designation. The console enforces the blinding in the
-   packet: a rater sees the situation the participant saw, the counterparts, the video and
-   the transcript, and never the participant key, the stage directions, the planted
-   triggers, the ESCI tags on those triggers, the actor briefs, the construct/variant
-   label, or the offline judge's score.
+   the scenario's primary-competency designation. A rater sees the situation the
+   participant saw, the counterparts, the video and the transcript — never the participant
+   key, the stage directions, the planted triggers, the ESCI tags on those triggers, the
+   actor briefs, or the construct/variant label.
 
 ## Reliability & scoring plan
 
@@ -194,15 +165,6 @@ ratings, reading the reliability report — is [`docs/RATING.md`](../../../docs/
   across scenarios) vs. discriminant (different competencies within scenario)
   correlations — the MTMM matrix.
 
-Implemented in `server/reliability.py` — ICC(2,1) and ICC(2,k) (two-way random, absolute
-agreement), quadratic weighted κ pairwise, and Krippendorff's α on the ordinal scale, in
-pure Python, per construct and per item with the n and rater count each figure was
-computed from:
-
-```bash
-python -m server.reliability --cohort study        # human-readable
-python -m server.reliability --cohort study --json
-```
-
-The bands to read those against, and the fact that the study's own threshold is not yet
-chosen, are in [`docs/RATING.md`](../../../docs/RATING.md#reading-the-reliability-report).
+Reliability is computed at analysis time from the Qualtrics export (ICC(2,1) and
+ICC(2,k), quadratic weighted κ, Krippendorff's α), per construct and per item, with the n
+and rater count each figure was computed from. The study's own threshold is not yet chosen.

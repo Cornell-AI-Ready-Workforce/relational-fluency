@@ -246,7 +246,6 @@ Then open:
 | Researcher console | <http://127.0.0.1:8765/researcher> |
 | Steering trail | <http://127.0.0.1:8765/director> |
 | Evidence trace | <http://127.0.0.1:8765/evidence> |
-| Rater sign-in | <http://127.0.0.1:8765/rate/start> |
 | Demo view, for showing the lab | <http://127.0.0.1:8765/demo> — reads `/health` and says what will and will not work *before* you present |
 
 Two things about those participant links that nothing else tells you, and both
@@ -434,9 +433,7 @@ CloudResearch screener.
 this order: `video/webm;codecs=vp8,opus`, `video/webm`,
 `video/mp4;codecs=h264,aac`, `video/mp4`. So Chrome and Firefox participants
 produce **WebM/VP8+Opus**, and Safari — which implements `MediaRecorder` but
-supports only MP4/H.264 — produces **MP4/H.264**. The rater console plays both;
-see [What a rater plays](docs/RATING.md#what-a-rater-plays) for what to check
-when a rater reports a file that will not play. If a browser admits none of the
+supports only MP4/H.264 — produces **MP4/H.264**. If a browser admits none of the
 four, the page writes a line into the transcript saying the conversation will
 not be captured on camera, rather than letting the live camera tile imply a
 recording is being made.
@@ -572,61 +569,9 @@ prints how many replies had their voice lost upstream and were retried. Exit
 code is 0 only when every encounter passes.
 
   `record.json` is the analysis-facing view, built from `events.jsonl` at close;
-  raters, the scorer, and Phase-3 training read it rather than replaying events.
+  analysis reads it rather than replaying events.
   A turn with `stage_direction: null` ran unsteered — distinguishable from a
   direction that went unrecorded.
-
-## Phase 2 — human rating and reliability
-
-The human ICC/κ that benchmark is measured against comes from here. Two to three
-independent raters score every recorded encounter on all 22 ESCI Relationship
-Management items, and reliability is computed per construct **before** anything
-is modelled. Full operational guide: [`docs/RATING.md`](docs/RATING.md).
-
-> **The ESCI items are a proprietary instrument**, reproduced in this repository
-> for research reference only, and **licensing for this use is not confirmed in
-> writing**. The warning is attached to them in the console, in the exported item
-> bank, and in the instrument doc. Resolve it before fielding.
-
-Raters work in a console this platform serves, at `/rate`:
-
-```
-/rate?token=rt_…      the rater's own link — queue, video, transcript, 22 items
-```
-
-- **What they rate** is the webcam recording, which carries the mixed
-  conversation audio, with the aligned transcript beside it. The per-channel
-  WAVs cannot be played back as a conversation; an encounter whose video upload
-  failed is rated from the transcript alone, and the console says so.
-- **What they never see** — a rater holds a scoped `rt_` token, never the
-  session key, and the packet is blinded: the situation the participant saw, the
-  counterparts, the video and the transcript, and none of the participant key,
-  the stage directions, the planted triggers, their ESCI tags, the actor briefs,
-  or the judge's score. Encounters are identified to a rater by an opaque rating
-  code. Another rater's assignment answers 404, not 403.
-- **N/A is a real answer**, stored as `null` and never as a number. Nothing is
-  pre-selected, and submit is refused until all 22 items carry a 1–5 or an N/A.
-
-These are bash/zsh. The single-quoted JSON bodies are passed **literally** by
-cmd.exe, which has no single-quote quoting, so the server rejects them as
-malformed JSON; in Windows PowerShell `curl` is an alias for
-`Invoke-WebRequest` and rejects `-s` entirely. Windows forms of the three POST
-commands are in [`docs/RATING.md`](docs/RATING.md).
-
-```bash
-# researcher side, with the usual SESSION_KEY
-curl -sX POST "$RF/api/raters?key=$KEY"            -d '{"name":"…","kind":"trained"}'
-curl -sX POST "$RF/api/raters/$RID/token?key=$KEY" -d '{"days":30}'   # shown once
-curl -sX POST "$RF/api/rater-assignments?key=$KEY" -d '{"cohort":"study","rater_ids":[…],"per_encounter":3,"seed":1}'
-curl -s      "$RF/api/ratings?cohort=study&key=$KEY"       # the export
-python -m server.reliability --cohort study                # ICC(2,1)/ICC(2,k), weighted κ, α
-```
-
-Statistics are pure Python — no numpy, no scipy, no new runtime dependency for a
-22 × 27 matrix. The Qualtrics route stays open (`esci_items.csv` imports, and
-`ratings.import_qualtrics` ingests an export), but the console is the working
-path, because the platform cannot get answers back out of Qualtrics without a
-survey and an API round trip that do not exist.
 
 ## Model configuration
 

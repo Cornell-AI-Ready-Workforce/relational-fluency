@@ -69,8 +69,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 V2 = ROOT / "static" / "v2.html"
 RESEARCHER = ROOT / "static" / "researcher.html"
-RATER = ROOT / "static" / "rater.html"
-
 # The fixture wave is resolved once for the whole suite, in tests/conftest.py,
 # and reached here through its `wave_encounters` fixture. What was here before
 # was `DATA_DIR or <one machine's scratchpad path, session UUID and all>`, which
@@ -169,15 +167,6 @@ def test_the_launch_probe_is_bounded():
     assert "new AbortController()" in probe and "signal: ac.signal" in probe, \
         "the participant-key probe is an unbounded fetch again"
     assert "clearTimeout(timer)" in probe
-
-
-def test_the_rater_console_does_not_re_enable_a_blocked_submit():
-    """R32. renderVideo/renderItems disable the button; openAssignment ran
-    afterwards and turned it back on."""
-    src = RATER.read_text(encoding="utf-8")
-    assert "if (blockedReason) {" in src
-    assert re.search(r"} else \{\s*\$\('submitBtn'\)\.disabled = false;", src), \
-        "the submit button is re-enabled without checking blockedReason again"
 
 
 # --------------------------------------------------------------------------
@@ -1078,105 +1067,6 @@ function primed(putAtMs, advanceDelayMs) {
 """
 
 
-RATER_HARNESS = r"""/* Drives static/rater.html's packet opener: what the submit button does on a
-   packet the packet itself says must not be rated. */
-'use strict';
-const fs = require('fs'), assert = require('assert');
-const { makeContext, vm } = require('./stub.js');
-
-const PAGE = process.argv[2];
-const SRC = fs.readFileSync(PAGE, 'utf8').match(/<script>([\s\S]*)<\/script>/)[1];
-
-const ITEMS = [1, 2, 3, 4, 5, 6].map(i => ({ id: 'i' + i, text: 'item ' + i }));
-
-function boot() {
-  // A token the page rejects, so boot() gates without touching the network and
-  // the packet under test is the only thing that has been opened.
-  const b = makeContext({
-    location: { search: '?token=not-a-token', href: 'http://t/rater', reload() {} },
-    performance: { now: () => 0 },
-    scrollTo() {},
-    CSS: { escape: (s) => s },
-  });
-  b.net.route([{ match: '/api/rater/', fn: () => b.net.res(200, {}) }]);
-  vm.runInContext(SRC, b.ctx, { filename: 'rater.html' });
-  return b;
-}
-
-async function open(packet) {
-  const b = boot();
-  b.net.route([{ match: '/api/rater/packet/', fn: () => b.net.res(200, packet) }]);
-  await b.ctx.openAssignment('a_1');
-  return b;
-}
-
-const $ = (b, id) => b.dom.document.getElementById(id);
-
-(async () => {
-  // --- a recording that could not be stored: blocked, and it LOOKS blocked -
-  {
-    const b = await open({ assignment_id: 'a_1', status: 'assigned', items: ITEMS,
-      transcript: [{ speaker: 'participant', text: 'hello' }],
-      media: { video_url: null, video_available: true, video_status: 'failed',
-               note: 'This encounter WAS recorded, but the recording could not be stored.' } });
-    assert.strictEqual($(b, 'submitBtn').disabled, true,
-      'the submit button was re-enabled on a packet that must not be rated');
-    assert(/Do not rate it/i.test($(b, 'submitMsg').textContent),
-      'the rater was left to discover the block by pressing a dead button: ' +
-      $(b, 'submitMsg').textContent);
-    assert(/could not be stored/i.test($(b, 'videoSlot').innerHTML),
-      'a lost recording read as an unsignable link: ' + $(b, 'videoSlot').innerHTML);
-    // And the rating is still refused if it is attempted anyway.
-    await b.ctx.onSubmit();
-    assert.strictEqual(b.net.countOf('/rating'), 0, 'a blocked rating was filed');
-  }
-
-  // --- a link that could not be signed: blocked, and named apart ----------
-  {
-    const b = await open({ assignment_id: 'a_1', status: 'assigned', items: ITEMS,
-      media: { video_url: null, video_available: true, video_status: 'unsigned',
-               note: 'This encounter has a webcam recording, but a playback link could not be issued.' } });
-    assert.strictEqual($(b, 'submitBtn').disabled, true, 'an unsignable packet was ratable');
-    assert(/could not be loaded/i.test($(b, 'videoSlot').innerHTML),
-      'the unsignable state lost its own wording: ' + $(b, 'videoSlot').innerHTML);
-  }
-
-  // --- an encounter that never had a camera IS ratable --------------------
-  // Two of the twenty-seven in the reference wave. Blocking these would cost
-  // the study real ratings.
-  {
-    const b = await open({ assignment_id: 'a_1', status: 'assigned', items: ITEMS,
-      media: { video_url: null, video_available: false, video_status: 'absent',
-               note: 'No webcam recording was captured for this encounter.' } });
-    assert.strictEqual($(b, 'submitBtn').disabled, false,
-      'an encounter with no camera was blocked from being rated');
-    assert(/No video for this encounter/.test($(b, 'videoSlot').innerHTML),
-      'the no-camera state lost its wording');
-  }
-
-  // --- an ordinary packet is ratable --------------------------------------
-  {
-    const b = await open({ assignment_id: 'a_1', status: 'assigned', items: ITEMS,
-      media: { video_url: 'https://s3.invalid/v.webm', video_available: true,
-               video_status: 'ok', expires_in: 3600 } });
-    assert.strictEqual($(b, 'submitBtn').disabled, false, 'a good packet was blocked');
-    assert(!$(b, 'submitMsg').textContent, 'a good packet was given a warning');
-  }
-
-  // --- a packet with no items stays blocked too ---------------------------
-  {
-    const b = await open({ assignment_id: 'a_1', status: 'assigned', items: [],
-      media: { video_url: 'https://s3.invalid/v.webm', video_available: true, video_status: 'ok' } });
-    assert.strictEqual($(b, 'submitBtn').disabled, true, 'a packet with no items was ratable');
-    assert(/without its rating items/i.test($(b, 'submitMsg').textContent),
-      'the missing item bank was not explained: ' + $(b, 'submitMsg').textContent);
-  }
-
-  console.log('RATER OK');
-})().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
-"""
-
-
 LAUNCH_HARNESS = r"""/* Drives static/researcher.html's launch card: presses the button and reads
    the URL the participant's tab is actually pointed at. */
 'use strict';
@@ -1457,12 +1347,6 @@ def test_the_bound_does_not_lose_the_recording(tmp_path):
     assert "RELEASE OK" in _run(tmp_path, RELEASE_HARNESS, V2)
 
 
-def test_the_rating_console_blocks_what_it_says_it_blocks(tmp_path):
-    """R32: a submit button that looks usable on a packet that must not be
-    rated, by opening the packets rather than reading the file."""
-    assert "RATER OK" in _run(tmp_path, RATER_HARNESS, RATER)
-
-
 def test_the_launch_card_keeps_the_session_key(tmp_path):
     """B48 / contract 6, by pressing the button rather than reading the file."""
     assert "LAUNCH OK" in _run(tmp_path, LAUNCH_HARNESS, RESEARCHER)
@@ -1683,7 +1567,7 @@ def test_every_page_carries_the_tab_icon():
     works, and costs every visitor that download for a 16px square. favicon.png
     is the same artwork at 64px and 4.4 KB.
     """
-    for name in ("landing.html", "v2.html", "rater.html", "researcher.html",
+    for name in ("landing.html", "v2.html", "researcher.html",
                  "director.html", "evidence.html", "participant.html"):
         p = ROOT / "static" / name
         if not p.exists():
@@ -1769,7 +1653,7 @@ def test_the_evidence_trace_is_light_and_fills_the_screen():
 
     assert "prefers-color-scheme" not in src and 'data-theme' not in src, (
         "the evidence trace flips with the operating system again, and no other page does")
-    for other in ("landing.html", "researcher.html", "rater.html", "v2.html"):
+    for other in ("landing.html", "researcher.html", "v2.html"):
         assert "prefers-color-scheme" not in (ROOT / "static" / other).read_text(encoding="utf-8"), (
             f"{other} gained a dark palette; the platform is light only by choice")
 
@@ -1809,51 +1693,6 @@ def test_the_evidence_trace_is_light_and_fills_the_screen():
     fallback = fallback[:fallback.index("@media (max-width:1080px){")]
     assert "height:auto" in fallback and "overflow-y:visible" in fallback, (
         "the fallback does not release the fixed height, so it still cannot scroll")
-
-
-def test_the_landing_page_does_not_call_the_researcher_console_a_reviewer_view():
-    """This platform has two reviewing roles, and only one of them is a rater.
-
-    A participant has the conversation, a researcher runs and monitors the
-    study, and a RATER scores the recorded encounters afterwards from their own
-    console at /rate with their own scoped token. "rater" is the word the rest of
-    the codebase uses, by a wide margin.
-
-    So the two entry points on the landing page are named for the role each one
-    belongs to, and the researcher console is not called a reviewer view: that
-    would point the reviewing word at the wrong one of two real reviewing jobs,
-    on the page a new team member reads first.
-    """
-    src = LANDING.read_text(encoding="utf-8")
-
-    assert "Conversation view" in src, "the participant entry point lost its name"
-    assert "Researcher view" in src, "the researcher entry point lost its name"
-    assert "Start a conversation" not in src, (
-        "the two entry points are no longer named as a matched pair")
-
-    # The word that would collide, in anything a visitor reads.
-    visible = re.sub(r"<!--.*?-->", "", src, flags=re.S)
-    visible = re.sub(r"<style>.*?</style>", "", visible, flags=re.S)
-    visible = re.sub(r"<script>.*?</script>", "", visible, flags=re.S)
-    assert "eviewer" not in visible, (
-        "a visible label calls something a reviewer; this platform's reviewing "
-        "role is the rater, and it has its own console")
-
-    # There is a rater door, and it must not be a published link.
-    #
-    # A rater's URL carries their own scoped token, so a public one cannot exist:
-    # an <a href> to /rate would hand every visitor a 401 and tell them nothing.
-    # The card takes a token from the person who has one and navigates from
-    # there, which is the only shape that works. What must never appear is a
-    # hardcoded rt_ token in the page, which would publish one rater's identity
-    # to everyone who views source.
-    assert 'href="/rate' not in src, (
-        "the landing page publishes a rater link; a rater URL is personal and "
-        "a bare /rate answers 401")
-    assert "location.href = '/rate?token='" in src, (
-        "the rater card no longer navigates with the token the rater supplied")
-    assert not re.search(r"rt_[A-Za-z0-9]{8,}", src), (
-        "a real rater token is hardcoded in the landing page")
 
 
 def test_an_empty_transcript_says_why_it_is_empty():

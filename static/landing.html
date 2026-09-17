@@ -219,31 +219,6 @@
                font-size: 13px; padding: 0; margin-bottom: 16px; font-family: inherit; }
   .back-link:hover { color: var(--accent); }
 
-  /* Rater card */
-  .rater-entry { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
-  .rater-label {
-    flex-basis: 100%; font-size: 12px; font-weight: 600; color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.08em;
-  }
-  #raterToken {
-    flex: 1 1 260px; min-width: 0; font-family: ui-monospace, Consolas, monospace;
-    font-size: 14px; padding: 11px 12px; border: 1px solid var(--line);
-    border-radius: 8px; background: var(--bg); color: var(--fg);
-  }
-  #raterToken:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
-  .rater-msg { margin-top: 12px; font-size: 13px; color: var(--accent-deep); min-height: 1.2em; }
-  /* Marked as a development affordance in the text itself, not just by being
-     subtle, so nobody mistakes it for something a real rater would see. */
-  .rater-shortcut {
-    margin-top: 12px; font-size: 12px; color: var(--muted);
-    background: var(--surface-2); border: 1px dashed var(--line);
-    border-radius: 6px; padding: 8px 10px;
-  }
-  .rater-bypass {
-    margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line);
-    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  }
-  .rater-bypass-note { font-size: 12px; color: var(--muted); flex: 1 1 220px; }
 
   @media (max-width: 700px) {
     .hero { padding: 60px 24px 70px; }
@@ -300,8 +275,8 @@
 
          So it is revealed to an operator and to nobody else: when this page was
          opened with the researcher key, or when the SERVER reports it has no
-         session key at all. The second half is the same test the rater bypass
-         below uses, and it is a real gate rather than a cosmetic one —
+         session key at all. The second half is the same test the demo door
+         uses, and it is a real gate rather than a cosmetic one —
          server/app.py refuses to start on a non-loopback bind without
          SESSION_KEY, so a keyless server is a loopback server by construction
          and has no recruited participants on it.
@@ -331,16 +306,10 @@
        every session's download. It stays reachable from the nav for the people
        who run the study, and off the front of a page recruited participants
        land on.
-
-       Rater view does not link straight to /rate, and that is not an oversight:
-       a rater's link carries their own scoped token, so there is no such thing
-       as a public one. Sending someone to a bare /rate would hand them a 401 and
-       no idea why. It opens a card that says how a rater gets in instead, and
-       takes a token from anyone who has one. -->
+ -->
   <div class="cta-row">
     <button class="btn primary" id="openPickerBtn">Conversation view</button>
-    <button class="btn secondary" id="openRaterBtn">Rater view</button>
-    <span class="cta-note">Have the conversation, or score a recorded one.</span>
+    <span class="cta-note">Have the conversation.</span>
   </div>
 </section>
 
@@ -431,54 +400,6 @@
   </div>
 </div>
 
-<!-- Rater card. A rater reaches their queue through a personal link, so this
-     explains that rather than pretending there is a public door, and takes a
-     token from anyone who already has one. -->
-<div class="modal-backdrop" id="raterModal">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="raterTitle">
-    <div class="modal-header">
-      <h3 id="raterTitle">Rater view</h3>
-      <button class="close" id="closeRater" aria-label="Close">&times;</button>
-    </div>
-    <div class="step-eyebrow">Scoring recorded encounters</div>
-    <p class="step-lede">
-      Raters watch a recorded conversation and score the participant on the
-      study's 22 items. Each rater gets their own link, because it carries a
-      personal token and reaches only their own assignments, so there is no
-      shared address for this one.
-    </p>
-    <p class="step-lede">
-      If you have been sent a link, open it directly. If you have it to hand but
-      not the whole URL, paste the token below. If you have lost it, ask the
-      study team for a new one rather than reusing an old link.
-    </p>
-    <div class="rater-entry">
-      <label class="rater-label" for="raterToken">Rater token</label>
-      <input id="raterToken" type="text" placeholder="rt_…" autocomplete="off"
-             spellcheck="false" />
-      <button class="btn primary" id="raterGo">Open my queue</button>
-    </div>
-    <div class="rater-shortcut" id="raterShortcut" role="status" hidden></div>
-    <!-- Development bypass. Hidden unless the SERVER reports it has no session
-         key, and that is a real gate rather than a UI one: server/app.py refuses
-         to start on a non-loopback bind without SESSION_KEY, so a keyless server
-         is a loopback server by construction. On such a box the rater endpoints
-         are already unauthenticated, so this button can do nothing that anyone
-         loading this page could not already do with two POSTs. On a keyed
-         deployment the same calls answer 401 and the button fails, which is the
-         correct outcome and the reason the gate is defence in depth rather than
-         the only defence. -->
-    <div class="rater-bypass" id="raterBypass" hidden>
-      <button class="btn secondary" id="raterBypassBtn">Open a rater queue</button>
-      <span class="rater-bypass-note">
-        Development server only. Uses an existing rater, or creates one, and
-        issues a short-lived token.
-      </span>
-    </div>
-    <div class="rater-msg" id="raterMsg" role="status"></div>
-  </div>
-</div>
-
 <script>
   const params = new URLSearchParams(location.search);
   const key = params.get('key') || '';
@@ -499,8 +420,7 @@
 
   /* One /health read for the whole page.
 
-     Two things ask the server the same question now — the rater bypass, which
-     only exists on a keyless box, and the demo door in the nav — and two
+     The demo door in the nav asks the server this question, and two
      fetches would be two answers that can disagree with each other within one
      page load. Cached as the promise rather than the result, so callers that
      arrive while it is in flight wait on it instead of starting a second one.
@@ -600,7 +520,7 @@
   function closeModal() { closeDialog('modal'); }
 
   // Keep Tab inside whichever dialog is open, wrapping at both ends.
-  ['modal', 'raterModal'].forEach(id => {
+  ['modal'].forEach(id => {
     $(id).addEventListener('keydown', (e) => {
       if (e.key !== 'Tab') return;
       const items = focusablesIn($(id));
@@ -611,29 +531,6 @@
     });
   });
 
-  /* The rater door.
-
-     It validates the shape of a token before navigating, because /rate answers
-     401 for a bad one and a bare 401 tells a rater nothing about what they did
-     wrong. A token that is merely expired still gets sent through: only the
-     server can know that, and guessing here would lock out someone whose link is
-     fine. */
-  /* Remembering the token, and why only on a development box.
-
-     Pasting a token every time makes testing miserable, so this remembers the
-     last one and offers it back in one click. It is a bearer credential though,
-     and localStorage outlives a browser session, so it is only ever stored when
-     the SERVER says it has no session key configured.
-
-     That is a sound test rather than a guess: server/app.py refuses to start on
-     a non-loopback bind without SESSION_KEY, so "no session key" cannot be true
-     of a deployment anyone can reach. On a real one, nothing is written and
-     nothing is offered, and a rater on a shared machine leaves nothing behind.
-
-     Deliberately NOT built: a button that mints a rater token from this page.
-     Even gated it would be a credential vending machine one regression away
-     from being real, and this page is the least protected surface here. */
-  const RATER_TOKEN_KEY = 'rf.rater.lasttoken';
   let devBox = false;
 
   // Both wrapped: localStorage THROWS on access in private browsing and where a
@@ -646,113 +543,6 @@
     try { localStorage.setItem(k, v); } catch (e) { /* nothing to remember with */ }
   }
 
-  async function openRater() {
-    openDialog('raterModal', 'raterToken');
-    $('raterMsg').textContent = '';
-    $('raterShortcut').hidden = true;
-    const h = await serverHealth();
-    devBox = !!(h && h.session_key_configured === false);
-    if (!devBox) return;
-    $('raterBypass').hidden = false;
-    const saved = readStore(RATER_TOKEN_KEY);
-    if (!saved) return;
-    $('raterToken').value = saved;
-    $('raterShortcut').hidden = false;
-    $('raterShortcut').textContent =
-      'Development server: your last token is filled in. Press Open my queue.';
-  }
-
-  /* The development bypass: get me into a rater queue without hunting for a token.
-
-     Reuses an existing rater rather than minting a new one each time, because a
-     wave's reliability is computed per rater and a pile of one-encounter test
-     raters is noise in exactly the table this platform exists to produce. It
-     only creates one when there are none at all.
-
-     Every failure says which step failed. A bypass that just does nothing is
-     worse than no bypass, because the next thing anyone does is doubt the
-     server rather than read the reason. */
-  async function bypassToRaterQueue() {
-    const msg = $('raterMsg');
-    const btn = $('raterBypassBtn');
-    btn.disabled = true;
-    msg.textContent = 'Finding a rater…';
-    try {
-      let raters = [];
-      const list = await fetch('/api/raters');
-      if (list.status === 401 || list.status === 403) {
-        msg.textContent = 'This server has a session key configured, so the '
-          + 'bypass does not apply. Paste your own token above.';
-        return;
-      }
-      if (list.ok) {
-        const body = await list.json();
-        raters = Array.isArray(body) ? body : (body.raters || []);
-      }
-      let rater = raters.find(r => r.active !== false) || raters[0];
-
-      if (!rater) {
-        msg.textContent = 'No raters yet, creating one…';
-        const made = await fetch('/api/raters', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ name: 'Development rater', kind: 'trained' }),
-        });
-        if (!made.ok) {
-          msg.textContent = `Could not create a rater (HTTP ${made.status}).`;
-          return;
-        }
-        rater = await made.json();
-      }
-
-      msg.textContent = 'Issuing a token…';
-      const id = rater.rater_id || rater.id;
-      const tok = await fetch(`/api/raters/${encodeURIComponent(id)}/token`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        // Short-lived on purpose: this is a testing convenience, and a token
-        // minted by a button should not outlive the afternoon it was made for.
-        body: JSON.stringify({ days: 1 }),
-      });
-      if (!tok.ok) {
-        msg.textContent = `Could not issue a token (HTTP ${tok.status}).`;
-        return;
-      }
-      const { token } = await tok.json();
-      if (!token) { msg.textContent = 'The server issued no token.'; return; }
-      writeStore(RATER_TOKEN_KEY, token);
-      location.href = '/rate?token=' + encodeURIComponent(token);
-    } catch (e) {
-      msg.textContent = 'Could not reach the server (' + (e && e.message) + ').';
-    } finally {
-      btn.disabled = false;
-    }
-  }
-  function closeRater() { closeDialog('raterModal'); }
-
-  function goToRaterQueue() {
-    const raw = ($('raterToken').value || '').trim();
-    const msg = $('raterMsg');
-    // Paste-the-whole-link is the common case, so take a URL apart rather than
-    // rejecting it.
-    let token = raw;
-    const m = raw.match(/[?&]token=([^&\s]+)/);
-    if (m) token = decodeURIComponent(m[1]);
-    if (!token) {
-      msg.textContent = 'Paste your rater token, or the whole link you were sent.';
-      return;
-    }
-    if (!/^rt_[A-Za-z0-9]{8,}$/.test(token)) {
-      msg.textContent = 'That does not look like a rater token. They begin with '
-        + '"rt_". If you have the link you were sent, paste the whole thing.';
-      return;
-    }
-    msg.textContent = '';
-    // Stored only on a development box, and only once the token has passed the
-    // shape check, so a typo is never what gets remembered.
-    if (devBox) writeStore(RATER_TOKEN_KEY, token);
-    location.href = '/rate?token=' + encodeURIComponent(token);
-  }
 
   function showStep(n) {
     $('step1').style.display = n === 1 ? 'block' : 'none';
@@ -815,23 +605,10 @@
   document.querySelectorAll('.format-card').forEach(b => {
     b.addEventListener('click', () => renderScenarios(b.dataset.format));
   });
-  $('openRaterBtn').addEventListener('click', openRater);
-  $('closeRater').addEventListener('click', closeRater);
-  $('raterModal').addEventListener('click', (e) => {
-    if (e.target === $('raterModal')) closeRater();
-  });
-  $('raterGo').addEventListener('click', goToRaterQueue);
-  $('raterBypassBtn').addEventListener('click', bypassToRaterQueue);
-  // Enter submits, because the field is the only thing anyone types here and
-  // reaching for the button is a step nobody expects to need.
-  $('raterToken').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); goToRaterQueue(); }
-  });
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if ($('modal').classList.contains('show')) closeModal();
-    else if ($('raterModal').classList.contains('show')) closeRater();
   });
 
   /* The footer contact, from the consent config and nowhere else.
@@ -913,26 +690,10 @@
     box.hidden = false;
   }
 
-  /* #rater opens the rater door on arrival.
-
-     There is exactly one place in this app that takes a rater token and knows
-     how to get one on a development box, and it is the card in this page. The
-     demo door links here rather than growing a second copy of it: a button that
-     mints a bearer credential is not a thing to have two of, and the one that
-     exists is already gated on the server's own answer.
-
-     A hash rather than a query so it cannot be confused with a participant
-     link, and so an operator can bookmark it. Anything else in the hash is
-     ignored, including the anchors this page's own nav uses. */
-  function openDoorFromHash() {
-    if (location.hash.toLowerCase() === '#rater') openRater();
-  }
-  window.addEventListener('hashchange', openDoorFromHash);
 
   loadScenarios();
   loadFooterContact();
   revealDemoDoor();
-  openDoorFromHash();
 </script>
 </body>
 </html>

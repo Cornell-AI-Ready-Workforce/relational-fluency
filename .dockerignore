@@ -31,18 +31,6 @@
 !scenarios
 !config
 
-# The ESCI item bank. server/esci.py resolves it as
-# <repo root>/studies/study1/qualtrics/esci_construct4_items.csv and raises at
-# import if it is absent, so every rating-console route needs it in the image.
-# `*` above only matches top-level entries, so re-including a nested path means
-# walking the chain down: re-include the directory, re-exclude its siblings,
-# re-include the next level.
-!studies
-studies/*
-!studies/study1
-studies/study1/*
-!studies/study1/qualtrics
-
 # --- re-excluded from inside the paths above ---------------------------------
 # Caches and stray secrets can live under server/ or config/ on a developer's
 # machine; the allowlist would otherwise carry them in.
