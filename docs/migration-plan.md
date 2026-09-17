@@ -409,7 +409,7 @@ role on Fargate. No access keys in env files.
 
 ### 4. Participant flow → Connect/Qualtrics round trip
 
-Today: `/v2?scenario=…` opens straight into an encounter.
+Internal test links (`/v2?scenario=…`) open straight into an encounter; participants arrive through `/start`.
 
 Target (Phase 1 deployment flow): CloudResearch Connect → Qualtrics
 (participant key + WEIP baseline) → simulation app (consent → 4 counterbalanced

@@ -726,7 +726,7 @@ async def settle(runner):
 
 def one_to_one(monkeypatch):
     monkeypatch.setenv("TRANSCRIPT_GRACE_SECONDS", "0.2")
-    session = FakeSession("01_missed_deadlines")
+    session = FakeSession("S1A")
     ws = FakeWS()
     runner = rvs.RealtimeVoiceSessionRunner(session, ws)
     rt = FakeRT()
@@ -1469,7 +1469,7 @@ async def test_a_barge_in_during_a_retry_writes_the_outcome_and_keeps_the_head(m
     lost' - on a line whose head the participant had seen. Now: interrupted,
     outcome not recovered, and the lost head on the turn."""
     monkeypatch.setenv("TRANSCRIPT_GRACE_SECONDS", "0.2")
-    session = FakeSession("01_missed_deadlines")
+    session = FakeSession("S1A")
     ws = LoudThenGone()
     runner = rvs.RealtimeVoiceSessionRunner(session, ws)
     rt = FakeRT()

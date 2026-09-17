@@ -96,13 +96,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "static"
 V2 = STATIC / "v2.html"
-PARTICIPANT = STATIC / "participant.html"
 RESEARCHER = STATIC / "researcher.html"
 EVIDENCE = STATIC / "evidence.html"
 DIRECTOR = STATIC / "director.html"
 LANDING = STATIC / "landing.html"
 
-PAGES = [V2, PARTICIPANT, RESEARCHER, EVIDENCE, DIRECTOR, LANDING]
+PAGES = [V2, RESEARCHER, EVIDENCE, DIRECTOR, LANDING]
 
 
 def _src(path: Path) -> str:
@@ -130,7 +129,7 @@ def test_backdrop_filter_is_always_prefixed():
     """Unprefixed backdrop-filter only reached Safari 18. Cosmetic — the rgba
     scrim underneath is the real fallback — but listed so nobody spends an
     afternoon on it during Safari testing."""
-    for page in (V2, PARTICIPANT, LANDING):
+    for page in (V2, LANDING):
         src = _src(page)
         plain = len(re.findall(r"(?<!-)\bbackdrop-filter\s*:", src))
         prefixed = len(re.findall(r"-webkit-backdrop-filter\s*:", src))
@@ -190,22 +189,6 @@ def test_the_landing_modal_manages_its_own_focus():
     assert "modalReturnFocus" in src, "focus is not restored when the dialog closes"
     assert "document.body.style.overflow = 'hidden'" in src, "the page behind still scrolls"
     assert "if (e.key !== 'Tab') return;" in src, "Tab is not trapped inside the dialog"
-
-
-def test_the_participant_pages_agree_about_the_hazards_they_share():
-    """Both pages load the same worklet and both play the same 16 kHz stream.
-    The legacy page had none of v2's protections; whatever is true of one has
-    to be true of the other, or the next fix lands on one page again."""
-    for page in (V2, PARTICIPANT):
-        src = _src(page)
-        assert "audioCtx.resume()" in src, \
-            f"{page.name} never resumes a suspended AudioContext"
-        assert "workletNode.connect(" in src, \
-            f"{page.name} leaves the capture worklet with no path to a destination"
-        assert "makeAgentBuffer(" in src, \
-            f"{page.name} still builds agent audio at a rate an engine may refuse"
-        assert "isSecureContext" in src, \
-            f"{page.name} reports a non-secure origin as a microphone permission problem"
 
 
 def test_the_recorder_teardown_is_not_a_race():

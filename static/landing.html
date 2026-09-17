@@ -549,21 +549,7 @@
     $('step2').style.display = n === 2 ? 'block' : 'none';
   }
 
-  const SCENARIO_DESC = {
-    missed_deadlines: "Your senior engineer used to be reliable and just missed their third sprint in a row. Have the conversation without jumping to a performance review.",
-    pushback_meeting: "A peer pushed back on your proposal in a meeting, harder than felt fair. They pinged you for a follow up. The proposal isn't actually what they're upset about.",
-    critical_feedback: "Your skip level pulled you in for an unscheduled chat. They have three critical things to say about you. Stay open without folding.",
-    credit_taken: "You and a peer worked on an idea together. They just presented it as their own at the all hands. You pull them aside.",
-    slack_snap: "Three days ago you snapped at a junior colleague in a public Slack channel. They have been quiet since. You meet to repair.",
-    bad_decision: "A decision you made shipped and caused a customer outage. The team worked the weekend cleaning it up. You debrief with one of them.",
-    quiet_report: "One of your reports is your strongest engineer and never speaks up in team discussions. You think they have a view they are not sharing.",
-    burned_out_team: "You just took over a project. The docs say everything is on track. In your first one on one, your senior engineer is going to suggest otherwise, if you earn it.",
-    hidden_profile_vendor: "Pick between two vendors with three teammates. The deck makes Vendor A look obvious. Each teammate holds one piece of information that, together, change the answer.",
-    blameful_retro: "Run the post incident retro after a four hour outage. One engineer is defensive, one is bracing to be blamed, one wants to skip the retro, one saw a warning sign but did not escalate.",
-    dominated_brainstorm: "Run a strategy brainstorm. A VP and his ally are taking over. A researcher has data that complicates their view. A new hire is invisible on video. Get the floor open again.",
-    public_retraction: "Last week you publicly blamed the wrong person on your team. Today you learned it was actually someone else. The person you blamed, the person actually responsible, and a peer who witnessed the whole thing are all on this call. Set the record straight.",
-    presentation_pileon: "You're a junior analyst who just presented. A skeptical senior engineer, a stressed PM, a cost-focused finance lead, a rival peer, and your own hands-off manager start arguing over your work, and increasingly with each other. Your job is to mediate and hold the room. (High-incivility research condition.)",
-  };
+  const SCENARIO_DESC = {};   // per-scenario blurbs; the v3 bank carries its setup in the brief
 
   function renderScenarios(format) {
     const list = scenarios.filter(s => s.mode === format);

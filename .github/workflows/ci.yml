@@ -311,7 +311,7 @@ jobs:
           # YAMLError: an OSError or UnicodeDecodeError should be reported, not
           # crash the step with a traceback.
           seen = {}
-          files = sorted(Path("scenarios").glob("*.yaml")) + sorted(Path("scenarios/v3").glob("*.yaml"))
+          files = sorted(Path("scenarios/v3").glob("*.yaml"))
           for path in files:
               try:
                   with path.open(encoding="utf-8") as fh:

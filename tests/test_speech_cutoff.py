@@ -289,7 +289,7 @@ class FakeRT:
 
 
 def one_to_one_runner(frames):
-    session = FakeSession("01_missed_deadlines")
+    session = FakeSession("S1A")
     ws = FakeWS(frames)
     runner = rvs.RealtimeVoiceSessionRunner(session, ws)
     runner.rt = FakeRT()
@@ -387,7 +387,7 @@ def test_the_scan_reads_an_encounter_and_skips_what_it_should():
 async def test_a_turn_records_the_audio_the_participant_was_actually_sent():
     """`audio_ms` on the turn is the whole instrument: without it the
     comparison above has nothing to run on, live or afterwards."""
-    session = FakeSession("01_missed_deadlines")
+    session = FakeSession("S1A")
     ws = FakeWS()
     runner = rvs.RealtimeVoiceSessionRunner(session, ws)
     runner.rt = FakeRT()
@@ -405,7 +405,7 @@ async def test_a_turn_records_the_audio_the_participant_was_actually_sent():
 async def test_a_turn_whose_audio_stopped_early_says_so_in_the_record():
     """The one row that would have told the researcher what they were hearing,
     and which side of the gateway lost it."""
-    session = FakeSession("01_missed_deadlines")
+    session = FakeSession("S1A")
     ws = FakeWS()
     runner = rvs.RealtimeVoiceSessionRunner(session, ws)
     runner.rt = FakeRT()

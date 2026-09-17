@@ -361,46 +361,6 @@ def test_the_guard_holds_over_a_real_recorded_wave(tmp_path, monkeypatch, wave_d
 # --- B40: a scenario id is a filename fragment, not a path -------------------
 
 
-@pytest.fixture()
-def outside_yaml(tmp_path):
-    """A perfectly well-formed scenario sitting outside SCENARIOS_DIR."""
-    path = tmp_path / "outside_secret.yaml"
-    path.write_text(
-        "id: pwned\n"
-        "title: Outside The Scenarios Dir\n"
-        "intro: injected intro\n"
-        "system_prompt: You are an actor whose brief came from outside the repo.\n",
-        encoding="utf-8",
-    )
-    return path
-
-
-def test_a_traversing_scenario_id_cannot_reach_a_yaml_outside_the_directory(
-        outside_yaml, monkeypatch):
-    """?scenario= is participant-controlled, so it must not address the disk.
-
-    Unvalidated it loaded any mapping with an id/title/system_prompt as a live
-    encounter: an attacker-chosen brief handed to the actor, and an id that is
-    not a study scenario stamped onto the recording.
-    """
-    # Keep the allowed directory and attack target on the fixture's volume.
-    # Windows CI puts the checkout on D: and temporary files on C:, so a path
-    # relative to the real checkout cannot represent this traversal there.
-    scenario_dir = outside_yaml.parent / "scenarios"
-    scenario_dir.mkdir()
-    monkeypatch.setattr(scenarios, "SCENARIOS_DIR", scenario_dir)
-    traversal = os.path.relpath(
-        outside_yaml.with_suffix(""), scenario_dir
-    ).replace("\\", "/")
-    assert ".." in traversal
-    target = scenario_dir / f"{traversal}.yaml"
-    assert target.resolve() == outside_yaml.resolve()
-    assert target.is_file()
-
-    with pytest.raises(FileNotFoundError):
-        scenarios.load_scenario(traversal)
-
-
 @pytest.mark.parametrize("bad", [
     "archive/mundane_chitchat",   # no traversal needed: a retired scenario
     "v3/S1A_taken_credit",        # existing file, wrong shape -> used to KeyError

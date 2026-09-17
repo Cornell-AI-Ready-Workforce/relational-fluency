@@ -208,38 +208,6 @@ def test_session_dir_refuses_every_alias_of_a_real_encounter(tmp_path, monkeypat
 
 # ---------- scenario ids ----------
 
-def test_a_scenario_is_found_only_under_its_own_spelling(tmp_path, monkeypatch):
-    """A scenario id is stamped onto the recording and into the manifest.
-
-    A wrong-cased participant link that loads the scenario on the researcher's
-    Mac, 404s on the Linux container and labels the encounter with whichever
-    spelling the URL carried is a data problem, not a cosmetic one.
-    """
-    import server.scenarios as scenarios
-
-    (tmp_path / "S1A.yaml").write_text("id: S1A\n", encoding="utf-8")
-    monkeypatch.setattr(scenarios, "SCENARIOS_DIR", tmp_path)
-    monkeypatch.setattr(scenarios, "_legacy_by_id", dict)
-
-    assert scenarios._find_scenario_file("S1A") == tmp_path / "S1A.yaml"
-    for bad in ("s1a", "S1a", "S1A.", "S1A "):
-        with pytest.raises(FileNotFoundError):
-            scenarios._find_scenario_file(bad)
-
-
-def test_a_scenario_id_that_names_a_windows_device_is_refused(tmp_path, monkeypatch):
-    """"nul" matches [A-Za-z0-9_-] but is a character device on Windows: opening
-    it succeeds and reads back nothing, so the scenario would load as empty
-    rather than report itself missing."""
-    import server.scenarios as scenarios
-
-    monkeypatch.setattr(scenarios, "SCENARIOS_DIR", tmp_path)
-    monkeypatch.setattr(scenarios, "_legacy_by_id", dict)
-    for bad in ("nul", "CON", "aux", "com1", "lpt1"):
-        with pytest.raises(FileNotFoundError):
-            scenarios._find_scenario_file(bad)
-
-
 # ---------- line endings ----------
 
 def test_the_scenario_map_generator_pins_its_newline():

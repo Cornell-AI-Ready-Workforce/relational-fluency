@@ -1568,7 +1568,7 @@ def test_every_page_carries_the_tab_icon():
     is the same artwork at 64px and 4.4 KB.
     """
     for name in ("landing.html", "v2.html", "researcher.html",
-                 "director.html", "evidence.html", "participant.html"):
+                 "director.html", "evidence.html"):
         p = ROOT / "static" / name
         if not p.exists():
             continue

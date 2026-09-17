@@ -795,10 +795,8 @@ def _operator_key(key: Optional[str]) -> bool:
 # --- HTML routes ---
 
 @app.get("/", response_class=HTMLResponse)
-async def landing_page(request: Request, scenario: Optional[str] = None,
-                       key: Optional[str] = None):
-    """Landing page with scenario picker popup. If a scenario is passed via
-    query (legacy v1 link), still serve the chat UI so old bookmarks work.
+async def landing_page(request: Request, key: Optional[str] = None):
+    """Landing page with the scenario picker popup.
 
     A participant arriving from Qualtrics carries their id in the query. The
     base URL is what gets pasted into the survey, so forward those visitors
@@ -824,16 +822,7 @@ async def landing_page(request: Request, scenario: Optional[str] = None,
     if any(k in q for k in ("pid", "participant_id", "participantId", "PROLIFIC_PID")):
         return RedirectResponse(url=f"/start?{request.url.query}", status_code=307)
     check_key(key)
-    if scenario:
-        return (STATIC_DIR / "participant.html").read_text(encoding="utf-8")
     return (STATIC_DIR / "landing.html").read_text(encoding="utf-8")
-
-
-@app.get("/chat", response_class=HTMLResponse)
-async def chat_page(scenario: Optional[str] = None, key: Optional[str] = None):
-    """Legacy text-mode chat UI. /v2 is the recommended entry point."""
-    check_key(key)
-    return (STATIC_DIR / "participant.html").read_text(encoding="utf-8")
 
 
 @app.get("/researcher", response_class=HTMLResponse)

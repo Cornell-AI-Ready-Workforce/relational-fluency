@@ -144,9 +144,9 @@ silently breaks Gemini Live sessions.
 |---|---|---|
 | Voice | **Gemini Live speech-to-speech** via Cornell LiteLLM — done | — |
 | Models | **Cornell LiteLLM gateway** (Gemini) — done | — |
-| Scenarios | **4 constructs × 3 parallel forms**, compiled into `scenarios/v3/` — done (the 13 exploratory YAMLs in `scenarios/` remain for the legacy `/?scenario=` links) | — |
+| Scenarios | **4 constructs × parallel forms**, compiled into `scenarios/v3/` — done | — |
 | Storage | **ephemeral container disk** on the deployed task; only webcam video reaches S3 | encrypted S3 or a mounted volume, one aligned record per encounter |
-| Entry | direct `?scenario=` links | CloudResearch Connect → Qualtrics → app → completion code |
+| Entry | `/start` from Qualtrics with `participantId` + `qid` — done; researcher links `/v2?scenario=` for internal tests | CloudResearch Connect → Qualtrics → app → Qualtrics (two-survey chain) |
 | Deploy | **ECS/Fargate behind an ALB, released by hand with the AWS CLI** | the same, under Terraform — once the missing state is recovered |
 
 Verified 2026-08-19: `nto.gemini-live-2.5-flash` works end to end through the

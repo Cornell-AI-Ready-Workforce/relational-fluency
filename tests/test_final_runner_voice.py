@@ -56,12 +56,6 @@ GPT = "gpt-realtime-2.1"
 # One character from each group scenario, carrying the id that started this.
 AN_ELEVENLABS_ID = "9BWtsMINqrJLrRacOk9x"
 
-GROUP_YAML_SCENARIOS = [
-    "hidden_profile_vendor", "blameful_retro",
-    "dominated_brainstorm", "public_retraction",
-]
-
-
 # --------------------------------------------------------------------------
 # Fakes, in the shapes the runner actually uses.
 # --------------------------------------------------------------------------
@@ -181,42 +175,6 @@ def on_model(monkeypatch):
 # 1. A scenario's ElevenLabs id must never reach a realtime session.
 # --------------------------------------------------------------------------
 
-def test_no_group_scenario_can_put_an_elevenlabs_id_on_the_wire(on_model):
-    """The defect, over every scenario that carries one.
-
-    Held over all four group YAML scenarios rather than one, because the id is
-    per character: the fix has to be a rule about what may be sent, not a patch
-    to the one cast somebody happened to test.
-    """
-    on_model(GEMINI)
-    # Straight off the capability table, not off the runner's own accessor:
-    # what may go on the wire is the table's claim, and this test is about
-    # whether the runner obeys it.
-    roster = rt_mod.capabilities_for(GEMINI).voices
-    for scenario_id in GROUP_YAML_SCENARIOS:
-        runner, _ = make_runner(scenario_id)
-        for agent in runner.cast:
-            chosen = runner._voice_for(agent)
-            assert chosen in roster, (
-                f"{scenario_id}/{agent.id} would open its session with "
-                f"{chosen!r}; the gateway refuses the whole session.update "
-                "for an unknown voice, so the character brief never lands"
-            )
-
-
-def test_the_id_is_still_in_the_scenario_file(on_model):
-    """Guard the test above against passing for the wrong reason.
-
-    If the group scenarios ever stop carrying ElevenLabs ids, the assertion
-    above becomes vacuous and would keep passing while the runner's rule was
-    removed. This is what notices."""
-    session = FakeSession("hidden_profile_vendor")
-    ids = [getattr(a, "voice_id", None) for a in session.scenario.cast]
-    assert AN_ELEVENLABS_ID in ids, (
-        "the scenario no longer carries the id these tests are about"
-    )
-
-
 def test_a_voice_from_the_other_family_is_refused_too(on_model):
     """The same rule, in the direction that only appears if the study moves.
 
@@ -245,18 +203,6 @@ def test_a_gemini_scenario_voice_survives_on_gemini(on_model):
     assert runner._voice_for(runner.cast[1]) == "Charon"
 
 
-def test_characters_without_a_usable_voice_still_sound_different(on_model):
-    """Falling back must not collapse a room into one voice.
-
-    Three characters answering in the same voice is not a cosmetic problem in a
-    group encounter: the participant is being scored on whether they addressed
-    the right person."""
-    on_model(GPT)
-    runner, _ = make_runner("hidden_profile_vendor")
-    chosen = [runner._voice_for(a) for a in runner.cast]
-    assert len(set(chosen)) == len(chosen), f"the room shares voices: {chosen}"
-
-
 def test_the_realtime_field_wins_over_the_cascade_field(on_model):
     """`realtime_voice` is the realtime path's own field and is asked first."""
     on_model(GEMINI)
@@ -277,31 +223,6 @@ def test_the_realtime_field_is_checked_against_the_roster_as_well(on_model):
     agent = runner.cast[0]
     object.__setattr__(agent, "realtime_voice", "Puck")
     assert runner._voice_for(agent) in rt_mod.capabilities_for(GPT).voices
-
-
-def test_a_voice_that_cannot_be_spoken_is_written_down_once(on_model):
-    """A casting decision that did not survive the run is a fact about the data.
-
-    A rater listening for two distinguishable characters, or an analyst asking
-    why a scenario sounds nothing like its author's notes, needs the value
-    itself: an ElevenLabs id and a misspelt Gemini name are different repairs
-    to the scenario file. Once, because _voice_of runs on every character
-    switch and on every member of a room."""
-    on_model(GEMINI)
-    runner, session = make_runner("hidden_profile_vendor")
-    agent = runner.cast[0]
-    for _ in range(4):
-        runner._voice_for(agent)
-
-    rows = session.store.of("realtime_voice_unusable")
-    assert len(rows) == 1, f"expected one row, got {len(rows)}"
-    assert rows[0]["value"] == AN_ELEVENLABS_ID
-    assert rows[0]["agent_id"] == agent.id
-    assert rows[0]["model"] == GEMINI
-    assert "Puck" in rows[0]["offered"], (
-        "the row does not say what the model would have accepted, so it "
-        "cannot be acted on without re-deriving the roster"
-    )
 
 
 def test_a_usable_voice_is_not_reported_as_a_problem(on_model):
@@ -522,20 +443,3 @@ def test_a_group_turn_keeps_its_segment_and_interaction():
     assert pair["segment"] == 1
     assert pair["interaction"] == runner._interaction_id()
 
-
-def test_the_record_names_the_voice_the_participant_actually_heard():
-    """The group pair used to copy the scenario's `voice_id` straight in.
-
-    On a group YAML scenario that is an ElevenLabs id — a voice no participant
-    has ever heard, because it was refused by the gateway before a word was
-    spoken. A record that names it is not merely unhelpful; it is evidence of a
-    delivery that did not happen."""
-    async def scenario():
-        runner, session = make_runner("hidden_profile_vendor")
-        await runner._finalize_member_inner(runner.cast[0], "a line")
-        return session
-
-    session = asyncio.run(scenario())
-    (pair,) = session.store.of("steering_pair")
-    assert pair["actor"]["voice"] != AN_ELEVENLABS_ID
-    assert pair["actor"]["voice"] in rt_mod.capabilities_for(GEMINI).voices
