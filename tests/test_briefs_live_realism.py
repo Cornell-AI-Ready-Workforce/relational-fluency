@@ -340,11 +340,16 @@ def test_the_anti_repetition_rule_no_longer_falls_back_to_the_demand(sid, aid):
     asked it seven ways in ten turns. The fallback is now a question he has
     not asked yet, and the rule names the second thing he must not do."""
     low = flat(brief(sid, aid))
+    # The rule itself now lives in the compiler's shared block (2026-09), so it
+    # is asserted against the compiled prompt; the brief is checked only for
+    # the fallback it must not carry.
+    from server.scenarios import load_scenario
+    compiled = flat(next(a for a in load_scenario(sid, "p_test").cast if a.id == aid).system_prompt)
     assert "ask them something instead" not in low, (
         f"{sid}: the anti-repetition rule falls back to 'ask them something "
         "instead', which live is the demand again")
-    assert "ask them something you have not asked yet" in low, sid
-    assert "you do not say the same sentence twice, and you do not ask the same question twice in different words" in low, sid
+    assert "ask them something you have not asked yet" in compiled, sid
+    assert "you do not say the same sentence twice, and you do not ask the same question twice in different words" in compiled, sid
 
 
 def test_the_concession_gate_is_untouched_by_the_vague_answer_rule():
