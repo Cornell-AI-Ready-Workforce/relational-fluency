@@ -204,36 +204,6 @@ def test_the_voice_socket_closes_on_a_withdrawn_participant(client, store,
     assert caught.value.code == 4403
 
 
-def test_the_text_socket_refuses_a_withdrawn_participant_too(client, store,
-                                                             runs_mod, monkeypatch):
-    """A transcript opened under a withdrawn record is still study data: it
-    resolves the run, carries cohort "study" and is queued to a human rater."""
-    run, pid = _consented_arrival(store, runs_mod, key="RF_GATE_TXT")
-
-    def no_such_scenario(*a, **k):
-        raise FileNotFoundError("unknown scenario: conflict")
-
-    monkeypatch.setattr(appmod.registry, "create", no_such_scenario)
-    runs_mod.withdraw(run["run_id"])
-
-    with pytest.raises(WebSocketDisconnect) as caught:
-        with client.websocket_connect(
-                f"/ws/participant?scenario=conflict&participant_id={pid}"):
-            pass
-    assert caught.value.code == 4403
-
-
-def test_the_anonymous_text_entrance_still_opens(client, monkeypatch):
-    """The withdrawal check must not widen the gate it sits behind: the
-    documented single-agent text entrance opens with no participant_id."""
-    def no_such_scenario(*a, **k):
-        raise FileNotFoundError("unknown scenario: conflict")
-
-    monkeypatch.setattr(appmod.registry, "create", no_such_scenario)
-    with client.websocket_connect("/ws/participant?scenario=conflict") as ws:
-        assert ws.receive_json()["type"] == "error"
-
-
 # --- B7: a withdrawal is about the person, not one run document --------------
 
 # --- B6: a same-arm return is not a cross-arm arrival ------------------------

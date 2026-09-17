@@ -219,45 +219,6 @@ def test_a_wrapped_key_does_not_reach_the_participant_socket_or_the_record(
     assert logged and "<redacted>" in logged[0]["message"]
 
 
-def test_a_gateway_401_echoing_the_key_does_not_reach_the_text_socket(
-        live_key, voice_session, monkeypatch):
-    """The other credential-carrying shape, on the other participant socket.
-
-    A gateway that quotes the key it was sent back in its 401 body reaches this
-    handler as `e`, and anthropic's str() reproduces that body verbatim.
-    """
-    failure = _anthropic_401_echoing_the_key(FLAT_KEY)
-    monkeypatch.setitem(llm._FILE, "LITELLM_API_KEY", FLAT_KEY)
-
-    async def stream_reply(*a, **k):
-        raise failure
-        yield ""  # pragma: no cover - unreachable, makes this an async generator
-
-    voice_session.primary_engine = types.SimpleNamespace(
-        agent=types.SimpleNamespace(id="alex"),
-        model="nto.claude-sonnet-4-5",
-        live_notes=[],
-        stream_reply=stream_reply,
-    )
-    ws = FakeWS(incoming=[{"type": "user_text", "text": "hello"}])
-
-    asyncio.run(appmod.ws_participant_text(
-        ws, scenario="S1A", participant_id=None, model=None, launch=None,
-        key=None, run=None,
-    ))
-
-    assert not _leaks(ws.dump(), FLAT_KEY)
-    assert not _leaks(voice_session.store.dump(), FLAT_KEY)
-    assert not _leaks(voice_session.dump(), FLAT_KEY)
-    logged = [e for e in voice_session.store.events
-              if e["type"] == "error" and e.get("where") == "participant_ws"]
-    assert logged, "the encounter record must still say the encounter failed"
-    # The failure that arrived has to be the gateway's, or this test would pass
-    # on any stand-in's AttributeError and prove nothing about the credential.
-    assert "authentication_error" in logged[0]["message"]
-    assert "<redacted>" in logged[0]["message"]
-
-
 # The AWS documentation's own example secret, which is the shape a real one has:
 # 40 characters of base64 alphabet and no vendor prefix to recognise it by.
 AWS_SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"

@@ -58,8 +58,8 @@ def task_env():
 # ---------- R37: the text engine and the director are two settings ----------
 
 def test_claude_model_is_not_wired_to_the_director(task_env):
-    """CLAUDE_MODEL is read as DEFAULT_MODEL by server/engine.py and
-    server/claude_engine.py, and rendered by server/app.py as the default in the
+    """CLAUDE_MODEL is read as DEFAULT_MODEL by server/engine.py and rendered
+    by server/app.py as the default in the
     researcher's pre-start model picker. Pointing it at var.director_model
     repointed the deployment's text engine and that picker at the director's
     model to make one provenance field come out right. The record is fixed a
@@ -88,11 +88,10 @@ def test_text_model_variable_defaults_to_the_code_default():
     declared = re.search(r'default\s*=\s*"([^"]+)"', block.group(1))
     assert declared, "text_model has no default"
 
-    # The value the three readers fall back to when the env var is unset.
+    # The value the two readers fall back to when the env var is unset.
     code_defaults = set()
     for rel, pattern in (
         ("server/engine.py", r'setting\("CLAUDE_MODEL",\s*"([^"]+)"\)'),
-        ("server/claude_engine.py", r'setting\("CLAUDE_MODEL",\s*"([^"]+)"\)'),
         ("server/llm.py", r'"text_model":\s*_cfg\("CLAUDE_MODEL",\s*"([^"]+)"\)'),
     ):
         m = re.search(pattern, (REPO_ROOT / rel).read_text(encoding="utf-8"))

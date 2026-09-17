@@ -1084,19 +1084,6 @@ def people(monkeypatch):
     monkeypatch.setattr(appmod, "get_participant", lambda pid: RECORDS.get(pid))
 
 
-@pytest.mark.parametrize("path", ["/ws/participant", "/ws/participant/voice"])
-@pytest.mark.parametrize("pid", ["p_declined", "p_pending", "p_unknown"])
-def test_both_sockets_refuse_anyone_who_has_not_consented(client, people, path, pid):
-    """The text socket used to check that the record EXISTS. A participant who
-    read the form and refused was accepted on it, and their transcript was
-    written into cohort "study" and queued to a human rater."""
-    url = path + f"?scenario=conflict&participant_id={pid}"
-    with pytest.raises(WebSocketDisconnect) as caught:
-        with client.websocket_connect(url):
-            pass
-    assert caught.value.code == 4403
-
-
 def test_the_voice_socket_refuses_a_connection_with_no_record_at_all(client, people):
     """Capture there is audio and webcam under the IRB. An anonymous one has no
     business opening."""
@@ -1104,27 +1091,6 @@ def test_the_voice_socket_refuses_a_connection_with_no_record_at_all(client, peo
         with client.websocket_connect("/ws/participant/voice?scenario=conflict"):
             pass
     assert caught.value.code == 4403
-
-
-def test_the_text_socket_still_opens_with_no_record_at_all(client, people, monkeypatch):
-    """The gate must be `participant_id and not consented`, not `not consented`.
-
-    Refusing an absent participant_id killed the documented single-agent text
-    entrance (README: /?scenario=missed_deadlines): static/participant.html
-    deliberately skips the consent gate in text mode and opens this socket with
-    an empty pidParam, so every such connection was closed 4403 — and app.py's
-    own module docstring calls that path the one that is "sufficient to make
-    sure the conversation is working well and steer the model".
-
-    Allowing it costs nothing that matters, which the next test proves.
-    """
-    def no_such_scenario(*a, **k):
-        raise FileNotFoundError("unknown scenario: conflict")
-
-    monkeypatch.setattr(appmod.registry, "create", no_such_scenario)
-    with client.websocket_connect("/ws/participant?scenario=conflict") as ws:
-        # It opened: the reply is the scenario failing, not a 4403 close.
-        assert ws.receive_json()["type"] == "error"
 
 
 def test_an_anonymous_text_encounter_can_never_become_study_data():
@@ -1137,19 +1103,6 @@ def test_an_anonymous_text_encounter_can_never_become_study_data():
     """
     assert appmod._run_context(None) is None
     assert appmod._run_context(None, "some_run_id") is None
-
-
-@pytest.mark.parametrize("path", ["/ws/participant", "/ws/participant/voice"])
-def test_both_sockets_open_for_a_consented_participant(client, people, monkeypatch, path):
-    """The gate passes and the session is what fails, which is how we know the
-    refusal above was the consent check and not a broken socket."""
-    def no_such_scenario(*a, **k):
-        raise FileNotFoundError("unknown scenario: conflict")
-
-    monkeypatch.setattr(appmod.registry, "create", no_such_scenario)
-    with client.websocket_connect(
-            path + "?scenario=conflict&participant_id=p_consented") as ws:
-        assert ws.receive_json()["type"] == "error"
 
 
 def test_the_helper_is_the_one_rule_both_gates_use(people):

@@ -1012,7 +1012,6 @@
     // one clause earlier (app.py's `except WebSocketDisconnect: pass`) and
     // sends no frame at all, so this kind is raised by everything EXCEPT the
     // disconnect — usually the model gateway inside stream_reply.
-    participant_ws_error: 'the participant encounter failed, the encounter has ended',
   };
   // An unrecognised kind is rendered, not dropped. The server side owns the
   // list of failures worth broadcasting; a console that silently ignores the
