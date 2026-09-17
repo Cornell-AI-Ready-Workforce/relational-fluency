@@ -33,7 +33,7 @@ from typing import Dict, List, Optional, Tuple
 
 from . import scenarios_v3
 from .scenarios_v3 import available, load_spec
-from .storage import DATA_DIR, record_withdrawal, replace_with_retry
+from .storage import DATA_DIR, encounter_timing, record_withdrawal, replace_with_retry
 
 RUNS_DIR = DATA_DIR / "runs"
 
@@ -1432,6 +1432,10 @@ def view(run: dict) -> dict:
         # happened, which is the opposite of what they asked for and would
         # record them again after they had withdrawn consent to continue.
         "withdrawn": run.get("withdrawn"),
+        # The encounter clock the page draws and the server enforces: floor,
+        # wrap and hard stop in seconds (storage.encounter_timing). One source,
+        # so the ring that fills at 7:00 and the 409 from /advance agree.
+        "timing": encounter_timing(),
     }
 
 

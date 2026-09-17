@@ -3644,6 +3644,31 @@ async def api_run_advance(run_id: str, session_id: Optional[str] = None,
     # the run is visibly incomplete in the data instead of silently missing from
     # it. `runs.advance` copies the entry through, so the flag lands on the
     # completed encounter.
+    # THE SEVEN-MINUTE FLOOR (docs/study1-plan.md, E4.1). The encounter is the
+    # measurement, and a three-minute conversation has not exercised it, so a
+    # study encounter is not marked complete before ENCOUNTER_MIN_SECONDS have
+    # passed since its socket opened — the same clock the page's ring fills on.
+    # The runner holds its own exits (auto-advance, the actor's end tool, the
+    # participant's move-on) to the same floor, so this is the backstop for the
+    # one exit that does not pass through it: the page's End button, which
+    # closes the session and POSTs here. Withdrawal is a different route and is
+    # never gated; internal runs and the operator are exempt so the team can
+    # walk the study fast.
+    if run.get("cohort", "study") != "internal" and not _is_operator(key):
+        from .storage import encounter_timing
+        floor = encounter_timing()["min_seconds"]
+        elapsed = m.get("duration_s")
+        if elapsed is None and m.get("started_at"):
+            elapsed = time.time() - float(m["started_at"])
+        if elapsed is not None and float(elapsed) < floor:
+            print(f"  NOTE: refusing to advance run {run_id}: encounter {session_id} "
+                  f"ran {float(elapsed):.0f}s, under the {floor:.0f}s floor.")
+            raise HTTPException(
+                409,
+                f"this conversation has run {int(float(elapsed))}s of the "
+                f"{int(floor)}s the study asks for; keep going, or use "
+                f"'Stop and leave the study' to withdraw")
+
     empty = _count_user_turns(sdir) < 1 and (m.get("n_turns") or 0) < 1
     if empty:
         idx = run.get("index", 0)

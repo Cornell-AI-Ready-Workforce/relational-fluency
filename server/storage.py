@@ -575,6 +575,52 @@ class SessionStore:
             )
 
 
+# ---------- The encounter clock ----------
+#
+# Study 1 asks for at least seven minutes per encounter and wraps it at twelve
+# (docs/study1-plan.md, E4). Three numbers, read here so the runner, the advance
+# route and the participant page (through runs.view) agree on them:
+#
+#   ENCOUNTER_MIN_SECONDS   the floor — nothing completes an encounter earlier,
+#                           except a withdrawal, which is never gated
+#   ENCOUNTER_WRAP_SECONDS  the actor is told to close the scene
+#   ENCOUNTER_MAX_SECONDS   the hard stop — the encounter completes regardless
+#
+# Measured from the moment the voice socket opens, which is when the page's
+# timer starts, so the number the participant watches is the number the server
+# enforces. Internal-cohort runs are exempt from the floor.
+ENCOUNTER_MIN_SECONDS_DEFAULT = 420.0
+ENCOUNTER_WRAP_SECONDS_DEFAULT = 720.0
+ENCOUNTER_MAX_SECONDS_DEFAULT = 780.0
+
+
+def encounter_timing() -> Dict[str, float]:
+    """{"min_seconds", "wrap_seconds", "max_seconds"} from the environment.
+
+    An unusable value falls back to the default and is named once, for the
+    same reason MAX_VIDEO_UPLOAD_BYTES does: an import must not break on a typo,
+    and a floor that silently became 0 would collect a wave of short encounters.
+    """
+    out: Dict[str, float] = {}
+    for key, env, default in (("min_seconds", "ENCOUNTER_MIN_SECONDS", ENCOUNTER_MIN_SECONDS_DEFAULT),
+                              ("wrap_seconds", "ENCOUNTER_WRAP_SECONDS", ENCOUNTER_WRAP_SECONDS_DEFAULT),
+                              ("max_seconds", "ENCOUNTER_MAX_SECONDS", ENCOUNTER_MAX_SECONDS_DEFAULT)):
+        raw = os.getenv(env, "").strip()
+        try:
+            val = float(raw) if raw else default
+            if val < 0:
+                raise ValueError(raw)
+        except ValueError:
+            print(f"  WARNING: {env}={raw!r} is not a number of seconds; using {default:g}")
+            val = default
+        out[key] = val
+    if out["max_seconds"] < out["min_seconds"]:
+        out["max_seconds"] = out["min_seconds"]
+    if not (out["min_seconds"] <= out["wrap_seconds"] <= out["max_seconds"]):
+        out["wrap_seconds"] = out["max_seconds"]
+    return out
+
+
 # ---------- Participants / consent ----------
 #
 # WHERE CONSENT NOW HAPPENS, AND WHY THE RECORD HAS TO SAY SO.

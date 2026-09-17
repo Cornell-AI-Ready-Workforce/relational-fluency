@@ -413,6 +413,29 @@ what they think they heard.
 > the exclusion starts applying again. Both mechanisms exist in the merged
 > code; the default is A.
 
+## The seven-minute floor, and the thirteen-minute stop
+
+Every study encounter runs **at least 7:00** and **at most 13:00**, measured
+from the moment the voice socket opens (the page's timer). Three environment
+variables carry it — `ENCOUNTER_MIN_SECONDS` (420), `ENCOUNTER_WRAP_SECONDS`
+(720) and `ENCOUNTER_MAX_SECONDS` (780) — read by `storage.encounter_timing()`
+and served to the page on the run (`timing`), so the ring that fills next to
+the timer and the server's refusals agree to the second.
+
+- **Floor.** The runner will not complete an encounter before it: the actor's
+  `end_conversation`, the auto-advance after the last planted beat and the
+  participant's *move on* are all held (event `floor_held`, with the reason),
+  and `POST /api/run/{id}/advance` answers **409** if a page asks anyway. The
+  page's **End conversation** is locked until then and says why. Moving from
+  one interaction to the next inside an encounter is never held.
+- **Withdrawal is never gated.** *Stop and leave the study* works at any second;
+  that is the consent promise, and it is a different control from End.
+- **Wrap and stop.** At 12:00 the runner records `ceiling_wrap` and tells the
+  page; at 13:00 it completes the encounter on the next turn (`ceiling_reached`),
+  and the page ends it on its own clock if the participant has gone quiet.
+- **Internal runs** (`cohort=internal`, the `/test` door) are exempt from the
+  floor so the team can walk the study quickly. The ceiling still applies.
+
 ## The base URL also forwards participants (second route in)
 
 **This is not the link this page tells you to paste.** The links to paste are

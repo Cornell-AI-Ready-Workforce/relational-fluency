@@ -136,10 +136,11 @@
   .gate .fill { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
   .gate.open .fill { stroke: #3a9a5c; }
   .gate.open { color: #2f7d4a; font-weight: 600; }
-  /* A pacing cue only, never a disabled state: the End button still works
-     before 7:00 (consent promises the participant can stop at any time), so it
-     must not be dimmed to the point of reading as unavailable. */
-  button#stopBtn.locked { opacity: .8; }
+  /* Held, and it looks held: End does not finish a study conversation before
+     the floor (storage.encounter_timing, 7:00 by default). Stopping the STUDY
+     is a different control — "Stop and leave the study" — and that one is never
+     locked, which is what keeps the consent promise. */
+  button#stopBtn.locked { opacity: .55; cursor: not-allowed; }
   .gate-note { display: none; position: fixed; top: 104px; right: 20px; max-width: 340px; z-index: 50;
     background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px;
     font-size: 14px; line-height: 1.5; box-shadow: 0 8px 24px rgba(47,47,47,0.12); }
@@ -466,7 +467,7 @@
   </div>
   <div class="controls" id="controls">
     <span class="turn-state" id="turnState"></span>
-    <span class="gate" id="gate" title="We ask for at least 7 minutes per conversation, but you can stop at any time">
+    <span class="gate" id="gate" title="Each conversation runs at least 7 minutes; End unlocks then. You can stop taking part at any time with “Stop and leave the study”.">
       <svg viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="fill" id="gateFill" cx="12" cy="12" r="9" stroke-dasharray="56.5" stroke-dashoffset="56.5"/></svg>
       <span id="gateLabel"></span>
     </span>
@@ -516,6 +517,7 @@
       const r = await fetch(`/api/run/${encodeURIComponent(runId)}` + keyParamFirst);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       run = await r.json();
+      applyTiming(run.timing);
     } catch (e) {
       // A run link that cannot be resolved must NOT silently fall through to the
       // default scenario (which is never attached to the run and yields no
@@ -772,6 +774,25 @@
       if (r.ok) advanced = await r.json();
     } catch (e) { r = null; }   // network failure: worth another press
     if (!advanced) {
+      // The floor's refusal is not a dead end: the conversation ended before
+      // the study's minimum (a fault path, or a race with the page's own gate),
+      // and the right offer is the same conversation again, not the exit.
+      let detail = '';
+      if (r && r.status === 409) { try { detail = (await r.json()).detail || ''; } catch {} }
+      if (r && r.status === 409 && /asks for/.test(detail)) {
+        advancing = false;
+        $('nextTitle').textContent = 'That conversation ended early';
+        $('nextBody').innerHTML =
+          '<p>Each conversation needs to run for about ' + Math.round(MIN_S / 60) +
+          ' minutes to count, and this one stopped before that. You can have it ' +
+          'again from the start.</p>';
+        $('nextBtn').textContent = 'Have this conversation again';
+        $('nextBtn').style.display = 'inline-block';
+        $('nextBtn').onclick = () => { $('nextOverlay').style.display = 'none'; };
+        offerExit('I can’t continue, finish here');
+        $('nextOverlay').style.display = 'flex';
+        return;
+      }
       // The encounter is recorded to the run ONLY on a successful advance. Never
       // discard a finished conversation silently: show the overlay, with a Retry
       // when a retry could plausibly work, and a way out either way.
@@ -1868,13 +1889,24 @@
     if (started) applyPresence();
   }
 
-  // ---------- minimum-duration gate ----------
-  // Study encounters should run at least 7 minutes. Rather than refusing the
-  // End button with an alert, the timer's ring fills toward 7:00 and the
-  // label counts down, so the target is visible from the first second.
-  // It is a target, not a lock: the consent form promises the participant may
-  // stop at any time, so the End button always works (see its click handler).
-  const MIN_S = 7 * 60;
+  // ---------- the encounter clock ----------
+  // Three numbers, served on the run (`run.timing`, from
+  // storage.encounter_timing) so the page and the server agree to the second:
+  //   MIN_S   the floor: End does not finish a study conversation before it,
+  //           and /advance answers 409 if asked. The ring fills toward it.
+  //   WRAP_S  the label says "wrapping up"; the server has told the actor.
+  //   MAX_S   the hard stop: the page ends the conversation itself, and so
+  //           does the server on the next turn, whichever comes first.
+  // Stopping the STUDY ("Stop and leave the study") is never gated: that is
+  // the consent promise, and it is a different control from End.
+  let MIN_S = 7 * 60, WRAP_S = 12 * 60, MAX_S = 13 * 60;
+  let ceilingFired = false;
+  function applyTiming(t) {
+    if (!t) return;
+    if (t.min_seconds > 0) MIN_S = t.min_seconds;
+    if (t.wrap_seconds > 0) WRAP_S = t.wrap_seconds;
+    if (t.max_seconds > 0) MAX_S = t.max_seconds;
+  }
   const RING = 56.5;   // circumference of the r=9 ring in the header
   function gateActive() { return !!(runId && run && run.cohort !== 'internal'); }
   function renderGate(s) {
@@ -1885,18 +1917,27 @@
     $('gateFill').style.strokeDashoffset = String(RING * (1 - pct));
     if (pct >= 1) {
       g.classList.add('open');
-      $('gateLabel').textContent = 'You can end when you are ready';
+      $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up' : 'You can end when you are ready';
       $('stopBtn').classList.remove('locked');
+      $('stopBtn').setAttribute('aria-disabled', 'false');
       $('stopBtn').title = '';
     } else {
       const left = Math.ceil((MIN_S - s) / 60);
       $('gateLabel').textContent = `about ${left} more minute${left === 1 ? '' : 's'}`;
-      // 'locked' only dims the button as a pacing cue. It is deliberately not
-      // `disabled`, and the tooltip says so, because a stop control the
-      // participant reads as unavailable is the same broken promise as one that
-      // refuses the click.
+      // Held until the floor. Not `disabled`, so the click can still explain
+      // itself (see the handler); aria-disabled says what the styling shows.
       $('stopBtn').classList.add('locked');
-      $('stopBtn').title = 'You can stop at any time.';
+      $('stopBtn').setAttribute('aria-disabled', 'true');
+      $('stopBtn').title = `End unlocks at ${pad2(Math.floor(MIN_S / 60))}:${pad2(MIN_S % 60)}. To stop taking part, use “Stop and leave the study”.`;
+    }
+    // The hard stop, from the page's side. The server completes the encounter
+    // on the next turn past MAX_S; a participant who has gone quiet has no next
+    // turn, so the page ends it too. Once.
+    if (s >= MAX_S && started && !ceilingFired) {
+      ceilingFired = true;
+      showGateNote('Time is up for this conversation — thank you. Moving on.');
+      endSession();
+      onEncounterComplete();
     }
   }
   let gateNoteTimer = null;
@@ -3433,6 +3474,14 @@
         $('transcript').appendChild(el);
         $('transcript').scrollTop = $('transcript').scrollHeight;
         applyPresence();
+      } else if (m.type === 'floor_held') {
+        // The server declined to finish the encounter before the floor (the
+        // actor's end tool, or an auto-advance that came due early). Nothing
+        // to do but say so; the conversation carries on.
+        const left = Math.max(1, Math.ceil((m.seconds_left || 0) / 60));
+        showGateNote(`Keep going — about ${left} more minute${left === 1 ? '' : 's'} in this conversation.`);
+      } else if (m.type === 'wrap_up') {
+        $('gateLabel').textContent = 'Wrapping up';
       } else if (m.type === 'encounter_complete') {
         const el = document.createElement('div');
         el.className = 'scene';
@@ -3982,24 +4031,18 @@
   });
   $('stopBtn').addEventListener('click', () => {
     if (runId) {
-      // Study encounters should run at least 7 minutes; the encounter is the
-      // measurement, and a 3-minute conversation has not exercised it.
-      // Internal test runs skip the gate so the team can move fast.
-      //
-      // The gate DISCOURAGES an early exit, it must never prevent one: the
-      // consent the participant signed (config/consent.yaml) says they may stop
-      // at any time, and the AI banner and fiction card repeat it. Refusing the
-      // only stop control before 7:00 was a refused withdrawal request. So the
-      // early press now shows the encouragement note AND offers the way out in
-      // the same interaction; only a second, explicit "no" keeps them in.
+      // Study encounters run at least MIN_S; the encounter is the measurement,
+      // and a 3-minute conversation has not exercised it. End is held until
+      // then — the server would refuse the advance anyway (409) — and the note
+      // says so and names the control that is never held: "Stop and leave the
+      // study", which withdraws. Internal test runs skip the gate.
       const elapsed = sessionStartedAt ? (Date.now() - sessionStartedAt) / 1000 : 0;
       if (gateActive() && elapsed < MIN_S) {
         const left = Math.ceil((MIN_S - elapsed) / 60);
-        showGateNote(`We'd like the conversation to run about ${left} more minute${left === 1 ? '' : 's'}, the ring next to the timer fills when you get there. You can still stop now if you want to.`);
-        if (!confirm(`We were hoping for about ${left} more minute${left === 1 ? '' : 's'} of conversation, but you can stop whenever you want to. Stop this conversation now?`)) return;
-      } else {
-        if (!confirm('Finish this conversation and move on?')) return;
+        showGateNote(`This conversation runs about ${left} more minute${left === 1 ? '' : 's'} — the ring next to the timer fills when you can end it. If you want to stop taking part in the study, use “Stop and leave the study”.`);
+        return;
       }
+      if (!confirm('Finish this conversation and move on?')) return;
       endSession();
       onEncounterComplete();
     } else {

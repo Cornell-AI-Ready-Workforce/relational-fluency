@@ -705,6 +705,13 @@ class RealtimeVoiceSessionRunner:
         self._last_activity = time.time()
         self._turns_this_interaction = 0
         self._interaction_started_at = time.time()
+        # The encounter clock (storage.encounter_timing): floor, wrap, hard
+        # stop, measured from here — the socket opening, which is when the
+        # page's timer starts.
+        self._encounter_started_at = time.time()
+        self._floor_held_noted = False
+        self._wrap_noted = False
+        self._ceiling_noted = False
         self._switching = False
         # True for the whole of _enter, i.e. while the sessions behind self.rt
         # are being torn down and rebuilt. _model_to_client must not pump
@@ -2578,6 +2585,8 @@ class RealtimeVoiceSessionRunner:
     async def _advance_from_tool(self) -> None:
         """Advance the encounter from a room member's end_conversation call."""
         try:
+            if await self._hold_at_floor("end_conversation"):
+                return
             if not await self._advance_segment():
                 await self._send({"type": "encounter_complete"})
         except Exception as exc:  # noqa: BLE001
@@ -4319,6 +4328,8 @@ class RealtimeVoiceSessionRunner:
                 self.session.store.event(
                     "tool_call", name=ev.get("name"), segment=self.segment
                 )
+                if await self._hold_at_floor("end_conversation"):
+                    continue
                 if not await self._advance_segment():
                     await self._send({"type": "encounter_complete"})
                     return
@@ -4451,6 +4462,10 @@ class RealtimeVoiceSessionRunner:
             return
         if msg.get("type") != "advance_interaction":
             return
+        # Moving on cannot complete the encounter before the study's floor;
+        # between interactions it is never held.
+        if await self._hold_at_floor("move_on"):
+            return
         # The participant chose to move on. Their judgement about when a
         # conversation is finished is better than a turn counter, so this
         # bypasses the pacing gates, but the beats they skipped are recorded,
@@ -4468,6 +4483,77 @@ class RealtimeVoiceSessionRunner:
         if not await self._advance_segment():
             await self._send({"type": "encounter_complete"})
 
+    # ── the encounter clock ──────────────────────────────────────────────
+    def _encounter_elapsed(self) -> float:
+        return time.time() - self._encounter_started_at
+
+    def _is_last_segment(self) -> bool:
+        """True when advancing from here would complete the encounter."""
+        if self._interaction_mode() == "one_to_one_series" \
+                and self._series_idx + 1 < len(self._resolve_agents()):
+            return False
+        return self.segment + 1 >= len(self.interactions)
+
+    def _floor_open(self) -> bool:
+        from .storage import encounter_timing
+        return self._encounter_elapsed() >= encounter_timing()["min_seconds"]
+
+    async def _hold_at_floor(self, reason: str) -> bool:
+        """If completing now would break the floor, record it and say so.
+
+        Returns True when the caller must NOT complete the encounter. Only the
+        exit that would end the encounter is held: moving from one interaction
+        to the next is never gated, because the per-interaction floors already
+        pace those and the participant still has the later scenes to fill.
+        Withdrawal does not come through here at all.
+        """
+        if not self._is_last_segment() or self._floor_open():
+            return False
+        from .storage import encounter_timing
+        left = max(0.0, encounter_timing()["min_seconds"] - self._encounter_elapsed())
+        if not self._floor_held_noted:
+            self._floor_held_noted = True
+            self.session.store.event(
+                "floor_held", reason=reason,
+                elapsed_s=round(self._encounter_elapsed(), 1),
+                seconds_left=round(left, 1),
+            )
+        await self._send({"type": "floor_held", "reason": reason,
+                          "seconds_left": round(left)})
+        return True
+
+    async def _at_ceiling(self) -> bool:
+        """Wrap at ENCOUNTER_WRAP_SECONDS, complete at ENCOUNTER_MAX_SECONDS.
+
+        Returns True when the encounter has been completed here. The wrap is
+        recorded and sent to the page; on the configured Gemini family a
+        mid-session direction does not reach the actor (README, "What the
+        participant hears"), so the record says the wrap was *called* and the
+        hard stop is what guarantees the ceiling.
+        """
+        from .storage import encounter_timing
+        t = encounter_timing()
+        elapsed = self._encounter_elapsed()
+        if elapsed >= t["max_seconds"]:
+            if not self._ceiling_noted:
+                self._ceiling_noted = True
+                self.session.store.event(
+                    "ceiling_reached", elapsed_s=round(elapsed, 1),
+                    interaction=self._interaction_id(),
+                    segment=self.segment,
+                )
+            await self._send({"type": "encounter_complete", "reason": "ceiling"})
+            return True
+        if elapsed >= t["wrap_seconds"] and not self._wrap_noted:
+            self._wrap_noted = True
+            self.session.store.event(
+                "ceiling_wrap", elapsed_s=round(elapsed, 1),
+                interaction=self._interaction_id(),
+            )
+            await self._send({"type": "wrap_up",
+                              "seconds_left": round(t["max_seconds"] - elapsed)})
+        return False
+
     async def _maybe_advance(self) -> None:
         """Move on once this interaction's planted beats are spent.
 
@@ -4478,6 +4564,11 @@ class RealtimeVoiceSessionRunner:
         also advances on its own once every trigger has fired and the
         conversation has run a couple more turns past the last one.
         """
+        # The hard stop outranks everything below: at ENCOUNTER_MAX_SECONDS the
+        # encounter completes whether or not beats remain.
+        if await self._at_ceiling():
+            return
+
         if self._next_trigger() is not None:
             return  # beats remain in this interaction
 
@@ -4492,6 +4583,10 @@ class RealtimeVoiceSessionRunner:
         if self._turns_this_interaction < max(min_turns, len(self._triggers()) + 2):
             return
         if elapsed < min_seconds:
+            return
+        # The encounter-level floor: the last interaction stays open until the
+        # study's seven minutes have passed, however spent its beats are.
+        if await self._hold_at_floor("auto_advance"):
             return
 
         self.session.store.event(
