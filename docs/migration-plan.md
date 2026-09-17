@@ -424,7 +424,7 @@ issuance, and resumability across four 7–12 minute encounters.
 
 ### 5. Deployment → AWS
 
-Today: `fly.toml` + Dockerfile.
+Previously: Fly.io (`fly.toml`, removed 2026-09). Today: ECS/Fargate, released with the AWS CLI.
 
 Target: ECS/Fargate behind an ALB with HTTPS/WSS, per `infra/terraform/`.
 DNS is wired in code — `infra/terraform/dns_tls.tf` now provisions one ACM cert

@@ -27,7 +27,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 OPERATIONS = REPO_ROOT / "docs" / "OPERATIONS.md"
 DEPLOY_AWS = REPO_ROOT / "docs" / "DEPLOY-AWS.md"
-DEPLOY_FLY = REPO_ROOT / "docs" / "DEPLOY.md"
 README = REPO_ROOT / "README.md"
 
 
@@ -342,8 +341,8 @@ def _heading_slugs(path: Path) -> set[str]:
 
 
 @pytest.mark.parametrize(
-    "doc", [OPERATIONS, DEPLOY_AWS, DEPLOY_FLY, README],
-    ids=["OPERATIONS", "DEPLOY-AWS", "DEPLOY", "README"])
+    "doc", [OPERATIONS, DEPLOY_AWS, README],
+    ids=["OPERATIONS", "DEPLOY-AWS", "README"])
 def test_every_cross_reference_lands_on_a_heading_that_exists(doc):
     """These pages point at each other constantly, and a link into a renamed
     heading does not fail loudly — it drops the reader at the top of the page

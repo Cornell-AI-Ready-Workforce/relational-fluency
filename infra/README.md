@@ -7,9 +7,9 @@ Manager, CloudWatch logs.
 
 **Scope:** provisions the live platform — the ECS service named `platform` runs
 the root Dockerfile's image (web app + session broker) on port 8080 behind the
-ALB, with an EFS volume mounted at `/data` for study records. The retired
-`agents/` ElevenLabs packaging still has its own ECR repository but is not on
-the serving path. Adding CloudFront for rater review lands in a later pass.
+ALB, with an EFS volume mounted at `/data` for study records. (A second ECR
+repository, `relational-fluency/agent`, is left over from the retired
+ElevenLabs agent service and is not on the serving path.)
 
 ## Prerequisites
 
@@ -29,8 +29,8 @@ cd infra/terraform
 terraform init
 terraform apply -var domain_name=yourlab.org
 # note the outputs: app_url (rf.<domain>, the participant entrance) and
-# ecr_repository (the PLATFORM repo — ecr_repository_legacy_agent is the
-# retired agents/ image and is not what the service runs)
+# ecr_repository (the PLATFORM repo — ecr_repository_legacy_agent is a
+# retired repository and is not what the service runs)
 
 # 2) Set the two secrets (values never touch git or Terraform state)
 # The LLM key is the Cornell LiteLLM virtual key (sk-...), used for both the
@@ -47,8 +47,6 @@ aws secretsmanager put-secret-value \
 # that a hand build ties the deployed tag to nothing but the state of your
 # working tree.
 #
-# NOTE: `agents/` is the retired ElevenLabs packaging and pushes to
-# relational-fluency/agent. Do not set container_image to that image.
 AWS_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 REGION=us-east-1
 REPO=$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/relational-fluency/platform
@@ -64,20 +62,6 @@ terraform apply -var domain_name=yourlab.org -var container_image=$REPO:$SHA
 # 5) Verify
 curl https://rf.yourlab.org/health
 ```
-
-## Wire into ElevenLabs (superseded)
-
-> Retired — voice no longer runs on ElevenLabs Agents. Kept only because the
-> `agent_url` output and TLS wiring below are still how you verify the endpoint
-> is reachable. Current design: [`../docs/architecture.md`](../docs/architecture.md).
-
-In the agent's settings → LLM → **Custom LLM**:
-
-- Server URL: the `agent_url` output (`https://agent.yourlab.org/v1`)
-- API key: the value you stored in `relational-fluency/agent-api-key`
-- First message: the scenario's fixed opening line (see
-  `agents/src/agents/director_actor/scenarios.py`)
-- Dynamic variables: `participant_name`, `company_name`
 
 ## Operations
 

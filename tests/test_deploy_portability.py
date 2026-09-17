@@ -14,7 +14,7 @@ runs, and that is exactly the fenced content.
 
 Scope note: only the five documents rewritten in this pass are checked
 (README.md and the four runbooks under docs/). Widening the set to
-infra/*.md and agents/README.md would be right, and is listed as follow-up
+infra/*.md would be right, and is listed as follow-up
 work rather than done here, because those files are owned elsewhere.
 """
 from __future__ import annotations
@@ -36,7 +36,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # The documents rewritten in the cross-platform pass.
 PORTABLE_DOCS = [
     "README.md",
-    "docs/DEPLOY.md",
     "docs/DEPLOY-AWS.md",
     "docs/OPERATIONS.md",
     "docs/RATING.md",
@@ -321,8 +320,6 @@ def test_dockerignore_is_an_allowlist():
         "data",
         "logs",
         "reddit-analysis",
-        "finetuning",
-        "agents",
     ):
         assert heavy not in re_included, f"{heavy} must not enter the build context"
 
@@ -572,11 +569,9 @@ def test_things_a_shell_or_a_container_executes_are_pinned_to_lf():
         "deploy.sh",
         "scripts/entrypoint.sh",
         "Dockerfile",
-        "agents/Dockerfile",
         "Dockerfile.dev",
         ".env",
         ".env.example",
-        "agents/.env.example",
     ):
         got = _attributes([probe])[probe]["eol"]
         assert got == "lf", (

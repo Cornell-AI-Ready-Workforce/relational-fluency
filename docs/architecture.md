@@ -102,11 +102,3 @@ methods question for the PI (`PI-DECISION-realtime-model.md`).
   and are compiled into runnable personas, rather than being hand-copied into
   engine YAML.
 - ElastiCache omitted at study scale.
-
-## Known duplication
-
-There are currently **two director–actor implementations**: `server/director.py`
-plus `server/steering.py` (live, used by the running platform) and
-`agents/src/agents/director_actor/` (built for the retired ElevenLabs
-custom-LLM callback). These should converge on the `server/` one; `agents/`
-retains value mainly for its persona text and scenario policies.

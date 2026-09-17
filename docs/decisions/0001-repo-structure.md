@@ -5,7 +5,9 @@
 > The component-not-phase principle still holds. The specific layout changed:
 > `app/` was removed when the Python simulation platform became the repo root,
 > so the participant-facing code now lives in `server/` + `static/` at top level
-> rather than in a separate `app/` folder. `agents/` is legacy — see its README.
+> rather than in a separate `app/` folder. `agents/` and `finetuning/` were
+> removed in 2026-09 (Study 1 scope, see `docs/study1-plan.md`); the
+> director–actor method lives in `server/`.
 
 ## Context
 

@@ -10,7 +10,7 @@ data/
   raw/         # collected Reddit data — GITIGNORED, never committed
   processed/   # de-identified, aggregated derivatives (committable if IRB-clean)
 notebooks/     # exploration and analysis notebooks
-scenarios/     # OUTPUT: scenario configs consumed by agents/
+scenarios/     # OUTPUT: canonical S1–S4 specs, compiled into scenarios/v3/ by server/scenarios_v3.py
 ```
 
 ## Pipeline (to build)

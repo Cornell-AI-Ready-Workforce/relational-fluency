@@ -93,8 +93,7 @@ jobs:
               exit 1 ;;
           esac
 
-          # Built from the repo root: the root Dockerfile is the platform, the
-          # agents/ Dockerfile is the retired ElevenLabs packaging.
+          # Built from the repo root: the root Dockerfile is the platform.
           docker build -t "$REPO:$SHA" .
           docker push "$REPO:$SHA"
 
