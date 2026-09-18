@@ -99,7 +99,7 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
   (4 × 7–12 min + surveys), completion handling via Survey 2 redirect.
 - AC: dry run with an internal account end to end.
 
-**1.5 Upstream consent version + remove in-app consent** — S · app (carve-out K)
+**1.5 Remove consent from the app** — S · app (carve-out K) — ✅ done 2026-09-17: no consent routes, gate, config or version variable; `qid` stays as the survey join key; withdrawal unchanged
 - Set `UPSTREAM_CONSENT_VERSION` to the Survey 1 consent version; keep the gate
   that refuses to record without it and without `qid`.
 - Remove `config/consent.yaml`, `server/consent_check.py`, the in-app consent
@@ -271,7 +271,7 @@ One PR per line; each removes the code, its routes, its tests, and its docs.
 | G ✅ | Arm links | `/start/one-to-one`, `/start/group`; `ARMS`, `arm_constructs`, `_resolve_pool` restriction in `server/runs.py`; arm sections in OPERATIONS |
 | H ✅ | Legacy services | `agents/` (self-described not on the live path), `finetuning/` |
 | J ✅ | Infra leftovers | `fly.toml`, `infra/apprunner-pilot.md`, root `btn_tmp.py`, root `.zip` |
-| K | In-app consent | see E1.5 (pending) |
+| K ✅ | In-app consent | removed entirely 2026-09-17 (decision: consent is taken offline); contact details now from `STUDY_CONTACT_*` env |
 | N ✅ | Tests | pruned with the modules above; keep everything covering the voice path, runs, storage, video, entry, withdrawal, browser compat |
 
 Kept: D `demo.html` + `/demo`; I `reddit-analysis/` (canonical specs);
@@ -279,12 +279,17 @@ L researcher console, `/ws/researcher`, `director.html`, steering — hold.
 
 ### E7 — Docs
 
-**7.1 README rewrite** — M
-- ~150 lines: what the platform is, the Study 1 flow (§1), quick start, the
-  pre-wave checklist (consent version, `qid`, return URL, port 8765, headset),
-  where the data lands. Move the audit narrative ("What the participant hears",
-  "Five things that each cost an afternoon", steering findings) to
-  `docs/field-notes.md`.
+**7.1 README rewrite** — M ✅ 2026-09-17
+- Rewritten as an introduction to the project and the app: what we measure,
+  the Study 1 participant path, how the app works, repository map, quick
+  start, configuration, browsers, the data, testing, deploying, where things
+  stand. The live-measurement narrative ("What the participant hears", the
+  2026-09-14 hesitant-participant round, transcription quality) moved verbatim
+  to `docs/field-notes.md`. Every consent-gate description in the docs and the
+  server comments was removed with it; dead consent-era helpers
+  (`_adopt_participant_record`, `_bind_record_to_run`, `_record_is_the_callers`,
+  `is_placeholder_value`, `_run_for_record`) deleted. CI's job for the removed
+  `agents/` service deleted.
 
 **7.2 OPERATIONS / DEPLOY refresh after E6 and E3** — S
 

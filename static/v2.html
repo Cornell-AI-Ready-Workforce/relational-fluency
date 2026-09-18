@@ -334,31 +334,6 @@
 </style>
 </head>
 <body>
-<!-- NOT a consent form. There is no consent form on this platform any more:
-     Cornell's IRB text is shown in the Qualtrics survey before anybody is sent
-     here, so there is no tick to take and nothing here asks for one. This card
-     is shown only when the handoff FAILED — when the server would not write a
-     consent record for this participant — and its job is to say where consent
-     is actually given and how to get back there. Nobody who arrives properly
-     ever sees it. -->
-<div class="consent-overlay" id="consentOverlay" style="display:none">
-  <div class="consent-card">
-    <h2 id="consentTitle">Checking your consent record</h2>
-    <div class="body" id="consentBody"></div>
-    <div class="err" id="consentErr"></div>
-    <!-- Participation is voluntary, so a participant stuck on this card needs
-         somewhere to go other than the close button. With only a retry,
-         someone who has decided against taking part could do nothing but
-         abandon the tab, which leaves a pending record indistinguishable from
-         a crashed browser and records no refusal at all — and a refusal is a
-         figure the IRB asks for. -->
-    <div class="actions">
-      <button class="secondary" id="consentDecline">I do not wish to take part</button>
-      <button id="consentSubmit">Try again</button>
-    </div>
-  </div>
-</div>
-
 <div class="consent-overlay" id="situationOverlay" style="display:none">
   <div class="consent-card situation-card">
     <div class="situation-main">
@@ -416,7 +391,7 @@
 
 <div class="consent-overlay" id="audioCheckOverlay" style="display:none">
   <div class="consent-card situation-card">
-    <h2>Check your audio</h2>
+    <h2>Check your audio and camera</h2>
     <div class="body rich">
       <p>You will be talking out loud with AI characters for about 10 minutes at a time. Please use <b>headphones</b> if you have them, and find a quiet spot.</p>
       <div class="check-row">
@@ -433,6 +408,14 @@
         </div>
         <button id="spkTestBtn">Play a test sound</button>
         <div class="status" id="spkStatus">Not tested</div>
+      </div>
+      <div class="check-row">
+        <div class="what"><b>3. Your camera</b><span>Every conversation is recorded on video. Turn the camera on and check you can see yourself.</span>
+          <video id="camPreview" autoplay muted playsinline style="display:none;width:160px;height:120px;border-radius:8px;background:#000;margin-top:8px"></video>
+          <div class="check-help" id="camHelp">We couldn't start your camera. Check that your browser allowed it (the camera icon in the address bar), that no other app is using it, and try again.</div>
+        </div>
+        <button id="camTestBtn">Turn on my camera</button>
+        <div class="status" id="camStatus">Not tested</div>
       </div>
     </div>
     <div class="check-actions">
@@ -616,7 +599,7 @@
     $('nextOverlay').style.display = 'flex';
     // Finishing does not end the participant's rights: deletion is exercised
     // after the study, so the address has to be on the screen that closes it
-    // too. Painted after the overlay is up, so a slow /api/consent never holds
+    // too. Painted after the overlay is up, so a slow /api/run/config never holds
     // back the completion code.
     $('nextBody').innerHTML +=
       '<p>If you have questions about the study, or would like anything ' +
@@ -634,7 +617,6 @@
     // has just asked to stop, so nothing they are looking at should wait on a
     // network call that may not answer.
     closing = true;   // this surface owns the overlay now; nothing may repaint over it
-    $('consentOverlay').style.display = 'none';
     $('situationOverlay').style.display = 'none';
     $('nextTitle').textContent = title;
     $('nextBody').innerHTML = bodyHtml +
@@ -677,7 +659,7 @@
     // participant reaches when the study is over for them, and it is where the
     // consent form's promise of withdrawal and deletion has to become an actual
     // address. Appended after the return link rather than painted with the
-    // title, so a slow /api/consent delays this line and nothing else.
+    // title, so a slow /api/run/config delays this line and nothing else.
     $('nextBody').innerHTML +=
       '<p>If you have questions about the study, or would like anything ' +
       'recorded about you removed, contact ' + (await contactWho()) + '.</p>';
@@ -960,7 +942,6 @@
   // encounters. It sets consent=1 while that record is still unconsented. A
   // participant_id on its own is therefore NOT evidence of consent, and the
   // gate below must run whenever this flag is set.
-  let consentPending = params.get('consent') === '1';
   let started = false;       // is a session currently running
   let intentionalClose = false;  // set by endSession so a close is not mistaken for a drop
   // Did the server state a reason before this socket closed?
@@ -1097,49 +1078,35 @@
   // said "contact the researcher named on the consent form" over a form that
   // named nobody, so the one route the study gives a participant for exercising
   // the deletion right that same form promises pointed at a blank.
-  let consentCfg = null;
-  async function loadConsentCfg() {
-    if (consentCfg) return consentCfg;
+  // Who a participant contacts about the study. Consent, and the contact
+  // details that go with it, are taken outside this platform (2026-09-17);
+  // the deployment names the study team through STUDY_CONTACT_NAME /
+  // STUDY_CONTACT_EMAIL / STUDY_IRB_PROTOCOL, served on /api/run/config.
+  let runCfg = null;
+  async function loadRunCfg() {
+    if (runCfg) return runCfg;
     try {
-      const res = await fetch('/api/consent' + keyParamFirst);
-      if (res.ok) consentCfg = await res.json();
+      const res = await fetch('/api/run/config' + keyParamFirst);
+      if (res.ok) runCfg = await res.json();
     } catch (e) { /* contactPhrase has a wording for carrying no contact at all */ }
-    return consentCfg;
+    return runCfg;
   }
 
-  // config/consent.yaml ships with "[FILL IN: ...]" in every contact field, and
-  // a card that printed one of those literally would be worse than the blank it
-  // replaced. server/consent_check.py refuses to field a form in that state; on
-  // this side we just never treat a placeholder as somebody's contact details.
-  function contactFilled(v) {
-    const s = String(v == null ? '' : v).trim();
-    if (!s) return false;
-    return !(/fill[ _-]?in|^tbd$|^todo$/i.test(s) || /^[<[].*[>\]]$/.test(s));
-  }
-
-  // The phrase that follows "contact" or "tell", built only out of fields the
-  // consent form actually carries. With none of them it names the one route we
-  // know the participant has — the link they arrived on — rather than a person
-  // who is not there, and says whose fault the gap is.
   function contactPhrase(cfg) {
-    const c = (cfg && cfg.contact) || {};
-    const name = contactFilled(c.pi_name) ? String(c.pi_name).trim() : '';
-    const email = contactFilled(c.email) ? String(c.email).trim() : '';
-    const irb = contactFilled(c.irb_protocol) ? String(c.irb_protocol).trim() : '';
+    const c = cfg || {};
+    const name = String(c.contact_name || '').trim();
+    const email = String(c.contact_email || '').trim();
+    const irb = String(c.irb_protocol || '').trim();
     const mail = email ? `<a href="mailto:${esc(email)}">${esc(email)}</a>` : '';
     let who = '';
     if (name && mail) who = `${esc(name)} at ${mail}`;
     else if (mail) who = `the research team at ${mail}`;
     else if (name) who = `${esc(name)}, the researcher for this study`;
-    if (!who) {
-      return 'whoever sent you this study link, the consent form you were shown ' +
-             'carries no contact details for the research team, which is a fault ' +
-             'on our side';
-    }
+    if (!who) who = 'the study team, using the contact details in the survey that sent you here';
     return who + (irb ? ` (IRB protocol ${esc(irb)})` : '');
   }
 
-  async function contactWho() { return contactPhrase(await loadConsentCfg()); }
+  async function contactWho() { return contactPhrase(await loadRunCfg()); }
 
   // ---------- the upstream consent handoff ----------
   // There is no consent form on this platform. Cornell's IRB consent is taken
@@ -1165,332 +1132,34 @@
   //   * the server would not write it -> the participant is stopped and told
   //     where consent is actually given; nothing is recorded
   //   * the server could not be reached -> the same card, with a live retry
-  let consentGate = null;   // the in-flight handoff Promise, if it is open
+  let participantGate = null;   // the in-flight mint, if one is open
   async function ensureParticipant() {
-    // Only an id that is already consented lets us skip. `consentPending` is
-    // set by /start when the record it minted has not been consented yet, so a
-    // participant_id on its own is still NOT evidence of consent.
-    if (participantId && !consentPending) return true;
-    // One handoff, however many callers. The boot sequence opens it, and Start
-    // and the situation card may both arrive while it is still open; without
-    // this, each caller would add another click listener to the same buttons
-    // and one press would fire the whole exchange several times.
-    if (consentGate) return consentGate;
-    // This Promise resolves ONLY once a consent record actually exists for this
-    // participant. It never resolves otherwise, so nothing that waits on it
-    // (the page start, "Start", the situation card) can reach microphone or
-    // webcam capture without one. Declining is likewise terminal: it resolves
-    // nothing and shows a closing card.
-    consentGate = new Promise((resolve) => {
-      const submit = $('consentSubmit');
-      const decline = $('consentDecline');
-
-      // The card a participant sees when the handoff did not work. It has to do
-      // two things the old "We couldn't save your consent" line did not: say
-      // where consent is actually given, and say what is (not) happening to
-      // them meanwhile. Stranding somebody on a spinner is not an option, and
-      // neither is quietly carrying on.
-      // `ourFault` swaps the one paragraph that would otherwise be a lie. When
-      // the server refuses because the deployment never declared which approved
-      // consent wording the survey shows (UPSTREAM_CONSENT_VERSION, unset on
-      // the task), nothing about this participant or their survey is wrong:
-      // sending them back to Qualtrics to "open the study link again" spends
-      // their time on a trip that cannot possibly work, and telling them we
-      // could not confirm THEY consented blames them for our own unset
-      // variable. The rest of the card is unchanged, including the contact,
-      // because everything else on it is true either way.
-      //
-      // `permanent` splits `ourFault` in two, and the split is the difference
-      // between advice that works and advice that cannot. Both of the
-      // deployment's own refusals were being told "press Try again in a few
-      // minutes", and for one of them that is true — an unset
-      // UPSTREAM_CONSENT_VERSION is set on the service and the next press
-      // succeeds. For the other it is false and always will be: a link that
-      // arrived with no survey response id will arrive with no survey response
-      // id every time, because it is the link. MEASURED: an entry link carrying
-      // ?pid= and no ?qid= is refused 409 no_survey_response_id, and
-      // _why_consent_was_refused reaches that same answer on every retry — so
-      // the participant presses Try again, waits, presses it again, and the
-      // card never changes. The one screen a stopped participant reads
-      // carefully was giving them a task that could only fail, indefinitely.
-      async function showUnverified(lead, ourFault, permanent) {
-        const cfg = await loadConsentCfg();
-        // config/consent.yaml is no longer a form — nothing here asks anyone to
-        // agree to it — but it is still the honest description of what this
-        // platform does with the data, so a participant who has been stopped
-        // can still read it. Three things come off it first, and all three are
-        // the difference between a description and the form it used to be:
-        //
-        //   * the [FILL IN: ...] markers. server/consent_check.py refuses to
-        //     field a form still carrying one, and printing one at a
-        //     participant would be worse than the blank it stands in for.
-        //   * what those markers leave behind. A bullet whose whole text was a
-        //     marker becomes a bare dash, and a paragraph whose whole text was
-        //     one becomes a heading promising something that is not there:
-        //     "How long we keep it." followed by nothing at all.
-        //   * the closing sentence, which asks the reader to tick a box. There
-        //     is no box on this card, and no box anywhere on this platform any
-        //     more. Asking for the agreement is the survey's job now, and
-        //     printing that sentence here would point a stopped participant at
-        //     a control that does not exist.
-        const describes = flowText(String((cfg && cfg.body) || '')
-            .replace(/\[FILL IN[^\]]*\]/g, '')
-            .split('\n').filter(line => !/^\s*[-*]\s*$/.test(line)).join('\n'))
-          .split('\n\n')
-          .filter(p => p.replace(/\*\*.*?\*\*/g, '').trim().length > 0)
-          .filter(p => !/consent to participate|checking the box|box below|by (checking|ticking)/i.test(p))
-          .join('\n\n');
-        $('consentTitle').textContent = 'We could not confirm your consent record';
-        const text = lead + '\n\n' +
-          (permanent
-            ? '**What to do.** There is nothing wrong with anything you have ' +
-              'done, and pressing Try again will not fix this one — the link ' +
-              'that brought you here is missing a piece we need, and it will ' +
-              'still be missing however long you wait. Please use the contact ' +
-              'below and tell them the study link did not carry the survey ' +
-              'reference; they can send you a working link. Your place in the ' +
-              'study is kept and nothing you have already done is lost.\n\n'
-            : ourFault
-            ? '**What to do.** There is nothing wrong with your survey or ' +
-              'anything you have done. Please press Try again in a few ' +
-              'minutes, and if it still will not start, use the contact below ' +
-              '— your place in the study is kept and nothing you have already ' +
-              'done is lost.\n\n'
-            : '**Where consent is given.** Consent for this study is given in ' +
-              'the Cornell survey you came from, not on this page. Please go ' +
-              'back to that survey tab and open the study link again. If you ' +
-              'have closed it, reopen the survey from the invitation you were ' +
-              'sent, and use the link there — your place in the study is kept ' +
-              'and nothing you have already done is lost.\n\n') +
-          '**Nothing is being recorded.** Your microphone and camera stay off ' +
-          'until your consent record is found, and no conversation can start ' +
-          'until then.\n\n' +
-          (describes ? '**What this study records, if you do go on.**\n' +
-                       describes + '\n\n' : '');
-        // Escape first, then re-enable **bold** only. The contact is appended
-        // from `contact:` rather than typed in, so this card and every later
-        // one can only ever name the same person.
-        $('consentBody').innerHTML = esc(text)
-          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-          + '<strong>Still stuck, or want your data removed?</strong> Contact '
-          + contactPhrase(cfg) + '.';
-        // The control is still there on a permanent refusal, and it still
-        // works. It is relabelled rather than removed or disabled: a card with
-        // no live control at all is the state a participant abandons the tab
-        // from, and a retry that cannot succeed is still the right thing to
-        // offer once — an operator who fixes the survey's redirect while the
-        // participant is reading this is exactly the case where the button
-        // should be pressable. What it must not do is promise.
-        submit.textContent = permanent ? 'Try this link again' : 'Try again';
-        submit.disabled = false;
-        $('consentOverlay').style.display = 'flex';
+    // /start hands this page its participant record id, and a study arrival
+    // never comes through here without one. A page opened WITHOUT one — the
+    // researcher's single-scenario links, a keyless development box — mints a
+    // record now, because the voice socket refuses to open with no record at
+    // all (server/app.py, _participant_may_capture). Consent itself is taken
+    // outside this platform (2026-09-17): there is no form and no tick here.
+    if (participantId) return true;
+    if (participantGate) return participantGate;
+    participantGate = (async () => {
+      try {
+        const r = await fetch('/api/participant' + keyParamFirst, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        participantId = (await r.json()).participant_id || null;
+        if (!participantId) throw new Error('no participant id in the reply');
+        return true;
+      } catch (e) {
+        showBlockingError(
+          'This page could not set up a participant record, so the conversation ' +
+          'cannot start. Please reload; if it happens again, use the contact below.',
+          () => location.reload());
+        return false;
       }
-
-      // Ask the server to attach the upstream consent to the record /start
-      // minted for this run.
-      async function attach() {
-        $('consentErr').textContent = '';
-        submit.disabled = true;
-        // No record id, no handoff. Without one the server's other branch would
-        // MINT a participant record that asserts consent, built from nothing
-        // but a code this page made up — a consent record for somebody this
-        // platform has no evidence ever agreed to anything. Somebody who
-        // reached /v2 without coming through /start is exactly the person that
-        // would happen to, so they get the card instead.
-        if (!participantId) {
-          await showUnverified(
-            'This page could not find the study record that is created when you ' +
-            'arrive from the survey.');
-          return;
-        }
-        const code = (run && run.participant_id) || '';
-        let out = null;
-        // Whether the server answered at all. A participant on a train and a
-        // participant whose survey link dropped the response id are two
-        // different people with two different things to do, and telling the
-        // first one that their consent could not be confirmed in Qualtrics
-        // sends them back to a survey that was never the problem.
-        let reached = true;
-        // Why the write was refused, in the server's own machine-readable word.
-        // The route used to answer 404 "no such participant record" whatever
-        // the reason was, so this page had nothing to branch on and told every
-        // stopped participant the same thing. It now says which of the refusals
-        // it is, and one of them is not about the participant at all.
-        let refusal = null;
-        try {
-          const r = await fetch('/api/consent' + keyParamFirst, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              code,
-              // Send the id /start minted, so the server attaches the consent
-              // to that record instead of creating a second one. Without it the
-              // participant would get a fresh identity here and a different
-              // assigned name in every encounter.
-              participant_id: participantId,
-              // And the run, so a run whose mint failed can adopt this record
-              // rather than leaving the encounter unattributable.
-              run_id: runId || '',
-              // Still true, and still required by the route — the participant
-              // HAS consented, in Qualtrics. What has changed is that this
-              // field is no longer the evidence: the server checks the run's
-              // own qualtrics_id, which came from the survey's redirect and not
-              // from this page, so a hand-made POST cannot manufacture a
-              // consent record out of this flag.
-              consent_given: true,
-              consent_source: 'qualtrics',
-            }),
-          });
-          if (r.ok) out = await r.json().catch(() => null);
-          else refusal = await r.json().catch(() => null);
-        } catch (e) { out = null; reached = false; }
-        // 200 is not the answer; a written record is. The server answers 200 to
-        // things that are not the write (GET /api/consent is the config), and
-        // it refuses the write — deliberately — for the participant who arrived
-        // with no upstream signal. Reading r.ok alone would let exactly that
-        // person through to the microphone. The write's shape is
-        // {participant_id, consent_text_version}, so the id is the evidence.
-        if (out && out.participant_id) {
-          participantId = out.participant_id;
-          consentPending = false;   // consent is now on record for this run
-          $('consentOverlay').style.display = 'none';
-          resolve(true);  // the only path that lets the study proceed
-          return;
-        }
-        // Four leads, not two, and the split that matters is WHOSE FAULT the
-        // participant is told it is. Two of the server's refusal reasons are
-        // the deployment's own misconfiguration, and the participant is the one
-        // person on the chain who can do nothing about either:
-        //
-        //   * consent_version_unset — the server has no approved consent
-        //     version configured, so it cannot record ANY consent yet.
-        //   * no_survey_response_id — the survey's redirect did not pass the
-        //     response id to this platform, so there is no survey response to
-        //     attach their consent to.
-        //
-        // The second one was falling through to the default, which tells the
-        // reader "we could not confirm that you completed the consent step in
-        // the Cornell survey" — and then sends them back to the survey tab to
-        // open the link again, which cannot work, because the link is the thing
-        // that is broken. So the one screen a stopped participant reads
-        // carefully was blaming them for an operator's Qualtrics redirect and
-        // prescribing the one action guaranteed to fail. They completed the
-        // consent step. The link lost the receipt.
-        const reason = (refusal && refusal.reason) || '';
-        const ourFault = reason === 'consent_version_unset' ||
-                         reason === 'no_survey_response_id';
-        // Of the two, only one clears by waiting. A missing survey reference is
-        // a property of the link this participant is holding, so the retry
-        // advice `ourFault` would otherwise print is advice that can never come
-        // true — see showUnverified.
-        const permanent = reached && reason === 'no_survey_response_id';
-        await showUnverified(
-          !reached
-            ? 'We could not reach the study server, so your consent record ' +
-              'could not be checked and this study cannot start for you yet. ' +
-              'Please check your internet connection and press Try again.'
-            : reason === 'no_survey_response_id'
-              ? 'The link that brought you here did not carry the reference we ' +
-                'need to match you to the survey you just completed, so we ' +
-                'could not record your consent yet. This is a fault in our ' +
-                'setup, not anything you have done.'
-              : ourFault
-                ? 'This study is not quite ready to start on our side, so we ' +
-                  'could not record your consent yet. This is a fault in our ' +
-                  'setup, not anything you have done.'
-                : 'We could not confirm that you completed the consent step in ' +
-                  'the Cornell survey, so this study cannot start for you yet.',
-          ourFault, permanent);
-      }
-
-      async function onSubmit() { await attach(); }
-
-      // Declining is still a real answer, even though this page no longer asks
-      // the question: somebody stopped here has decided something, so it gets a
-      // real outcome: the refusal is reported, capture never starts, and the
-      // participant is sent to a closing card instead of being left to abandon
-      // the tab. We only claim the refusal was noted when the server said so.
-      //
-      // "Said so" means the BODY, not the status. The route answers 200 even
-      // when it recorded nothing — deliberately, because re-prompting somebody
-      // who has just refused would be worse than a thin record — and says what
-      // it did in {recorded, withdrawn, reason}. Reading r.ok alone showed the
-      // "you have not taken part / nothing about you was recorded" card to a
-      // participant whose record already carries consent, which is the case the
-      // server refuses precisely BECAUSE audio and webcam may already have been
-      // captured under that consent. Telling that person nothing was recorded
-      // is a false statement about their own data, made by the one screen they
-      // will read carefully, and it also leaves them believing they are out of
-      // a study they are still enrolled in.
-      async function onDecline() {
-        if (!confirm('This ends your participation, you will not take part in the study. Is that what you want?')) return;
-        decline.disabled = true;
-        submit.disabled = true;
-        // Three outcomes, not two: recorded, refused-with-an-explanation, and
-        // never-answered. `null` is the last of those and is never treated as
-        // either of the first two.
-        let outcome = null;
-        try {
-          const r = await fetch('/api/consent/decline' + keyParamFirst, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              participant_id: participantId,
-              code: (run && run.participant_id) || '',
-              run_id: runId || '',
-              consent_given: false,
-            }),
-          });
-          if (r.ok) outcome = await r.json().catch(() => null);
-        } catch (e) { outcome = null; }
-        const recorded = !!(outcome && outcome.recorded);
-        const alreadyConsented = !!(outcome && outcome.reason === 'already_consented');
-        if (recorded) {
-          showClosing(
-            'You have not taken part',
-            '<p>Thank you for telling us. Your microphone and camera were never ' +
-            'switched on, and nothing about you was recorded.</p>' +
-            '<p>We have noted that you chose not to take part' +
-            (outcome.withdrawn ? ', and your session has been closed.' : '.') + '</p>',
-            '');
-        } else if (alreadyConsented) {
-          // Do not repeat the "nothing was recorded" line here: this record
-          // carries consent, so an encounter may already have been recorded
-          // under it, and only a person can sort that out.
-          showClosing(
-            'We could not record that decision',
-            '<p>Our records show that consent has already been given for this ' +
-            'participant, most often because the study link was opened in a second ' +
-            'tab or window. Because of that, this page cannot withdraw it for ' +
-            'you, and anything already recorded is unchanged.</p>' +
-            '<p>Nothing further will be recorded while you stay on this page. If ' +
-            'you do not want to take part, tell the researcher using the contact ' +
-            'below, they can stop your participation and remove what was ' +
-            'recorded.</p>',
-            '');
-        } else {
-          // Either the server never answered, or it answered that there is no
-          // record to mark. Nothing was captured in either case, so the first
-          // paragraph is still true; what we must not do is claim the refusal
-          // is on file.
-          showClosing(
-            'You have not taken part',
-            '<p>Thank you for telling us. Your microphone and camera were never ' +
-            'switched on, and nothing about you was recorded.</p>' +
-            '<p>We could not note your decision on file, so if you would like ' +
-            'that recorded, please say you declined using the contact below.</p>',
-            '');
-        }
-        // Deliberately never resolves: the boot sequence, Start and the
-        // situation card all wait on this Promise, and none of them may proceed.
-      }
-
-      // Both handlers are attached before the first attempt, so a
-      // participant who is stopped has somewhere to go the moment the card
-      // appears, and the retry is never a dead button.
-      submit.addEventListener('click', onSubmit);
-      decline.addEventListener('click', onDecline);
-      attach();
-    });
-    return consentGate;
+    })();
+    return participantGate;
   }
 
   // Reflow a hard-wrapped block-scalar string: join single line breaks within a
@@ -2103,6 +1772,9 @@
     return e;
   }
   const CAPTURE_MESSAGES = {
+    camera: 'This study records video, so your camera needs to be on for every conversation. ' +
+            'Please allow camera access (look for the camera icon in the address bar), close any ' +
+            'other app that is using the camera, then press Start conversation again.',
     denied: 'We couldn’t turn on your microphone. Please allow microphone access and try again.',
     missing: 'We couldn’t find a working microphone. Check that one is plugged in and that no other ' +
              'app (a video call, a recorder) is using it, then try again.',
@@ -2301,8 +1973,11 @@
     // unanswered prompt used to leave this await pending forever, and with it
     // startSession, and with that the whole encounter.
     mediaStream = await getUserMediaBounded({ audio: audioConstraints });
-    // Camera-on by default for the Zoom-like tile, and strictly non-fatal: an
-    // encounter with audio and no video is worth far more than no encounter.
+    // THE CAMERA IS REQUIRED (decision 2026-09-17): every encounter is
+    // recorded on video, so a camera that is missing, refused or busy stops
+    // the encounter from starting rather than starting it degraded. The
+    // failure keeps its browser name (cameraFailReason) so the notice and the
+    // record can say which it was; the microphone is released with it.
     cameraFailReason = null;
     try {
       // Bounded too, and this one matters even where the microphone was
@@ -2332,6 +2007,15 @@
       // from this string, and "they never answered" is a different fact about a
       // wave from "there is no camera".
       cameraFailReason = (e && (e.captureKind || e.name)) || 'unknown';
+      try { mediaStream.getTracks().forEach(t => t.stop()); } catch (e2) {}
+      mediaStream = null;
+      throw captureError('camera', 'camera required: ' + cameraFailReason);
+    }
+    if (mediaStream.getVideoTracks().length === 0) {
+      try { mediaStream.getTracks().forEach(t => t.stop()); } catch (e2) {}
+      mediaStream = null;
+      cameraFailReason = cameraFailReason || 'no_video_track';
+      throw captureError('camera', 'camera required: no video track');
     }
     // addModule is awaited AFTER the prompts so the microphone request is not
     // pushed further from the gesture by a module fetch. Its own failure is a
@@ -3579,7 +3263,7 @@
     // truthy participantId and waved the click straight through to
     // startCapture, which opens the microphone and the webcam. Honour the flag:
     // ensureParticipant returns only once a consent record actually exists.
-    if (!participantId || consentPending) await ensureParticipant();
+    if (!participantId) await ensureParticipant();
     try { await startCapture(); }
     catch (e) {
       // Release everything startCapture may have created before it failed, so
@@ -4177,9 +3861,9 @@
   function runAudioCheck() {
     return new Promise(resolve => {
       const ov = $('audioCheckOverlay');
-      const micOk = { v: false }, spkOk = { v: false };
-      let testStream = null, testCtx = null, meterInt = null, micTimer = null;
-      const update = () => { $('audioCheckContinue').disabled = !(micOk.v && spkOk.v); };
+      const micOk = { v: false }, spkOk = { v: false }, camOk = { v: false };
+      let testStream = null, testCtx = null, meterInt = null, micTimer = null, camStream = null;
+      const update = () => { $('audioCheckContinue').disabled = !(micOk.v && spkOk.v && camOk.v); };
       // Release the microphone the moment the test has its answer.
       //
       // This used to happen only when the participant pressed Continue or Skip,
@@ -4204,6 +3888,45 @@
       // A concluded test shows its verdict in the status line, not in a meter
       // frozen at whatever level it happened to be reading when it stopped —
       // a bar stuck mid-bounce is the thing that looks broken.
+      const stopCamera = () => {
+        try { camStream && camStream.getTracks().forEach(t => t.stop()); } catch {}
+        camStream = null;
+        try { $('camPreview').srcObject = null; } catch {}
+      };
+      // The camera is required for every conversation (2026-09-17), and this
+      // is where a participant finds out before the first one starts. The
+      // recording format is checked here too: a browser with a camera and no
+      // MediaRecorder container this page can produce would record nothing.
+      const onCamTest = async () => {
+        $('camStatus').textContent = 'Starting…'; $('camStatus').className = 'status';
+        $('camHelp').classList.remove('show');
+        try {
+          stopCamera();
+          camStream = await getUserMediaBounded({
+            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+          });
+          const canRecord = window.MediaRecorder && ['video/webm;codecs=vp8,opus', 'video/webm',
+            'video/mp4;codecs=h264,aac', 'video/mp4'].some(t => MediaRecorder.isTypeSupported(t));
+          if (!canRecord) {
+            stopCamera();
+            $('camStatus').textContent = 'Cannot record video'; $('camStatus').className = 'status';
+            $('camHelp').textContent = 'This browser cannot record video. Please open the study link in an up-to-date Google Chrome.';
+            $('camHelp').classList.add('show');
+            return;
+          }
+          const v = $('camPreview'); v.srcObject = camStream; v.style.display = 'block';
+          camOk.v = true;
+          $('camStatus').textContent = 'Camera on'; $('camStatus').className = 'status ok';
+          $('camTestBtn').textContent = 'Camera is on';
+          update();
+        } catch (e) {
+          stopCamera();
+          const kind = captureKindFor(e);
+          $('camStatus').textContent = kind === 'denied' ? 'Camera blocked'
+            : kind === 'unanswered' ? 'Still waiting for your permission' : 'No camera found';
+          $('camHelp').classList.add('show');
+        }
+      };
       const concludeMicTest = () => {
         stopListening();
         $('micMeter').style.width = '0%';
@@ -4332,8 +4055,10 @@
       // one could not be stopped by anything.
       const finish = () => {
         stopListening();
+        stopCamera();
         $('micTestBtn').removeEventListener('click', onMicTest);
         $('spkTestBtn').removeEventListener('click', onSpkTest);
+        $('camTestBtn').removeEventListener('click', onCamTest);
         markAudioCheck();
         ov.style.display = 'none';
         resolve();
@@ -4341,6 +4066,7 @@
 
       $('micTestBtn').addEventListener('click', onMicTest);
       $('spkTestBtn').addEventListener('click', onSpkTest);
+      $('camTestBtn').addEventListener('click', onCamTest);
       $('audioCheckContinue').addEventListener('click', finish, { once: true });
       // Internal testers can skip; study participants see the link too, since
       // a blocked check must never strand someone, but it is deliberately quiet.

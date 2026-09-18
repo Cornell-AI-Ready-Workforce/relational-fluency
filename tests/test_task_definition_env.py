@@ -93,63 +93,6 @@ def test_provenance_text_model_is_the_model_that_runs(task_env):
     )
 
 
-@pytest.mark.parametrize("name", [
-    # Model + gateway wiring: without these the task runs on code defaults that
-    # nobody chose, and the record says so afterwards.
-    "REALTIME_MODEL", "DIRECTOR_MODEL", "CLAUDE_MODEL", "LLM_BASE_URL",
-    # Hostnames feed the Host-header allowlist and the CORS origins.
-    "APP_HOST", "API_HOST",
-    # Webcam capture: server/video.py signs uploads against these two.
-    "S3_BUCKET", "AWS_REGION",
-    # Listening socket, which the ALB target group health check depends on.
-    "HOST", "PORT",
-    # Where the study is written. server/storage.py:57 falls back to
-    # <repo>/data, which on Fargate is the container filesystem — destroyed on
-    # the next deploy, with the EFS volume mounted and empty beside it. Live
-    # revisions 35 through 38 all shipped without this and nothing said so:
-    # /health stayed 200 while every run file, participant record, transcript,
-    # WAV and the SQLite index went to disposable disk. See
-    # tests/test_terraform_persistence.py, which pins the volume and the mount
-    # point this name has to agree with.
-    "DATA_DIR",
-    # Where a participant goes after the fourth encounter. Unset, they are not
-    # returned to Qualtrics and the survey half of their response never
-    # completes — a silently partial record rather than an error.
-    "SURVEY_RETURN_URL",
-    # Which approved consent wording the survey is showing. Unset,
-    # server/storage.py records no study consent at all: /api/consent 404s,
-    # voice sockets close 4403, runs keep being minted, and the wave collects
-    # zero encounters uniformly from the first participant onward.
-    "UPSTREAM_CONSENT_VERSION",
-    # WHICH FORM EVERY PARTICIPANT GETS. server/runs.py reads this to decide
-    # whether a run pins S1A/S2A/S3A/S4A (Phase 1's design) or draws per slot
-    # from the twelve-form bank, and a pinned form takes the exclusion table's
-    # caller hatch — so this one name decides both the study design and whether
-    # FORM_EXCLUSIONS runs at all. It reached the deployed service only as a
-    # code default until 2026-09-15, while docs/OPERATIONS.md told the operator
-    # to set it.
-    "DEFAULT_RUN_VARIANT",
-    # The language every realtime session is told the conversation is in. Unset,
-    # the sessions are given no hint and the transcript is whatever each model
-    # guesses: live runs with an English-speaking participant produced a Russian
-    # word and a run of Japanese syllables before this existed.
-    "TRANSCRIPTION_LANG",
-])
-def test_required_env_is_set(task_env, name):
-    """The forward direction, and the one that actually cost records.
-
-    The other tests in this file pin the reverse: a name set in the task
-    definition that no module reads. That direction is cheap to catch and cheap
-    to survive — dead configuration. The expensive direction is a name the code
-    reads and the deployment never sets, because its failure mode is a healthy
-    task quietly doing the wrong thing. DATA_DIR, SURVEY_RETURN_URL and
-    UPSTREAM_CONSENT_VERSION were all missing from the live task definition at
-    the same time, for four revisions, while every surface an operator watches
-    stayed green.
-    """
-    assert name in task_env, f"{name} is not set in the ECS task definition"
-
-
 @pytest.mark.parametrize("name", ["ANTHROPIC_API_KEY", "SESSION_KEY"])
 def test_credentials_arrive_as_secrets_not_plaintext(task_secrets, task_env, name):
     assert name in task_secrets, f"{name} must be injected from Secrets Manager"

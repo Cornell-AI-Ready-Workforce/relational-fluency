@@ -12,13 +12,10 @@ A SQLite index at data/index.db lets you query across sessions:
   participants(id, code, consent_given, consent_text_version, created_at,
                consent_source, consent_reference, consent_reference_kind)
 
-Consent itself is no longer taken on this platform: Cornell's IRB text is shown
-in Qualtrics before the participant is ever redirected to /start. So a consent
-record here is not the consent, it is this platform's note that one exists
-upstream, and the three provenance columns are what make that note readable in
-an audit: WHERE the person agreed, WHICH act (the Qualtrics response id), and
-which approved wording they saw. See "Participants / consent" below for why a
-record carrying consent_given alone is now a false statement.
+Consent is taken outside this platform entirely (2026-09-17), so a participant
+record carries identity, the run it was minted for, and a withdrawal if one
+was recorded. The consent_* columns are kept in the schema for existing
+indexes and are written as 0 / NULL.
 
 run_id/cohort/participant_key are carried on the manifest and the sessions row
 so an encounter is self-describing. Before that, the only link from a recorded
@@ -177,7 +174,7 @@ def init_storage() -> None:
     """Create directories and DB tables if not present. Idempotent.
 
     Called from every public entry point that WRITES (SessionStore.__init__,
-    create_participant, record_consent, record_decline) and from the server's
+    create_participant, record_withdrawal) and from the server's
     startup hook — never from this module's body, and never from server.app's.
     Same rule and same shape as raters.init_rater_storage, for three reasons:
 
@@ -621,86 +618,16 @@ def encounter_timing() -> Dict[str, float]:
     return out
 
 
-# ---------- Participants / consent ----------
+# ---------- Participants ----------
 #
-# WHERE CONSENT NOW HAPPENS, AND WHY THE RECORD HAS TO SAY SO.
-#
-# This platform used to show an IRB consent form and take the tick. It does not
-# any more: Cornell's approved text is shown in Qualtrics, and a participant
-# reaches /start only after they have agreed there. Asking a second time would
-# be asking them to agree to a text this repository wrote and no board approved.
-#
-# The GATE did not go with the form. server/app.py's voice socket still closes
-# 4403 for any participant whose record does not carry consent, and that record
-# is the audit trail saying somebody agreed before a microphone or a webcam was
-# ever switched on. What changed is what the record has to contain to be true.
-#
-# A record that says only `consent_given: true`, written by a platform that
-# shows no form, asserts nothing an auditor can check and reads — reasonably —
-# as though the agreement happened here. So every consent this module writes
-# also carries:
-#
-#   consent_source           where the affirmative act happened
-#   consent_reference        which act: the Qualtrics response id, which the
-#                            survey pipes to /start as ?qid= and runs.create
-#                            stores on the run
-#   consent_reference_kind   what that reference is, so a later reader knows
-#                            what system to look it up in
-#   consent_text_version     which approved wording they saw
-#   consent_upstream_verified  whether this platform actually saw the upstream
-#                            signal, or is only recording what it was told
-#
-# "unknown" is not an available answer to any of them. Where the evidence is
-# missing the record is not written at all, and the participant is stopped
-# rather than recorded — see _consent_provenance.
-#
-# WHY THE EVIDENCE IS TAKEN FROM THE RUN AND NOT FROM THE PAGE. The browser
-# cannot be the witness to its own consent: /v2 is a URL, and anyone holding it
-# can POST whatever they like. The run file is written by /start out of the
-# redirect Qualtrics itself performed, so the qualtrics_id on the run is the one
-# piece of upstream evidence this process has that did not come from the client.
-# That is what gets copied onto the record.
+# A participant record is identity plus, if it comes to that, a withdrawal.
+# Consent is taken in Qualtrics before the participant reaches /start
+# (2026-09-17); this module records nothing about it, and the voice socket's
+# gate (server/app.py, _participant_may_capture) asks only that the record
+# exists and is not withdrawn. The consent_* columns stay in the SQLite table
+# for existing indexes and are written as 0 / NULL.
 
-#: The participant agreed in the upstream survey, and this platform has the
-#: survey's own response id to point at.
-CONSENT_SOURCE_UPSTREAM = "qualtrics"
 
-#: A record consented through the API with no run behind it: the researcher
-#: launch path and the ad-hoc landing page. Honest about being neither a survey
-#: consent nor study data (a run-less encounter carries a null cohort, which the
-#: header of this module already defines as "not study data").
-CONSENT_SOURCE_DIRECT = "direct_api"
-
-#: The /test entrance. A member of the lab recording themselves to check the
-#: platform works, on a run already tagged cohort="internal" and already
-#: excluded from the analysis set. There is no survey behind them and there is
-#: nobody to protect from themselves, so requiring a Qualtrics response id here
-#: would only mean that nobody could test the study before fielding it. The
-#: record says which it is, so an auditor reading the store can tell a tester
-#: from a participant without leaving the file.
-CONSENT_SOURCE_INTERNAL = "internal_test"
-
-#: Names the approved upstream wording. Nothing in this repository can work out
-#: which text the survey is showing this month, and guessing would put a wrong
-#: document's name on the one field an IRB reads, so the deployment has to say.
-UPSTREAM_CONSENT_VERSION_ENV = "UPSTREAM_CONSENT_VERSION"
-
-#: What every environment variable the consent path REQUIRES is for, keyed by
-#: name. This is a declaration for the operator-facing surfaces, not a runtime
-#: switch: tests/test_required_deployment_env.py reads it and fails if a name in
-#: here is missing from .env.example or from the ECS task definition.
-#:
-#: It exists because UPSTREAM_CONSENT_VERSION was required by this module and
-#: named in no other file in the repository — not .env.example, not the task
-#: definition, not the Dockerfile, not a single page of docs/. Unset, every
-#: study consent is refused below, POST /api/consent answers 404, the voice
-#: socket closes 4403, /health stays 200 and runs keep accumulating: an entire
-#: wave of zero encounters, uniformly, from the first arrival onward, with no
-#: symptom anywhere an operator looks. The reverse direction was already pinned
-#: (test_task_definition_env.py refuses a variable the server never reads); this
-#: is the direction that actually voided the wave. Any module under server/ may
-#: declare a REQUIRED_ENV mapping and the same test picks it up, so the next
-#: variable somebody makes mandatory is caught the day it is made mandatory.
 class _RequiredEnvDeclarations(Dict[str, str]):
     """This module's own REQUIRED_ENV, and on lookup every other module's.
 
@@ -727,94 +654,20 @@ class _RequiredEnvDeclarations(Dict[str, str]):
         return _declared_required_env().get(name, default)
 
 
-REQUIRED_ENV: _RequiredEnvDeclarations = _RequiredEnvDeclarations({
-    UPSTREAM_CONSENT_VERSION_ENV: (
-        "Names the approved Qualtrics consent wording, e.g. "
-        "cornell-irb-2026-09-v3. Stamped on every participant record as "
-        "consent_text_version; unset, no study consent can be recorded at all."
-    ),
-})
+# Nothing this module reads is mandatory any more: consent, and the version
+# string that named its wording, are taken outside the platform (2026-09-17).
+# The mapping stays so other modules' declarations still route through it.
+REQUIRED_ENV: _RequiredEnvDeclarations = _RequiredEnvDeclarations({})
 
 #: A value that is still somebody's note to themselves rather than an answer.
 #: THE UNIVERSAL HALF of the rule: this much is asked of every variable any
 #: module makes required, because "[FILL IN: ...]", "changeme" and "xxx" are
-#: nobody's port, bucket, header or version. Sibling to
-#: server/consent_check.py's _PLACEHOLDER and static/v2.html's contactFilled,
-#: each guarding its own sink. Copied out of .env.example or a tfvars template
-#: unedited, a placeholder is worse than the blank it replaced — a blank is
-#: refused loudly below, while "[FILL IN: ...]" would be stamped on every
-#: consent in the wave as the name of the document the participant agreed to.
+#: nobody's port, bucket, header or version. Copied out of .env.example or a
+#: tfvars template unedited, a placeholder is worse than the blank it replaced —
+#: a blank is refused loudly below, while "[FILL IN: ...]" would be carried
+#: into the wave as though it were a value.
 _ENV_PLACEHOLDER_PATTERN = r"fill[ _-]?in|TBD|TODO|XXX|placeholder|change[ _-]?me"
 _ENV_PLACEHOLDER_RE = re.compile(_ENV_PLACEHOLDER_PATTERN, re.I)
-
-#: A half-written bracket, and THE FIRST HALF OF THE CONSENT-VERSION RULE —
-#: asked of the consent version and of nothing else. "[FILL IN: ..." with the
-#: closing bracket lost to a shell is still nobody's answer, and requiring both
-#: ends is what let "<the Qualtrics consent version" through a rule written to
-#: catch it; but `{"X-Study": "relational-fluency"}` is a perfectly good value
-#: for a variable that holds a JSON header block, and applying this to every
-#: required variable reported a correctly configured deployment as missing one.
-#: A version string never opens with a bracket. A header always does.
-_ENV_BRACKET_PATTERN = r"^[\[<{]|[\]>}]$"
-
-#: What an operator types when the deployment refuses to apply without a value
-#: and they do not have one. THE SECOND HALF OF THE CONSENT-VERSION RULE, and
-#: likewise asked of nothing else: these passed both rules, so they were
-#: accepted and stamped on every record in the wave as the approved wording the
-#: participant agreed to — the one field an IRB reads, naming a document that
-#: does not exist. Matched whole, case-insensitively, so a real version string
-#: that happens to contain one ("protocol-0042-none-of-the-above") survives.
-#
-# WHY THIS LIST IS SHORTER THAN IT WAS. It had grown to hold "v1", "v0", "1",
-# "x", "test", "example", "temp", "default", "set", "value" and "version" — and
-# an IRB wording genuinely called v1 is then refused by the rule, with exactly
-# the consequence the rule exists to prevent: /api/consent 404, sockets 4403, a
-# wave of zero encounters. A guess about what an operator meant is not worth a
-# correctly configured deployment recording nothing, so only the strings that
-# are an admission of having no answer are left.
-#
-# "v1" IS GONE TOO, and it was the last one still here against the paragraph
-# above. It stayed because tests/test_cohort_integrity.py pinned it, which is a
-# test pinning a defect: "v1" is a likelier name for a real approved wording
-# than for anybody's admission of having none, "v0" was already an explicit
-# positive control beside it, and the refusal is indistinguishable from never
-# setting the variable — the operator is shown an error naming FILL IN, TODO,
-# xxx and changeme, none of which is what they typed, so the repair they reach
-# for is renaming their consent document. Then consent_text_version, the one
-# field an IRB reads, no longer names the text the participant saw. "0" stays:
-# it is what a required numeric variable gets set to when there is no answer,
-# and no IRB names a wording "0" the way one might name it v1.
-_ENV_NON_ANSWERS = frozenset(
-    ["unknown", "none", "null", "nil", "nan", "n/a", "na", "n.a.", "tbc", "tba",
-     "-", "--", ".", "?", "0", "asdf", "foo", "bar"])
-
-
-def consent_version_rule_pattern() -> str:
-    """The consent-version rule as one regular expression, for Terraform.
-
-    THE ONE DEFINITION BOTH SIDES READ. infra/terraform/ecs.tf enforces this
-    same idea at plan time and used to do it with a hand-written regex of its
-    own, and the two disagreed — for the XXX family, and later for thirty-odd
-    values, the disagreement ran the UNSAFE way: `tofu plan` accepted "xxx", the
-    apply succeeded, and this side then treated it as unset. That is the
-    original silent-void failure reproduced through the documented deployment
-    path: a task that answers /health 200, mints runs and records nothing.
-
-    A comment asking the two files to be kept in sync is what produced the drift
-    in the first place, so ecs.tf now carries a copy of exactly this string and
-    tests/test_required_deployment_env.py fails the day either side moves — with
-    the string to paste in the failure message. Terraform cannot import Python
-    and this repository will not run `tofu` in CI, so agreement is tested rather
-    than assumed.
-
-    Written for RE2 as well as for `re`: no backreferences, no lookaround, and
-    both sides match it against the TRIMMED value (`trimspace` there, `.strip()`
-    here) with case folding on (`(?i)` there, `re.I` here).
-    """
-    non_answers = "|".join(re.escape(v) for v in sorted(_ENV_NON_ANSWERS))
-    return "|".join([_ENV_PLACEHOLDER_PATTERN, _ENV_BRACKET_PATTERN,
-                     f"^(?:{non_answers})$"])
-
 
 def is_unfilled_placeholder(value: Optional[str]) -> bool:
     """Whether this value is a template marker, for ANY required variable.
@@ -830,24 +683,6 @@ def is_unfilled_placeholder(value: Optional[str]) -> bool:
     s = str(value or "").strip()
     if not s:
         return False
-    return bool(_ENV_PLACEHOLDER_RE.search(s))
-
-
-def is_placeholder_value(value: Optional[str]) -> bool:
-    """Whether this is a marker for a consent version rather than a version.
-
-    The consent version's own rule — the universal test above plus the two
-    halves that belong to this one field: a bracketed marker, and a word that is
-    an admission of having no answer. infra/terraform/ecs.tf refuses exactly
-    this at plan time; see consent_version_rule_pattern.
-    """
-    s = str(value or "").strip()
-    if not s:
-        return False
-    if s[0] in "[<{" or s[-1] in "]>}":
-        return True
-    if s.lower() in _ENV_NON_ANSWERS:
-        return True
     return bool(_ENV_PLACEHOLDER_RE.search(s))
 
 
@@ -871,21 +706,18 @@ def _scan_required_env(server_dir: Path) -> Dict[str, str]:
 
     The half of the general rule that was missing. Reading only sys.modules made
     the runtime check see whatever server.app happens to import at module level
-    — and the consent path is not in that set: server/consent_check.py,
-    server/runs.py, server/qualtrics.py and server/identity.py are all imported
-    inside functions, to break the cycle through this module. So a REQUIRED_ENV
-    declared on the consent path was found by the operator-facing test (which
-    walks the tree) and invisible to the boot preflight and /health (which did
-    not), and the silent void reproduced in full with all of the machinery
-    installed: the variable unset, every consent refused, and no surface saying
-    so.
+    — and server/runs.py, server/qualtrics.py and server/identity.py are all
+    imported inside functions, to break the cycle through this module. So a
+    REQUIRED_ENV declared in one of those was found by a test that walks the
+    tree and invisible to the boot preflight and /health (which did not), and a
+    wave could run with the variable unset and no surface saying so.
 
     Importing them from here is still not an option — storage is imported BY
     most of them, so it is a cycle, and an env check is no reason to drag the
     realtime voice stack into an offline tool — so the declaration is read the
-    way tests/test_required_deployment_env.py reads it, from the source text.
-    Keys and values are usually module-level constants rather than literals
-    (UPSTREAM_CONSENT_VERSION_ENV), so plain module-level string assignments in
+    way the deployment tests read it, from the source text.
+    Keys and values are usually module-level constants rather than literals,
+    so plain module-level string assignments in
     the same file are resolved too. Anything this cannot resolve statically is
     left to the sys.modules pass, which sees the real objects.
     """
@@ -935,12 +767,13 @@ def _declared_required_env() -> Dict[str, str]:
     """Every REQUIRED_ENV declared by a module of this server, merged.
 
     This module's own dict is not the whole rule. The rule — stated in
-    REQUIRED_ENV above and enforced by tests/test_required_deployment_env.py —
-    is that ANY module under server/ may declare one, so that the next variable
+    REQUIRED_ENV above and enforced by the source scan — is that ANY module
+    under server/ may declare one, so that the next variable
     somebody makes mandatory is caught the day it is made mandatory.
 
     Two passes, because neither sees everything. The source scan reaches modules
-    this process never imported, which is where the consent path lives; the
+    this process never imported, which is where a lazily imported module's
+    declaration lives; the
     sys.modules pass reaches declarations built at runtime and holds the real
     objects, so it wins where both have an answer.
     """
@@ -996,16 +829,13 @@ _ENV_REJECTED = ("set, but rejected as a placeholder rather than a value; "
 def _unusable_required_env_reason(name: str, raw: Optional[str]) -> Optional[str]:
     """Why this process cannot use what it was given for `name`, or None.
 
-    SCOPED, which round three's version was not. Every variable is held to the
-    universal placeholder test; the consent version, and only it, is held to its
-    own additional rule, because that rule was written about version strings and
+    Every variable is held to the universal placeholder test and nothing more:
     a port, a bucket or a JSON header block is not a version string.
     """
     s = str(raw or "").strip()
     if not s:
         return _ENV_NOT_SET
-    rejected = (is_placeholder_value(s) if name == UPSTREAM_CONSENT_VERSION_ENV
-                else is_unfilled_placeholder(s))
+    rejected = is_unfilled_placeholder(s)
     return _ENV_REJECTED if rejected else None
 
 
@@ -1028,8 +858,7 @@ def missing_required_env() -> List[str]:
     without ceasing to be the name, so the warning an operator reads tells them
     which of the two it is and /health's JSON is unchanged.
 
-    Read per call, like upstream_consent_version, so a value that appears after
-    boot is seen without a reload.
+    Read per call, so a value that appears after boot is seen without a reload.
     """
     unusable: List[str] = []
     for name in _declared_required_env():
@@ -1037,160 +866,6 @@ def missing_required_env() -> List[str]:
         if reason:
             unusable.append(_UnusableVar(name, reason))
     return unusable
-
-
-def upstream_consent_version() -> str:
-    """Which approved consent text the upstream survey is currently showing.
-
-    Empty when the deployment has not said — and also when what it said is a
-    placeholder, which is the same thing said less obviously. Read per call
-    rather than cached at import so a wave that re-fields under new approved
-    text only needs the process restarted, not the module reloaded — and so
-    tests can set it.
-    """
-    raw = (os.environ.get(UPSTREAM_CONSENT_VERSION_ENV) or "").strip()
-    if is_placeholder_value(raw):
-        # The value is deliberately not echoed. This line goes to CloudWatch on
-        # every call, and what is required of a deployment today is a consent
-        # version but the rule is general; the next variable it covers may hold
-        # a credential, and a log that has learned to print values prints that
-        # one too. The variable and the reason are what can be acted on.
-        log.error(
-            "%s is set to a placeholder rather than a version (the value is not "
-            "logged). Treating it as unset: stamping that string on a "
-            "participant record would name it as the document they agreed to, "
-            "and no audit could ever recover which text that was.",
-            UPSTREAM_CONSENT_VERSION_ENV)
-        return ""
-    return raw
-
-
-def _run_for_record(pid: str) -> Optional[Dict[str, Any]]:
-    """The run that minted this participant record, or None.
-
-    Imported here rather than at module scope: server.runs imports DATA_DIR and
-    replace_with_retry from this module, so a top-level import would be a cycle.
-    Any failure is None — a lookup that cannot answer is not evidence of an
-    upstream consent, and the caller treats it the same as having no run.
-    """
-    try:
-        from . import runs
-        return runs.find_by_participant_record(pid)
-    except Exception as e:  # noqa: BLE001 — absence of evidence, either way
-        log.warning("could not resolve the run for participant %s (%s: %s); "
-                    "treating it as having no run", pid, type(e).__name__, e)
-        return None
-
-
-#: An unreplaced Qualtrics pipe, in the spellings it leaks in as. Same failure
-#: runs.normalize_participant_key already knows about for the participant key:
-#: a survey whose field name is wrong renders the field's own text, and taking
-#: that as a response id would file a consent pointing at no response at all.
-_UNPIPED_RE = re.compile(r"\$\{|e://|\}")
-
-
-def _upstream_reference(run: Optional[Dict[str, Any]]) -> str:
-    """The Qualtrics response id this run can actually be joined on, or ""."""
-    qid = str((run or {}).get("qualtrics_id") or "").strip()
-    if not qid or _UNPIPED_RE.search(qid):
-        return ""
-    return qid
-
-
-def _consent_provenance(pid: str, rec: Dict[str, Any], consent_version: str,
-                        source: Optional[str], reference: Optional[str],
-                        reference_kind: Optional[str]) -> Optional[Dict[str, Any]]:
-    """The provenance fields to stamp on a consent, or None to refuse it.
-
-    Three cases, and only the first two write anything:
-
-      * the caller named a source. That is the seam for an upstream that is not
-        Qualtrics. It still has to point at something: a named source with no
-        reference is "unknown" wearing a label.
-      * the record belongs to a run. Then the run's own qualtrics_id decides.
-        Present and usable, the consent is recorded against it; absent, unpiped
-        or blank, THIS FUNCTION REFUSES — that participant reached /start
-        without the survey's signal, so there is no upstream consent to point
-        at and nothing truthful to write. They are stopped, not recorded.
-      * the record belongs to no run at all. It did not come through the study
-        entrance, so it is not a study arrival and must not borrow the survey's
-        provenance; it is recorded as what it is.
-
-    The refusal is also where a missing UPSTREAM_CONSENT_VERSION lands, and it
-    fails closed for the same reason server/consent_check.py refuses to field an
-    unapproved form: a wave collected under a version nobody can identify cannot
-    be repaired afterwards, and one blocked arrival can.
-    """
-    if source:
-        ref = str(reference or "").strip()
-        if not ref:
-            log.error("refusing to record consent for %s from source %r with no "
-                      "reference: a source with nothing to point at is 'unknown' "
-                      "with a label on it", pid, source)
-            return None
-        return {
-            "consent_source": str(source),
-            "consent_reference": ref,
-            "consent_reference_kind": str(reference_kind or "external_reference"),
-            "consent_text_version": consent_version,
-            # Only evidence this process resolved for itself earns the flag. A
-            # caller's word is recorded, not believed.
-            "consent_upstream_verified": False,
-        }
-
-    run = _run_for_record(pid)
-    if run is None:
-        return {
-            "consent_source": CONSENT_SOURCE_DIRECT,
-            "consent_reference": str(rec.get("code") or pid),
-            "consent_reference_kind": "participant_code",
-            "consent_text_version": consent_version,
-            "consent_upstream_verified": False,
-        }
-
-    if str(run.get("cohort") or "").strip() == "internal":
-        # The /test entrance (server/app.py), which exists so the lab can walk
-        # the study before fielding it and deliberately needs no Qualtrics
-        # setup. Refusing it would not protect a participant — there isn't one —
-        # it would only mean nobody could check the platform works. The record
-        # names the entrance rather than the survey, and the run is already
-        # tagged cohort="internal", so neither the record nor the encounter can
-        # be mistaken for study data later.
-        return {
-            "consent_source": CONSENT_SOURCE_INTERNAL,
-            "consent_reference": str(run.get("run_id") or rec.get("code") or pid),
-            "consent_reference_kind": "internal_run_id",
-            "consent_text_version": consent_version,
-            "consent_upstream_verified": False,
-        }
-
-    qid = _upstream_reference(run)
-    if not qid:
-        log.error(
-            "refusing to record consent for participant %s (run %s): the run "
-            "carries no usable Qualtrics response id (%r), so this platform "
-            "cannot say that anyone consented upstream. Check the survey's "
-            "redirect passes ?qid=${e://Field/ResponseID} to /start.",
-            pid, run.get("run_id"), run.get("qualtrics_id"))
-        return None
-
-    version = upstream_consent_version()
-    if not version:
-        log.error(
-            "refusing to record consent for participant %s (run %s): "
-            "%s is not set, so the record could not say which approved text "
-            "they agreed to. Set it to the version of the consent wording the "
-            "Qualtrics survey is currently showing.",
-            pid, run.get("run_id"), UPSTREAM_CONSENT_VERSION_ENV)
-        return None
-
-    return {
-        "consent_source": CONSENT_SOURCE_UPSTREAM,
-        "consent_reference": qid,
-        "consent_reference_kind": "qualtrics_response_id",
-        "consent_text_version": version,
-        "consent_upstream_verified": True,
-    }
 
 
 # ---------- Withdrawal ----------
@@ -1204,10 +879,10 @@ def _consent_provenance(pid: str, rec: Dict[str, Any], consent_version: str,
 # reproduced consequences came out of that one omission: the webcam PUT and the
 # presigned URL both opened, the camera-absence report wrote into a withdrawn
 # person's trail on a host with no S3 credentials at all, the scorer and the
-# debriefer spent gateway budget, a bare POST /api/consent minted a SECOND
-# record carrying no withdrawal and the voice socket opened on it, and an
-# unreadable run file turned a withdrawal back into consent because the scan
-# skipped what it could not parse.
+# debriefer spent gateway budget, a bare record mint produced a SECOND record
+# carrying no withdrawal and the voice socket opened on it, and an unreadable
+# run file made a withdrawal vanish because the scan skipped what it could not
+# parse.
 #
 # They are not eight bugs. They are one bug with eight exits, and the fix is to
 # put the fact where every reader already looks. The run-level stamps stay: an
@@ -1220,7 +895,7 @@ def participant_withdrawal(pid: str) -> Optional[Dict[str, Any]]:
     One file read, and the file is the same one get_participant already opens on
     every socket open. An unparseable record answers None here and None from
     get_participant, so the caller sees a record that does not exist rather than
-    a consented one — which is the closed direction.
+    a live one — which is the closed direction.
     """
     rec = get_participant(pid)
     if not rec:
@@ -1237,12 +912,9 @@ def record_withdrawal(pid: str, stamp: Dict[str, Any]) -> Optional[Dict[str, Any
     not a report. Returns the updated record, or None when there is no such
     record to stamp.
 
-    Never touches consent_given. The consent is a fact about what happened
-    upstream and stays true; the withdrawal is a later, more specific statement
-    about the recording that was about to happen, and it is the gate that reads
-    it. Rewriting the consent field instead would leave the one field an IRB
-    reads denying an agreement under which audio was already captured — the same
-    reason record_decline refuses to act on a consented record.
+    The withdrawal is a statement about the recording that was about to
+    happen, and the capture gate (server/app.py, _participant_may_capture) is
+    what reads it. Nothing else on the record is rewritten.
     """
     rec = get_participant(pid)
     if rec is None:
@@ -1264,9 +936,9 @@ def record_withdrawal(pid: str, stamp: Dict[str, Any]) -> Optional[Dict[str, Any
 def _withdrawal_for_code(code: Optional[str]) -> Optional[Dict[str, Any]]:
     """Has the person behind this participant KEY already stopped?
 
-    Asked when a record is minted, which is the moment the "re-consent" hole
-    opened through: POST /api/consent with a bare code took the minting branch
-    and produced a brand-new record with no withdrawal on it, and the voice
+    Asked when a record is minted, which is the moment the hole opened
+    through: a bare mint under a stopped participant's key produced a
+    brand-new record with no withdrawal on it, and the voice
     socket opened on that record. A record minted for somebody who has stopped
     has to be born carrying that fact, or the stop lasts exactly as long as it
     takes to press Continue again.
@@ -1288,11 +960,7 @@ def _withdrawal_for_code(code: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
 
 
-def create_participant(code: str, consent_given: bool, consent_version: str,
-                       *, source: Optional[str] = None,
-                       reference: Optional[str] = None,
-                       reference_kind: Optional[str] = None,
-                       run_id: Optional[str] = None,
+def create_participant(code: str, *, run_id: Optional[str] = None,
                        cohort: Optional[str] = None) -> str:
     """Mint a participant record.
 
@@ -1302,26 +970,18 @@ def create_participant(code: str, consent_given: bool, consent_version: str,
     this record's" was the NEWEST run pointing at it, so a second run adopting
     the record moved every encounter it had already recorded into that run's
     cohort. See server/app.py's _run_context.
+
+    Consent is taken outside this platform (2026-09-17), so the record carries
+    identity and withdrawal only. The consent_* columns stay in the SQLite table
+    for existing indexes and are written as 0 / NULL.
     """
-    # See init_storage: nothing creates PARTICIPANTS_DIR or the participants
-    # table at import any more, so the first write does it. Without this the
-    # temp-file write below raises FileNotFoundError on a fresh DATA_DIR — at
-    # the moment a participant is consenting, the worst place to find out.
     init_storage()
     pid = f"p_{int(time.time())}_{os.urandom(3).hex()}"
-    rec = {
-        "id": pid,
-        "code": code,
-        "consent_given": bool(consent_given),
-        "consent_text_version": consent_version,
-        "created_at": time.time(),
-    }
+    rec: Dict[str, Any] = {"id": pid, "code": code, "created_at": time.time()}
     if run_id:
         rec["run_id"] = str(run_id)
     if cohort:
         rec["cohort"] = str(cohort)
-    # Born withdrawn if the person behind this key already stopped. See
-    # _withdrawal_for_code.
     prior = _withdrawal_for_code(code)
     if prior:
         rec["withdrawn"] = dict(prior)
@@ -1329,47 +989,16 @@ def create_participant(code: str, consent_given: bool, consent_version: str,
             "minted participant record %s for a participant key (%r) that has "
             "already withdrawn; the record carries the withdrawal, so the "
             "capture socket refuses it.", pid, code)
-    if rec["consent_given"]:
-        # A record born already consented. /start never does this (it mints
-        # pending, and record_consent flips it), so what reaches here is the
-        # researcher launch and the ad-hoc landing page: an API call, with no
-        # run behind it and no upstream response to point at. It is still a
-        # consent record, and the voice socket will still open on it, so it has
-        # to say what it actually is rather than inheriting the study's
-        # provenance by silence.
-        rec.update({
-            "consent_source": str(source or CONSENT_SOURCE_DIRECT),
-            "consent_reference": str(reference or code or pid),
-            "consent_reference_kind": str(reference_kind or "participant_code"),
-            "consent_upstream_verified": False,
-            "consent_recorded_at": rec["created_at"],
-        })
-        if not source:
-            log.warning(
-                "minted participant %s already consented with no upstream "
-                "reference (code %r). No study arrival takes this path since "
-                "consent moved to the survey; if this is a participant rather "
-                "than a researcher launch, their consent is not joinable to a "
-                "Qualtrics response.", pid, code)
-    # Atomic write: a kill mid-write must not leave a truncated consent file,
-    # which get_participant would fail to parse and lock the participant out.
     dest = PARTICIPANTS_DIR / f"{pid}.json"
     tmp = PARTICIPANTS_DIR / f"{pid}.json.tmp"
     tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
-    # Retry the rename: a consent record is read by get_participant on every
-    # socket open, and on Windows a reader holding the destination fails the
-    # rename outright — losing the one field an IRB reads.
     replace_with_retry(tmp, dest)
     with _db() as conn:
         conn.execute(
             """INSERT INTO participants
-               (id, code, consent_given, consent_text_version, created_at,
-                consent_source, consent_reference, consent_reference_kind)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (rec["id"], rec["code"], int(rec["consent_given"]),
-             rec["consent_text_version"], rec["created_at"],
-             rec.get("consent_source"), rec.get("consent_reference"),
-             rec.get("consent_reference_kind")),
+               (id, code, consent_given, consent_text_version, created_at)
+               VALUES (?, ?, 0, NULL, ?)""",
+            (rec["id"], rec["code"], rec["created_at"]),
         )
     return pid
 
@@ -1381,7 +1010,7 @@ def get_participant(pid: str) -> Optional[Dict[str, Any]]:
     # pid arrives from a websocket query parameter, which may contain '/'.
     # Validate its exact minted shape before touching the filesystem so a
     # traversal string (e.g. "../runs/<run_id>") cannot resolve to another
-    # record and slip past the voice-path consent gate.
+    # record and slip past the voice-path capture gate.
     if not pid or not _PID_RE.fullmatch(pid):
         return None
     path = PARTICIPANTS_DIR / f"{pid}.json"
@@ -1391,148 +1020,3 @@ def get_participant(pid: str) -> Optional[Dict[str, Any]]:
         return json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
         return None
-
-
-def record_decline(pid: str, consent_version: str,
-                   run_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Record that a participant read the consent form and refused.
-
-    A refusal is data. Without it the only trace of someone deciding not to take
-    part is an abandoned tab, which is indistinguishable from a browser crash,
-    and the study cannot report how many people declined after reading the form
-    — a figure an IRB asks for.
-
-    The record stays consent_given=False, so nothing downstream can mistake it
-    for consent: the voice websocket already refuses any record whose flag is
-    not set.
-
-    Returns None when there is no such record, and also when the record already
-    carries consent — see the guard below. A caller that needs to tell the two
-    apart should ask get_participant() first.
-    """
-    rec = get_participant(pid)
-    if rec is None:
-        return None
-    if rec.get("consent_given") or rec.get("consent_recorded_at"):
-        # Consent is not retroactively withdrawable by a later POST. A decline
-        # can only follow an un-consented record: the mirror image of the
-        # `declined` guard in record_consent below, and for the same reason.
-        # Without it a stale second tab (both tabs get &consent=1, so the one
-        # you left open still shows Decline after you consented in the other), a
-        # back-button resubmit or a replayed request writes consent_given=False
-        # over a record that carries consent_recorded_at — and record_consent
-        # then refuses to flip it back, so the participant is locked out of the
-        # study for good. Worse, the one field an IRB reads would be denying a
-        # consent under which audio and webcam were already recorded. Someone
-        # who consents and then wants out withdraws the run, which the record
-        # already supports; it does not rewrite what they agreed to.
-        return None
-    rec["consent_given"] = False
-    rec["declined"] = True
-    rec["declined_at"] = time.time()
-    rec["consent_text_version"] = consent_version
-    if run_id:
-        rec["run_id"] = run_id
-    # Writer, so it initialises (see init_storage). The participant file it just
-    # read proves the directory exists, but not that index.db still carries the
-    # participants table — and a refusal that is not indexed is a refusal the
-    # IRB count never sees.
-    init_storage()
-    dest = PARTICIPANTS_DIR / f"{pid}.json"
-    tmp = PARTICIPANTS_DIR / f"{pid}.json.tmp"
-    tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
-    # Retry the rename: a consent record is read by get_participant on every
-    # socket open, and on Windows a reader holding the destination fails the
-    # rename outright — losing the one field an IRB reads.
-    replace_with_retry(tmp, dest)
-    with _db() as conn:
-        conn.execute(
-            "UPDATE participants SET consent_given = 0, consent_text_version = ? WHERE id = ?",
-            (consent_version, pid),
-        )
-    return rec
-
-
-def record_consent(pid: str, consent_version: str, *,
-                   source: Optional[str] = None,
-                   reference: Optional[str] = None,
-                   reference_kind: Optional[str] = None,
-                   ) -> Optional[Dict[str, Any]]:
-    """Record that this participant's upstream consent exists. Or refuse to.
-
-    /start mints the participant record early so one person keeps one identity
-    across all four encounters, but it must not assert consent on their behalf.
-    The record is therefore created with consent_given=False and only this
-    function may set it true. Returns the updated record, or None.
-
-    None now means one of four things, and all four are the same instruction to
-    the caller — do not proceed, do not record, tell the participant:
-
-      * there is no such record;
-      * the record carries a refusal, which is terminal (see below);
-      * the record belongs to a run that never carried a Qualtrics response id,
-        so this platform has no evidence anybody consented upstream;
-      * nothing has said which approved text the survey is showing
-        (UPSTREAM_CONSENT_VERSION), so the record could not name the document
-        that was agreed to.
-
-    `consent_version` is now the FALLBACK version, used only for records that
-    belong to no run. An upstream consent takes its version from
-    upstream_consent_version(), because config/consent.yaml's version describes
-    the text this platform used to show and stamping it on somebody who never
-    saw it names the wrong document as the one they agreed to.
-
-    `source`/`reference`/`reference_kind` let a caller name an upstream that is
-    not Qualtrics. Supplying them skips the run lookup, and is recorded as the
-    caller's claim rather than as something this process verified — see
-    _consent_provenance.
-    """
-    rec = get_participant(pid)
-    if rec is None:
-        return None
-    if rec.get("declined"):
-        # A refusal is terminal. Without this a stray or replayed POST could
-        # flip a record whose owner had explicitly declined back to consented,
-        # and the record would then carry both declined=True and
-        # consent_given=True — the worst possible state for the one field an
-        # IRB would ask about. Someone who declines and changes their mind
-        # starts a new run rather than overwriting the refusal.
-        #
-        # Upstream evidence does NOT override this, and the order matters: the
-        # check stays ahead of the provenance lookup so a run that does carry a
-        # Qualtrics response id can never be read as permission to overwrite a
-        # refusal. Someone who agreed in the survey and then told this platform
-        # they did not want to take part has said the later, more specific
-        # thing, about the recording that was actually about to happen.
-        return None
-    prov = _consent_provenance(pid, rec, consent_version,
-                               source, reference, reference_kind)
-    if prov is None:
-        # Nothing is written — not even a partial record. The participant is
-        # left exactly as /start made them: pending, and refused by the voice
-        # socket. static/v2.html turns this into a card that says where consent
-        # is actually given and how to get back there.
-        return None
-    rec["consent_given"] = True
-    rec.update(prov)
-    rec["consent_recorded_at"] = time.time()
-    # Writer, so it initialises (see init_storage). Same reason as
-    # record_decline: the UPDATE below needs the participants table to exist,
-    # and consent is the one field an IRB reads.
-    init_storage()
-    dest = PARTICIPANTS_DIR / f"{pid}.json"
-    tmp = PARTICIPANTS_DIR / f"{pid}.json.tmp"
-    tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
-    # Retry the rename: a consent record is read by get_participant on every
-    # socket open, and on Windows a reader holding the destination fails the
-    # rename outright — losing the one field an IRB reads.
-    replace_with_retry(tmp, dest)
-    with _db() as conn:
-        conn.execute(
-            "UPDATE participants SET consent_given = 1, consent_text_version = ?, "
-            "consent_source = ?, consent_reference = ?, consent_reference_kind = ? "
-            "WHERE id = ?",
-            (rec["consent_text_version"], rec["consent_source"],
-             rec["consent_reference"], rec["consent_reference_kind"], pid),
-        )
-    return rec

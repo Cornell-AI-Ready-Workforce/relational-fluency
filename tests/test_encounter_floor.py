@@ -107,7 +107,7 @@ def client(store, sessions_root, monkeypatch):
 
 def _enrol(store, runs_mod, key, cohort="study"):
     run = runs_mod.create(key, qualtrics_id=f"R_{key}", cohort=cohort, variant="A")
-    pid = store.create_participant(code=key, consent_given=True, consent_version="v1")
+    pid = store.create_participant(code=key)
     run["participant_record_id"] = pid
     runs_mod.save(run)
     return run, pid

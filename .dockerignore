@@ -29,10 +29,9 @@
 !server
 !static
 !scenarios
-!config
 
 # --- re-excluded from inside the paths above ---------------------------------
-# Caches and stray secrets can live under server/ or config/ on a developer's
+# Caches and stray secrets can live under server/ on a developer's
 # machine; the allowlist would otherwise carry them in.
 **/__pycache__
 **/*.pyc

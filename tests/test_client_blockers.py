@@ -1323,12 +1323,6 @@ def test_the_upload_chain_reports_what_happened(tmp_path):
     assert "UPLOAD OK" in _run(tmp_path, UPLOAD_HARNESS, V2)
 
 
-def test_the_decline_card_says_what_the_server_actually_did(tmp_path):
-    """B16's client half: the route answers 200 whether or not it recorded
-    anything, so `r.ok` is not the answer — the body is."""
-    assert "CONSENT OK" in _run(tmp_path, CONSENT_HARNESS, V2)
-
-
 def test_a_system_message_is_not_written_as_a_participant_turn(tmp_path):
     """R4: {"type":"error"} frames were rendered as "You: Something went
     wrong", which puts words in the participant's mouth in the one artefact
@@ -1581,57 +1575,6 @@ def test_every_page_carries_the_tab_icon():
         f = ROOT / "static" / asset
         assert f.exists(), f"{asset} is missing, so every page links a 404"
         assert f.stat().st_size < 60_000, f"{asset} is too heavy for an icon"
-
-
-def test_the_footer_never_prints_a_contact_the_consent_form_does_not_carry():
-    """The landing footer shows the logo and the study contact.
-
-    The contact comes from /api/consent's `contact:` block and nowhere else,
-    and each field is printed only when it is really filled in. The shipped
-    config carries "[FILL IN: principal investigator's name]", and a footer
-    that prints that to a visitor is worse than one that says nothing. This is
-    the rule the participant pages get from contactPhrase(), applied to the one
-    page that has no such helper.
-    """
-    src = LANDING.read_text(encoding="utf-8")
-
-    assert "footContact" in src and "loadFooterContact" in src, (
-        "the footer no longer builds its contact from the consent config")
-    assert "fetch('/api/consent'" in src, (
-        "the footer contact does not come from the consent config")
-    assert "function isFilled(" in src and "FILL IN" in src, (
-        "nothing stops a placeholder reaching a visitor")
-
-    fn = src[src.index("async function loadFooterContact("):]
-    fn = fn[:fn.index("\n  loadScenarios();")]
-    # An unfilled field shows a labelled empty slot, not the config's raw
-    # "[FILL IN: ...]" text and not silence. Silence was the first version and it
-    # made the gap invisible: the footer just looked like it had no contact by
-    # design. What must never happen is the placeholder itself reaching a
-    # visitor, or a slot that could be read as a real contact.
-    assert "function slot(" in fn, (
-        "an unfilled contact field no longer shows a slot, so the gap is invisible again")
-    assert "not set" in fn, "the empty slot does not say it is unset"
-    assert fn.count("isFilled(") == 3, (
-        "a contact field is rendered without checking it is really filled in")
-    # The participant-facing rule is the opposite one and must stay that way.
-    v2 = V2.read_text(encoding="utf-8")
-    assert "not set" not in v2, (
-        "a participant screen now shows an unset-contact slot; there a missing "
-        "contact must show nothing at all")
-
-    # Operator-supplied text, on a page anyone can load: built as text nodes,
-    # never pasted into innerHTML.
-    assert "innerHTML" not in fn, (
-        "the footer pastes config text into innerHTML")
-    assert fn.count("textContent") >= 3, (
-        "the contact fields are no longer written as text")
-
-    # And the footer still carries the logo it was asked for.
-    footer = src[src.index("<footer>"):src.index("</footer>")]
-    assert "/static/logo.png" in footer, "the footer lost the logo"
-    assert "research prototype" in footer and "Citations live in" not in footer, (
-        "the old footer text is back")
 
 
 EVIDENCE = ROOT / "static" / "evidence.html"

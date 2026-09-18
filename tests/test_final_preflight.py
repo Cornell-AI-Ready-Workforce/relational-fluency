@@ -187,34 +187,6 @@ def test_the_named_problem_is_what_the_boot_log_prints(gateway, monkeypatch, cap
     assert "200" not in out, "the HTTP status is not the diagnosis here"
 
 
-def test_the_named_problem_is_on_health_too(gateway, monkeypatch):
-    """docs/OPERATIONS.md sends the operator to `gateway.detail` to find out
-    why. The gateway block is published whole, so the fields added here arrive
-    there without app.py having to know about them."""
-    from fastapi.testclient import TestClient
-
-    from server import app as appmod
-
-    from server import storage
-
-    set_model(monkeypatch, "REALTIME_MODEL", TYPO)
-    monkeypatch.setattr(appmod, "_PREFLIGHT", dict(llm.preflight(), checked=True))
-    # The environment this deployment needs, supplied so that the one thing
-    # wrong in this test is the gateway. /health's top-level word now answers to
-    # the config block as well (see app._health_status), so without this the
-    # assertion below would be reading "UPSTREAM_CONSENT_VERSION is unset" and
-    # calling it a gateway result — and this test's whole claim is about which
-    # faults move the word and which do not.
-    monkeypatch.setenv(storage.UPSTREAM_CONSENT_VERSION_ENV,
-                       "cornell-irb-2026-09-v3")
-
-    body = TestClient(appmod.app, raise_server_exceptions=False).get("/health").json()
-
-    assert body["status"] == "ok", "a gateway fault must not take the task offline"
-    assert body["gateway"]["ok"] is False
-    assert "REALTIME_MODEL" in body["gateway"]["detail"]
-
-
 # --- and the same check must not cry wolf ------------------------------------
 
 

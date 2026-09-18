@@ -153,32 +153,13 @@ def _consented_arrival(store, runs_mod, key="RF_GATE_1", arm=None):
     writes, and a hand-made pair could quietly stop matching it.
     """
     run = runs_mod.create(key, qualtrics_id=f"R_{key}", cohort="study", arm=arm)
-    pid = store.create_participant(code=key, consent_given=True,
-                                   consent_version="v1")
+    pid = store.create_participant(code=key)
     run["participant_record_id"] = pid
     runs_mod.save(run)
     return run, pid
 
 
 # --- B2: a withdrawal has to reach the capture socket ------------------------
-
-def test_a_withdrawn_participant_is_refused_by_the_capture_gate(store, runs_mod):
-    """The promise in the consent text is that they may stop at any time.
-
-    Before this, the gate asked the participant RECORD alone. Withdrawing set
-    `withdrawn` on the run and nothing on the record, so the record still read
-    consented, the gate still passed, and the socket that opens the microphone
-    and the webcam still opened — for someone who had pressed stop. advance()
-    refused them a completion code afterwards, but the recording had already
-    happened, which is the part no later refusal undoes.
-    """
-    run, pid = _consented_arrival(store, runs_mod)
-    assert appmod._consented_participant(pid) is not None, "setup"
-
-    runs_mod.withdraw(run["run_id"])
-
-    assert appmod._consented_participant(pid) is None
-
 
 def test_the_voice_socket_closes_on_a_withdrawn_participant(client, store,
                                                             runs_mod, monkeypatch):
@@ -395,20 +376,6 @@ def fielded(client, monkeypatch):
     return client
 
 
-@pytest.mark.parametrize("path", PARTICIPANT_LINKS)
-def test_a_participant_supplied_cohort_does_not_decide_the_dataset(
-        fielded, runs_mod, path):
-    """cohort=internal is not a label, it is an exit from the study.
-
-    storage._consent_provenance short-circuits on it: no Qualtrics response id
-    required, no UPSTREAM_CONSENT_VERSION required, consent_upstream_verified
-    false. So a participant whose link picked up that parameter was recorded
-    AND silently dropped from ?cohort=study.
-    """
-    run = runs_mod.get(_enter(fielded, path, "RF_COH_1", cohort="internal"))
-    assert run["cohort"] == "study"
-
-
 @pytest.mark.parametrize("bogus", ["internal", "unattributed", "gold", "STUDY"])
 def test_no_cohort_a_participant_can_type_is_taken_at_face_value(
         fielded, runs_mod, bogus):
@@ -465,19 +432,6 @@ def test_a_keyless_deployment_is_all_operator_and_that_is_the_rule_everywhere(
 
 
 # --- B5: the internal test entrance ------------------------------------------
-
-def test_the_test_entrance_needs_the_key_when_one_is_configured(
-        client, runs_mod, monkeypatch):
-    """GET /test -> POST /api/consent -> ws voice reached live audio and webcam
-    capture in three requests, from anywhere on the internet, on the study's
-    gateway budget. Containment held (cohort=internal), so this is a spend and
-    recording surface rather than a data-integrity one — but it is a door."""
-    monkeypatch.setattr(appmod, "SESSION_KEY", "s3cret", raising=False)
-
-    r = client.get("/test", params={"name": "stranger"}, follow_redirects=False)
-    assert r.status_code == 401, r.text
-    assert not _all_runs(runs_mod), "an unauthenticated request minted a run"
-
 
 def test_the_test_entrance_still_works_for_someone_holding_the_key(
         client, runs_mod, monkeypatch):

@@ -1,5 +1,5 @@
 output "app_url" {
-  description = "Participant entrance — consent, WEIP handoff, encounters"
+  description = "Participant entrance — WEIP handoff, encounters"
   value       = "https://${local.app_fqdn}"
 }
 

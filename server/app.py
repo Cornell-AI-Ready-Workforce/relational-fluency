@@ -36,7 +36,7 @@ from .scenarios import list_scenarios, load_scenario
 from .session import registry
 from .storage import (
     create_participant, get_participant, init_storage, missing_required_env,
-    participant_withdrawal, record_consent, record_decline, record_withdrawal,
+    participant_withdrawal, record_withdrawal,
     valid_session_id,
 )
 from .realtime_voice_session import RealtimeVoiceSessionRunner
@@ -206,21 +206,19 @@ def _check_storage() -> None:
 def _check_required_env() -> None:
     """Name the environment variables this deployment has no usable value for.
 
-    The third preflight, and the one whose absence cost the most. storage
-    declares REQUIRED_ENV and storage.missing_required_env() reads it, and its
-    own docstring says this is "what a boot preflight and /health should
-    publish" — and nothing called it. No startup hook, no route, nothing outside
-    the test suite. So the failure it was written to catch stayed exactly as
-    silent as before: UPSTREAM_CONSENT_VERSION unset (or set to "xxx", which
-    `tofu plan` accepts and this side treats as unset) means every study consent
-    is refused, POST /api/consent answers 404, the voice socket closes 4403,
-    /health answers 200 and runs keep accumulating. An entire wave of zero
-    encounters, uniformly, from the first arrival onward.
+    The third preflight. storage declares REQUIRED_ENV and
+    storage.missing_required_env() reads it, and its own docstring says this is
+    "what a boot preflight and /health should publish" — for a long time nothing
+    called it, so a variable a wave depended on could be unset (or set to a
+    placeholder like "xxx", which `tofu plan` accepts and this side treats as
+    unset) while /health answered 200 and runs kept accumulating. REQUIRED_ENV
+    is empty today — the consent step that once needed a variable here is taken
+    in Qualtrics, outside this app — and the wiring stays so that the next
+    variable a wave depends on is declared in one place and published in both.
 
-    A warning, not a refusal, for the reason the consent-fielding check is one:
-    a laptop and every CI run would be taken out by a variable that only a
-    recruiting deployment actually needs, and the thing that must not happen is
-    the wave, not the boot.
+    A warning, not a refusal: a laptop and every CI run would be taken out by a
+    variable that only a recruiting deployment actually needs, and the thing
+    that must not happen is the wave, not the boot.
 
     Routed through the same guarded helper /health uses, for both of its
     reasons: this runs inside a startup hook, where an unexpected exception is a
@@ -343,8 +341,8 @@ async def _line_buffer_stdout_on_startup() -> None:
     streams separate completely and the boot warnings sit in a 8 KB buffer
     while the INFO lines stream past them.
 
-    MEASURED, `python -m uvicorn server.app:app > server.log`, with
-    UPSTREAM_CONSENT_VERSION unset, which is the state that records nothing:
+    MEASURED, `python -m uvicorn server.app:app > server.log`, with a
+    required variable unset (at the time, the one a wave depended on):
 
         INFO:     Started server process [51700]
         INFO:     Waiting for application startup.
@@ -352,15 +350,14 @@ async def _line_buffer_stdout_on_startup() -> None:
         INFO:     Uvicorn running on http://127.0.0.1:8792
 
     — and that is the WHOLE file for as long as the server runs. /health says
-    "degraded", ready false, missing ['UPSTREAM_CONSENT_VERSION'] the entire
-    time. The two WARNING lines that name it, and the consent-config warning
-    beside them, appeared only when the process was killed and the buffer was
-    flushed on exit. So the one line telling an operator that every participant
-    will hit the blocking card and nothing will be recorded is invisible
-    exactly when it is needed, and legible only once the server is stopped.
+    "degraded", ready false, and names the variable the entire time. The
+    WARNING lines that name it appeared only when the process was killed and
+    the buffer was flushed on exit. So the one line telling an operator that
+    nothing will be recorded is invisible exactly when it is needed, and
+    legible only once the server is stopped.
 
     Line buffering, not `flush=True` at forty call sites: it covers the
-    request-time notices too — a refused consent, a withdrawal, an entry link
+    request-time notices too — a refused capture, a withdrawal, an entry link
     that lost its key — which have the same problem and are the lines somebody
     tails a log for.
 
@@ -443,54 +440,6 @@ async def _run_preflights_on_startup() -> None:
 app.router.on_startup.append(_run_preflights_on_startup)
 
 
-def check_consent_fielding() -> Optional[str]:
-    """Why the consent config is not fit to put in front of a participant, or
-    None if it is.
-
-    The third credentialed-seam check, except the credential here is the
-    participant's. config/consent.yaml ships as a template that names no
-    researcher, no email and no IRB protocol number, while the participant page
-    tells anyone who withdraws to "contact the researcher named on the consent
-    form" — an instruction pointing at information the form does not carry. That
-    is invisible from inside the running app: every route works, the form
-    renders, and the only symptom is a participant who cannot exercise the
-    deletion right the same form promised them.
-
-    The judgement lives in consent_check, not here, so the rule can be stated
-    once and read by the test suite without standing an app up. Imported inside
-    the function: a missing module must not stop a laptop from booting the
-    server, and the answer when it is missing is "unknown", said out loud,
-    rather than a silent pass.
-    """
-    try:
-        from .consent_check import consent_fielding_blocker
-    except Exception as e:  # noqa: BLE001, an absent check is not a broken app
-        return f"the consent check could not be loaded ({type(e).__name__}: {e})"
-    try:
-        return consent_fielding_blocker(_load_consent())
-    except Exception as e:  # noqa: BLE001
-        return f"the consent config could not be read ({type(e).__name__}: {e})"
-
-
-async def _check_consent_on_startup() -> None:
-    """Startup hook: say at boot whether the consent form is real.
-
-    A warning, not a refusal, and the distinction is deliberate. Refusing to
-    start would take out every developer laptop and every CI run the moment the
-    template is the file on disk — which is always, in this repository — and the
-    thing this protects against is a *recruiting* deployment, which is a
-    judgement about intent that this process cannot make. So it is printed where
-    the gateway and bucket warnings are printed, at the top of the log an
-    operator reads after a deploy, in the same voice.
-    """
-    reason = check_consent_fielding()
-    if reason:
-        print(f"  WARNING: {reason} Do not recruit participants until this is "
-              f"fixed: the consent form is the study's only permission to "
-              f"record anyone.")
-
-
-app.router.on_startup.append(_check_consent_on_startup)
 
 
 # Participant-facing HTML must never be cached. A stale build is invisible to
@@ -536,8 +485,8 @@ def _health_status(missing: list) -> str:
     """The one word at the top of /health, and whether it may say "ok".
 
     D3. This route answered `200 {"status": "ok"}` while its own `config` block
-    said ok:false — the state in which every study consent is refused, every
-    voice socket closes 4403, runs keep accumulating and NOTHING is recorded.
+    said ok:false — a state in which (on the build of the day) every voice
+    socket closed 4403, runs kept accumulating and NOTHING was recorded.
     That combination is what made the silent void silent: an uptime check, a
     status page and an operator's curl all read the top-level word, and the top
     level said the box was fine while the wave recorded zero encounters.
@@ -545,8 +494,8 @@ def _health_status(missing: list) -> str:
     WHY THE STATUS CODE STAYS 200, WHICH IS THE HALF THAT COULD HAVE CAUSED AN
     OUTAGE. infra/terraform/alb.tf's target group health checks path "/health"
     with matcher "200", interval 30, unhealthy_threshold 3 — and ecs.tf sets
-    deployment_minimum_healthy_percent = 100. Answering 503 here when
-    UPSTREAM_CONSENT_VERSION is unset would therefore take every task out of
+    deployment_minimum_healthy_percent = 100. Answering 503 here when a
+    required variable is unset would therefore take every task out of
     service 90 seconds after it booted and wedge the deploy that introduced it,
     turning a wave that records nothing into a site that serves nothing. The
     argument for it is real — a deployment that cannot record must not pretend
@@ -707,12 +656,12 @@ async def health(key: Optional[str] = Query(None)) -> dict:
                {k: _STORAGE_PREFLIGHT.get(k) for k in _PUBLIC_STORAGE_FIELDS
                 if k in _STORAGE_PREFLIGHT})
     # The third block, and the one that closes the quietest failure this
-    # project has had. A deployment missing UPSTREAM_CONSENT_VERSION refuses
-    # every study consent, closes every voice socket 4403, keeps minting runs
-    # and answers this route 200 — so the first evidence of it was an empty
-    # dataset at the end of the wave. storage.missing_required_env was written
-    # to be what "a boot preflight and /health should publish" and was wired to
-    # neither; it is wired to both now.
+    # project has had: a deployment missing a variable the wave depended on
+    # closed every voice socket 4403, kept minting runs and answered this route
+    # 200 — so the first evidence of it was an empty dataset at the end of the
+    # wave. storage.missing_required_env was written to be what "a boot
+    # preflight and /health should publish" and was wired to neither; it is
+    # wired to both now (REQUIRED_ENV is empty today, see _check_required_env).
     #
     # Computed per request rather than cached at startup, unlike the two blocks
     # above, so a variable that appears after boot (a task redeployed with the
@@ -748,10 +697,6 @@ async def health(key: Optional[str] = Query(None)) -> dict:
             # route would not already prove.
             "session_key_configured": bool(SESSION_KEY),
             "active_sessions": len(registry.list_ids())}
-
-
-def _load_consent() -> dict:
-    return yaml.safe_load((CONFIG_DIR / "consent.yaml").read_text(encoding="utf-8"))
 
 
 def check_key(key: Optional[str]) -> None:
@@ -843,8 +788,8 @@ async def start_test_run(
 
     THIS DOOR STAYS. The researcher demos the platform to their lab through it,
     and the demo entrance of the next phase is built on top of it. What it does
-    not stay is open: GET /test, POST /api/consent, ws voice reached live audio
-    and webcam capture in three requests from anywhere on the internet, on the
+    not stay is open: GET /test and the voice socket reached live audio
+    and webcam capture in two requests from anywhere on the internet, on the
     study's gateway budget. Containment held — the run is cohort=internal and
     falls out of ?cohort=study — so what was exposed was spend and recording
     rather than the dataset, but a recording surface with no credential in front
@@ -878,20 +823,16 @@ async def start_test_run(
     # Mint the participant record here, exactly as /start does, and carry it in
     # the redirect. The cohort tag only reaches an encounter's manifest through
     # _run_context, which resolves the run from the participant *record* id on
-    # the voice socket. Without a record minted against this run, the tester
-    # consented with a bare code, POST /api/consent minted a second record that
-    # no run pointed at, and the internal encounter recorded cohort=null — so it
-    # was excluded from ?cohort=study but invisible to ?cohort=internal too, and
-    # the tag was true only at the run level. Minting it here also means the
-    # internal path exercises the same identity and consent code the study path
-    # does, which is the point of a test entrance.
-    #
-    # consent_given=False for the same reason as /start: consent is the
-    # participant's affirmative act, not something an entry point may assert.
+    # the voice socket. Without a record minted against this run, the page
+    # minted a second record that no run pointed at, and the internal encounter
+    # recorded cohort=null — so it was excluded from ?cohort=study but
+    # invisible to ?cohort=internal too, and the tag was true only at the run
+    # level. Minting it here also means the internal path exercises the same
+    # identity code the study path does, which is the point of a test entrance.
     q = f"?run={run['run_id']}"
     try:
         pid_record = create_participant(
-            code=run["participant_id"], consent_given=False, consent_version="",
+            code=run["participant_id"],
             # Same binding /start writes, and the reason the demo door needs it
             # too: cohort="internal" is the whole point of this entrance, and a
             # record that does not carry it can have that tag re-derived away by
@@ -900,7 +841,7 @@ async def start_test_run(
         )
         run["participant_record_id"] = pid_record
         runs.save(run)
-        q += f"&participant_id={pid_record}&consent=1"
+        q += f"&participant_id={pid_record}"
     except Exception:  # noqa: BLE001, a test entrance must still open
         pass
     return RedirectResponse(url=f"/v2{q}", status_code=307)
@@ -1320,9 +1261,8 @@ async def _enter_study(arm: Optional[str], p: dict):
         raise HTTPException(400, str(e))
 
     # ?cohort= decides whether this run is study data at all — cohort=internal
-    # takes storage._consent_provenance's internal-test short circuit (no
-    # Qualtrics response id required, no UPSTREAM_CONSENT_VERSION required,
-    # consent_upstream_verified false) and drops the run out of ?cohort=study.
+    # drops the run out of ?cohort=study and exempts it from the encounter
+    # floor.
     # An operator's deliberate choice is legitimate and is how the lab walks the
     # links without contaminating the wave; a participant-supplied one is a
     # recruited person being recorded and silently excluded at the same time,
@@ -1578,12 +1518,11 @@ async def _enter_study(arm: Optional[str], p: dict):
     # so identity.assign() hashes the same key across all four encounters (and
     # mid-encounter refreshes) instead of a fresh code per page load.
     #
-    # The record is minted with consent_given=False. Minting it here is about
-    # identity, not consent: this endpoint has no affirmative act from the
-    # participant to record, and a record asserting consent that nobody gave is
-    # exactly the defect the in-app gate exists to prevent. POST /api/consent
-    # flips it once they have read the text and ticked the box. Until then the
-    # voice endpoint refuses to open, so no capture can precede consent.
+    # The record is minted here for identity: it is what the page carries
+    # across all four encounters, and what the voice socket checks
+    # (_participant_may_capture: a record that exists and is not withdrawn).
+    # Consent itself is taken in Qualtrics before /start is ever reached, so
+    # there is nothing for this endpoint to assert about it.
     pid_record = run.get("participant_record_id")
     if not pid_record:
         # Retried once, then logged. A failed mint here is not cosmetic: the run
@@ -1606,14 +1545,12 @@ async def _enter_study(arm: Optional[str], p: dict):
         # exactly one. An identity that exists is still the right one to hand the
         # page, so a save failure keeps it; it is the run write-back, not the
         # record, that is worth a second attempt. If both saves fail the run file
-        # still has no participant_record_id, and _adopt_participant_record
-        # repairs the join at the first affirmative act.
+        # still has no participant_record_id and the encounter is recorded as
+        # unattributable; the WARNING below says so.
         for attempt in (1, 2):
             try:
                 pid_record = create_participant(
                     code=(pkey or run["run_id"]),
-                    consent_given=False,
-                    consent_version="",
                     # Bound here, at the one moment the binding is certain. The
                     # record naming its run is what stops an encounter's cohort
                     # being re-derived later from whichever run happens to be
@@ -1629,7 +1566,7 @@ async def _enter_study(arm: Optional[str], p: dict):
                         f"  WARNING: /start could not mint a participant record "
                         f"for run {run['run_id']} (participant {pkey}): "
                         f"{type(e).__name__}: {e}. The encounter will proceed but "
-                        f"will not be joined to the run until consent is recorded."
+                        f"will be recorded as unattributable."
                     )
         if pid_record:
             run["participant_record_id"] = pid_record
@@ -1643,8 +1580,8 @@ async def _enter_study(arm: Optional[str], p: dict):
                             f"  WARNING: /start minted participant record "
                             f"{pid_record} for run {run['run_id']} (participant "
                             f"{pkey}) but could not write it back to the run: "
-                            f"{type(e).__name__}: {e}. The record is kept and the "
-                            f"run will adopt it when consent is recorded."
+                            f"{type(e).__name__}: {e}. The record is kept; the "
+                            f"run has no pointer to it."
                         )
 
     q = f"?run={run['run_id']}"
@@ -1663,21 +1600,13 @@ async def _enter_study(arm: Optional[str], p: dict):
     # that exists. ?participant_id= is one of the spellings Qualtrics pipes the
     # raw participant key through (see raw_key above), so when the mint failed
     # this fallback used to hand the page the survey's own key dressed up as a
-    # record id; the page POSTs it to /api/consent, record_consent finds no such
-    # record, the route answers 404 and the participant is stuck in "We couldn't
-    # save your consent. Please press Continue to try again." forever. Passing
-    # nothing instead lets the page mint its own record and proceed.
+    # record id, which names no record and fails every check that reads one.
+    # Passing nothing instead lets the page mint its own record
+    # (POST /api/participant) and proceed.
     effective_pid = pid_record or (participant_id if participant_id
                                    and get_participant(participant_id) else None)
     if effective_pid:
         q += f"&participant_id={effective_pid}"
-        # Tell the page whether this record still needs consent, so it shows the
-        # gate on the first encounter of a run and skips it on the rest. Without
-        # this the page would treat any participant_id as proof of consent and
-        # never render the form.
-        rec = get_participant(effective_pid)
-        if not (rec or {}).get("consent_given"):
-            q += "&consent=1"
     # 307 preserves the method, which is what a GET arrival wants and what every
     # caller of this link already expects. The Continue button's POST must NOT
     # be preserved — a 307 there would have the browser POST to /v2, which
@@ -1900,59 +1829,24 @@ def _require_session_owner(m: dict, participant_id: Optional[str]) -> None:
         raise HTTPException(403, "not your session")
 
 
-def _consented_participant(participant_id: Optional[str]) -> Optional[dict]:
+def _participant_may_capture(participant_id: Optional[str]) -> Optional[dict]:
     """The participant record a capture socket may open under, or None.
 
-    Existence is not consent, and this is the one question both participant
-    sockets have to ask. /start mints a record with consent_given=False so
-    identity is stable across a run before anyone has agreed to anything, and
-    storage.record_decline leaves the record in place with the flag off and
-    declined=True — a refusal is data, so the record survives the refusal.
-
-    The text socket used to test existence alone. A participant who read the
-    form and refused was therefore accepted on it, and _run_context still
-    stamped their withdrawn run's id, participant key and cohort "study" onto
-    the encounter: a rateable study transcript belonging to someone who said no.
-    Both sockets now ask here, so the two gates cannot drift apart again.
-
-    They differ on ONE thing, at their call sites and not here: an ABSENT
-    participant_id. The voice socket refuses it (capture is audio and webcam
-    under the IRB), the text socket allows it (the documented single-agent text
-    entrance opens with no record, and an encounter with no record resolves no
-    run, so it is unattributable rather than misattributed). None is returned
-    for the absent case either way, so a caller that wants the strict rule gets
-    it by testing this alone.
-
-    THE WITHDRAWAL IS PART OF THE QUESTION. This asked the participant RECORD
-    alone, and a withdrawal is written on the run, so someone who pressed stop
-    still read as consented here: the socket opened, audio and webcam capture
-    began, and only runs.advance refused them afterwards — they got no
-    completion code, but the recording had happened, which is the part no later
-    refusal undoes. The consent text promises they may stop at any time, and
-    until this only static/v2.html's boot-time check honoured it, which a second
-    tab has already passed. Note that record_decline refuses to act on an
-    already-consented record, so withdrawing is the ONLY stop a consented
-    participant has; if it does not reach this gate, they do not have one.
+    Consent is taken outside this platform (decision 2026-09-17), so the socket
+    asks two things only: does the record exist, and has this person withdrawn.
+    THE WITHDRAWAL IS PART OF THE QUESTION: a withdrawal is written on the run
+    and on the record, and a socket that asked the record alone opened audio
+    and webcam capture for someone who had pressed stop. An absent
+    participant_id is None too, so the strict rule is this test alone.
     """
     if not participant_id:
         return None
     rec = get_participant(participant_id)
-    if not rec or not rec.get("consent_given") or rec.get("declined"):
+    if not rec:
         return None
     if _withdrawn(participant_id):
         return None
     return rec
-
-
-# What _participant_withdrawal answers with when the store could not be read.
-# It refuses like a withdrawal and it is NOT one: `status_unknown` is what tells
-# a writer (see _confirmed_withdrawal) that there is nothing here to write down.
-# Kept as one object so the two halves cannot drift into disagreeing about the
-# spelling — a gate that refuses on a string a writer no longer recognises is
-# how "we could not read the store" became a permanent stop on a live
-# participant's record.
-WITHDRAWAL_STATUS_UNKNOWN = {"reason": "withdrawal_status_unknown",
-                             "status_unknown": True}
 
 
 def _participant_withdrawal(participant_id: Optional[str]) -> Optional[dict]:
@@ -2005,6 +1899,10 @@ def _participant_withdrawal(participant_id: Optional[str]) -> Optional[dict]:
             f"calls are blocked for this record until the store can be read."
         )
         return dict(WITHDRAWAL_STATUS_UNKNOWN)
+
+
+WITHDRAWAL_STATUS_UNKNOWN = {"reason": "withdrawal_status_unknown",
+                             "status_unknown": True}
 
 
 def _withdrawn(participant_id: str) -> bool:
@@ -2076,7 +1974,7 @@ def _record_is_this_arrival(record_id: str, pkey: Optional[str],
 def _record_owns_run(rec: Optional[dict], run: Optional[dict]) -> bool:
     """Is this participant record the one that run belongs to?
 
-    The question POST /api/consent/decline never asked before it ended a study.
+    The question the withdrawal route has to ask before it ends a study.
     Note that it is NOT "does the caller hold this record" — the caller's own
     body is not evidence about somebody else's run. Every one of the three
     answers below is a fact this server wrote at a moment it could not be
@@ -2104,49 +2002,6 @@ def _record_owns_run(rec: Optional[dict], run: Optional[dict]) -> bool:
     return False
 
 
-def _record_is_the_callers(rec: Optional[dict], code: str,
-                           run_id: str) -> bool:
-    """Does the caller hold something that proves this record is theirs?
-
-    POST /api/consent took any existing participant_id and asked nothing at all,
-    so a record id — which travels in the URL this platform hands out, and comes
-    back in the body of the consent POST itself — was the whole credential. A
-    person who had stopped, or anybody who learned a live id, could consent a
-    stranger's record and then be recorded under that stranger's identity, in
-    their cohort, against their run.
-
-    What counts as proof is something the SERVER wrote and the caller could only
-    know by being the person: the participant key the record was minted under
-    (static/v2.html sends it as `code`, off the run), or a run id that the
-    record, or the run itself, already names. A body that merely asserts a
-    different key proves nothing and is refused.
-
-    Deliberately generous about which ONE of those arrives, because the page
-    sends whichever it has: its /api/run fetch can fail, leaving it with a
-    record id and a run id and no code, and a run whose mint failed is joined to
-    its record by the key alone. Refusing a participant here costs them the
-    study — the page can do nothing but show "we could not confirm your consent
-    record" — so this errs on letting the real person through and refuses only
-    the caller who can show nothing.
-    """
-    if not rec:
-        return False
-    if code and rec.get("code") == code:
-        return True
-    if run_id:
-        if rec.get("run_id") == run_id:
-            return True
-        from . import runs
-
-        try:
-            run = runs.get(run_id)
-        except Exception:  # noqa: BLE001, an unreadable run proves nothing
-            run = None
-        if run is not None and _record_owns_run(rec, run):
-            return True
-    return False
-
-
 def _is_operator(key: Optional[str]) -> bool:
     """A caller holding the researcher credential, and only that.
 
@@ -2168,9 +2023,9 @@ def _may_stop_run(run: dict, participant_id: str, key: Optional[str]) -> bool:
     participant key and every participant record those runs name, the live
     encounter is torn out of the registry and the microphone closed, and there
     is no clearing path — advance() 403s them from then on and their record
-    reads withdrawn to an IRB. Run ids are not secrets by this module's own
-    standard (see _record_is_the_callers): one travels in the participant's
-    address bar as /v2?run=..., and where SESSION_KEY is unset GET /api/runs
+    reads withdrawn to an IRB. Run ids are not secrets: one travels in the
+    participant's address bar as /v2?run=..., and where SESSION_KEY is unset
+    GET /api/runs
     hands out the whole roster keylessly.
 
     THE PROOF IS THE RECORD ID, because it is the one thing the page holds that
@@ -2327,7 +2182,7 @@ async def _stop_live_sessions(participant_records: set, run_ids: set) -> list:
 def _records_for_participant_key(pkey: Optional[str]) -> set:
     """Every participant record minted under this participant key.
 
-    A person is not one record. A second tab whose consent POST minted its own,
+    A person is not one record. A second tab that minted its own record,
     a repair after a failed mint, a demo record under the same key — all of them
     are the same human at the same microphone, and the teardown used to match
     only on the records the RUN documents happened to name. An encounter
@@ -2522,425 +2377,6 @@ async def api_session_zip(session_id: str, key: Optional[str] = Query(None)):
         filename=f"{session_id}.zip",
         background=BackgroundTask(os.remove, tmp_path),
     )
-
-
-@app.get("/api/consent")
-async def api_get_consent(key: Optional[str] = None):
-    check_participant(key)
-    return _load_consent()
-
-
-@app.post("/api/consent")
-async def api_post_consent(payload: dict, key: Optional[str] = Query(None)):
-    check_participant(key)
-    code = (payload.get("code") or "").strip()
-    consent_given = bool(payload.get("consent_given"))
-    existing = (payload.get("participant_id") or "").strip()
-    if not consent_given:
-        raise HTTPException(400, "consent_given must be true to proceed")
-    version = _load_consent().get("version", "unknown")
-    # A run that came through /start already has a participant record, minted
-    # there with consent_given=False so identity is stable across the four
-    # encounters. Flip that record rather than minting a second one, or the
-    # participant would end up with one identity per encounter again.
-    run_id = (payload.get("run_id") or "").strip()
-    # In a worker thread: without a run_id the repair below scans RUNS_DIR to
-    # find the participant's run, and this coroutine shares its event loop with
-    # every live encounter's audio. One consent POST per participant is not
-    # much, but it arrives while the rest of the wave is mid-encounter.
-    from starlette.concurrency import run_in_threadpool
-
-    if existing:
-        # WHOSE RECORD IS IT. This branch took any existing participant_id and
-        # asked nothing: not whether the caller had any claim on it, and not
-        # whether the person behind it had already stopped. A record id is not a
-        # secret — it is in the URL /start redirects to and in this route's own
-        # reply — so somebody who had withdrawn, or anybody who learned a live
-        # id, could consent a stranger's record here and then open the capture
-        # socket under it: recorded as that stranger, in their cohort, against
-        # their run.
-        #
-        # Asked only when there is a record to ask about. record_consent refuses
-        # an id that resolves to nothing anyway, and answering 403 instead of
-        # its 404 would tell a stranger which ids exist.
-        prior = get_participant(existing)
-        if prior is not None and not _is_operator(key):
-            if not _record_is_the_callers(prior, code, run_id):
-                print(f"  WARNING: POST /api/consent presented participant "
-                      f"record {existing} (minted under key "
-                      f"{prior.get('code')!r}) beside key {code!r} / run "
-                      f"{run_id or 'none'}. Refusing: the record belongs to "
-                      f"somebody else, and consenting it would record this "
-                      f"caller under their identity.")
-                raise HTTPException(403, "not your participant record")
-            if _participant_withdrawal(existing):
-                # Consent is the affirmative act that opens the microphone, and
-                # walking a stopped person back through it is how a withdrawal
-                # lasts exactly as long as it takes to press Continue again. The
-                # minting branch below has been born carrying the withdrawal
-                # since the last round; this branch had no guard at all.
-                print(f"  NOTE: refusing to record consent for participant "
-                      f"record {existing}: they withdrew from the study.")
-                raise HTTPException(403, "participant withdrew from the study")
-        rec = record_consent(existing, version)
-        if rec is None:
-            # In a worker thread for the reason the adopt below is: this
-            # coroutine shares its event loop with every live encounter's audio,
-            # and the diagnosis globs and JSON-parses every file in RUNS_DIR
-            # (runs.find_by_participant_record). Measured at 8.6 ms for 1 run
-            # and 162 ms for 400 — and on the deployment this function was
-            # written for, the one with UPSTREAM_CONSENT_VERSION unset, it fires
-            # for every participant's consent POST and again for every press of
-            # Try again. A refusal explaining itself must not stutter the
-            # encounters that are still working.
-            status, detail, reason = await run_in_threadpool(
-                _why_consent_was_refused, existing)
-            # Returned rather than raised so the body can carry the machine
-            # name beside the prose. HTTPException's detail is the whole body,
-            # and nesting a second "detail" inside it would make the one field
-            # every client already reads unreadable.
-            return JSONResponse({"detail": detail, "reason": reason},
-                                status_code=status)
-        await run_in_threadpool(_adopt_participant_record, run_id, existing, code)
-        # The version that was WRITTEN, off the record itself, not the one this
-        # route happened to load from config/consent.yaml. See _written_version.
-        return {"participant_id": existing,
-                "consent_text_version": _written_version(rec, version)}
-    if not code:
-        raise HTTPException(400, "code required")
-    pid = create_participant(code=code, consent_given=True, consent_version=version)
-    await run_in_threadpool(_adopt_participant_record, run_id, pid, code)
-    return {"participant_id": pid,
-            "consent_text_version": _written_version(get_participant(pid), version)}
-
-
-def _written_version(rec: Optional[dict], fallback: str) -> str:
-    """The consent version that is actually on the record.
-
-    D4, and the quietest of the four. This route echoed config/consent.yaml's
-    `version` while storage.record_consent wrote upstream_consent_version() —
-    two different strings for an upstream consent, because config/consent.yaml
-    describes the text THIS platform used to show and the environment names the
-    approved wording the SURVEY is showing. Nothing user-facing reads the echo,
-    so nothing ever contradicted it; what reads it is a researcher curling the
-    route and an audit asking which document a participant agreed to, and both
-    were answered wrongly and confidently.
-
-    The record is the authority because the record is what an IRB reads. The
-    fallback covers the paths where no record comes back to ask (a test double,
-    a mint whose store could not be re-read) and is the old answer, so this can
-    only ever become more truthful and never less available.
-    """
-    return str((rec or {}).get("consent_text_version") or fallback)
-
-
-#: Machine-readable names for the reasons a consent write is refused. The page
-#: branches on these (static/v2.html), not on the prose, so the wording can be
-#: improved without changing what the participant is shown.
-CONSENT_REFUSAL_NO_RECORD = "no_such_record"
-CONSENT_REFUSAL_DECLINED = "declined"
-CONSENT_REFUSAL_NO_QID = "no_survey_response_id"
-CONSENT_REFUSAL_VERSION_UNSET = "consent_version_unset"
-CONSENT_REFUSAL_UNKNOWN = "refused"
-
-
-def _why_consent_was_refused(pid: str) -> tuple:
-    """(status, detail, reason) for a consent record.py refused to write.
-
-    D2. Every refusal used to answer `404 no such participant record`, including
-    the two that had a record and could name what was actually wrong:
-
-      * UPSTREAM_CONSENT_VERSION is unset on this deployment, so no study
-        consent anywhere can be recorded, and
-      * this participant's entry link carried no ?qid=, so this platform has no
-        survey response to point the consent at.
-
-    Two unrelated operator mistakes, one identical misleading message, and the
-    truth only in a log line nobody reads — while the operator goes looking for
-    a participant record that is sitting on disk. Both are things an operator
-    can act on in minutes ONCE THEY ARE TOLD, and the wave that voided itself
-    voided itself because nobody was.
-
-    WHAT THIS MAY NOT REVEAL. A record id is not a secret, but which ids EXIST
-    is: the route already refuses a record that is not the caller's with 403,
-    and it already answers 404 for an id that resolves to nothing. So the new
-    answers are reachable only where the old 404 already told the caller their
-    record exists — after the ownership check, or for the operator key. Nothing
-    here is told to anybody who was not already being told it.
-
-    Asked in storage.record_consent's own order, so the reason named is the
-    reason it actually stopped at.
-    """
-    rec = get_participant(pid)
-    if rec is None:
-        # Unchanged, deliberately: an id that resolves to nothing gets exactly
-        # what it got before, and a stranger probing ids learns nothing new.
-        return 404, "no such participant record", CONSENT_REFUSAL_NO_RECORD
-    if rec.get("declined"):
-        return (409,
-                "this participant record carries a refusal, and a refusal is "
-                "terminal. Somebody who declined and changed their mind starts "
-                "a new run rather than overwriting the refusal.",
-                CONSENT_REFUSAL_DECLINED)
-
-    from . import runs
-    from .storage import (UPSTREAM_CONSENT_VERSION_ENV, upstream_consent_version)
-
-    try:
-        run = runs.find_by_participant_record(pid)
-    except Exception:  # noqa: BLE001 — a diagnosis must not raise over a lookup
-        run = None
-    qid = str((run or {}).get("qualtrics_id") or "").strip()
-    unpiped = bool(re.search(r"\$\{|e://|\}", qid))
-    if run is not None and str(run.get("cohort") or "").strip() != "internal" \
-            and (not qid or unpiped):
-        return (409,
-                "this participant's entry link carried no usable Qualtrics "
-                "response id, so there is no survey response to record their "
-                "consent against and none was written. Fix the survey's "
-                "redirect to pass ?qid=${e://Field/ResponseID} to the study "
-                "link, and have this participant enter again.",
-                CONSENT_REFUSAL_NO_QID)
-    if not upstream_consent_version():
-        return (503,
-                f"{UPSTREAM_CONSENT_VERSION_ENV} is not set on this deployment "
-                f"(or is set to a placeholder), so no consent record can name "
-                f"the approved text the participant agreed to and NO STUDY "
-                f"CONSENT CAN BE RECORDED AT ALL. Set it on the service to the "
-                f"version of the consent wording the Qualtrics survey is "
-                f"currently showing, then this participant may continue. "
-                f"/health reports the same thing under config.",
-                CONSENT_REFUSAL_VERSION_UNSET)
-    # Reached only if storage grows a refusal this function has not learned
-    # about. Says so, rather than picking the nearest of the four and being
-    # confidently wrong — which is the defect this function exists to end.
-    return (409,
-            "consent was refused for this record and this route could not "
-            "determine which rule refused it; the server log carries the "
-            "reason.",
-            CONSENT_REFUSAL_UNKNOWN)
-
-
-def _adopt_participant_record(run_id: str, pid: str, code: str = "") -> None:
-    """Give a run the participant record it never got, if it has none.
-
-    /start normally mints the record and stores it on the run. When that mint
-    fails the run is left without one, and the page mints its own here — a
-    record the run has never heard of, so _run_context cannot resolve the
-    encounter and the manifest records it as unattributable. Writing the id back
-    at the first affirmative act repairs the join for the rest of the run.
-
-    `code` is the belt to run_id's braces, and it is what makes this reachable
-    at all. The repair used to return immediately unless the POST carried a
-    run_id — and static/v2.html's consent-ACCEPT handler does not send one (only
-    its decline handler does), so on the one client that takes this path the
-    repair never fired and B20's harm stayed live: the run kept
-    participant_record_id None, _run_context resolved to None, and the
-    encounter's manifest recorded run_id, cohort and participant key as null,
-    which per storage.py means "not study data". The page does send `code`, and
-    `code` is the run's own participant key (v2.html sends run.participant_id),
-    so when no run_id is given the run can be found from it. Fixing the client
-    to send run_id is the better half of this and is tracked separately; this
-    half is what stops a client that forgets it from silently costing the
-    participant their first encounter.
-
-    Only ever fills a blank: a run that already names a record keeps it, because
-    that is the identity its earlier encounters were recorded under. Failure is
-    swallowed for the same reason /start's is — consent has been given and
-    recorded, and bookkeeping must not be what turns the participant away.
-
-    AND ONLY EVER ADOPTS A FREE RECORD. A record that already names its own run
-    belongs to that run, and letting a second run claim it was the last step of
-    a reproduced cohort forgery: mint a run keylessly, POST a consent naming
-    somebody else's participant record, and every encounter that record had
-    already produced changed cohort. A record is the identity one person keeps
-    across four encounters; it is not a thing a later request may re-home.
-    """
-    if not pid or not (run_id or code):
-        return
-    from . import runs
-
-    try:
-        rec = get_participant(pid) or {}
-        owner_run = rec.get("run_id")
-        if owner_run and owner_run != run_id:
-            print(
-                f"  WARNING: refusing to attach participant record {pid} to run "
-                f"{run_id or '(resolved from code)'}: the record already belongs "
-                f"to run {owner_run}. Its encounters were recorded under that "
-                f"run's cohort and a second run may not claim them."
-            )
-            return
-        run = runs.get(run_id) if run_id else None
-        if run is None and code:
-            # Their own run, not a stranger's: find_for_participant matches on
-            # the participant key, which is the same key /start created the run
-            # under. Newest wins, which is the run the consent form is being
-            # shown for — the accept happens on the first encounter of a run,
-            # before any later one exists.
-            run = runs.find_for_participant(code)
-        if run is not None and not run.get("participant_record_id"):
-            run["participant_record_id"] = pid
-            runs.save(run)
-            # Both directions, at the one moment the binding is decided. The run
-            # naming the record is what lets an encounter be joined back; the
-            # record naming the run is what stops the join being re-derived
-            # later from whichever run happens to be newest. See _run_context.
-            _bind_record_to_run(pid, run)
-    except Exception as e:  # noqa: BLE001
-        print(
-            f"  WARNING: could not attach participant record {pid} to run "
-            f"{run_id}: {type(e).__name__}: {e}"
-        )
-
-
-def _bind_record_to_run(pid: str, run: dict) -> None:
-    """Write this record's run and cohort onto the record. Fills blanks only.
-
-    Kept out of storage.create_participant's signature for the repair path,
-    where the record already exists. Never overwrites: a record that already
-    names a run is answered by _adopt_participant_record above, which refuses
-    the adoption outright rather than arriving here.
-    """
-    from .storage import PARTICIPANTS_DIR
-    from .storage import replace_with_retry as _replace
-
-    rec = get_participant(pid)
-    if rec is None or rec.get("run_id"):
-        return
-    rec["run_id"] = run.get("run_id")
-    rec["cohort"] = run.get("cohort", "study")
-    tmp = PARTICIPANTS_DIR / f"{pid}.json.tmp"
-    tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
-    _replace(tmp, PARTICIPANTS_DIR / f"{pid}.json")
-
-
-@app.post("/api/consent/decline")
-async def api_post_consent_decline(payload: dict, key: Optional[str] = Query(None)):
-    """The participant read the consent form and chose not to take part.
-
-    Recorded rather than ignored: how many people decline after reading the form
-    is a number an IRB asks for, and without a record a refusal looks exactly
-    like a browser crash. Nothing here can grant consent, so this is safe on the
-    participant's side of the gate.
-
-    Answers 200 even when there is no record to mark. The page has already told
-    the participant they are finished, and re-prompting someone who has just
-    refused would be a worse failure than a thinner record. `recorded`,
-    `withdrawn` and `reason` in the body say what actually happened, so a 200 is
-    not read as "both artefacts were written".
-
-    `reason` exists because `recorded: false` covers two situations the
-    participant must not be told the same thing about. "already_consented" means
-    this record carries consent — very likely given in the other tab of a
-    duplicated study link — so an encounter may already have been recorded and
-    the page must not tell them their camera was never on. "no_record" means
-    there is nothing on file under that id at all, where nothing was captured
-    and the honest thing to say is that the refusal could not be filed. The
-    client cannot tell those apart from a boolean, and guessing would have it
-    state one of them as fact.
-    """
-    check_participant(key)
-    from . import runs
-
-    version = _load_consent().get("version", "unknown")
-    pid = (payload.get("participant_id") or "").strip()
-    run_id = (payload.get("run_id") or "").strip()
-
-    # WHOSE RUN IS IT. This is asked BEFORE the refusal is filed, and the order
-    # is the fix rather than a detail: storage.record_decline writes the posted
-    # run_id onto the record it marks, so asking afterwards would be asking a
-    # record this very call had just taught to claim the run.
-    #
-    # `recorded` below is computed against the POSTED RECORD; the withdrawal
-    # below that was applied to the POSTED RUN; and nothing joined the two. So
-    # anybody could arrive normally, get their own pending record, and POST a
-    # decline naming it beside somebody else's run_id: their refusal filed, and
-    # that stranger's study permanently over — runs.withdraw has no clearing
-    # path, runs.advance refuses a withdrawn run, and every remaining encounter
-    # is refused from then on. No key, no unusual precondition.
-    #
-    # A record we cannot read is not gated here. record_decline refuses one too,
-    # so `recorded` is already False and there is nothing for this to protect.
-    run = runs.get(run_id) if run_id else None
-    declining_record = get_participant(pid) if pid else None
-    owns_run = (declining_record is None
-                or _record_owns_run(declining_record, run))
-
-    recorded = False
-    if pid:
-        # A run this record has no claim on is not written onto it either.
-        recorded = record_decline(
-            pid, version, run_id=(run_id if owns_run else None)) is not None
-    if recorded:
-        reason = "recorded"
-    else:
-        # Ask the record itself rather than inferring: record_decline answers
-        # None for both cases and the difference is what the participant is
-        # about to be told.
-        prior = get_participant(pid) if pid else None
-        reason = ("already_consented"
-                  if prior is not None and (prior.get("consent_given")
-                                            or prior.get("consent_recorded_at"))
-                  else "no_record")
-    # Stop the run as well, so reopening the study link cannot enrol someone who
-    # declined into the encounters they just refused — but ONLY when the refusal
-    # was actually recorded.
-    #
-    # record_decline returns None when the record already carries consent: a
-    # decline cannot retroactively withdraw a consent under which audio and
-    # webcam have already been captured (storage.record_decline explains why).
-    # Withdrawing the run regardless, which is what this did, produced two
-    # artefacts that contradict each other — the participant file saying
-    # consented and never declined, the run file saying withdrawn BECAUSE
-    # consent was declined — split across two files so neither one alone shows
-    # the contradiction, with the participant locked out of every remaining
-    # encounter (runs.withdraw has no clearing path and runs.advance refuses a
-    # withdrawn run). That is worse-shaped than the defect it replaced. The
-    # request that triggers it is ordinary, not adversarial: both tabs of a
-    # duplicated study link get &consent=1, so the one left open still offers
-    # Decline after the other has consented.
-    #
-    # `completed` is the second guard. A run with finished encounters holds
-    # recorded data that a late decline did not undo, and marking it withdrawn
-    # would tell an analyst the participant stopped partway through a run they
-    # actually finished. Someone who consents and then wants out uses the
-    # participant page's own stop control, which withdraws the run as the
-    # separate act it is.
-    #
-    # `owns_run` is the third, and the one a stranger needed. See above.
-    withdrawn = False
-    if recorded and owns_run and run is not None and not (run.get("completed") or []):
-        runs.withdraw(run_id, reason="declined_consent")
-        withdrawn = True
-        # A decline is one of the three places a withdrawal is written, and it
-        # used to be the one the teardown had never heard of: both tabs of a
-        # duplicated study link get &consent=1, so the tab left open still
-        # offers Decline while the other one is mid-encounter. The run was
-        # marked withdrawn and that encounter kept recording and kept streaming.
-        await _enforce_withdrawal(runs.get(run_id) or run,
-                                  where=f"a consent decline on run {run_id}")
-    elif recorded and not owns_run and run is not None:
-        # Loud for the same reason the branch below is: somebody has just tried
-        # to end a study that is not theirs, and nothing else in the data will
-        # ever say so.
-        print(
-            f"  WARNING: decline POSTed for run {run_id} named participant "
-            f"record {pid}, which does not belong to that run (it belongs to "
-            f"run {declining_record.get('run_id') or 'none'}, participant key "
-            f"{declining_record.get('code')!r}). The refusal is filed against "
-            f"the record; the run is left alone."
-        )
-    elif run is not None and not recorded:
-        # Loud, because the two records are about to disagree with what the
-        # participant just clicked and nothing downstream will say so.
-        print(
-            f"  WARNING: decline POSTed for run {run_id} (participant record "
-            f"{pid or 'none'}) was not recorded ({reason}). The run is left "
-            f"alone rather than withdrawn against a consented record."
-        )
-    return {"recorded": recorded, "withdrawn": withdrawn, "reason": reason,
-            "consent_text_version": version}
 
 
 @app.post("/api/run")
@@ -3493,7 +2929,34 @@ async def api_run_config(key: Optional[str] = None):
     return {
         "return_url": os.getenv("SURVEY_RETURN_URL", "").strip(),
         "return_label": os.getenv("SURVEY_RETURN_LABEL", "Return to the survey"),
+        # Who a participant contacts about the study. Consent and its contact
+        # details live outside this platform (2026-09-17); these three feed the
+        # closing and withdrawal cards, and the page falls back to "the study
+        # team" when they are blank.
+        "contact_name": os.getenv("STUDY_CONTACT_NAME", "").strip(),
+        "contact_email": os.getenv("STUDY_CONTACT_EMAIL", "").strip(),
+        "irb_protocol": os.getenv("STUDY_IRB_PROTOCOL", "").strip(),
     }
+
+
+@app.post("/api/participant")
+async def api_post_participant(payload: Optional[dict] = None,
+                               key: Optional[str] = Query(None)):
+    """Mint a participant record for a page that was opened without one.
+
+    A study arrival never needs this: /start mints the record and hands its id
+    to the page. The researcher's single-scenario links (/v2?scenario=…) and a
+    keyless development box do, because the voice socket refuses to open with
+    no record at all. Never cohort "study": a record minted here belongs to no
+    run, so it is internal under the researcher key and unattributed otherwise.
+    """
+    check_participant(key)
+    body = payload or {}
+    cohort = "internal" if _operator_key(key) else "unattributed"
+    code = str(body.get("code") or "").strip() or f"direct_{secrets.token_hex(4)}"
+    pid = await anyio.to_thread.run_sync(
+        functools.partial(create_participant, code=code, cohort=cohort))
+    return {"participant_id": pid, "cohort": cohort}
 
 
 @app.get("/api/run/{run_id}")
@@ -4360,12 +3823,10 @@ async def ws_participant_voice(
     if PARTICIPANT_KEY_REQUIRED and SESSION_KEY and key != SESSION_KEY:
         await ws.close(code=4401)
         return
-    # Voice capture needs recorded consent, and the record existing is not the
-    # same as consent having been given: /start mints one with consent_given
-    # False so identity is stable before the participant has agreed to anything.
-    # Check the flag, not just the record, or the gate is decorative — the same
-    # check the text socket makes, from the same helper.
-    if not _consented_participant(participant_id):
+    # Voice capture needs a participant record that exists and is not
+    # withdrawn (_participant_may_capture). Consent is taken in Qualtrics
+    # before the participant reaches this app, so it is not asked of here.
+    if not _participant_may_capture(participant_id):
         await ws.close(code=4403)
         return
     await ws.accept()

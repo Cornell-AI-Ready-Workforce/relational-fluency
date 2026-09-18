@@ -49,8 +49,9 @@ steering log under a single encounter id, so the modalities stay joined.
 
 1. CloudResearch Connect recruits and pays; Qualtrics issues the participant key
    and collects the WEIP baseline before the app opens.
-2. Web app handles consent, webcam permission, and counterbalanced assignment of
-   the four scenarios; state keyed by participant.
+2. Web app handles the camera and microphone check and the counterbalanced
+   order of the four scenarios; state keyed by participant. Consent is taken in
+   Qualtrics before the app opens, and the app holds no consent step.
 3. Live voice conversation over a WebSocket to the session broker.
 4. The broker relays participant audio to Gemini Live and streams agent audio
    back, holding the gateway key so it never reaches the browser.

@@ -703,36 +703,22 @@ const transcript = (b) =>
   }
 
   // --- 4. a camera that is missing, denied or busy -------------------------
+  // The camera is REQUIRED (2026-09-17): every encounter is recorded on video,
+  // so a camera that cannot be opened stops the encounter from starting, keeps
+  // the browser's own name for the failure, and releases the microphone with
+  // it — a page that kept the mic open behind a refusal would be recording
+  // someone it had just told it could not record.
   for (const name of ['NotFoundError', 'NotAllowedError', 'NotReadableError']) {
     const b = boot({ cameraError: name });
-    await b.ctx.startCapture();
-    const stream = b.run('mediaStream');
-    assert(stream.getAudioTracks().length === 1,
-      'a camera failure took the microphone with it: the encounter is lost, not degraded');
-    assert(stream.getVideoTracks().length === 0, 'a refused camera produced a video track');
-    assert(/not be captured on camera/.test(transcript(b)),
-      'the participant consented to being filmed and was not told they were not: ' + transcript(b));
+    let thrown = null;
+    try { await b.ctx.startCapture(); } catch (e) { thrown = e; }
+    assert(thrown, 'a refused camera let the encounter start without video');
+    assert.strictEqual(thrown.captureKind, 'camera',
+      'the refusal is not reported as the camera\'s: ' + (thrown && thrown.captureKind));
+    assert.strictEqual(b.run('mediaStream'), null,
+      'the microphone was left open behind a refused camera');
     assert.strictEqual(b.run('cameraFailReason'), name,
       'the camera error was swallowed, so nothing downstream can say which it was');
-    // And the absence is reported AS an absence. A plain confirm means the
-    // opposite — server/app.py writes a video_uploaded event with status
-    // "failed" and server/rater_packet.py reads that as "this encounter WAS
-    // recorded and could not be stored, do not rate it" — so a page that
-    // reports a denied camera on that path turns every one of them into a paid
-    // encounter no rater may score, plus a storage fault against a bucket that
-    // lost nothing. `?no_camera=` is the parameter that says which fact this
-    // is; the Python side drives the real route with the URL built here.
-    b.run("sessionId = 's_1772460300_44c9a2'; participantId = 'p_1772460300_4327ae';");
-    b.ctx.finishVideoRecording();
-    const beacon = b.beacons.find(u => u.indexOf('/video-uploaded') >= 0);
-    assert(beacon, 'an encounter with no camera generated no report at all, so nothing ' +
-      'downstream can say why it has no video');
-    assert(/[?&]no_camera=/.test(beacon),
-      'the absence was reported on the path that means "recorded and lost": ' + beacon);
-    assert(!/client_error=/.test(beacon), 'and it carried a client_error too: ' + beacon);
-    assert(beacon.indexOf('no_camera=' + name) >= 0,
-      'the beacon did not carry which failure it was: ' + beacon);
-    console.log('NOCAMERA_BEACON ' + beacon);
   }
 
   // --- 4b. a recorder that ran, collected bytes, and died ------------------
@@ -1107,7 +1093,6 @@ def test_what_the_page_reports_about_a_camera_is_what_the_server_records(tmp_pat
     raises the real NoCredentialsError if anything asks it anything.
     """
     out = _run(tmp_path, CAPTURE_HARNESS, V2)
-    absence_url = _beacon(out, "NOCAMERA_BEACON")
     lost_url = _beacon(out, "LOST_BEACON")
 
     pytest.importorskip("fastapi")
@@ -1142,20 +1127,8 @@ def test_what_the_page_reports_about_a_camera_is_what_the_server_records(tmp_pat
         return [json.loads(ln) for ln
                 in (sdir / "events.jsonl").read_text(encoding="utf-8").splitlines() if ln.strip()]
 
-    # 1. the encounter that never had a camera
-    res = client.post(absence_url)
-    assert res.status_code == 200, f"{absence_url} -> {res.status_code} {res.text}"
-    assert res.json().get("status") == "absent", res.text
-    kinds = [e.get("type") for e in written()]
-    assert "video_uploaded" not in kinds, (
-        "the page's own no-camera report is recorded as a recording that was made and lost, "
-        "which is the one state the rating console refuses to rate")
-    absent = [e for e in written() if e.get("type") == "video_absent"]
-    assert len(absent) == 1, kinds
-    assert absent[0].get("reason") == "NotReadableError", (
-        f"the reason the camera never ran did not survive the round trip: {absent[0]}")
-
-    # 2. and the recording that was made and then dropped
+    # the recording that was made and then dropped (a camera that never opened
+    # no longer starts an encounter at all — the camera is required)
     res = client.post(lost_url)
     assert res.status_code in (200, 503), res.text
     uploaded = [e for e in written() if e.get("type") == "video_uploaded"]

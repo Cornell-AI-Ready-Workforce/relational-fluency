@@ -165,11 +165,11 @@ def _wrapped_key_header_error(key: str):
 
 @pytest.fixture()
 def voice_session(monkeypatch):
-    """A voice socket whose registry, consent gate and run join are stood in for."""
+    """A voice socket whose registry, capture gate and run join are stood in for."""
     session = FakeSession()
     monkeypatch.setattr(appmod.registry, "create", lambda *a, **k: session)
     monkeypatch.setattr(appmod.registry, "drop", lambda sid: None)
-    monkeypatch.setattr(appmod, "_consented_participant",
+    monkeypatch.setattr(appmod, "_participant_may_capture",
                         lambda pid: {"participant_id": pid, "consent_given": 1})
     monkeypatch.setattr(appmod, "_run_context", lambda pid, run: None)
     return session
@@ -522,39 +522,3 @@ def test_the_encounter_listing_row_reports_the_camera_it_never_had(
 
 # --- the consent guard is called, not merely available -----------------------
 
-
-def test_the_startup_check_asks_consent_check_about_the_real_config(monkeypatch):
-    """Contract (b): the judgement lives in consent_check; this module calls it.
-
-    Asserted on the loaded config rather than on a stub, because a check wired to
-    something other than the file the app serves would pass a unit test and
-    protect nobody.
-    """
-    seen = {}
-
-    def blocker(cfg):
-        seen["cfg"] = cfg
-        return "the form still names no researcher"
-
-    fake = types.ModuleType("server.consent_check")
-    fake.consent_fielding_blocker = blocker
-    monkeypatch.setitem(__import__("sys").modules, "server.consent_check", fake)
-
-    assert appmod.check_consent_fielding() == "the form still names no researcher"
-    assert seen["cfg"] == appmod._load_consent()
-
-
-def test_a_missing_consent_check_is_said_out_loud_rather_than_passing(monkeypatch):
-    """An absent check must not read as a clean bill of health."""
-    import sys
-
-    monkeypatch.setitem(sys.modules, "server.consent_check", None)
-
-    reason = appmod.check_consent_fielding()
-
-    assert reason and "could not be loaded" in reason
-
-
-def test_the_check_runs_at_startup():
-    names = [h.__name__ for h in appmod.app.router.on_startup]
-    assert "_check_consent_on_startup" in names
