@@ -230,13 +230,22 @@ def _strip_context_echo(text: str, told: list) -> str:
     # The alternation stops at the INNER sentence's full stop, so without a
     # place for the quote and the bracket to go the reply was recorded starting
     # `") Right, so...` \u2014 the note stripped and its punctuation left behind.
+    # Live rooms on 2026-09-17 also produced the paraphrases "(Context, not
+    # meant for you to repeat:", "(Alex speaks again: ..." and "(Casey just
+    # said "Sorry..." with no colon, so the marker takes those too; a note
+    # that is opened and never closed is then the whole reply, and comes off
+    # whole (see _strip_narration for the unterminated case).
     t = re.sub(
-        r"(?:\[[^\]]{1,40}\s+says\]:|\(Context, not for you to repeat:|"
-        r"\b[A-Z][a-z]+\s+(?:just\s+)?(?:says|said)(?:\s+out\s+loud(?:\s+to\s+the\s+group)?)?:)"
+        r"(?:\[[^\]]{1,40}\s+says\]:|\(Context,?\s+not\s+(?:meant\s+)?for\s+you\s+to\s+repeat:|"
+        r"\b[A-Z][a-z]+\s+(?:speaks\s+again|(?:just\s+)?(?:says|said)(?:\s+out\s+loud(?:\s+to\s+the\s+group)?)?)"
+        r"(?::|(?=\s*[\"\u201c])))"
         r"\s*(?:\"[^\"]*\"?|\u201c[^\u201d]*\u201d?|[^.!?]*[.!?])[\"\u201d]?\s*\)?\s*",
         " ", t,
     ).strip()
     t = re.sub(r"\s{2,}", " ", t)
+    # A note that was opened and never closed leaves only its bracket behind.
+    if re.fullmatch(r"[\(\[\"\u201c\)\]\s]*", t):
+        t = ""
     if not told or not t:
         return t
     told_norm = " ".join(_norm_speech(x) for x in told)
@@ -247,6 +256,31 @@ def _strip_context_echo(text: str, told: list) -> str:
             continue
         kept.append(sent)
     return " ".join(kept).strip().strip('"').strip()
+
+
+def _strip_narration(text: str) -> str:
+    """Drop a narrated lead-in from a reply: a leading (...) or [...] block.
+
+    '(Casey pauses.) I agree' is still a spoken reply, so the block comes off
+    and the speech stays. Two shapes seen live on the native-audio route on
+    2026-09-17 that the balanced rule alone missed: a note the model opened
+    and never closed ('(Context, not meant for you to repeat:' and nothing
+    after it; '(Alex speaks again: "You can say that again...' running to the
+    end), and a 1:1 opener narrating the scene ('(The meeting has ended. Alex
+    and Casey have left.) I stopped doing the second pass...'). An unterminated
+    note is the whole reply unless a quoted line inside it closes and speech
+    follows the quote.
+    """
+    t = (text or "").strip()
+    m = re.match(r"^\s*[\(\[][^\)\]]{3,240}[\)\]]\s*", t)
+    if m:
+        return t[m.end():].strip()
+    if t[:1] in "([" and not re.search(r"[\)\]]", t):
+        q = re.search(r'["\u201c][^"\u201d]*["\u201d]\s*\)?\s*', t)
+        if q and q.end() < len(t):
+            return t[q.end():].strip()
+        return ""
+    return t
 
 
 def _is_stage_direction(text: str) -> bool:
@@ -2905,7 +2939,7 @@ class RealtimeVoiceSessionRunner:
         # Drop a narrated lead-in before classifying the remaining speech:
         # '(Casey pauses.) I agree (for now)' is still a spoken reply.
         before_narration = text
-        text = re.sub(r"^\s*[\(\[][^\)\]]{3,120}[\)\]]\s*", "", text).strip()
+        text = _strip_narration(text)
         # A standalone direction may have been stripped in full. Retain its
         # original text for the diagnostic, while recording no spoken reply.
         direction_text = text or before_narration
@@ -4691,6 +4725,15 @@ class RealtimeVoiceSessionRunner:
 
             text = _clean_agent_text("".join(buf))
             buf.clear()
+            # The same two strips the group path applies. Seen live in the
+            # S3A one-on-ones (2026-09-17): Jordan opening with "(The meeting
+            # has ended. Alex and Casey have left...)" and Casey captioned
+            # "(The user hasn't spoken yet, I should wait for their response.)".
+            before_narration = _strip_context_echo(text, [])
+            text = _strip_narration(before_narration)
+            if before_narration and not text:
+                self.session.store.event("stage_direction_output",
+                                         agent_id=agent_id, text=before_narration)
             text, retry_head = self._retry_head_if_empty(agent_id, text, retried)
             # See _instructions: the note is spent once the actor has spoken
             # under it, and the _steer() re-brief in this method's finally is
