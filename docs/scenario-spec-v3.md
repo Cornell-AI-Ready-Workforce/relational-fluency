@@ -137,9 +137,11 @@ and should be carried into the scenario files rather than left in the deck.
 
 1. **Scenario schema needs interactions.** An encounter is two interactions,
    each with a mode (1:1 or group), a cast, and an ordered trigger list.
-2. **Group support must be rebuilt on Gemini Live.** The v1 multi-agent runner
-   was deleted with the vendor cascade (commit `d2b896c`, recoverable); S3 and
-   S4 — half the constructs — cannot run without a replacement.
+2. **Group support runs on Gemini Live** as one realtime session per character
+   (`server/group_room.py`), with the director choosing who holds the floor.
+   The v1 multi-agent runner was deleted with the vendor cascade (commit
+   `d2b896c`); its replacement was verified live on the native-audio model on
+   2026-09-17 — `docs/rooms-verification.md`.
 3. **Triggers need to be first-class**, fired in order and logged with their
    ESCI item ids, so the steering log shows which trigger produced which
    response. This is what makes an encounter scoreable.
