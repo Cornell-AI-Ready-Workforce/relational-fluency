@@ -399,7 +399,9 @@ def test_the_configured_model_is_the_one_with_no_mid_session_steering():
     from server.voice.realtime import capabilities_for, family_of
 
     model = provenance()["realtime_model"]
-    assert family_of(model) == "gemini-live", model
+    # Both Gemini rows share the card (see the slice in the next test); the
+    # study's default moved to the native-audio row on 2026-09-17.
+    assert family_of(model) in ("gemini-live", "gemini-live-native-audio"), model
     assert capabilities_for(model).honours_session_update is False
 
 

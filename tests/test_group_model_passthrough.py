@@ -59,6 +59,9 @@ from server.voice.realtime import capabilities_for       # noqa: E402
 
 GEMINI = "nto.gemini-live-2.5-flash"
 GPT = "gpt-realtime-2.1"
+# The study's configured default since 2026-09-17: the native-audio sibling of
+# GEMINI, on its own row of the table (family gemini-live-native-audio).
+DEFAULT = "nto.gemini-live-2.5-flash-native-audio"
 
 # What the runner's own _voice_for hands out with the process default left
 # alone: the gemini roster, by cast position. Every one of them is refused by
@@ -126,7 +129,7 @@ def _open_room(model=None, voice_for=None):
 def test_a_room_asked_for_gpt_opens_gpt_sockets(real_sessions):
     """The defect itself, in the configuration that exposes it: the model set
     for the room, the process default left alone."""
-    assert rt_mod.MODEL == GEMINI, (
+    assert rt_mod.MODEL == DEFAULT, (
         "this test is about a room whose model differs from the process's; "
         f"the process is on {rt_mod.MODEL}"
     )
@@ -221,12 +224,12 @@ def test_the_configured_default_is_left_exactly_where_it_was(real_sessions):
     configured model, on the gemini row, with the floor a filter and steering
     inert — i.e. what a study encounter does today."""
     room = _open_room()
-    assert room.model == GEMINI == rt_mod.MODEL
-    assert all(rt.model == GEMINI for rt in room.sessions.values())
-    assert room.caps.family == "gemini-live"
+    assert room.model == DEFAULT == rt_mod.MODEL
+    assert all(rt.model == DEFAULT for rt in room.sessions.values())
+    assert room.caps.family == "gemini-live-native-audio"
     assert room.floor_is_real is False
     assert room.steering_is_real is False
-    assert all(GEMINI in url for url, _ in real_sessions)
+    assert all(DEFAULT in url for url, _ in real_sessions)
 
 
 def test_steering_is_real_is_read_from_the_one_table():
@@ -634,4 +637,5 @@ def test_nothing_in_this_change_moves_REALTIME_MODEL():
         assert 'setting("REALTIME_MODEL"' not in src, name
         assert "REALTIME_MODEL =" not in src, name
         assert 'setenv("REALTIME_MODEL' not in src, name
-    assert os.getenv("REALTIME_MODEL") in (None, GEMINI)
+    # A local .env may set the study's own value; nothing else may.
+    assert os.getenv("REALTIME_MODEL") in (None, DEFAULT)

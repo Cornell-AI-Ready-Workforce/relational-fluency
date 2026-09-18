@@ -155,7 +155,7 @@ def _ratecv(pcm: bytes, inrate: int, outrate: int, state):
     return struct.pack("<%dh" % len(out), *out), new_state
 
 GATEWAY = gateway_base_url()
-MODEL = setting("REALTIME_MODEL", "nto.gemini-live-2.5-flash")
+MODEL = setting("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio")
 # Deliberately no default. "Puck" used to stand here, which made one family's
 # voice the answer for both: point REALTIME_MODEL at a gpt model and every
 # session would open with a voice that family rejects, and a rejected voice
@@ -1242,13 +1242,18 @@ class RealtimeVoiceSession:
         self,
         instructions: str,
         *,
-        model: str = MODEL,
+        model: Optional[str] = None,
         voice: str = VOICE,
         tools: Optional[list] = None,
         api_key: Optional[str] = None,
     ) -> None:
         self.instructions = instructions
-        self.model = model
+        # Read at call time, not bound as a default argument: MODEL is the one
+        # clock the runner and the room read on every call
+        # (realtime_voice_session.realtime_model, group_room._configured_model),
+        # and a default bound at import disagreed with both the moment the
+        # process's model was changed after import.
+        self.model = model or MODEL
         self.voice = voice_for_model(voice, model)
         self.tools = tools or []
         self.api_key = api_key or gateway_api_key()

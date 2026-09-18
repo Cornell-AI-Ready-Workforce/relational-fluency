@@ -132,9 +132,11 @@ static/v2.html                     server/app.py                      LiteLLM â†
 One thing to know about the model. Every character carries its brief, its beats
 and its personality from the moment the session opens, and that is what the
 participant hears. The platform also has a *director* that composes a stage
-direction per turn, but on the configured model (`nto.gemini-live-2.5-flash`)
-a direction sent mid-encounter is accepted and silently discarded, so the
-per-turn steering does not reach the character. The encounter is unaffected as
+direction per turn, but on the configured Gemini family
+(`nto.gemini-live-2.5-flash-native-audio`) a direction sent mid-encounter is
+accepted and silently discarded, so the per-turn steering does not reach the
+character. That was measured on the model's plain sibling; the native-audio
+route is treated the same way until someone probes it. The encounter is unaffected as
 a recording; whether to stay on this model is a PI and IRB decision, written up
 in the `PI-DECISION-realtime-model.md` memo that accompanies this repository.
 The measurements behind that, and behind the runner's recovery constants, are

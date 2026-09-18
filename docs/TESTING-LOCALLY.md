@@ -93,10 +93,12 @@ predicts looks like a participant-side problem rather than a configuration one.
 
 ### 4. On the configured model, the director's directions never arrive
 
-`REALTIME_MODEL` is `nto.gemini-live-2.5-flash`. On that model a stage direction
-sent **mid-encounter** is composed, logged, and discarded in transit: measured
+`REALTIME_MODEL` is `nto.gemini-live-2.5-flash-native-audio`. On the Gemini
+family a stage direction sent **mid-encounter** is composed, logged, and
+discarded in transit: measured on the plain sibling `nto.gemini-live-2.5-flash`
 across two 1:1 sessions and one group room, **5 sent, 0 received**, with no error
-and no warning.
+and no warning. The native-audio route inherits that setting in the bridge's
+table until someone probes it there.
 
 The conversation you will hear is fluent, in character, on topic — and
 **unsteered**. Nothing in the audio or the transcript shows it. The only trace is
@@ -212,7 +214,7 @@ and try again."* in the room, with Start re-enabled.
 ### The character pauses for about eight seconds and then says the line again
 
 Not a bug you have found, and the most important thing on this page to know
-before you listen. The gateway (`nto.gemini-live-2.5-flash` through
+before you listen. The gateway (measured on `nto.gemini-live-2.5-flash` through
 `api.ai.it.cornell.edu`) sometimes drops a reply's voice — either mid-sentence
 with the caption whole (about 1 reply in 9) or before it starts (before this
 build: 47 s of dead air, with your own turns refused meanwhile). The bridge now

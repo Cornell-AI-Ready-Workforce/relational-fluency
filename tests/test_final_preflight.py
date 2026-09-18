@@ -87,7 +87,7 @@ EXPECTED_ROLES = (
     ("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite", "the actor's text engine", True),
     ("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite", "the director", True),
     ("STEERING_MODEL", "nto.gemini-3.1-flash-lite", "the steering reviewer", True),
-    ("REALTIME_MODEL", "nto.gemini-live-2.5-flash", "the voice socket", True),
+    ("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio", "the voice socket", True),
     ("TRANSCRIBE_MODEL", "nto.gemini-2.5-pro", "the re-transcriber, offline", False),
 )
 ROLE_OF = {name: role for name, _, role, _ in EXPECTED_ROLES}
@@ -207,12 +207,12 @@ def test_the_configuration_this_study_runs_is_not_flagged(gateway):
 def test_the_live_voice_model_is_accepted_despite_reporting_no_mode(gateway):
     """Guards the fixture's warning above with an assertion.
 
-    nto.gemini-live-2.5-flash is what the participant talks to and the gateway
-    lists it with mode=None, so any rule that required mode == "realtime" would
-    take the study down on a correct configuration.
+    nto.gemini-live-2.5-flash-native-audio is what the participant talks to and
+    the gateway lists it with mode=None, so any rule that required
+    mode == "realtime" would take the study down on a correct configuration.
     """
     entry = next(e for e in LIVE_MODELS["data"]
-                 if e["id"] == "nto.gemini-live-2.5-flash")
+                 if e["id"] == "nto.gemini-live-2.5-flash-native-audio")
     assert entry["mode"] is None, "the gateway started reporting mode; re-record"
 
     assert llm.preflight()["ok"] is True
