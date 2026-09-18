@@ -46,7 +46,7 @@ verification:
 - **`infra/terraform/ecs.tf` declared resources absent from those live
   revisions** — the EFS file system, its access point, the `/data` mount and the
   `DATA_DIR` environment entry. Those are the fix, not the state of the world;
-  see [No persistent volume](#no-persistent-volume-yet), below.
+  see [No persistent volume](#the-persistent-volume), below.
 
 **Repository update, 15 September 2026:** `versions.tf` now configures a shared
 S3 backend with a DynamoDB lock table, and `terraform.tfvars` pins image
@@ -66,16 +66,16 @@ system, access point, two mount targets, security group, backup policy, the
 task role's EFS grant and the bucket lifecycle rule are created; the task
 definition is replaced (it gains the `/data` volume and `DATA_DIR`,
 `DEFAULT_RUN_VARIANT`, `CLAUDE_MODEL`); the service and target group are
-updated in place. Still no EFS file system exists and the live revision has no
-volume. The apply waits on one number, `study_data_retention_days`, which is
-the IRB's (see [Lifecycle and retention](#webcam-recordings-and-the-study-bucket)).
+updated in place. **Applied the same evening:** EFS `fs-09e2d30bae3ce9239`,
+revision **41** with `study-data` mounted at `/data`, rollout completed 23:45,
+`/health` green. The Terraform path is the release procedure from here.
 
 This page documents **two** paths; their status at the 12 September inspection was:
 
 | Path | Status | Use it for |
 |---|---|---|
-| **CLI: register a task definition, update the service** | In use. Every revision 35–38 | Shipping a build, changing an environment variable, today |
-| **OpenTofu / Terraform** | Blocked until the state is found or rebuilt | Everything structural — EFS, IAM, ALB — and, eventually, all of it |
+| **CLI: register a task definition, update the service** | Was in use for revisions 35–40 | Nothing new; the Terraform path covers it |
+| **OpenTofu / Terraform** | In use since 17 September 2026 (revision 41) | Everything: image pin, environment, EFS, IAM, ALB |
 
 Neither is the long-term answer on its own. The CLI path cannot create a
 persistent volume, an IAM policy or a bucket rule, and a task definition edited
@@ -474,7 +474,7 @@ built and pushed, and two of them name something other than what is wrong.
 | Read logs | `logs:FilterLogEvents`, `logs:DescribeLogGroups`, `logs:DescribeLogStreams` | `/ecs/relational-fluency/agent` |
 | Check the load balancer | `elasticloadbalancing:DescribeTargetGroups`, `elasticloadbalancing:DescribeTargetHealth` | the target group |
 | Look in the study bucket | `s3:ListBucket`, `s3:GetObject`, `kms:Decrypt` | the bucket and its key |
-| Add the persistent volume (one-off) | `elasticfilesystem:CreateFileSystem`, `CreateAccessPoint`, `CreateMountTarget`, `DescribeFileSystems`; `ec2:CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, `DescribeSubnets`; `iam:PutRolePolicy` on the task role; then RegisterTaskDefinition + UpdateService again | see [No persistent volume](#no-persistent-volume-yet) |
+| Add the persistent volume (one-off) | `elasticfilesystem:CreateFileSystem`, `CreateAccessPoint`, `CreateMountTarget`, `DescribeFileSystems`; `ec2:CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, `DescribeSubnets`; `iam:PutRolePolicy` on the task role; then RegisterTaskDefinition + UpdateService again | see [No persistent volume](#the-persistent-volume) |
 
 **`iam:PassRole` is the one that catches people.** A person with every `ecs:*`
 action still cannot register this task definition, because it names an
@@ -528,11 +528,17 @@ the ALB provides — this is why encounters cannot be tested over a bare IP.
 one encounter through `/test` after every deploy and confirm its record
 appears (see [OPERATIONS.md](OPERATIONS.md#is-the-data-being-stored-properly)).
 
-## No persistent volume (yet)
+## The persistent volume
+
+**Applied 17 September 2026:** `tofu apply` created EFS `fs-09e2d30bae3ce9239`
+(two mount targets, an access point owning `/data` as uid 1000) and registered
+revision 41 with the `study-data` volume mounted at `/data` and
+`DATA_DIR=/data`. The record below is how it stood before, kept so the
+one-line check's two outputs stay recognisable.
 
 `infra/terraform/ecs.tf` declares an EFS file system, an access point, a
-`/data` mount point and `DATA_DIR=/data`. **None of that is deployed.** Checked
-12 September 2026:
+`/data` mount point and `DATA_DIR=/data`. None of that was deployed when
+checked on 12 September 2026:
 
 - Revisions 35, 36, 37 and 38 all have `volumes=[]` and no `mountPoints`.
 - **There is no EFS file system in the account** for any of them to mount.

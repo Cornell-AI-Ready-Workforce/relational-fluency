@@ -24,7 +24,7 @@
 #      describe-services gives the running task definition revision)
 #   4. commit, then apply
 #
-# deployed: relational-fluency-agent:0 UNVERIFIED AFTER THE 2026-09-15 MERGE.
+# deployed: relational-fluency-agent:41, registered by tofu apply on 2026-09-17 with this tag; rollout completed 23:45, /health ok.
 #   Revision 0 does not exist. It is here so this line cannot be misread as a
 #   verification, while still satisfying tests/test_terraform_persistence.py,
 #   which requires the pin to name a revision. What is actually known:

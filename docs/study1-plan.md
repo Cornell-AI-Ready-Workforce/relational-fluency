@@ -229,7 +229,7 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
   fallback stays (it puts video on the ephemeral disk).
 - AC: 3 browsers × 1 run each; every encounter has an S3 object and a receipt.
 
-**5.2 Persistent storage for audio, transcript and events** — L · infra — half done 2026-09-17: every closed encounter is archived to `s3://<study bucket>/encounters/<id>/` (`server/archive.py`, off by `ARCHIVE_SESSIONS_TO_S3=0`). EFS: state confirmed in the shared bucket, `tofu plan` = 9 add / 2 change / 1 destroy; no retention rule (PI, 2026-09-17: recordings are kept); apply planned and handed over.
+**5.2 Persistent storage for audio, transcript and events** — L · infra ✅ 2026-09-17 (EFS `fs-09e2d30bae3ce9239` mounted at `/data` on revision 41; archive code awaits an image deploy): every closed encounter is archived to `s3://<study bucket>/encounters/<id>/` (`server/archive.py`, off by `ARCHIVE_SESSIONS_TO_S3=0`). EFS: state confirmed in the shared bucket, `tofu plan` = 9 add / 2 change / 1 destroy; no retention rule (PI, 2026-09-17: recordings are kept); apply planned and handed over.
 - Records today live on the task's ephemeral disk; a deploy loses them. Choose
   EFS mount at `/data` (Terraform exists on the audit branch) or per-encounter
   archive to S3 at completion. Prefer both: EFS for durability during the wave,
@@ -296,7 +296,7 @@ L researcher console, `/ws/researcher`, `director.html`, steering — hold.
 
 ### E8 — Deploy and ops
 
-**8.1 Set the deployed task's environment** — S · infra
+**8.1 Set the deployed task's environment** — S · infra — mostly done 2026-09-17 via Terraform (revision 41: `DATA_DIR`, `DEFAULT_RUN_VARIANT=A`, `REALTIME_MODEL`, `CLAUDE_MODEL`). Still empty: `SURVEY_RETURN_URL` (needs Survey 2); `ENCOUNTER_*` use the code defaults.
 - `UPSTREAM_CONSENT_VERSION`, `SURVEY_RETURN_URL`, `CLAUDE_MODEL`, `DATA_DIR`,
   `ENCOUNTER_MIN_SECONDS`, `DEFAULT_RUN_VARIANT=A`, `REALTIME_MODEL` as decided.
 - AC: `/health` reports all of them set; a study-cohort run records.

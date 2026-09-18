@@ -68,22 +68,16 @@ server.<module>` generalised from one of these lines fails with a confusing
 [Getting data off the server](#getting-data-off-the-server)). That is the
 standing rule. Everything below is why it is still the rule.
 
-**Today there is no persistent volume, and that is measured, not suspected.**
-Checked against the account on 12 September 2026: revisions 35, 36, 37 and 38
-of `relational-fluency-agent` all carry `volumes=[]` and no `mountPoints`, and
-**no EFS file system exists in the account** for any of them to mount. The
-image's own `ENV DATA_DIR=/data` means the app writes to `/data` regardless, so
-the path in every other command on this page is right — but with no volume
-behind it, `/data` is the container's writable layer and it goes with the task.
-
-The EFS file system, its access point and the `/data` mount *are* written in
-`infra/terraform/ecs.tf` (`aws_efs_file_system.study`,
-`aws_efs_access_point.study`, the `mountPoints` entry on the platform
-container). Terraform source is not a running service: it protects nothing
-until someone applies it, and that stack's state is not in the account's state
-bucket, so applying it is itself blocked — see
-[`DEPLOY-AWS.md`](DEPLOY-AWS.md#read-this-first-the-runbook-and-the-practice-have-diverged).
-Do not read the presence of those resources in the repository as protection.
+**Since 17 September 2026 the task has a persistent volume.** `tofu apply`
+created EFS file system `fs-09e2d30bae3ce9239` with two mount targets and an
+access point, and registered revision **41** of `relational-fluency-agent`,
+which carries volume `study-data` mounted at `/data` and `DATA_DIR=/data`; the
+service rolled over to it at 23:45 and `/health` stayed green. Records now
+survive a deploy, a crash and task retirement. Before that (revisions 35–40)
+the task carried `volumes=[]` and no EFS file system existed, so every record
+died with the task; any encounter recorded on those revisions that was not
+pulled is gone. Every closed encounter is also archived to the study bucket
+(`server/archive.py`) once an image carrying that code is deployed.
 
 Ask the running service rather than trusting either this page or that one — it
 is one command and it is the only answer that counts:
@@ -93,12 +87,11 @@ TD=$(aws ecs describe-services --cluster relational-fluency --services platform 
       --query "services[0].taskDefinition" --output text)
 aws ecs describe-task-definition --task-definition "$TD" \
   --query "taskDefinition.[volumes,containerDefinitions[0].mountPoints]"
-# [[],[]]                        → what it returns today: volumes=[] and no
-#                                  mount points. Ephemeral task. Every deploy,
-#                                  crash, or task retirement destroys whatever
-#                                  was recorded since your last pull.
-# an EFS volume + a /data mount  → records survive a deploy, a crash, and task
-#                                  retirement. Nothing else changes.
+# an EFS volume + a /data mount  → what revision 41 returns: records survive a
+#                                  deploy, a crash, and task retirement.
+# [[],[]]                        → volumes=[] and no mount points: an ephemeral
+#                                  task (revisions 35–40). Pull before every
+#                                  deploy if you ever see this again.
 ```
 
 ```powershell

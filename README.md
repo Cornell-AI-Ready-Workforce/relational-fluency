@@ -345,7 +345,7 @@ The study service runs on ECS/Fargate behind an ALB at
 Every live task-definition revision so far was registered by hand with the AWS
 CLI. The Terraform under `infra/terraform/` describes the stack and, since
 17 September 2026, its state is confirmed in the shared state bucket, so
-`tofu plan` works; the first apply adds the persistent `/data` volume. The release path in use, the permissions each
+`tofu apply` on 17 September added the persistent `/data` volume (revision 41). The release path in use, the permissions each
 step needs, and the state of that apply are in
 [`docs/DEPLOY-AWS.md`](docs/DEPLOY-AWS.md#read-this-first-the-runbook-and-the-practice-have-diverged).
 Operating a wave — health, logs, the participant URLs, pulling data off the
@@ -364,8 +364,8 @@ Open before a wave, in dependency order, tracked in
 [`docs/study1-plan.md`](docs/study1-plan.md):
 
 1. Verify the S3 and S4 group rooms live on the current build.
-2. Give the deployed task a persistent volume so an encounter survives a deploy,
-   and archive session records to S3 rather than only the webcam video.
+2. Deploy an image built from the current main, so the archive-to-S3 step and
+   everything since the carve-out is live (the volume is in place).
 3. Build Survey 2 and set `SURVEY_RETURN_URL`; extend the join script to both
    surveys.
 4. Play through the four scenarios and settle the scenario text.
