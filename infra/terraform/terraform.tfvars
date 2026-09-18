@@ -40,7 +40,7 @@
 #   replace the 0 with the real running revision and today's date, and commit
 #   that in the same change. Applying against an unverified pin is exactly the
 #   rollback-with-a-success-message this block exists to prevent.
-container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:5093dcd"
+container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:4940a40"
 
 # Live voice model. Native-audio route (nto.gemini-live-2.5-flash is being
 # deprecated); verified for 1:1 and group rooms on 5a45420, 2026-09-08.
