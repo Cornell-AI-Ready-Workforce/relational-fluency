@@ -77,7 +77,7 @@ jobs:
           # frozen production dependency set, and adding a test runner to it
           # would ship pytest inside every deployed container. A
           # requirements-dev.txt is the tidier home for this line.
-          pip install pytest
+          pip install pytest httpx2
       # Imports the FastAPI app with no credentials present — catches syntax
       # errors, bad imports, and anything that reaches for a key at import time.
       - name: Import check
