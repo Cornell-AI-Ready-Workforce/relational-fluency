@@ -243,7 +243,7 @@ def _consented() -> dict:
     flipped by record_consent — because the guard keys off both fields and a
     hand-written dict could quietly stop matching what the app writes.
     """
-    pid = storage.create_participant("RF-CONSENTED", False, "2026-01-15")
+    pid = storage.create_participant("RF-CONSENTED")
     rec = storage.record_consent(pid, "2026-01-15")
     assert rec and rec["consent_given"] is True and rec.get("consent_recorded_at")
     return rec
@@ -251,111 +251,11 @@ def _consented() -> dict:
 
 def _pending() -> dict:
     """A participant who has been minted by /start and has not yet answered."""
-    pid = storage.create_participant("RF-PENDING", False, "2026-01-15")
+    pid = storage.create_participant("RF-PENDING")
     rec = storage.get_participant(pid)
     assert rec and rec["consent_given"] is False
     assert "consent_recorded_at" not in rec
     return rec
-
-
-def test_decline_refuses_a_participant_who_already_consented(participants):
-    """The one field an IRB reads must not end up denying a recorded consent.
-
-    A stale second tab, a back-button resubmit or a replayed POST used to flip
-    a consented record to declined, and record_consent then refused to flip it
-    back — locking the participant out of a study whose audio and webcam were
-    already recorded under the consent the record now denied.
-    """
-    rec = _consented()
-    pid = rec["id"]
-    before = (participants / f"{pid}.json").read_text(encoding="utf-8")
-
-    assert storage.record_decline(pid, "2026-09-01", run_id="whatever") is None
-
-    after = json.loads((participants / f"{pid}.json").read_text(encoding="utf-8"))
-    assert after["consent_given"] is True
-    assert "declined" not in after
-    assert after["consent_text_version"] == rec["consent_text_version"]
-    assert (participants / f"{pid}.json").read_text(encoding="utf-8") == before
-
-    with sqlite3.connect(storage.DB_PATH) as conn:
-        row = conn.execute(
-            "SELECT consent_given FROM participants WHERE id = ?", (pid,)
-        ).fetchone()
-    assert row is None or row[0] == 1
-
-
-def test_a_refused_decline_does_not_lock_the_participant_out(participants):
-    """The irreversibility was the injury; check the way back is still open."""
-    pid = _consented()["id"]
-
-    storage.record_decline(pid, "2026-09-01")
-
-    assert storage.record_consent(pid, "2026-09-01") is not None
-    assert json.loads(
-        (participants / f"{pid}.json").read_text(encoding="utf-8")
-    )["consent_given"] is True
-
-
-def test_a_genuine_refusal_is_still_recorded(participants):
-    """A refusal is data — the guard must not swallow the case it exists for."""
-    pid = _pending()["id"]
-
-    rec = storage.record_decline(pid, "2026-09-01", run_id="r_abc")
-
-    assert rec is not None
-    assert rec["declined"] is True and rec["consent_given"] is False
-    assert rec["run_id"] == "r_abc"
-    on_disk = json.loads((participants / f"{pid}.json").read_text(encoding="utf-8"))
-    assert on_disk["declined"] is True
-
-
-def test_a_refusal_is_still_terminal_in_the_other_direction(participants):
-    """The guard added here mirrors record_consent's; neither may weaken."""
-    pid = _pending()["id"]
-    storage.record_decline(pid, "2026-09-01")
-
-    assert storage.record_consent(pid, "2026-09-01") is None
-
-
-def test_declining_an_unknown_participant_is_still_a_miss(participants):
-    assert storage.record_decline("p_0000000000_ffffff", "2026-09-01") is None
-
-
-def test_the_guard_holds_over_a_real_recorded_wave(tmp_path, monkeypatch, wave_dir):
-    """The same guard against records the app actually wrote, when one is here.
-
-    An extra, not the guarantee: the tests above already cover the behaviour
-    everywhere. This one exists because a real wave carries record shapes that
-    predate the current writers, and a consented record from an older consent
-    version must be just as un-declinable as a freshly minted one. Always a
-    COPY — a test must not be able to damage a collection wave.
-    """
-    if not (wave_dir / "participants").is_dir():
-        pytest.skip(f"the wave at {wave_dir} carries no participants/ directory")
-    root = tmp_path / "wave"
-    shutil.copytree(wave_dir / "participants", root / "participants")
-    if (wave_dir / "index.db").exists():
-        shutil.copy(wave_dir / "index.db", root / "index.db")
-    monkeypatch.setattr(storage, "DATA_DIR", root)
-    monkeypatch.setattr(storage, "PARTICIPANTS_DIR", root / "participants")
-    monkeypatch.setattr(storage, "DB_PATH", root / "index.db")
-
-    consented = [
-        rec
-        for path in sorted((root / "participants").glob("p_*.json"))
-        for rec in [json.loads(path.read_text(encoding="utf-8"))]
-        if rec.get("consent_given") or rec.get("consent_recorded_at")
-    ]
-    if not consented:
-        pytest.skip("this wave has no consented participant to try it on")
-
-    for rec in consented:
-        pid = rec["id"]
-        path = root / "participants" / f"{pid}.json"
-        before = path.read_text(encoding="utf-8")
-        assert storage.record_decline(pid, "2026-09-01", run_id="stale-tab") is None
-        assert path.read_text(encoding="utf-8") == before
 
 
 # --- B40: a scenario id is a filename fragment, not a path -------------------

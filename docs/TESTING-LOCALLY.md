@@ -18,27 +18,24 @@ reference for running *yourself* through it.
 Read these before you start, because each one costs an afternoon if you find it
 the hard way.
 
-### 1. A participant entry link needs **both** `?pid=` and `&qid=`
+### 1. A participant entry link carries **both** `?pid=` and `&qid=`
 
 ```
-http://127.0.0.1:8765/start?pid=selftest1            ← dead end
+http://127.0.0.1:8765/start?pid=selftest1            ← runs, but is not study data
 ```
 
-That link — the one you will type first, because it is the obvious one — gets
-past the fiction gate and then stops forever on a blocking card:
+That link — the one you will type first, because it is the obvious one — runs
+end to end. What it produces is a run with no `qualtrics_id`: `qid` carries the
+Qualtrics `ResponseID`, which is the join key between a run and the survey
+response that sent the participant here, and a run without it cannot be joined
+afterwards. A `pid` that is not a real CloudResearch key lands the run in
+`cohort=unattributed`, which every study export drops. Neither is refused —
+the app shows no consent form and keeps no consent record; consent is taken in
+Qualtrics before the link is ever shown.
 
-> **We could not confirm your consent record.** The link that brought you here
-> did not carry the reference we need to match you to the survey you just
-> completed…
-
-The refusal is **permanent**, and the card says so: pressing Try again will not
-fix it, because the link is missing a piece it will still be missing however long
-anyone waits. `qid` carries the Qualtrics `ResponseID`, which is the only
-evidence this platform has that anyone consented; without a usable one,
-`_why_consent_was_refused` returns `CONSENT_REFUSAL_NO_QID` for every
-non-internal run.
-
-**This is the check working, not a broken install.**
+**So a bare link works, and its run is not part of the study.** That is the
+right outcome for a self-test, but say so with `&cohort=internal` (next) rather
+than relying on the accident.
 
 ### 2. `&cohort=internal` is your own way in
 
@@ -47,12 +44,10 @@ http://127.0.0.1:8765/start?pid=selftest1&cohort=internal   ← works
 ```
 
 On a server with no `SESSION_KEY` — which is every local checkout — appending
-`&cohort=internal` does three things at once:
+`&cohort=internal` does two things at once:
 
-- it **satisfies the consent-provenance check with no `qid` at all**, so the
-  link above runs end to end;
-- it **skips the seven-minute encounter gate and the 180-second advance floor**,
-  so a self-test takes three minutes instead of thirty;
+- it **skips the seven-minute encounter floor and the 180-second advance
+  floor**, so a self-test takes three minutes instead of thirty;
 - it **tags the run `cohort=internal`**, which every analysis filter and every
   study export drops.
 
@@ -60,10 +55,10 @@ That last one is the important one. It is the difference between a clean dataset
 and one with your own walkthroughs sitting in it as participants. **Use it on
 every link you type by hand.**
 
-The alternative escape, if you want to exercise the real consent path, is
-`&qid=R_anything` — anything that is not the literal unreplaced
-`${e://Field/...}` placeholder. That produces a `cohort=study` run, so only do
-it deliberately.
+To exercise the study path proper — the floor, the join key, the survey
+return — add `&qid=R_anything` (anything that is not the literal unreplaced
+`${e://Field/...}` placeholder) and leave `cohort` off. With a real
+participant key that produces a `cohort=study` run, so only do it deliberately.
 
 > On a **deployed** server, `cohort=` and `variant=` are ignored on a link that
 > does not also carry the researcher key, and a `WARNING` naming the discarded
@@ -81,8 +76,8 @@ curl -s localhost:8765/health | python -m json.tool
 (Invoke-RestMethod http://127.0.0.1:8765/health) | ConvertTo-Json -Depth 4
 ```
 
-- `status: ok`, `ready: true`, `config.missing_required_env: []` — consent will
-  be recorded and conversations will be captured.
+- `status: ok`, `ready: true`, `config.missing_required_env: []` —
+  conversations will be captured.
 - `status: degraded`, `ready: false`, or anything in `missing_required_env` —
   **every participant will hit the blocking card and nothing will be recorded**,
   while the server keeps answering 200 and keeps handing out runs.
@@ -90,8 +85,8 @@ curl -s localhost:8765/health | python -m json.tool
 Check it immediately after start, every time. It is one request and it is the
 difference between a wave and a lost wave.
 
-**The boot warning is not enough on its own.** The line naming a missing
-`UPSTREAM_CONSENT_VERSION` is printed a few seconds **after** uvicorn's
+**The boot warning is not enough on its own.** A line naming a missing or
+unusable variable is printed a few seconds **after** uvicorn's
 `Uvicorn running on http://127.0.0.1:8765` line — that is, after the line that
 invites you to open your browser. It is easy to scroll past, and the symptom it
 predicts looks like a participant-side problem rather than a configuration one.
@@ -136,7 +131,7 @@ port-bound:
 | Surface | Cares about the port? |
 |---|---|
 | Participant webcam upload | **Yes.** 8765 only. |
-| Participant voice, transcript, consent, completion | No |
+| Participant voice, transcript, completion | No |
 | Evidence trace `/evidence` | No |
 | Researcher console `/researcher`, steering trail `/director` | No |
 | Landing page `/`, demo view `/static/demo.html` | No |
@@ -364,15 +359,9 @@ See [OPERATIONS → Sending them back](OPERATIONS.md#sending-them-back).
 
 ## The contact sentence every participant reads
 
-Until `config/consent.yaml`'s contact block is filled in, every completion,
-withdrawal and consent-failure screen ends with, verbatim:
-
-> …contact whoever sent you this study link, the consent form you were shown
-> carries no contact details for the research team, **which is a fault on our
-> side.**
-
-It is true: `contact.pi_name`, `contact.email` and `contact.irb_protocol` are
-still `[FILL IN: …]`, and the deletion right the consent form promises points at
-a blank. Filling those three fields removes the sentence. The full list of what
-must be filled before fielding is in
-[OPERATIONS → the blanks in `config/consent.yaml`](OPERATIONS.md#before-fielding-the-blanks-in-configconsentyaml).
+Every completion and withdrawal screen ends with a contact line built from
+`STUDY_CONTACT_NAME`, `STUDY_CONTACT_EMAIL` and `STUDY_IRB_PROTOCOL` (served on
+`/api/run/config`). With none of them set — every local checkout — it reads
+"…contact the study team, using the contact details in the survey that sent
+you here." Set the three in `.env` to see the real sentence. Consent itself is
+taken outside this platform; the app shows no consent form.

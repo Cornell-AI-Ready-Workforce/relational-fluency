@@ -71,14 +71,14 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "study_data" {
 
 # --- Retention ---
 #
-# config/consent.yaml promises participants a retention period in writing. Until
+# The consent document promises participants a retention period in writing. Until
 # this configuration existed that promise was enforced by nothing: the bucket
 # had no lifecycle rule at all, so "we keep your recording for N and then delete
 # it" was true only for as long as somebody remembered to delete things by hand
 # — which, on a versioned bucket, has never once happened anywhere.
 #
 # THE NUMBER IS NOT IN THIS REPOSITORY ON PURPOSE. It is an IRB-approved figure
-# and the consent text still reads "[FILL IN: retention period ...]". A default
+# and that period has to be copied from the approved document. A default
 # here would be this file answering a question that was asked of the protocol,
 # and it would be a *plausible* answer, which is what makes it dangerous: the
 # apply succeeds, the bucket starts expiring objects on a schedule nobody

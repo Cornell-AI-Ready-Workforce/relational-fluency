@@ -218,28 +218,6 @@ def test_the_demo_door_offers_no_study_entrance():
     assert "/test?" in code, "the demo door does not use the internal entrance at all"
 
 
-def test_the_demo_door_mints_no_consent():
-    """It writes no consent and claims none.
-
-    POST /api/consent is how a consent record comes into being. The demo path
-    reaches it the way a participant does — through /v2, which /test redirects
-    to — and this page must not be a second caller with its own idea of what to
-    put in the record.
-    """
-    code = _code(_demo())
-    assert "/api/consent" not in code
-    assert "consent_given" not in code
-    assert "qid=" not in code
-    # consent_source is printed on this page, deliberately — the callout tells
-    # the room what the record will say. What it may never be is a value this
-    # page decides, so it may appear in the markup and never in the script.
-    body = _code(_script(_demo()))
-    assert "consent_source" not in body
-    assert "JSON.stringify" not in body, (
-        "the demo door builds a request body; it is supposed to open doors, "
-        "not write records")
-
-
 def test_every_live_demo_is_prefixed_demo_in_the_participant_key():
     """The mark an analyst sees without filtering for it.
 
@@ -538,71 +516,3 @@ def test_a_demo_run_is_absent_from_the_study_export(client, runs_mod):
         "filter too, which is the worst of both: it cannot be found to be "
         "deleted")
 
-
-def test_a_demo_consent_record_names_the_demo_and_not_the_survey(client, store):
-    """The record has to say what actually happened.
-
-    A participant's consent is evidenced by their Qualtrics response id. A demo
-    has no Qualtrics response and never will, so the only truthful record is one
-    that says so: source internal_test, reference the internal run id. What it
-    must never do is carry consent_given alone, or borrow the survey's
-    provenance by silence — a record like that reads, to anyone auditing it
-    later, as though somebody consented to the study here.
-    """
-    run_id, pid = _start_demo(client)
-
-    # As minted: identity, no consent. An entry point does not get to assert
-    # somebody's agreement on their behalf.
-    rec = store.get_participant(pid)
-    assert rec["consent_given"] is False
-
-    # The handoff /v2 performs.
-    r = client.post("/api/consent", json={
-        "code": f"test_demo-lab", "participant_id": pid, "run_id": run_id,
-        "consent_given": True, "consent_source": "qualtrics",
-    })
-    assert r.status_code == 200, r.text
-
-    rec = store.get_participant(pid)
-    assert rec["consent_given"] is True
-    assert rec["consent_source"] == store.CONSENT_SOURCE_INTERNAL == "internal_test"
-    assert rec["consent_reference"] == run_id
-    assert rec["consent_reference_kind"] == "internal_run_id"
-    # The page asked for "qualtrics" in that POST and was ignored, which is the
-    # point: provenance is resolved from the run the server wrote, never from
-    # what the browser claims. A client that could name its own source could
-    # manufacture a study consent out of a demo.
-    assert rec["consent_upstream_verified"] is False
-    assert "qualtrics" not in json.dumps(rec).lower()
-
-
-def test_the_capture_gate_is_no_looser_for_a_demo(client, store, monkeypatch):
-    """A demo reaches the microphone through the same consent record, or not at all.
-
-    The demo entrance needs no Qualtrics setup, and it would be an easy and
-    invisible mistake to let that become "and no consent record either". It is
-    not: the voice socket closes 4403 on a demo record that has not consented,
-    exactly as it does on a participant's, and opens once the record exists.
-    """
-    run_id, pid = _start_demo(client)
-
-    def no_such_scenario(*a, **k):
-        raise FileNotFoundError("unknown scenario: conflict")
-
-    monkeypatch.setattr(appmod.registry, "create", no_such_scenario)
-
-    with pytest.raises(WebSocketDisconnect) as caught:
-        with client.websocket_connect(
-                f"/ws/participant/voice?scenario=conflict&participant_id={pid}"):
-            pass
-    assert caught.value.code == 4403
-
-    client.post("/api/consent", json={
-        "code": "test_demo-lab", "participant_id": pid, "run_id": run_id,
-        "consent_given": True,
-    })
-    # Positive control: now it opens, so the 4403 above was the consent gate and
-    # not a broken fixture.
-    with client.websocket_connect(
-            f"/ws/participant/voice?scenario=conflict&participant_id={pid}") as ws:
-        assert ws.receive_json()["type"] == "error"

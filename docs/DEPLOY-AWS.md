@@ -148,46 +148,25 @@ Until a first apply completes in a new environment, its hostname does not
 resolve at all — the DNS records are ALB aliases created by this process, so
 "server not found" is the expected state beforehand.
 
-**The apply will stop and ask for two variables, and both are the check
-working rather than a fault.** `upstream_consent_version` names the approved
-consent wording the Qualtrics survey is showing, it is recorded on every
-participant as `consent_text_version`, and `server/storage.py` refuses to
-record any study consent without it — so a task deployed without it answers
-`/health` 200, takes every arrival, and collects nothing at all. It is given no
-default for exactly that reason: the alternative to being asked here is finding
-out from an empty dataset. `study_data_retention_days` is the number of days
+**The apply will stop and ask for one variable, and that is the check
+working rather than a fault.** `study_data_retention_days` is the number of days
 the bucket keeps a recording before the lifecycle rule in
-`storage_secrets.tf` expires it; it is the period the approved consent text
-promises, that text still reads `[FILL IN: retention period …]`, and a default
-here would be this repository inventing an IRB figure. See
+`storage_secrets.tf` expires it; it is the period the approved consent
+document promises, and a default here would be this repository inventing an
+IRB figure. See
 [Lifecycle and retention](#webcam-recordings-and-the-study-bucket) before
 answering it.
 
 Answer it once, in `terraform.tfvars`, beside the committed image pin. It is not
-a secret, and having the running wave's consent version in git history is worth
-having:
-
-```hcl
-# infra/terraform/terraform.tfvars
-upstream_consent_version = "cornell-irb-2026-09-v3"
-```
-
-Use your **survey's** consent version, not `config/consent.yaml`'s `version` —
-that one names the text this platform used to show, and stamping it on somebody
-who never saw it names the wrong document as the one they agreed to. Blank and
-placeholder values (`[FILL IN: …]`, `TBD`, `changeme`) are rejected at plan time
-and, if one somehow reaches the task, treated as unset by the app.
+a secret, and having the running wave's retention period in git history is worth
+having.
 
 > **On the running study service this variable is not set at all.** Revision 38
 > declares `API_HOST`, `APP_HOST`, `AWS_REGION`, `DIRECTOR_MODEL`, `HOST`,
 > `LLM_BASE_URL`, `PORT`, `REALTIME_MODEL` and `S3_BUCKET`, and nothing else;
 > `ANTHROPIC_API_KEY` and `SESSION_KEY` come correctly from Secrets Manager and
-> must stay that way. `UPSTREAM_CONSENT_VERSION`, `CLAUDE_MODEL` and
-> `SURVEY_RETURN_URL` are absent, and the Terraform variable that would have
-> stopped an apply without the first of them cannot stop a CLI registration.
-> Adding them is part of [4. Release](#4-release), and the wave-time symptom of
-> the first one is in
-> [`OPERATIONS.md`](OPERATIONS.md#the-consent-version-unset-this-records-nothing).
+> must stay that way. `CLAUDE_MODEL` and `SURVEY_RETURN_URL` are absent.
+> Adding them is part of [4. Release](#4-release).
 
 ## 2. Set the secrets
 
@@ -380,7 +359,6 @@ Terraform description agree once they are added:
 
 | Name | Value | Why |
 |---|---|---|
-| `UPSTREAM_CONSENT_VERSION` | the survey's approved consent version | decides whether the wave records anything at all |
 | `CLAUDE_MODEL` | `nto.gemini-3.1-flash-lite` (`text_model` in `variables.tf`) | the text engine, and what `provenance.text_model` on every record names; unset, the record names a code default |
 | `SURVEY_RETURN_URL` | the survey's continuation link — see [Sending them back](OPERATIONS.md#sending-them-back) | where the completion button sends the participant; must be a URL that may receive the run id, completion code and participant key |
 | `DATA_DIR` | `/data` | the image already sets it, so the app writes there either way; on the task it is visible to `describe-task-definition` and to the person trying to work out where the data went |
@@ -515,21 +493,14 @@ study is the body:
 
 ```json
 {"status": "ok",       "ready": true,  "config": {"ok": true,  "missing_required_env": []}}
-{"status": "degraded", "ready": false, "config": {"ok": false, "missing_required_env": ["UPSTREAM_CONSENT_VERSION"]}}
+{"status": "degraded", "ready": false, "config": {"ok": false, "missing_required_env": ["<the variable>"]}}
 ```
 
 `degraded` / `ready: false` is **not** a failed deploy and not a reason to roll
 back. It means the task is serving but a required environment variable is unset
-or still holds a placeholder — and in that state every study consent is
-refused, every voice socket closes 4403, runs keep accumulating and **nothing
-is recorded**. Set the variable named in `missing_required_env` on the service
-and deploy again.
-
-The task definition running in production today has no
-`UPSTREAM_CONSENT_VERSION`, so the first deploy of this build **will** print
-`degraded`. That is the alarm working, not the deploy failing. Point any uptime
-monitor at `.ready == true` rather than at the HTTP status, which by design
-cannot tell these apart.
+or still holds a placeholder. Set the variable named in `missing_required_env`
+on the service and deploy again. Point any uptime monitor at `.ready == true`
+rather than at the HTTP status, which by design cannot tell these apart.
 
 Windows PowerShell — `curl` there is an alias for `Invoke-WebRequest` and
 rejects `-sS`, and `dig` is not a Windows command:
@@ -542,27 +513,9 @@ Resolve-DnsName rf.ai-ready-workforce.ai.cornell.edu
 Then open the app URL in a browser. Microphone capture requires HTTPS, which
 the ALB provides — this is why encounters cannot be tested over a bare IP.
 
-**`{"status":"ok"}` does not mean the deployment can collect anything.** A task
-that is missing `UPSTREAM_CONSENT_VERSION` is healthy by every measure on this
-page and records zero encounters, because no study consent can be written — and
-a `/test` walkthrough will not show it either, since internal runs take a
-different consent path on purpose. So verify the variable itself, not just the
-probe:
-
-```bash
-TD=$(aws ecs describe-services --cluster relational-fluency --services platform \
-      --query "services[0].taskDefinition" --output text)
-aws ecs describe-task-definition --task-definition "$TD" \
-  --query "taskDefinition.containerDefinitions[0].environment[?name=='UPSTREAM_CONSENT_VERSION']"
-```
-
-An empty list, or an entry whose value is blank or a placeholder, means the wave
-would be lost in silence: `POST /api/consent` answers 503 naming the variable
-(on the build deployed today, 404 `no such participant record` — the record
-exists; the message is misleading), the record stays unconsented, and every
-voice socket closes 4403. Go back to step 1. The
-wave-time check, once participants are arriving, is in
-[`OPERATIONS.md`](OPERATIONS.md#the-consent-version-unset-this-records-nothing).
+**`{"status":"ok"}` does not mean the deployment can collect anything.** Walk
+one encounter through `/test` after every deploy and confirm its record
+appears (see [OPERATIONS.md](OPERATIONS.md#is-the-data-being-stored-properly)).
 
 ## No persistent volume (yet)
 
@@ -806,7 +759,7 @@ laptop never exhibits:
 
 - Nothing expires. Recordings are kept until somebody deletes them by hand.
 - A delete is not a delete. With versioning on, `DeleteObject` writes a delete
-  marker and the bytes survive as a noncurrent version. `config/consent.yaml`
+  marker and the bytes survive as a noncurrent version. The consent document
   tells participants they may request that their recordings be deleted, so
   honouring that request today takes a version-aware delete, not an ordinary
   one.
@@ -816,10 +769,9 @@ The rule is now **written**, in `infra/terraform/storage_secrets.tf`
 unable to apply until the IRB supplies the number:
 
 - `study_data_retention_days` has **no default**. It is the period the approved
-  consent text promises, and that text still carries `[FILL IN: retention
-  period for audio, video and transcripts]`. **The lifecycle rule and the
-  consent text are one decision, and the consent text is the half that has to
-  be settled first** — a bucket that expires objects at a date the form does
+  consent document promises. **The lifecycle rule and the consent document are
+  one decision, and the document is the half that has to be settled first** —
+  a bucket that expires objects at a date the form does
   not mention is deleting research data early, and a bucket that keeps them
   forever while the form promises a date is the same mistake pointing the other
   way. `tofu plan` stops and asks; do not answer it from this page.
@@ -847,8 +799,6 @@ unable to apply until the IRB supplies the number:
 
 | Symptom | Cause |
 |---|---|
-| **503 from `POST /api/consent` naming `UPSTREAM_CONSENT_VERSION` (404 `no such participant record` on the build deployed today), or sockets closing 4403, or runs with no encounters** | **`UPSTREAM_CONSENT_VERSION` missing from the task.** It is missing today. On the old build the record exists and the message is misleading. See [step 5](#5-verify) |
-| `tofu apply` stops asking for `upstream_consent_version` | Working as designed — [step 1](#1-provision-the-infrastructure). It has no default because a deployment without it collects nothing |
 | `tofu apply` stops asking for `study_data_retention_days` | Working as designed — the bucket lifecycle rule needs the IRB's retention period and this repository is not entitled to invent it. See [Lifecycle and retention](#webcam-recordings-and-the-study-bucket) |
 | `tofu plan` proposes to CREATE the bucket, roles or certificate | The state for this stack is missing. **Stop**; do not apply. See [Read this first](#read-this-first-the-runbook-and-the-practice-have-diverged) |
 | `Unknown parameter in input: "taskDefinitionArn"` from `register-task-definition` | The read-only fields were not stripped from `td.json` — [step 4a](#4a-the-path-in-use-register-a-task-definition-point-the-service-at-it) |
@@ -884,7 +834,7 @@ Terraform that is supposed to be the source of truth.
    cannot say who has it. Ask the Cornell AWS administrator for the account, and
    have the answer before a wave rather than during one.
 3. **What is the retention period for audio, video and transcripts?**
-   `config/consent.yaml` still carries `[FILL IN: retention period …]`, and the
+   the consent document has to state the retention period, and the
    bucket lifecycle rule and the consent text are one decision. The rule is
    written in `storage_secrets.tf` and waits on `study_data_retention_days`,
    which has no default. The IRB protocol settles it; the PI is who to ask.

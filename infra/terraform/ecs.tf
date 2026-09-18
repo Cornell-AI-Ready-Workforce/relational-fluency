@@ -246,52 +246,6 @@ resource "aws_efs_access_point" "study" {
   }
 }
 
-# --- The consent version the survey is showing ---
-#
-# Declared here, beside its one use, and deliberately WITHOUT a default, which
-# is the whole point of it: `tofu apply` stops and asks rather than deploying a
-# task that comes up healthy and records nothing. server/storage.py refuses to
-# write any study consent until this names the approved Qualtrics wording, so a
-# deployment missing it answers /health 200, mints a run for every arrival,
-# closes every voice socket 4403 and collects an empty dataset — uniformly, from
-# the first participant onward, with no symptom on any surface an operator
-# watches. That failure cost is not one a convenient default can be worth: a
-# default would be a version string this repository invented, stamped on real
-# participants' records as the document they agreed to.
-#
-# Set it in infra/terraform/terraform.tfvars (committed, like container_image —
-# it is not a secret, and the running wave's consent version belonging to git
-# history is a feature), or pass -var upstream_consent_version=... for a one-off.
-variable "upstream_consent_version" {
-  description = "Version string of the consent block the Qualtrics survey is currently showing, e.g. cornell-irb-2026-09-v3. Recorded as consent_text_version on every participant. No default on purpose: an apply that has not been told must fail, not deploy."
-  type        = string
-
-  validation {
-    # Empty and placeholder are the two ways this gets "set" without being
-    # answered, and the app treats both as unset (storage.is_placeholder_value).
-    # Caught at plan time instead, where it costs an apply rather than a wave.
-    #
-    # THIS REGEX IS NOT WRITTEN HERE. It is a copy of the string returned by
-    # server/storage.py's consent_version_rule_pattern(), with every backslash
-    # doubled for HCL, and tests/test_required_deployment_env.py fails — with
-    # the exact string to paste — the moment the two stop agreeing. It used to
-    # be an independent rule that happened to look similar, and the two drifted
-    # the ONE way that costs a wave rather than an apply: `tofu plan` accepted
-    # "xxx", the apply succeeded, and the app then treated the value as unset,
-    # so the task came up healthy, minted a run per arrival and recorded
-    # nothing. Do not edit this line by hand; change the Python and paste what
-    # the test prints. Terraform cannot import it, so agreement is tested.
-    #
-    # Both sides match the trimmed value, case-insensitively.
-    condition = (
-      trimspace(var.upstream_consent_version) != "" &&
-      !can(regex("(?i)fill[ _-]?in|TBD|TODO|XXX|placeholder|change[ _-]?me|^[\\[<{]|[\\]>}]$|^(?:\\-|\\-\\-|\\.|0|\\?|asdf|bar|foo|n\\.a\\.|n/a|na|nan|nil|none|null|tba|tbc|unknown)$",
-      trimspace(var.upstream_consent_version)))
-    )
-    error_message = "upstream_consent_version must name the approved consent wording the Qualtrics survey shows (e.g. cornell-irb-2026-09-v3). Blank, a template marker (FILL IN, TODO, xxx, changeme, anything in brackets) or a word that admits to having no answer (unknown, none, n/a) means the task records no consent at all, and therefore no encounters. This is the same rule server/storage.py applies at runtime; it is refused here so it costs an apply instead of a wave."
-  }
-}
-
 # WHICH STUDY DESIGN THE DEPLOYED SERVICE RUNS, and the language the transcript
 # is taken in. Both arrived with origin/main cabc1dd as code defaults and had no
 # way through the task definition at all until 2026-09-15, which meant
@@ -370,11 +324,6 @@ resource "aws_ecs_task_definition" "agent" {
       { name = "S3_BUCKET", value = aws_s3_bucket.study_data.bucket },
       { name = "AWS_REGION", value = var.region },
       { name = "SURVEY_RETURN_URL", value = var.survey_return_url },
-      # Which approved consent wording the Qualtrics survey is showing. Without
-      # it server/storage.py records no study consent, so the task serves a
-      # green /health, opens a run for every arrival and captures nothing —
-      # see the variable above, which has no default so an apply cannot skip it.
-      { name = "UPSTREAM_CONSENT_VERSION", value = var.upstream_consent_version },
       # The study design and the transcript language. See the two variables
       # above: both are read by server/ and neither had an entry here, so the
       # deployed service ran on code defaults an operator could not change and

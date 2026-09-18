@@ -303,61 +303,6 @@ def test_the_containment_map_names_the_screens_a_demo_appears_on():
         "beside the study's")
 
 
-def test_the_two_marks_that_belong_to_this_page_are_not_claimed_of_every_demo(
-        open_client, store):
-    """"In the participant store the consent record reads consent_source:
-    "internal_test", and the run's participant key begins test_demo-."
-
-    Both true of a demo started from THIS page and neither true of an internal
-    encounter as such — and the comment above the map claimed every line of it
-    had been checked against one internal encounter on this tree. Checked:
-    the demo wave's s_1773142745_384dad was started by GET /test?name=bjordan
-    before this page existed. Its participant key is test_bjordan_1773142745,
-    not test_demo-anything, and its participant record carries no
-    consent_source field at all. Two of the lines the comment vouched for were
-    false against the record it named.
-
-    The mechanism is pinned here rather than the wave, since the wave is not on
-    the test path: /test mints an internal run under whatever name it is given,
-    and the two marks come from this page forcing a prefix and from the /v2
-    handoff, not from the cohort.
-    """
-    from server import runs as runsmod
-
-    r = open_client.get("/test", params={"name": "bjordan"},
-                        follow_redirects=False)
-    assert r.status_code == 307, r.text
-    rows = open_client.get("/api/runs", params={"cohort": "internal"}).json()
-    assert rows, "GET /test did not mint an internal run"
-    row = rows[-1]
-    assert row["cohort"] == "internal"
-    assert not str(row["participant_id"]).startswith("test_demo-"), (
-        "the test_demo- prefix has become a property of the /test entrance; if "
-        "that is deliberate the page can widen the claim again")
-    run = json.loads(
-        (runsmod.RUNS_DIR / f"{row['run_id']}.json").read_text(encoding="utf-8"))
-    record = json.loads(
-        (store.PARTICIPANTS_DIR / f"{run['participant_record_id']}.json")
-        .read_text(encoding="utf-8"))
-    assert "consent_source" not in record or record["consent_source"] is None, (
-        "an internal run now carries consent_source before any consent has "
-        "been recorded; the page's scoping of that claim needs re-reading")
-
-    # So the page must scope both marks to a demo started from it.
-    m = _map(_prose(_demo()))
-    claims = [s for s in _sentences(m)
-              if "internal_test" in s or "test_demo-" in s]
-    assert claims, "the map no longer mentions either mark at all"
-    assert any("this page" in s for s in claims), (
-        "the map states the consent_source and test_demo- marks without saying "
-        "they belong to a demo started from this page: " + str(claims))
-    src = _demo()
-    assert "Every line of this was checked against" not in src, (
-        "the comment above the map still vouches for every line of it against "
-        "one encounter, and two of those lines are false against that "
-        "encounter")
-
-
 # =============================================================================
 # 3. The screens the demo opens: they have to mark a demo themselves
 # =============================================================================

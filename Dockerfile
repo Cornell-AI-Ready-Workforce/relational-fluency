@@ -30,11 +30,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Application code (scenarios + config travel with the image; data is mounted).
+# Application code (scenarios travel with the image; data is mounted).
 COPY server ./server
 COPY static ./static
 COPY scenarios ./scenarios
-COPY config ./config
 
 # The volume gets mounted here. mkdir is just for first-boot when there is no
 # volume yet (local docker run, etc.).

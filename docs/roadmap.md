@@ -24,13 +24,15 @@ See [`migration-plan.md`](migration-plan.md) for detail and dependency order.
       including broker-side end-of-turn detection and barge-in (the detector
       now adapts to the room; group rooms run one session per character)
 - [x] Compile canonical S1–S4 specs into runnable multi-agent sessions —
-      twelve forms, three per construct, in `scenarios/v3/`
+      eight forms, two per construct, in `scenarios/v3/` (Study 1 fields the
+      A forms; B is reserved for a later study)
 - [ ] Move study data to encrypted S3, one aligned record per encounter (only
       the webcam video reaches S3; session records are on the task's own disk,
       with no persistent volume yet — `DEPLOY-AWS.md`)
-- [x] Consent → WEIP handoff → counterbalanced encounters → completion code
-      (consent is taken in Qualtrics; `UPSTREAM_CONSENT_VERSION` must name it,
-      and `SURVEY_RETURN_URL` must be the survey's continuation link)
+- [x] Qualtrics → counterbalanced encounters → completion code → Qualtrics
+      (consent and the self-report are taken in Qualtrics before the app opens;
+      the app holds no consent step, and `SURVEY_RETURN_URL` must be the second
+      survey's link — `docs/study1-plan.md`)
 - [x] Deploy to ECS/Fargate behind ALB; `rf` / `api.rf` DNS records and the
       ACM certificate exist — released by hand with the AWS CLI, Terraform
       state not yet recovered

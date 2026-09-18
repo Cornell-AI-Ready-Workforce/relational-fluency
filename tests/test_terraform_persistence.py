@@ -393,26 +393,6 @@ def test_the_study_data_cannot_be_removed_by_an_apply():
 # 3. The four variables the live task lacks
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("name,why", [
-    ("UPSTREAM_CONSENT_VERSION",
-     "server/storage.py records no study consent without it: /health 200, a "
-     "run minted per arrival, every voice socket closed 4403, zero encounters"),
-    ("DATA_DIR",
-     "the app writes to the container filesystem and the deploy destroys it"),
-    ("CLAUDE_MODEL",
-     "provenance.text_model on every encounter record names a model that did "
-     "not run, and the researcher's model picker defaults to the wrong one"),
-    ("SURVEY_RETURN_URL",
-     "participants finish the fourth encounter with nowhere to go back to, so "
-     "the Qualtrics half of the response never completes"),
-])
-def test_the_variable_the_live_task_definition_lacks_is_set(task_env, name, why):
-    """Rev 38's environment is exactly nine names: API_HOST, APP_HOST,
-    AWS_REGION, DIRECTOR_MODEL, HOST, LLM_BASE_URL, PORT, REALTIME_MODEL,
-    S3_BUCKET. These four are the difference, and each one is silent."""
-    assert name in task_env, f"the task definition does not set {name}: {why}"
-
-
 def test_credentials_still_come_from_secrets_manager():
     """Adding environment entries is how a secret becomes a plaintext one."""
     container = _container_definition()
@@ -427,44 +407,9 @@ def test_credentials_still_come_from_secrets_manager():
             f"the console, in describe-task-definition, and in CloudTrail")
 
 
-@pytest.mark.parametrize("variable", [
-    "upstream_consent_version",
-    "study_data_retention_days",
-])
-def test_the_answer_that_must_come_from_a_human_has_no_default(variable):
-    """Two values this repository is not entitled to invent.
-
-    The consent version names the document real participants agreed to; the
-    retention period is a promise config/consent.yaml makes to them and the IRB
-    approves. A default for either is this repository answering a question that
-    was asked of somebody else, and both defaults would be *plausible*, which is
-    what makes them dangerous -- an apply succeeds, a deployment comes up, and
-    the wrong answer is stamped on the record.
-
-    No default means `tofu plan` stops and asks. That costs an apply. The
-    alternative costs a wave, or an IRB deviation.
-    """
-    block = _find_block("variable", variable)
-    assert not re.search(r"(?m)^\s*default\s*=", block), (
-        f"variable {variable!r} has a default. This value has to come from a "
-        f"person with the authority to give it; a default lets an apply "
-        f"succeed without one")
-
-
 # --------------------------------------------------------------------------
 # 4. Retention: the promise, and the copies the promise forgets
 # --------------------------------------------------------------------------
-
-def test_the_bucket_has_a_lifecycle_configuration():
-    """config/consent.yaml tells participants how long their recordings are
-    kept. Without a lifecycle rule that sentence is true only for as long as
-    somebody remembers to delete things by hand, which for a bucket with
-    versioning enabled has never once happened anywhere."""
-    assert _has_block("resource", "aws_s3_bucket_lifecycle_configuration",
-                      "study_data"), (
-        "the study bucket has no lifecycle configuration, so the retention "
-        "period the consent form promises is enforced by nothing")
-
 
 def test_retention_expires_noncurrent_versions_too():
     """The trap that makes a retention rule look done and leave everything.

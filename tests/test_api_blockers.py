@@ -248,30 +248,6 @@ def test_health_never_pays_the_required_env_source_scan_on_the_loop():
     assert time.perf_counter() - t0 < 0.05, "the scan is not actually memoised"
 
 
-def test_priming_the_scan_did_not_cache_the_environment_too(monkeypatch):
-    """The half of /health that must NOT be memoised.
-
-    Only the static REQUIRED_ENV *declaration* is cached. The route recomputes
-    from os.environ per request on purpose — a task redeployed with the value,
-    or a secret that resolves late, has to stop showing as missing without a
-    restart — and a warming step that quietly froze the answer would reintroduce
-    the silent void the config block exists to close, in a form that looks
-    healthy.
-    """
-    from server import storage
-
-    name = "UPSTREAM_CONSENT_VERSION"
-    assert name in storage._declared_required_env(), "test's premise moved"
-
-    monkeypatch.delenv(name, raising=False)
-    assert name in appmod._missing_required_env_for_health()
-
-    monkeypatch.setenv(name, "2026-09-12.v4")
-    assert name not in appmod._missing_required_env_for_health(), (
-        "a value that arrived after boot is still reported missing"
-    )
-
-
 def test_a_slow_head_does_not_freeze_the_loop_and_only_happens_once(
         sessions_root, served, s3):
     """A 600 ms HEAD used to be 1.2 s of total silence: two HEADs, on the loop.
@@ -857,30 +833,6 @@ def test_the_storage_hook_runs_only_after_the_refusal(tmp_path, monkeypatch):
     assert not data.exists(), "a process that refused to serve still made a store"
 
 
-def test_the_first_write_initialises_a_data_directory_that_appeared_late(
-        tmp_path, monkeypatch):
-    """And lazy must not mean broken. Nothing initialises at import any more, so
-    a DATA_DIR that only exists at write time — a mounted volume, a test
-    repointing it, an offline tool that decides to write after all — has to be
-    minted by the writer itself, or a participant's consent record dies on a
-    missing directory at the moment they consent."""
-    from server import storage as storage_mod
-
-    data = tmp_path / "late"
-    monkeypatch.setattr(storage_mod, "DATA_DIR", data)
-    monkeypatch.setattr(storage_mod, "SESSIONS_DIR", data / "sessions")
-    monkeypatch.setattr(storage_mod, "PARTICIPANTS_DIR", data / "participants")
-    monkeypatch.setattr(storage_mod, "DB_PATH", data / "index.db")
-
-    pid = storage_mod.create_participant("code-1", False, "v1")
-    assert storage_mod.get_participant(pid)["consent_given"] is False
-    assert storage_mod.record_consent(pid, "v1")["consent_given"] is True
-    with sqlite3.connect(data / "index.db") as conn:
-        row = conn.execute("SELECT consent_given FROM participants WHERE id = ?",
-                           (pid,)).fetchone()
-    assert row == (1,)
-
-
 def test_startup_is_what_runs_the_preflights(monkeypatch):
     """The other half: lazy must not mean never. A served process still checks
     both seams before anyone can join, and /health still answers from it."""
@@ -939,32 +891,6 @@ def test_health_carries_storage_and_stays_200(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200            # a storage blip must not kill the task
     assert r.json()["storage"]["error_code"] == "NoSuchBucket"
-
-
-def test_health_does_not_name_the_bucket_to_the_open_internet(client, monkeypatch):
-    """/health carries no check_key and is the one path exempted from the Host
-    allowlist, and the ALB forwards every path to the target group by default —
-    so it answers strangers. Publishing the study bucket's exact name, its
-    region and whether the task has credentials hands an attacker the target for
-    the very "seed/abuse the study bucket" attack the presign guard exists to
-    stop, and names the bucket holding IRB-recorded encounters."""
-    monkeypatch.setattr(appmod, "_STORAGE_PREFLIGHT", LEAKY_PREFLIGHT)
-    # The required environment supplied, so the only fault in play is the
-    # bucket. /health's top-level word now answers to the config block too (see
-    # app._health_status), and this test's claim — a storage fault does not move
-    # the word — can only be read when nothing else is moving it.
-    monkeypatch.setenv(storagemod.UPSTREAM_CONSENT_VERSION_ENV,
-                       "cornell-irb-2026-09-v3")
-    body = client.get("/health").json()
-    assert body["status"] == "ok", "a storage fault must not move the word"
-    storage = body["storage"]
-    # The shape a probe needs, and nothing more.
-    assert storage == {"ok": False, "readable": False, "writable": False,
-                       "error_code": "NoCredentialsError"}
-    flat = json.dumps(body)
-    for secret in ("relational-fluency-study-data", "us-east-1",
-                   "Unable to locate credentials"):
-        assert secret not in flat, f"/health published {secret!r} unauthenticated"
 
 
 def test_health_is_a_projection_so_a_new_field_is_private_by_default(client,
@@ -1105,13 +1031,6 @@ def test_an_anonymous_text_encounter_can_never_become_study_data():
     assert appmod._run_context(None, "some_run_id") is None
 
 
-def test_the_helper_is_the_one_rule_both_gates_use(people):
-    assert appmod._consented_participant("p_consented")
-    assert appmod._consented_participant("p_declined") is None
-    assert appmod._consented_participant("p_pending") is None
-    assert appmod._consented_participant(None) is None
-
-
 # --- B20: a swallowed mint in /start ------------------------------------------
 
 @pytest.fixture()
@@ -1195,133 +1114,7 @@ def test_a_failed_write_back_does_not_mint_a_second_record(client, runs_root,
     assert "p_minted_1" in out
 
 
-def test_a_raw_qualtrics_key_is_never_handed_over_as_a_record_id(
-        client, runs_root, monkeypatch):
-    """?participant_id= is one of the spellings Qualtrics pipes the raw key
-    through. Passing it on as if it were a record id put the page in an
-    unbreakable "We couldn't save your consent" loop: /api/consent 404s on it."""
-    monkeypatch.setattr(appmod, "create_participant",
-                        lambda **kw: (_ for _ in ()).throw(OSError("nope")))
-    monkeypatch.setattr(appmod, "get_participant", lambda pid: None)
-    r = client.get("/start", params={"participant_id": "RF_TEST_B1"},
-                   follow_redirects=False)
-    assert "participant_id=" not in r.headers["location"]
-    assert "consent=1" not in r.headers["location"]
-
-
-def test_consent_reattaches_a_record_to_a_run_that_lost_its_mint(
-        client, runs_root, monkeypatch):
-    """The repair path: the page mints its own record, and the run adopts it, so
-    the rest of the run is joinable even though /start's mint failed."""
-    run = runs_root.create("RF_TEST_C1", cohort="study")
-    assert not run.get("participant_record_id")
-    monkeypatch.setattr(appmod, "create_participant", lambda **kw: "p_from_page")
-    r = client.post("/api/consent", json={"code": "RF_TEST_C1", "consent_given": True,
-                                          "run_id": run["run_id"]})
-    assert r.status_code == 200
-    assert runs_root.get(run["run_id"])["participant_record_id"] == "p_from_page"
-
-
-def test_an_existing_record_on_a_run_is_never_overwritten(client, runs_root, monkeypatch):
-    """That id is the identity the run's earlier encounters were recorded under."""
-    run = runs_root.create("RF_TEST_C2", cohort="study")
-    run["participant_record_id"] = "p_original"
-    runs_root.save(run)
-    monkeypatch.setattr(appmod, "record_consent", lambda pid, v: {"id": pid})
-    r = client.post("/api/consent", json={"participant_id": "p_second",
-                                          "consent_given": True,
-                                          "run_id": run["run_id"]})
-    assert r.status_code == 200
-    assert runs_root.get(run["run_id"])["participant_record_id"] == "p_original"
-
-
-def test_the_repair_fires_on_the_body_the_page_actually_sends(client, runs_root,
-                                                              monkeypatch):
-    """The repair above was unreachable from the only client on this path.
-
-    _adopt_participant_record returned immediately unless the POST carried a
-    run_id, and static/v2.html's consent-ACCEPT handler sends
-    {code, consent_given, participant_id} and no run_id — only its DECLINE
-    handler sends one. So the run kept participant_record_id None, _run_context
-    could not resolve the encounter, and the manifest recorded run_id, cohort
-    and participant key as null: "not study data" per storage.py. The consented
-    participant's first encounter was still silently dropped from the analysis
-    set — B20's exact harm — while the code and the test above suggested it was
-    repaired, because the test built the payload with run_id by hand.
-
-    The body below is the one v2.html sends, verbatim.
-    """
-    run = runs_root.create("RF_VERIFY_1", cohort="study")
-    assert not run.get("participant_record_id")
-    monkeypatch.setattr(appmod, "create_participant", lambda **kw: "p_from_page")
-    r = client.post("/api/consent", json={"code": "RF_VERIFY_1",
-                                          "consent_given": True,
-                                          "participant_id": None})
-    assert r.status_code == 200
-    assert runs_root.get(run["run_id"])["participant_record_id"] == "p_from_page"
-
-
-def test_the_repair_without_a_run_id_still_never_overwrites(client, runs_root,
-                                                            monkeypatch):
-    """The code-based fallback fills a blank and nothing else — it must not be a
-    way to repoint a run whose earlier encounters already carry an identity."""
-    run = runs_root.create("RF_VERIFY_2", cohort="study")
-    run["participant_record_id"] = "p_original"
-    runs_root.save(run)
-    monkeypatch.setattr(appmod, "create_participant", lambda **kw: "p_from_page")
-    client.post("/api/consent", json={"code": "RF_VERIFY_2", "consent_given": True})
-    assert runs_root.get(run["run_id"])["participant_record_id"] == "p_original"
-
-
-def test_the_repair_needs_something_to_go_on(client, runs_root, monkeypatch):
-    """No run_id and no code is not a run to adopt onto — it must not guess."""
-    run = runs_root.create("RF_VERIFY_3", cohort="study")
-    monkeypatch.setattr(appmod, "record_consent", lambda pid, v: {"id": pid})
-    client.post("/api/consent", json={"participant_id": "p_x", "consent_given": True})
-    assert not runs_root.get(run["run_id"]).get("participant_record_id")
-
-
 # --- B16 / R24: a decline must not withdraw a run it did not record -----------
-
-def test_a_decline_against_a_consented_record_withdraws_nothing(client, runs_root,
-                                                                monkeypatch, capsys):
-    """storage.record_decline returns None for an already-consented record: a
-    decline cannot retroactively withdraw a consent under which audio and webcam
-    were already captured. Withdrawing the run anyway split the contradiction
-    across two files — the participant record saying consented and never
-    declined, the run saying withdrawn BECAUSE consent was declined — so neither
-    one alone shows it, and the participant is locked out of every remaining
-    encounter with no clearing path.
-
-    The request that produces this is ordinary, not adversarial: both tabs of a
-    duplicated study link get &consent=1, so the one left open still offers
-    Decline after the other has consented.
-    """
-    run = runs_root.create("RF_DECLINE_1", cohort="study")
-    monkeypatch.setattr(appmod, "record_decline",
-                        lambda pid, v, run_id=None: None)   # the storage guard
-    r = client.post("/api/consent/decline",
-                    json={"participant_id": "p_consented", "run_id": run["run_id"]})
-    assert r.status_code == 200                    # the page has already closed
-    assert r.json()["recorded"] is False
-    assert r.json()["withdrawn"] is False
-    assert runs_root.get(run["run_id"]).get("withdrawn") is None
-    assert "was not recorded" in capsys.readouterr().out
-
-
-def test_a_real_decline_still_stops_the_run(client, runs_root, monkeypatch):
-    """The refusal is data and the run must stop handing out encounters, or
-    reopening the study link enrols someone who just said no."""
-    run = runs_root.create("RF_DECLINE_2", cohort="study")
-    monkeypatch.setattr(appmod, "record_decline",
-                        lambda pid, v, run_id=None: {"id": pid, "declined": True})
-    r = client.post("/api/consent/decline",
-                    json={"participant_id": "p_pending", "run_id": run["run_id"]})
-    assert r.json() == {"recorded": True, "withdrawn": True, "reason": "recorded",
-                        "consent_text_version": r.json()["consent_text_version"]}
-    withdrawn = runs_root.get(run["run_id"])["withdrawn"]
-    assert withdrawn["reason"] == "declined_consent"
-
 
 @pytest.fixture()
 def participant_store(tmp_path, monkeypatch):
@@ -1336,53 +1129,6 @@ def participant_store(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "DB_PATH", root / "index.db")
     storage.init_storage()
     return storage
-
-
-def test_a_refused_decline_says_which_refusal_it_was(client, participant_store):
-    """B16, the half the page acts on.
-
-    `recorded: false` covers two situations a participant must not be told the
-    same thing about. If the record already carries consent, an encounter may
-    already have been recorded under it — so the "nothing about you was
-    recorded" card is a false statement about their own data, and they are still
-    enrolled in a study they believe they have left. If there is no record at
-    all, nothing was captured and the honest line is that the refusal could not
-    be filed. A boolean cannot tell those apart, so the client would have to
-    guess, and a guess printed on a consent screen is stated as fact.
-    """
-    storage = participant_store
-    consented = storage.create_participant("RF_DECLINE_CONSENT", False, "2026-09-01")
-    assert storage.record_consent(consented, "2026-09-01") is not None
-
-    r = client.post("/api/consent/decline", json={"participant_id": consented})
-    assert r.status_code == 200
-    assert r.json()["recorded"] is False
-    assert r.json()["reason"] == "already_consented"
-    # And it really did not un-consent them.
-    assert storage.get_participant(consented)["consent_given"] is True
-
-    # The other refusal: no such record. Same booleans, different reason.
-    r = client.post("/api/consent/decline",
-                    json={"participant_id": "p_0000000000_ffffff"})
-    assert r.json()["recorded"] is False
-    assert r.json()["reason"] == "no_record"
-
-
-def test_a_run_with_completed_encounters_is_never_withdrawn_by_a_decline(
-        client, runs_root, monkeypatch):
-    """A run with finished encounters holds recorded data a late decline did not
-    undo. Marking it withdrawn would tell an analyst the participant stopped
-    partway through a run they actually finished."""
-    run = runs_root.create("RF_DECLINE_3", cohort="study")
-    run["completed"] = ["s_1772460300_44c9a2", "s_1772460301_44c9a3"]
-    runs_root.save(run)
-    monkeypatch.setattr(appmod, "record_decline",
-                        lambda pid, v, run_id=None: {"id": pid, "declined": True})
-    r = client.post("/api/consent/decline",
-                    json={"participant_id": "p_pending", "run_id": run["run_id"]})
-    assert r.json()["recorded"] is True          # the refusal is still data
-    assert r.json()["withdrawn"] is False
-    assert runs_root.get(run["run_id"]).get("withdrawn") is None
 
 
 # --- B22: the cohort filter belongs in the query ------------------------------

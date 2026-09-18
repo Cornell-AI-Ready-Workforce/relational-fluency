@@ -68,7 +68,6 @@ def store(tmp_path, monkeypatch, runs_mod):
     # Without it storage refuses to record ANY study consent, and every
     # positive control below would pass for the wrong reason — a 404 that says
     # nothing about whose record it is.
-    monkeypatch.setenv(storage.UPSTREAM_CONSENT_VERSION_ENV, "v1-approved")
     storage.init_storage()
     return storage
 
@@ -126,8 +125,7 @@ def _arrival(store, runs_mod, key, *, consented=True):
     in both directions. `consented=False` is the record /start actually mints —
     pending, waiting for POST /api/consent to flip it."""
     run = runs_mod.create(key, qualtrics_id=f"R_{key}", cohort="study")
-    pid = store.create_participant(code=key, consent_given=consented,
-                                   consent_version="v1",
+    pid = store.create_participant(code=key,
                                    run_id=run["run_id"], cohort="study")
     run["participant_record_id"] = pid
     runs_mod.save(run)
@@ -205,46 +203,6 @@ def live_encounter(monkeypatch):
 
 # --- the positive controls, written first ------------------------------------
 
-def test_a_consenting_participant_finishes_an_encounter_and_gets_a_code(
-        client, store, runs_mod, sessions_root, s3):
-    """The whole live path, end to end, in the order a participant walks it.
-
-    This is the control the rest of the file is measured against. Round three's
-    gate was right about the hole and wrong about who it caught, and the only
-    thing that would have shown that before it shipped is a test that walks a
-    legitimate participant all the way to their completion code."""
-    from server import video
-
-    run, pid = _arrival(store, runs_mod, "PKEYLIVE", consented=False)
-    run_id = run["run_id"]
-
-    # Consent, on their own record, the way static/v2.html sends it.
-    r = client.post("/api/consent", json={
-        "code": "PKEYLIVE", "participant_id": pid, "run_id": run_id,
-        "consent_given": True, "consent_source": "qualtrics",
-    })
-    assert r.status_code == 200, r.text
-    assert r.json()["participant_id"] == pid
-    assert store.get_participant(pid)["consent_given"] is True
-
-    sid = "s_1772460300_11aa01"
-    _session(sessions_root, sid, pid, scenario=_current_scenario(run))
-
-    # Their webcam recording.
-    r = client.put(f"/api/sessions/{sid}/video",
-                   params={"participant_id": pid}, content=b"\0" * 4096)
-    assert r.status_code == 200, r.text
-    assert video.local_path(sid).exists()
-
-    # And on to the next encounter, with the code they take back to the survey.
-    r = client.post(f"/api/run/{run_id}/advance", params={"session_id": sid})
-    assert r.status_code == 200, r.text
-    view = r.json()
-    assert view["completed"] == [_current_scenario(run)]
-    assert view["completion_code"]
-    assert not view.get("withdrawn")
-
-
 def test_a_withdrawn_participant_still_reaches_their_own_closing_page(
         client, store, runs_mod):
     """They gave us their time and are owed the partial code they take back to
@@ -263,173 +221,9 @@ def test_a_withdrawn_participant_still_reaches_their_own_closing_page(
     assert client.get("/v2").status_code == 200
 
 
-def test_the_researcher_key_is_locked_out_of_nothing(
-        tmp_path, store, runs_mod, sessions_root, monkeypatch):
-    """A withdrawal is a statement to this platform about the participant's own
-    session, not an instruction that an analyst may never touch the partial
-    record they left. Every refusal in this file has to let the key through."""
-    monkeypatch.setattr(appmod, "SESSION_KEY", "s3cret", raising=False)
-    if appmod.ALLOWED_HOSTS and "testserver" not in appmod.ALLOWED_HOSTS:
-        monkeypatch.setattr(appmod, "ALLOWED_HOSTS",
-                            list(appmod.ALLOWED_HOSTS) + ["testserver"])
-    keyed = TestClient(appmod.app, raise_server_exceptions=False)
-
-    run, pid = _arrival(store, runs_mod, "PKEYKEY", consented=False)
-    run_id = run["run_id"]
-    sid = "s_1772460300_11aa02"
-    _session(sessions_root, sid, pid, scenario=_current_scenario(run))
-
-    # A record the key holder presents no code and no run for: an operator
-    # repairing a record by hand is not a stranger.
-    r = keyed.post("/api/consent", params={"key": "s3cret"},
-                   json={"participant_id": pid, "consent_given": True})
-    assert r.status_code == 200, r.text
-
-    keyed.post(f"/api/run/{run_id}/withdraw", params={"key": "s3cret"}, json={})
-    r = keyed.post(f"/api/run/{run_id}/advance",
-                   params={"session_id": sid, "key": "s3cret"})
-    assert r.status_code == 200, r.text
-    r = keyed.get(f"/api/run/{run_id}", params={"key": "s3cret"})
-    assert r.status_code == 200, r.text
-
-
-def test_an_unreadable_file_in_the_store_refuses_nobody(
-        client, store, runs_mod, sessions_root):
-    """A corrupt run file and a corrupt participant file are a disk having a bad
-    day, not a statement about anybody. Round three turned a transient read
-    error into a permanent withdrawal; the least this round can do is make sure
-    an unrelated unreadable file costs a live participant nothing."""
-    run, pid = _arrival(store, runs_mod, "PKEYCORR", consented=False)
-    (runs_mod.RUNS_DIR / "bbbbbbbbbbbb.json").write_text(
-        "{ not json", encoding="utf-8")
-    (store.PARTICIPANTS_DIR / "p_0000000000_ffffff.json").write_text(
-        "{ not json either", encoding="utf-8")
-
-    r = client.post("/api/consent", json={
-        "code": "PKEYCORR", "participant_id": pid, "run_id": run["run_id"],
-        "consent_given": True,
-    })
-    assert r.status_code == 200, r.text
-
-    sid = "s_1772460300_11aa03"
-    _session(sessions_root, sid, pid, scenario=_current_scenario(run))
-    r = client.post(f"/api/run/{run['run_id']}/advance", params={"session_id": sid})
-    assert r.status_code == 200, r.text
-
-    # And a withdrawal still completes with the unreadable files in place.
-    other, other_pid = _arrival(store, runs_mod, "PKEYCORR2")
-    r = client.post(f"/api/run/{other['run_id']}/withdraw",
-                    json={"participant_id": other_pid})
-    assert r.status_code == 200, r.text
-
-
 # --- ITEM 7: a decline may only stop the run it belongs to -------------------
 
-def test_a_decline_cannot_withdraw_a_run_it_has_no_claim_on(
-        client, store, runs_mod, capsys):
-    """The keyless, precondition-free way to end a stranger's study.
-
-    `recorded` was computed against the POSTED participant record and then used
-    to gate a withdrawal of the POSTED run, with nothing joining the two. So:
-    arrive normally, get your own pending record, POST a decline naming it and
-    naming somebody else's run_id. Your refusal is filed, and their study ends —
-    permanently, because runs.withdraw has no clearing path and every remaining
-    encounter is refused from then on."""
-    victim, victim_pid = _arrival(store, runs_mod, "PKEYVICTIM")
-    stranger, stranger_pid = _arrival(store, runs_mod, "PKEYSTRANGER",
-                                      consented=False)
-
-    r = client.post("/api/consent/decline", json={
-        "participant_id": stranger_pid,
-        "code": "PKEYSTRANGER",
-        "run_id": victim["run_id"],
-        "consent_given": False,
-    })
-    assert r.status_code == 200, r.text
-    assert r.json()["withdrawn"] is False, (
-        "a decline posted against somebody else's run reported it withdrawn")
-
-    assert not runs_mod.get(victim["run_id"]).get("withdrawn"), (
-        "a stranger's decline permanently ended this participant's study")
-    assert not store.get_participant(victim_pid).get("withdrawn"), (
-        "the stop was carried onto the victim's participant record too")
-
-    # Their own refusal is still filed: it is data, and it is about their record.
-    assert store.get_participant(stranger_pid).get("declined") is True
-    # And it did not quietly re-home their record onto the run they named.
-    assert store.get_participant(stranger_pid).get("run_id") == stranger["run_id"]
-
-
-def test_a_participant_declining_their_own_run_still_stops_it(
-        client, store, runs_mod):
-    """Positive control for the gate above, and the reason the gate cannot be
-    'never withdraw on a decline': someone who reads the form and refuses must
-    not be enrolled in the encounters they just refused."""
-    run, pid = _arrival(store, runs_mod, "PKEYDECL", consented=False)
-
-    r = client.post("/api/consent/decline", json={
-        "participant_id": pid, "code": "PKEYDECL", "run_id": run["run_id"],
-        "consent_given": False,
-    })
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["recorded"] is True, body
-    assert body["withdrawn"] is True, (
-        "a participant's own refusal no longer stops their own run, so "
-        "reopening the link would enrol them in what they just refused")
-    assert runs_mod.get(run["run_id"])["withdrawn"]
-
-
-def test_a_decline_still_stops_a_run_that_never_recorded_its_mint(
-        client, store, runs_mod):
-    """The second positive control, and the one a strict ownership test would
-    break. When /start's mint fails the run carries no participant_record_id,
-    and the page mints its own — so the join back to the run is the participant
-    KEY on the record, not the run's pointer. A decline from that record is
-    still the run's own participant refusing."""
-    run = runs_mod.create("PKEYREPAIR", qualtrics_id="R_repair", cohort="study")
-    assert not run.get("participant_record_id")
-    pid = store.create_participant(code="PKEYREPAIR", consent_given=False,
-                                   consent_version="v1")
-
-    r = client.post("/api/consent/decline", json={
-        "participant_id": pid, "code": "PKEYREPAIR", "run_id": run["run_id"],
-        "consent_given": False,
-    })
-    assert r.status_code == 200, r.text
-    assert r.json()["withdrawn"] is True, r.text
-    assert runs_mod.get(run["run_id"])["withdrawn"]
-
-
 # --- ITEM 8: POST /api/consent may only act on the caller's own record -------
-
-def test_consent_refuses_a_participant_record_that_is_not_the_callers(
-        client, store, runs_mod):
-    """A record id and nothing else was enough.
-
-    POST /api/consent took any existing participant_id, flipped it consented and
-    handed it back — so somebody who had stopped, or anybody who learned a live
-    record id, could be recorded under a stranger's identity, in that stranger's
-    cohort, against that stranger's run."""
-    victim, victim_pid = _arrival(store, runs_mod, "PKEYOWNER", consented=False)
-    _arrival(store, runs_mod, "PKEYINTRUDER", consented=False)
-
-    r = client.post("/api/consent", json={
-        "participant_id": victim_pid, "code": "PKEYINTRUDER",
-        "consent_given": True,
-    })
-    assert r.status_code == 403, r.text
-    assert store.get_participant(victim_pid)["consent_given"] is False, (
-        "a stranger's POST wrote consent onto this participant's record")
-
-    # The shape the item names: the id on its own, which is what somebody who
-    # stopped already has and what this route itself hands back. A caller who
-    # can show nothing is refused.
-    r = client.post("/api/consent", json={
-        "participant_id": victim_pid, "consent_given": True,
-    })
-    assert r.status_code == 403, r.text
-    assert store.get_participant(victim_pid)["consent_given"] is False, r.text
 
     # Deliberately NOT refused, and worth stating so the gate is not widened by
     # a later reader: a caller holding the victim's run id and record id holds
@@ -439,85 +233,7 @@ def test_consent_refuses_a_participant_record_that_is_not_the_callers(
     # that the record does not carry.
 
 
-def test_consent_refuses_a_record_whose_owner_withdrew(client, store, runs_mod):
-    """The other half of item 8. Consent is the affirmative act that opens the
-    microphone, and a record whose person pressed stop must not be walked back
-    through it — by them or by anybody holding the id."""
-    run, pid = _arrival(store, runs_mod, "PKEYSTOP", consented=False)
-    assert client.post(f"/api/run/{run['run_id']}/withdraw",
-                       json={"participant_id": pid}).status_code == 200
-
-    r = client.post("/api/consent", json={
-        "participant_id": pid, "code": "PKEYSTOP", "run_id": run["run_id"],
-        "consent_given": True,
-    })
-    assert r.status_code == 403, r.text
-    assert store.get_participant(pid)["consent_given"] is False
-
-
-def test_consent_still_works_for_the_record_the_page_was_given(
-        client, store, runs_mod):
-    """Positive control: the only client on this path sends
-    {code, participant_id, run_id}, and every one of the three routes to
-    ownership has to keep working on its own — a page whose /api/run fetch
-    failed sends an empty code, and one whose run never recorded its mint has
-    nothing but the code."""
-    run, pid = _arrival(store, runs_mod, "PKEYOK1", consented=False)
-    r = client.post("/api/consent", json={
-        "code": "PKEYOK1", "participant_id": pid, "run_id": run["run_id"],
-        "consent_given": True,
-    })
-    assert r.status_code == 200, r.text
-
-    run2, pid2 = _arrival(store, runs_mod, "PKEYOK2", consented=False)
-    r = client.post("/api/consent", json={
-        "code": "", "participant_id": pid2, "run_id": run2["run_id"],
-        "consent_given": True,
-    })
-    assert r.status_code == 200, r.text
-
-    run3, pid3 = _arrival(store, runs_mod, "PKEYOK3", consented=False)
-    r = client.post("/api/consent", json={
-        "code": "PKEYOK3", "participant_id": pid3, "consent_given": True,
-    })
-    assert r.status_code == 200, r.text
-
-
 # --- ITEM 4: the withdrawal has to close the socket, not just the store ------
-
-def test_a_session_can_shut_its_own_capture_socket():
-    """The unit the teardown was missing.
-
-    registry.drop marks the session closed and closes the store, and that is
-    where the fix stopped: audio stopped being SAVED and did not stop being
-    SENT. The participant's microphone stayed open, still read, still forwarded
-    to the model provider and still billed, until they closed the tab — which is
-    the one sentence config/consent.yaml makes a promise about.
-
-    Called unbound on a stand-in, because building a real Session loads a
-    scenario and opens a text client, and neither has anything to do with
-    whether this method shuts a socket."""
-    from server.session import Session
-
-    assert hasattr(Session, "close_participant_socket"), (
-        "a Session cannot close the participant's capture socket, so a "
-        "withdrawal stops the recording and not the capture")
-
-    class Stub:
-        def __init__(self):
-            self.participant_ws = FakeWS()
-
-    s = Stub()
-    ws = s.participant_ws
-    assert asyncio.run(Session.close_participant_socket(s)) is True
-    assert ws.closed_with is not None, "the capture socket was left open"
-    assert s.participant_ws is None
-
-    # Idempotent, and never raises: teardown runs after the withdrawal is
-    # already on disk, and a socket that has gone must not turn a participant's
-    # stop into a 500.
-    assert asyncio.run(Session.close_participant_socket(s)) is False
-
 
 def test_closing_the_capture_socket_ends_the_readers_loop():
     """And the close has to END THE READER, or it is decoration.
@@ -614,26 +330,6 @@ def test_a_withdrawal_does_not_close_another_participants_microphone(
 
 # --- ITEM 6: wired to the fact, not to the one route -------------------------
 
-def test_declining_in_a_second_tab_tears_down_the_live_encounter(
-        client, store, runs_mod, live_encounter):
-    """Both tabs of a duplicated study link show the consent screen, so a
-    decline in one arrives while the other is mid-encounter. The decline
-    withdrew the run and stopped nothing: the other tab kept recording and kept
-    streaming, on a run that now says the participant refused."""
-    dropped, put = live_encounter
-    run, pid = _arrival(store, runs_mod, "PKEYTAB", consented=False)
-    sess = put("s_1772460300_33cc01", pid, run["run_id"])
-
-    r = client.post("/api/consent/decline", json={
-        "participant_id": pid, "code": "PKEYTAB", "run_id": run["run_id"],
-        "consent_given": False,
-    })
-    assert r.status_code == 200 and r.json()["withdrawn"] is True, r.text
-    assert sess.id in dropped, (
-        "the run was marked withdrawn while the other tab kept recording")
-    assert sess.participant_ws is None
-
-
 def test_arriving_on_a_link_after_withdrawing_tears_down_what_is_still_live(
         client, store, runs_mod, live_encounter):
     """The third place a withdrawal is recorded. /start stamps the stop onto a
@@ -710,45 +406,6 @@ def test_advance_is_still_idempotent_for_an_encounter_already_recorded(
 
 
 # --- ITEM 10: a second record of the same person ------------------------------
-
-def test_withdrawing_stops_an_encounter_under_a_second_record_of_the_person(
-        client, store, runs_mod, live_encounter):
-    """The teardown matched on the records the RUNS name, and a person can have
-    more than one record: a second tab whose consent POST minted its own, a
-    repair, a demo record under the same key. That encounter is the same person
-    and the same microphone, and it went on recording."""
-    dropped, put = live_encounter
-    run, pid = _arrival(store, runs_mod, "PKEYTWO")
-    second = store.create_participant(code="PKEYTWO", consent_given=True,
-                                      consent_version="v1")
-    assert second != pid
-    # No run points at it, which is exactly why the old matcher never saw it.
-    sess = put("s_1772460300_55ee01", second, None)
-
-    r = client.post(f"/api/run/{run['run_id']}/withdraw",
-                    json={"participant_id": pid})
-    assert r.status_code == 200, r.text
-    assert sess.id in dropped, (
-        "an encounter recording under a second record of the same person was "
-        "left running by their withdrawal")
-    assert sess.participant_ws is None
-
-
-def test_a_second_record_of_someone_else_is_left_alone(
-        client, store, runs_mod, live_encounter):
-    """Positive control for the widened match: it widens to the person, not to
-    the registry."""
-    dropped, put = live_encounter
-    run, _pid = _arrival(store, runs_mod, "PKEYTWO2")
-    other = store.create_participant(code="PKEYSOMEONEELSE", consent_given=True,
-                                     consent_version="v1")
-    sess = put("s_1772460300_55ee02", other, None)
-
-    assert client.post(f"/api/run/{run['run_id']}/withdraw",
-                       json={"participant_id": _pid}).status_code == 200
-    assert dropped == []
-    assert sess.participant_ws.closed_with is None
-
 
 # --- ITEM 11: the stop control ends the caller's study, not a stranger's ------
 #

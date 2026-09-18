@@ -62,162 +62,6 @@ server.<module>` generalised from one of these lines fails with a confusing
 
 ---
 
-## The consent version: unset, this records nothing
-
-**Check this before the first participant of every wave.** One environment
-variable on the task, `UPSTREAM_CONSENT_VERSION`, decides whether the wave
-collects anything at all.
-
-Consent is taken in Qualtrics now, before anybody reaches `/start`, so this
-platform never sees the text a participant agreed to and cannot work out which
-version it was. `server/storage.py` therefore refuses to record any study
-consent until this variable names the approved wording. Unset — or set to a
-placeholder like `[FILL IN: ...]`, which is treated as unset — here is the whole
-of what happens, measured rather than described:
-
-- `POST /api/consent` answers **503**, naming `UPSTREAM_CONSENT_VERSION` in the
-  body and `consent_version_unset` as the reason, and the participant page
-  shows the blocking card. (On the build deployed today, which predates this
-  branch, the same refusal answers **404 `no such participant record`** — the
-  record exists, the message is wrong, and it sends you looking for a missing
-  participant; the participant is fine and the configuration is not. A link
-  with no `qid` now answers **409** `no_survey_response_id` rather than the
-  same 404.)
-- The record stays `consent_given: false`, so the voice socket closes **4403**
-  the instant they try to speak.
-- `/health` answers **200**. `/start` keeps working. Runs keep being created,
-  one per arrival, each with an empty `encounters` list.
-- **Zero encounters are recorded, uniformly, from the first arrival onward.**
-  There is no partial failure and nobody gets through. The first evidence is an
-  empty dataset.
-
-**`/test` does not catch it.** An internal run is recorded under
-`internal_test` provenance, which deliberately needs no Qualtrics response and
-no upstream version, so a lab member can walk the whole study, watch four
-encounters record perfectly, and learn nothing about whether a real participant
-can consent. Only a `/start` arrival exercises this path.
-
-Check the deployed task carries it:
-
-```bash
-TD=$(aws ecs describe-services --cluster relational-fluency --services platform \
-      --query "services[0].taskDefinition" --output text)
-aws ecs describe-task-definition --task-definition "$TD" \
-  --query "taskDefinition.containerDefinitions[0].environment[?name=='UPSTREAM_CONSENT_VERSION']"
-# [] or a blank value → the wave will record nothing. Fix before recruiting.
-```
-
-```powershell
-$TD = aws ecs describe-services --cluster relational-fluency --services platform --query "services[0].taskDefinition" --output text
-aws ecs describe-task-definition --task-definition "$TD" --query "taskDefinition.containerDefinitions[0].environment[?name=='UPSTREAM_CONSENT_VERSION']"
-```
-
-**On the deployed service today this variable is not set at all**, which is why
-this section is first on the page. Revision 38's environment carries
-`API_HOST`, `APP_HOST`, `AWS_REGION`, `DIRECTOR_MODEL`, `HOST`, `LLM_BASE_URL`,
-`PORT`, `REALTIME_MODEL` and `S3_BUCKET`, and nothing else —
-`UPSTREAM_CONSENT_VERSION`, `CLAUDE_MODEL` and `SURVEY_RETURN_URL` are all
-missing. (`ANTHROPIC_API_KEY` and `SESSION_KEY` are correctly injected from
-Secrets Manager and must stay that way.)
-
-Setting it means adding it to `containerDefinitions[0].environment` and
-registering a new task-definition revision — the CLI release path, written out
-in
-[`DEPLOY-AWS.md`](DEPLOY-AWS.md#4a-the-path-in-use-register-a-task-definition-point-the-service-at-it).
-Use your survey's own consent version, not `config/consent.yaml`'s.
-
-`infra/terraform/terraform.tfvars` is where it belongs *once the Terraform path
-works again* — as `upstream_consent_version = "cornell-irb-2026-09-v3"`, where
-the variable has **no default**, so an apply that has not been told stops and
-says so rather than deploying a task that records nothing. That safety net does
-not exist on the CLI path: a hand-registered revision omitting this variable
-registers happily and deploys green. Until then the check below is the net.
-It is not a secret; commit it, the way `container_image` is committed, so the
-running wave's consent version is visible in git history. `.env.example`
-documents the same variable for a laptop or the Fly path.
-
-Then confirm on the live wave, after the first arrival: every run should have a
-`session_id` under `encounters`. Runs accumulating with nothing under them is
-this failure and no other.
-
-```bash
-curl -s "$RF/api/runs?key=$KEY" | python -c "
-import json,sys
-rows=json.load(sys.stdin)
-empty=[r['run_id'] for r in rows if not r.get('encounters')]
-print('runs:', len(rows), 'with no encounter yet:', len(empty))
-print(empty[:5])"
-```
-
-A few empty runs are ordinary — somebody opened the link and has not started
-talking yet. *Every* run empty, once people have had time to speak, is the
-consent version.
-
----
-
-## Before fielding: the blanks in `config/consent.yaml`
-
-The consent *form* is in Qualtrics now, but `config/consent.yaml` did not stop
-mattering: the participant page still reads its `contact:` block, and that block
-is what every card naming a human being is built from — the withdrawal card, the
-decline card, the closing card, and the card a participant sees when their
-consent record cannot be confirmed. The file ships as a template with eleven
-`[FILL IN: ...]` markers in it, and **three of them are the ones a participant
-actually runs into**:
-
-| Field | What it must hold | What breaks while it is a `[FILL IN: ...]` |
-|---|---|---|
-| `contact.pi_name` | The PI's name, as the IRB protocol has it | No name on any card |
-| `contact.email` | The study contact address (validated as an address) | **No way to ask for deletion.** The withdrawal card offers the right; the address is missing |
-| `contact.irb_protocol` | The IRB protocol number | Nothing for a participant to quote to the IRB office |
-
-With all three unfilled, a participant who stops mid-study is not shown a blank
-and is not shown `[FILL IN: ...]` either — the page refuses to print a
-placeholder as somebody's contact details, and degrades to *"contact whoever
-sent you this study link, the consent form you were shown carries no contact
-details for the research team, which is a fault on our side."* That sentence is
-honest and it is still a failure: the deletion right the consent form promises
-has no address on it, and the participant has to go back through recruitment to
-exercise it. Fill all three before the first arrival.
-
-The rest of the template is checked by `server/consent_check.py`, which reports
-one combined reason at boot. All of it has to be answered before fielding:
-
-- `version` — must not be the shipped `v0.1-2026-06` and must not read as a
-  draft. It is recorded per participant as `consent_text_version`, so two waves
-  under the same unedited string cannot be told apart afterwards. (This is the
-  *local* version. It is **not** what
-  [`UPSTREAM_CONSENT_VERSION`](#the-consent-version-unset-this-records-nothing)
-  should be set to: that names the survey's wording, which is the text a
-  participant actually read.)
-- `irb_status.reviewed: true` — the human act. Nothing in the system can tell
-  approved wording from a plausible draft, so a person says so here.
-- The eight `[FILL IN: ...]` markers in `body` — the lab and institution, the
-  time commitment, what the provider may do with audio, whether recordings are
-  shown outside the team, the retention period, compensation, eligibility, and
-  what stopping means for payment. `body` must also say that live microphone
-  audio is transmitted to the model provider; the guard checks for it.
-
-**Boot says so, and boot does not stop.** A task whose consent config is still
-the template prints
-
-```
-  WARNING: config/consent.yaml is not fit to field: … Do not recruit participants until this is fixed.
-```
-
-and then serves normally — deliberately, because refusing to start would take
-out every laptop and every CI run, and no process can tell a recruiting
-deployment from a rehearsal. So the warning is one line in the log an operator
-reads after a deploy, and this page is the other place it is written down. Check
-it deliberately:
-
-```bash
-aws logs tail /ecs/relational-fluency/agent --since 10m | grep -i "not fit to field"
-# no output = the consent config passed its checks at the last boot
-```
-
----
-
 ## Read this before collecting anything
 
 **Pull any encounter you care about, and do it before the next deploy** (see
@@ -463,8 +307,8 @@ Two things to know before choosing it:
   each — the same run the pasted link below starts.
 - **`&qid=` is as mandatory here as it is there.** The forward carries the
   query through unchanged, so a base-URL link missing `${e://Field/ResponseID}`
-  fails in exactly the way the warning below describes: no consent record, and
-  the voice socket closes 4403.
+  produces exactly what the warning below describes: a run with no
+  `qualtrics_id`, which cannot be joined to its survey response.
 
 The forward runs *before* the researcher-key check, which is the point of it —
 a participant arriving on the base URL used to hit that check. It does not
@@ -887,11 +731,8 @@ because nothing is mounted at `/data`. Pull first.
 
 | Symptom | First check |
 |---|---|
-| **"We could not confirm your consent record", or a 503 from `POST /api/consent`, or every socket closing 4403** | **`UPSTREAM_CONSENT_VERSION` on the task.** Unset or a placeholder and no study consent can be recorded at all — see [The consent version](#the-consent-version-unset-this-records-nothing). The 503 body names the variable. On the build deployed today the same failure is a 404 saying "no such participant record"; the record exists. Do not go looking for it. |
-| A 409 `no_survey_response_id` from `POST /api/consent` for one participant | Their entry link carried no usable `&qid=` — the survey's redirect is not piping `${e://Field/ResponseID}`. Fix the link; that participant re-enters — see [The participant URL](#the-participant-url-qualtrics--app--qualtrics) |
-| Runs are accumulating but the encounter count stays at zero | Same variable. `/health` is 200, `/start` works, and nothing else fails |
 | Page loads, mic "does not work" | `curl -s $RF/health` — if `gateway.ok` is false, no encounter can run |
-| WebSocket opens then closes instantly | Application logs — a server-side exception during session creation looks exactly like a dead mic (and 4403 specifically is the consent gate, one row above) |
+| WebSocket opens then closes instantly | Application logs — a server-side exception during session creation looks exactly like a dead mic (4403 specifically means the participant record is missing or withdrawn) |
 | 503 from the domain | Target health, then service events: usually no healthy task |
 | `No scenario: SxX` | Deployed image predates the scenario bank — check the running image tag |
 | Agent replies but no transcript | `verify_record` — look for `transcript_missing` |
@@ -915,14 +756,12 @@ Qualtrics.
 
 > **On your own laptop there is a fifth, and it is the one you will actually
 > type.** A local checkout has no `SESSION_KEY`, so the `/test` link's `&key=` is
-> not available to you as a way of proving who you are — and a bare
-> `?pid=whatever` participant link is a **permanent dead end** on *"We could not
-> confirm your consent record"*, because it carries no `qid`. Appending
-> **`&cohort=internal`** on the `/start` link is the way through: it satisfies
-> the consent-provenance check with no `qid`, skips the seven-minute encounter
-> gate and the 180-second advance floor (both are disabled for a run whose
-> cohort is `internal`), and tags the run so every study export drops it. Both
-> arms were walked end to end that way on a local checkout.
+> not available to you as a way of proving who you are. Append
+> **`&cohort=internal`** to the `/start` link instead: it skips the seven-minute
+> encounter floor and the 180-second advance floor (both are disabled for a run
+> whose cohort is `internal`), and tags the run so every study export drops it.
+> A bare `?pid=whatever` link also runs, but its run has no `qualtrics_id` and
+> cannot be joined to a survey response.
 >
 > The links themselves, written out, are in
 > [`docs/TESTING-LOCALLY.md`](TESTING-LOCALLY.md) — deliberately there and not
@@ -940,9 +779,9 @@ https://rf.ai-ready-workforce.ai.cornell.edu/test?name=jennie&variant=A&key=$KEY
 ```
 
 - **`key=` is mandatory on any deployment with `SESSION_KEY` set**, which is
-  every deployed one. This door is `check_key`-gated — GET `/test`, POST
-  `/api/consent` and the voice socket reached live audio and webcam capture in
-  three requests from anywhere on the internet before it was — so without the
+  every deployed one. This door is `check_key`-gated — GET `/test` and the
+  voice socket reached live audio and webcam capture in two requests from
+  anywhere on the internet before it was — so without the
   key it answers **401** and no run is created. It is still open on a local
   checkout with no `SESSION_KEY`, the way `/researcher` and the download routes
   are. It is the researcher's own credential: it belongs in a link you paste
@@ -951,11 +790,8 @@ https://rf.ai-ready-workforce.ai.cornell.edu/test?name=jennie&variant=A&key=$KEY
 - `variant=A` or `variant=B` pins all four scenarios to one form; omit for the
   randomized mix. A letter no form carries is refused with a 400, here as on
   the participant links.
-- `qid=` is neither needed nor read here: an internal run is recorded under
-  `internal_test` provenance, which needs no Qualtrics response and no
-  `UPSTREAM_CONSENT_VERSION`. That is also why walking the study through this
-  door proves nothing about whether a real participant can consent — see
-  [The consent version](#the-consent-version-unset-this-records-nothing).
+- `qid=` is neither needed nor read here: an internal run has no Qualtrics
+  response to join to, and is excluded from the study data by its cohort.
 - These runs are tagged `cohort=internal` and are excluded from study data by
   that tag; they can never be mistaken for a participant.
 
@@ -987,11 +823,12 @@ URL](#the-participant-url-qualtrics--app--qualtrics) below.
 |---|---|---|
 | `/start` | A participant arriving from the survey | `pid=`, **`qid=`** |
 
-> **`&qid=` is mandatory on the `/start` link.** It carries
-> the Qualtrics `ResponseID`, which is the only evidence this platform has that
-> anybody consented at all; without a usable one the arrival is refused, the
-> voice socket closes 4403 and **the encounter is not recorded**. The full
-> wording is in [The participant
+> **`&qid=` is mandatory on the `/start` link.** It carries the Qualtrics
+> `ResponseID`, the join key between a run and the survey response that sent
+> the participant here. Without a usable one the encounter still runs and is
+> still recorded, but **it cannot be joined to its survey response** — and
+> that is the whole wave, not one participant, because the link is one
+> template. The full wording is in [The participant
 > URL](#the-participant-url-qualtrics--app--qualtrics) below — read it before
 > you paste anything into the survey.
 
@@ -1170,14 +1007,16 @@ https://rf.ai-ready-workforce.ai.cornell.edu/start?pid=${e://Field/participantId
   counterbalanced order, recorded on the run under `construct_pool`.
 
 > **`&qid=` is mandatory on the `/start` link.** It carries the Qualtrics
-> `ResponseID`, and since consent moved upstream that response id is the only
-> evidence this platform has that anybody consented at all: `server/storage.py`
-> records a study consent *only* against a usable `qid`. A link without it, or
-> one whose `${e://Field/ResponseID}` never got replaced, is refused —
-> `POST /api/consent` answers 409 `no_survey_response_id` (404 on the build
-> deployed today), the record stays unconsented, and the voice socket closes
-> 4403. **The participant is turned away and the encounter is not
-> recorded.** `ResponseID` is built into Qualtrics; pipe it via embedded data.
+> `ResponseID`, the join key between a run and the Survey 1 response — the one
+> that holds the participant's consent and self-report. Consent itself is taken
+> in Qualtrics; this platform shows no consent form and keeps no consent
+> record, so the `ResponseID` is what ties an encounter to the person who
+> consented to it. A link without it, or one whose `${e://Field/ResponseID}`
+> never got replaced, is **not refused**: the participant plays all four
+> encounters and everything is recorded, and the run carries no `qualtrics_id`.
+> **Every run in the wave is then unjoinable**, and nothing on the participant's
+> screen or in `/health` says so. `ResponseID` is built into Qualtrics; pipe it
+> via embedded data, and check the first arrivals (below).
 >
 > **Do not append `&variant=` or `&cohort=`.** Neither is silently honoured any
 > more: on a link without the researcher key both are **ignored, and a
@@ -1197,9 +1036,9 @@ https://rf.ai-ready-workforce.ai.cornell.edu/start?pid=${e://Field/participantId
 
 After the first few arrivals, check the wave two ways: no `unattributed` runs
 (the `participantId` piping worked, [above](#joining-the-data-afterwards)) and
-no runs sitting with zero encounters (the `qid` piping and the consent version
-worked, [above](#the-consent-version-unset-this-records-nothing)). Both fail
-all-or-nothing, so the first three participants tell you about all hundred.
+every run carrying a `qualtrics_id` (the `qid` piping worked — it is the join
+key to the survey response). Both fail all-or-nothing, so the first three
+participants tell you about all hundred.
 
 > **Never put `SESSION_KEY` in the participant link.** An earlier version of this
 > page told you to append `&key=<SESSION_KEY>`. Do not. SESSION_KEY is not a

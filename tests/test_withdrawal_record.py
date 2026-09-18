@@ -134,8 +134,7 @@ def _session(sessions_root, sid, owner, scenario=SCENARIO):
 def _arrival(store, runs_mod, key, *, arm=None):
     """One participant as /start plus POST /api/consent leaves them."""
     run = runs_mod.create(key, qualtrics_id=f"R_{key}", cohort="study", arm=arm)
-    pid = store.create_participant(code=key, consent_given=True,
-                                   consent_version="v1")
+    pid = store.create_participant(code=key)
     run["participant_record_id"] = pid
     runs_mod.save(run)
     return run, pid
@@ -281,84 +280,7 @@ def no_gateway(monkeypatch):
     monkeypatch.setattr(appmod.registry, "create", no_such_scenario)
 
 
-def test_re_consenting_cannot_mint_a_record_without_the_withdrawal(
-        pair, client, store, runs_mod, no_gateway):
-    """The way back in that needed no session id and no run id at all.
-
-    POST /api/consent with a bare code takes the minting branch, and a brand new
-    record carried no withdrawal: withdrawal_for_record found no run pointing at
-    it, and participant_withdrawal was being handed a record id where it wanted
-    a participant key. The voice socket accepted. A record minted for somebody
-    who stopped has to be born carrying that fact."""
-    r = client.post("/api/consent",
-                    json={"code": "PKEY002", "consent_given": True})
-    assert r.status_code == 200, r.text
-    fresh = r.json()["participant_id"]
-    assert fresh != pair["gone_pid"]
-
-    rec = store.get_participant(fresh)
-    assert rec.get("withdrawn"), (
-        "a second record was minted for a withdrawn person with no withdrawal "
-        "on it, and the capture socket opens on exactly this record")
-    assert appmod._consented_participant(fresh) is None
-
-    with pytest.raises(WebSocketDisconnect) as caught:
-        with client.websocket_connect(
-                f"/ws/participant/voice?scenario={SCENARIO}"
-                f"&participant_id={fresh}"):
-            pass
-    assert caught.value.code == 4403
-
-
-def test_a_participant_who_never_withdrew_can_still_consent_and_connect(
-        pair, client, store, no_gateway):
-    """Positive control for the branch above: minting must still work, and the
-    socket must still open, for someone who never pressed stop."""
-    r = client.post("/api/consent",
-                    json={"code": "PKEYFRESH", "consent_given": True})
-    assert r.status_code == 200, r.text
-    fresh = r.json()["participant_id"]
-    assert not store.get_participant(fresh).get("withdrawn")
-    assert appmod._consented_participant(fresh) is not None
-
-    with client.websocket_connect(
-            f"/ws/participant/voice?scenario={SCENARIO}"
-            f"&participant_id={fresh}") as ws:
-        assert ws.receive_json()["type"] == "error"
-
-
 # --- failing closed ----------------------------------------------------------
-
-def test_an_unreadable_run_file_cannot_turn_a_withdrawal_back_into_consent(
-        pair, runs_mod, store):
-    """The scan skipped any file it could not parse, so corrupting (or losing a
-    write to) the owner run answered "nobody withdrew" and the gate opened.
-
-    Two defences, and the test asserts the outcome rather than which one fired:
-    the withdrawal is on the record, so the run file is no longer the only copy,
-    and the scan that backs it up refuses to report a clean negative when it
-    could not read everything it was asked to read."""
-    for f in sorted(runs_mod.RUNS_DIR.glob("*.json")):
-        run = json.loads(f.read_text(encoding="utf-8"))
-        if run.get("participant_record_id") == pair["gone_pid"]:
-            f.write_text("{ this is not json", encoding="utf-8")
-
-    assert appmod._withdrawn(pair["gone_pid"]) is True
-    assert appmod._consented_participant(pair["gone_pid"]) is None
-
-
-def test_an_unreadable_run_file_does_not_block_a_live_participant(
-        pair, runs_mod, store):
-    """The fail-closed rule above is bounded by the record.
-
-    A live participant's own record says nothing about a withdrawal and is
-    readable, so it answers on its own — an unrelated corrupt run file in the
-    directory must not cost them their encounter."""
-    (runs_mod.RUNS_DIR / "aaaaaaaaaaaa.json").write_text(
-        "{ not json either", encoding="utf-8")
-    assert appmod._withdrawn(pair["live_pid"]) is False
-    assert appmod._consented_participant(pair["live_pid"]) is not None
-
 
 # --- the live session --------------------------------------------------------
 
@@ -533,51 +455,6 @@ def test_a_store_read_error_still_refuses_capture(pair, client, sessions_root,
                    params={"participant_id": pair["live_pid"]},
                    content=b"\0" * 4096)
     assert r.status_code == 403, r.text
-
-
-def test_one_unreadable_file_does_not_refuse_a_record_no_run_names(
-        client, store, runs_mod, sessions_root, s3):
-    """The fail-closed rule was bounded by "which run names this record", and a
-    great many records are named by no run at all.
-
-    /start mints the record and then writes the pointer onto the run, and that
-    write-back can fail on its own — the handler retries it once and logs. For
-    every participant left in that state the scan could not name a run, so ONE
-    stray half-written file anywhere in the runs directory refused them:
-    capture, uploads, their encounter. The record still knows the participant
-    key it was minted under, and a run under that key is the same person.
-    """
-    runs_mod.create("PKEYORPH", qualtrics_id="R_o", cohort="study")
-    pid = store.create_participant(code="PKEYORPH", consent_given=True,
-                                   consent_version="v1")
-    # participant_record_id deliberately never written back onto the run.
-    (runs_mod.RUNS_DIR / "bbbbbbbbbbbb.json").write_text("{ nope",
-                                                         encoding="utf-8")
-
-    assert appmod._withdrawn(pid) is False
-    assert appmod._consented_participant(pid) is not None
-    sdir = _session(sessions_root, SPARE_LIVE_SID, pid)
-    r = client.put(f"/api/sessions/{SPARE_LIVE_SID}/video",
-                   params={"participant_id": pid}, content=b"\0" * 4096)
-    assert r.status_code == 200, r.text
-    assert (sdir / "webcam.webm").exists()
-
-
-def test_one_unreadable_file_still_cannot_un_withdraw_a_participant(
-        client, store, runs_mod):
-    """Positive control for the test above: the narrowing is about identifying
-    the person, not about believing a directory it could not read.
-
-    Here the record's own run IS the unreadable file and no other run of theirs
-    exists, so nothing identifies them and the gate still refuses.
-    """
-    run = runs_mod.create("PKEYORPH2", qualtrics_id="R_o2", cohort="study")
-    pid = store.create_participant(code="PKEYORPH2", consent_given=True,
-                                   consent_version="v1")
-    (runs_mod.RUNS_DIR / f"{run['run_id']}.json").write_text(
-        "{ half written", encoding="utf-8")
-    assert appmod._withdrawn(pid) is True
-    assert appmod._consented_participant(pid) is None
 
 
 def test_a_participant_presenting_their_own_record_is_still_stopped(

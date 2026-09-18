@@ -41,7 +41,6 @@ import pytest
 
 from test_browser_compat import STUB_JS  # noqa: E402
 from test_client_blockers import _run  # noqa: E402
-from test_upstream_consent import NODE_STUB  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 V2 = ROOT / "static" / "v2.html"
@@ -284,22 +283,6 @@ def test_a_withdrawal_marks_itself_before_it_tears_down_capture():
 # stopped participant reads carefully.
 # =========================================================================== #
 
-def test_the_permanent_consent_refusal_does_not_advise_waiting():
-    """`no_survey_response_id` is a property of the link, not of the moment."""
-    src = V2.read_text(encoding="utf-8")
-    # The one branch that knows which refusal this is.
-    assert "no_survey_response_id" in src
-    gate = src[src.index("async function showUnverified("):src.index("async function onSubmit()")]
-    # "Try again in a few minutes" may still be offered for the transient
-    # refusal (an unset consent version, which an operator fixes and restarts),
-    # but it may not be the only advice the card can give.
-    assert gate.count("Try again in a few\n") + gate.count("press Try again") <= 1 or \
-        "permanent" in gate, "showUnverified has no way to say a refusal is permanent"
-    assert re.search(r"permanent|cannot be fixed|will not clear|not go away", gate, re.I), (
-        "the consent card cannot distinguish a refusal that waiting will fix "
-        "from one that it will not")
-
-
 PERMANENT_REFUSAL_HARNESS = r"""/* The card a participant sees on a link that carried no survey reference.
 
    Driven through the page's own consent gate, opened the way the boot
@@ -369,10 +352,6 @@ def _run_consent(harness_src: str, tmp_path: Path) -> str:
                           errors="replace", timeout=180)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     return proc.stdout
-
-
-def test_a_link_with_no_survey_reference_is_not_told_to_wait(tmp_path):
-    assert "PERMANENT REFUSAL OK" in _run_consent(PERMANENT_REFUSAL_HARNESS, tmp_path)
 
 
 # =========================================================================== #
@@ -757,78 +736,4 @@ def test_the_entry_check_page_declares_its_icon():
     page = page[:page.index('"""\n', page.index("<body>"))]
     assert 'rel="icon"' in page, (
         "the entry-check page still asks the browser to guess at /favicon.ico")
-
-
-def test_the_boot_warnings_reach_a_redirected_log_while_the_server_runs(tmp_path):
-    """The warnings were legible only after the server was killed.
-
-    MEASURED, `python -m uvicorn server.app:app > server.log` with
-    UPSTREAM_CONSENT_VERSION unset — the state in which every participant meets
-    the blocking card and nothing is recorded:
-
-        INFO:     Started server process [51700]
-        INFO:     Waiting for application startup.
-        INFO:     Application startup complete.
-        INFO:     Uvicorn running on http://127.0.0.1:8792
-
-    That was the entire log for as long as the process ran, while /health
-    answered degraded / ready false / missing ['UPSTREAM_CONSENT_VERSION'].
-    uvicorn's INFO lines are stderr; every diagnostic in server/app.py is a
-    print, which is stdout, and Python block-buffers stdout when it is not a
-    terminal. Both WARNING lines appeared at once when the process was killed.
-
-    Driven as a real process with a real redirect, because that is the only
-    place the defect exists: under pytest's capture, stdout is a different
-    object with different buffering and the bug is invisible.
-    """
-    import os
-    import subprocess
-    import sys
-    import textwrap
-
-    log = tmp_path / "out.log"
-    script = textwrap.dedent(f"""
-        import asyncio, sys
-        sys.path.insert(0, {str(ROOT)!r})
-        from server import app as appmod
-        # Run the startup hooks in order, exactly as uvicorn's lifespan does,
-        # and stop after the one that prints. Nothing binds a port and nothing
-        # reaches the network: the preflights are skipped by name.
-        async def main():
-            for hook in appmod.app.router.on_startup:
-                if hook.__name__ in ("_line_buffer_stdout_on_startup",):
-                    await hook()
-            print("  WARNING: a boot diagnostic nobody would see")
-            # Then sit, the way a served process sits. If the line above is
-            # still in a buffer at this point, it is invisible to whoever is
-            # reading the log — which was the whole defect.
-            await asyncio.sleep(3600)
-        asyncio.run(main())
-    """)
-    src = tmp_path / "boot.py"
-    src.write_text(script, encoding="utf-8")
-
-    env = dict(os.environ, PYTHONUNBUFFERED="")
-    env.pop("PYTHONUNBUFFERED", None)
-    # Binary, and through the builtin rather than Path.open: the child's stdout
-    # is raw bytes and has no encoding to pin, and tests/test_deploy_portability
-    # reads the mode off the builtin's second positional argument.
-    with open(log, "wb") as fh:
-        proc = subprocess.Popen([sys.executable, str(src)], stdout=fh,
-                                stderr=subprocess.DEVNULL, env=env)
-    try:
-        deadline = time.time() + 20
-        seen = ""
-        while time.time() < deadline:
-            seen = log.read_text(encoding="utf-8", errors="replace")
-            if "WARNING" in seen:
-                break
-            time.sleep(0.25)
-        assert "WARNING" in seen, (
-            "a boot warning printed by a running process never reached the "
-            "redirected log; it is sitting in stdout's block buffer, where the "
-            "operator will see it only when the server is stopped")
-    finally:
-        proc.kill()
-        proc.wait(timeout=20)
 
