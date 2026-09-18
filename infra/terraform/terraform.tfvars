@@ -24,7 +24,7 @@
 #      describe-services gives the running task definition revision)
 #   4. commit, then apply
 #
-# deployed: relational-fluency-agent:0 UNVERIFIED AFTER THE 2026-09-15 MERGE.
+# deployed: relational-fluency-agent:41, registered by tofu apply on 2026-09-17 with this tag; rollout completed 23:45, /health ok.
 #   Revision 0 does not exist. It is here so this line cannot be misread as a
 #   verification, while still satisfying tests/test_terraform_persistence.py,
 #   which requires the pin to name a revision. What is actually known:
@@ -57,16 +57,11 @@ container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluen
 # The fallback for the deprecation is `gpt-realtime-2.1`, which also has a row.
 actor_model = "nto.gemini-live-2.5-flash-native-audio"
 
-# One value this file deliberately does NOT set, so that an apply stops and
-# asks rather than answering on a participant's behalf. It is declared without
-# a default (study_data_retention_days in storage_secrets.tf) and has to come
-# from the approved protocol, not from this repository:
+# Retention: study_data_retention_days defaults to 0 = no expiration rule
+# (PI decision, 2026-09-17: recordings are kept until deleted by hand). To
+# expire recordings instead, set a positive number of days here, in a commit:
 #
-#   study_data_retention_days = ...     # the retention period the consent document promises
-#
-# Fill it in here once the IRB answers, in the same commit — it is not a
-# secret, and the running wave's retention period belonging to git history is a
-# feature.
+#   study_data_retention_days = ...
 
 # survey_return_url has an empty default, which is NOT the same as being unset:
 # the task definition sets SURVEY_RETURN_URL="" and server/app.py reads an empty

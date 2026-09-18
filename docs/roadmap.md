@@ -37,7 +37,7 @@ See [`migration-plan.md`](migration-plan.md) for detail and dependency order.
       ACM certificate exist — released by hand with the AWS CLI, Terraform
       state not yet recovered
 - [ ] Pilot n=5–10 to tune agent difficulty and confirm 7–12 min elicits signal
-- [ ] **Decide the realtime model** (PI, then IRB): on the configured model the
+- [ ] **Decide the realtime model** (PI): on the configured model the
       director's mid-encounter directions never reach the character —
       `PI-DECISION-realtime-model.md`, alongside the repository
 
@@ -46,7 +46,6 @@ See [`migration-plan.md`](migration-plan.md) for detail and dependency order.
 100 participants × 4 encounters (one per construct, counterbalanced) = **400
 encounters** with audio, transcript, and video.
 
-- [ ] IRB amendment covering video capture, consent language, and retention
 - [ ] Recruitment via CloudResearch Connect; WEIP baseline in Qualtrics
 - [ ] Monitor completion, dropout, and encounter length during collection
 

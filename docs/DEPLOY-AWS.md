@@ -46,7 +46,7 @@ verification:
 - **`infra/terraform/ecs.tf` declared resources absent from those live
   revisions** — the EFS file system, its access point, the `/data` mount and the
   `DATA_DIR` environment entry. Those are the fix, not the state of the world;
-  see [No persistent volume](#no-persistent-volume-yet), below.
+  see [No persistent volume](#the-persistent-volume), below.
 
 **Repository update, 15 September 2026:** `versions.tf` now configures a shared
 S3 backend with a DynamoDB lock table, and `terraform.tfvars` pins image
@@ -66,16 +66,16 @@ system, access point, two mount targets, security group, backup policy, the
 task role's EFS grant and the bucket lifecycle rule are created; the task
 definition is replaced (it gains the `/data` volume and `DATA_DIR`,
 `DEFAULT_RUN_VARIANT`, `CLAUDE_MODEL`); the service and target group are
-updated in place. Still no EFS file system exists and the live revision has no
-volume. The apply waits on one number, `study_data_retention_days`, which is
-the IRB's (see [Lifecycle and retention](#webcam-recordings-and-the-study-bucket)).
+updated in place. **Applied the same evening:** EFS `fs-09e2d30bae3ce9239`,
+revision **41** with `study-data` mounted at `/data`, rollout completed 23:45,
+`/health` green. The Terraform path is the release procedure from here.
 
 This page documents **two** paths; their status at the 12 September inspection was:
 
 | Path | Status | Use it for |
 |---|---|---|
-| **CLI: register a task definition, update the service** | In use. Every revision 35–38 | Shipping a build, changing an environment variable, today |
-| **OpenTofu / Terraform** | Blocked until the state is found or rebuilt | Everything structural — EFS, IAM, ALB — and, eventually, all of it |
+| **CLI: register a task definition, update the service** | Was in use for revisions 35–40 | Nothing new; the Terraform path covers it |
+| **OpenTofu / Terraform** | In use since 17 September 2026 (revision 41) | Everything: image pin, environment, EFS, IAM, ALB |
 
 Neither is the long-term answer on its own. The CLI path cannot create a
 persistent volume, an IAM policy or a bucket rule, and a task definition edited
@@ -162,14 +162,11 @@ Until a first apply completes in a new environment, its hostname does not
 resolve at all — the DNS records are ALB aliases created by this process, so
 "server not found" is the expected state beforehand.
 
-**The apply will stop and ask for one variable, and that is the check
-working rather than a fault.** `study_data_retention_days` is the number of days
-the bucket keeps a recording before the lifecycle rule in
-`storage_secrets.tf` expires it; it is the period the approved consent
-document promises, and a default here would be this repository inventing an
-IRB figure. See
-[Lifecycle and retention](#webcam-recordings-and-the-study-bucket) before
-answering it.
+**Retention.** `study_data_retention_days` defaults to 0: no expiration rule,
+recordings are kept until deleted by hand (PI decision, 2026-09-17). A
+positive number in `terraform.tfvars` makes the lifecycle rule in
+`storage_secrets.tf` expire recordings after that many days. See
+[Lifecycle and retention](#webcam-recordings-and-the-study-bucket).
 
 Answer it once, in `terraform.tfvars`, beside the committed image pin. It is not
 a secret, and having the running wave's retention period in git history is worth
@@ -477,7 +474,7 @@ built and pushed, and two of them name something other than what is wrong.
 | Read logs | `logs:FilterLogEvents`, `logs:DescribeLogGroups`, `logs:DescribeLogStreams` | `/ecs/relational-fluency/agent` |
 | Check the load balancer | `elasticloadbalancing:DescribeTargetGroups`, `elasticloadbalancing:DescribeTargetHealth` | the target group |
 | Look in the study bucket | `s3:ListBucket`, `s3:GetObject`, `kms:Decrypt` | the bucket and its key |
-| Add the persistent volume (one-off) | `elasticfilesystem:CreateFileSystem`, `CreateAccessPoint`, `CreateMountTarget`, `DescribeFileSystems`; `ec2:CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, `DescribeSubnets`; `iam:PutRolePolicy` on the task role; then RegisterTaskDefinition + UpdateService again | see [No persistent volume](#no-persistent-volume-yet) |
+| Add the persistent volume (one-off) | `elasticfilesystem:CreateFileSystem`, `CreateAccessPoint`, `CreateMountTarget`, `DescribeFileSystems`; `ec2:CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, `DescribeSubnets`; `iam:PutRolePolicy` on the task role; then RegisterTaskDefinition + UpdateService again | see [No persistent volume](#the-persistent-volume) |
 
 **`iam:PassRole` is the one that catches people.** A person with every `ecs:*`
 action still cannot register this task definition, because it names an
@@ -531,11 +528,17 @@ the ALB provides — this is why encounters cannot be tested over a bare IP.
 one encounter through `/test` after every deploy and confirm its record
 appears (see [OPERATIONS.md](OPERATIONS.md#is-the-data-being-stored-properly)).
 
-## No persistent volume (yet)
+## The persistent volume
+
+**Applied 17 September 2026:** `tofu apply` created EFS `fs-09e2d30bae3ce9239`
+(two mount targets, an access point owning `/data` as uid 1000) and registered
+revision 41 with the `study-data` volume mounted at `/data` and
+`DATA_DIR=/data`. The record below is how it stood before, kept so the
+one-line check's two outputs stay recognisable.
 
 `infra/terraform/ecs.tf` declares an EFS file system, an access point, a
-`/data` mount point and `DATA_DIR=/data`. **None of that is deployed.** Checked
-12 September 2026:
+`/data` mount point and `DATA_DIR=/data`. None of that was deployed when
+checked on 12 September 2026:
 
 - Revisions 35, 36, 37 and 38 all have `volumes=[]` and no `mountPoints`.
 - **There is no EFS file system in the account** for any of them to mount.
@@ -778,24 +781,17 @@ laptop never exhibits:
   honouring that request today takes a version-aware delete, not an ordinary
   one.
 
-The rule is now **written**, in `infra/terraform/storage_secrets.tf`
-(`aws_s3_bucket_lifecycle_configuration.study_data`), and deliberately left
-unable to apply until the IRB supplies the number:
+The rule is **written**, in `infra/terraform/storage_secrets.tf`
+(`aws_s3_bucket_lifecycle_configuration.study_data`):
 
-- `study_data_retention_days` has **no default**. It is the period the approved
-  consent document promises. **The lifecycle rule and the consent document are
-  one decision, and the document is the half that has to be settled first** —
-  a bucket that expires objects at a date the form does
-  not mention is deleting research data early, and a bucket that keeps them
-  forever while the form promises a date is the same mistake pointing the other
-  way. `tofu plan` stops and asks; do not answer it from this page.
+- `study_data_retention_days` defaults to **0**: no `expiration` block, so
+  current recordings are kept until deleted by hand (PI decision,
+  2026-09-17). A positive number expires them after that many days.
 - `study_data_superseded_version_days` (default 30) is how long a superseded
-  version survives after being overwritten — an operational recovery window,
-  not the IRB's number — and a precondition refuses any value longer than the
-  retention period, because on a versioned bucket an `expiration` rule does
-  **not** delete the bytes, it makes them noncurrent. The true worst case for a
-  byte is retention + 30 days; set the window to 1 if the protocol's wording is
-  strict enough that this matters.
+  version survives after being overwritten — an operational recovery window —
+  and, when a retention period is set, a precondition refuses any value longer
+  than it, because on a versioned bucket an `expiration` rule does **not**
+  delete the bytes, it makes them noncurrent.
 - Every rule that deletes data is scoped to `encounters/` and `steering-logs/`
   — the two prefixes the task role can write — so a hand-made export or backup
   in the same bucket is never on a schedule nobody told its owner about. Each
@@ -813,7 +809,6 @@ unable to apply until the IRB supplies the number:
 
 | Symptom | Cause |
 |---|---|
-| `tofu apply` stops asking for `study_data_retention_days` | Working as designed — the bucket lifecycle rule needs the IRB's retention period and this repository is not entitled to invent it. See [Lifecycle and retention](#webcam-recordings-and-the-study-bucket) |
 | `tofu plan` proposes to CREATE the bucket, roles or certificate | The state for this stack is missing. **Stop**; do not apply. See [Read this first](#read-this-first-the-runbook-and-the-practice-have-diverged) |
 | `Unknown parameter in input: "taskDefinitionArn"` from `register-task-definition` | The read-only fields were not stripped from `td.json` — [step 4a](#4a-the-path-in-use-register-a-task-definition-point-the-service-at-it) |
 | `not authorized to perform: iam:PassRole` | Your identity, not the role it names. See [Who can run which step](#who-can-run-which-step) |
@@ -848,14 +843,11 @@ Terraform that is supposed to be the source of truth.
    cannot say who has it. Ask the Cornell AWS administrator for the account, and
    have the answer before a wave rather than during one.
 3. **What is the retention period for audio, video and transcripts?**
-   the consent document has to state the retention period, and the
-   bucket lifecycle rule and the consent text are one decision. The rule is
-   written in `storage_secrets.tf` and waits on `study_data_retention_days`,
-   which has no default. The IRB protocol settles it; the PI is who to ask.
-4. **Is there a second copy of anything?** Nothing archives session audio,
-   transcripts or events to S3, and the volume that would hold them does not
-   exist yet. Whether the IRB data-management plan requires a backup, and where
-   it would live, is a question for the PI and the IRB office.
+   Decided 2026-09-17: none. Recordings are kept until deleted by hand
+   (`study_data_retention_days = 0`).
+4. **Is there a second copy of anything?** Since 2026-09-17 every closed
+   encounter is archived to the study bucket (`server/archive.py`); the EFS
+   volume is the other copy once the planned apply has run.
 5. **Did any of revisions 35–37 differ in a way worth keeping?** They were
    registered by hand and there is no record of what changed between them.
    `aws ecs describe-task-definition --task-definition relational-fluency-agent:35`

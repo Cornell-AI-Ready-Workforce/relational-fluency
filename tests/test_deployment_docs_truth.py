@@ -135,24 +135,22 @@ def test_each_release_step_names_the_permission_it_needs(action):
 
 
 def test_operations_states_the_measured_volume_situation():
-    """The live task has no volume, and the docs hedged about it.
+    """The volume is a measured fact, with the id and revision that carry it.
 
-    `infra/terraform/ecs.tf` declares EFS, a mount point and DATA_DIR — but
-    Terraform source is not a running service, no revision has ever carried
-    them, and there is no EFS file system in the account to carry. Written as
-    "check whether it is mounted", a reader assumes the answer is probably yes.
+    Until 17 September 2026 the live task had no volume and no EFS file system
+    existed; `tofu apply` then created `fs-09e2d30bae3ce9239` and registered
+    revision 41 with `study-data` mounted at /data. The page must name both, so
+    a reader comparing the one-line check's output knows what "good" looks like,
+    and must still show the empty-list shape that means ephemeral.
     """
     body = _text(OPERATIONS)
-    assert "no EFS file system" in body, (
-        "docs/OPERATIONS.md must state, as measured fact, that no EFS file "
-        "system exists in this account — not merely that the mount is worth "
-        "checking. Every session, run, rating and WAV is on the container's "
-        "own writable layer and dies with the next deploy."
+    assert "fs-09e2d30bae3ce9239" in body and "study-data" in body, (
+        "docs/OPERATIONS.md must name the EFS file system and the volume that "
+        "revision 41 mounts at /data, as measured fact"
     )
     assert "volumes=[]" in body, (
-        "docs/OPERATIONS.md must show what the one-line check actually returns "
-        "on the deployed revisions, so the reader can match it against their "
-        "own output instead of interpreting it."
+        "docs/OPERATIONS.md must still show the empty-list shape the check "
+        "returns on an ephemeral revision, so a regression is recognisable."
     )
 
 

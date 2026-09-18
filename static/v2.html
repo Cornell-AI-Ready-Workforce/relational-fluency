@@ -1081,7 +1081,7 @@
   // Who a participant contacts about the study. Consent, and the contact
   // details that go with it, are taken outside this platform (2026-09-17);
   // the deployment names the study team through STUDY_CONTACT_NAME /
-  // STUDY_CONTACT_EMAIL / STUDY_IRB_PROTOCOL, served on /api/run/config.
+  // STUDY_CONTACT_EMAIL, served on /api/run/config.
   let runCfg = null;
   async function loadRunCfg() {
     if (runCfg) return runCfg;
@@ -1096,23 +1096,20 @@
     const c = cfg || {};
     const name = String(c.contact_name || '').trim();
     const email = String(c.contact_email || '').trim();
-    const irb = String(c.irb_protocol || '').trim();
     const mail = email ? `<a href="mailto:${esc(email)}">${esc(email)}</a>` : '';
     let who = '';
     if (name && mail) who = `${esc(name)} at ${mail}`;
     else if (mail) who = `the research team at ${mail}`;
     else if (name) who = `${esc(name)}, the researcher for this study`;
     if (!who) who = 'the study team, using the contact details in the survey that sent you here';
-    return who + (irb ? ` (IRB protocol ${esc(irb)})` : '');
+    return who;
   }
 
   async function contactWho() { return contactPhrase(await loadRunCfg()); }
 
   // ---------- the upstream consent handoff ----------
-  // There is no consent form on this platform. Cornell's IRB consent is taken
-  // in the Qualtrics survey, before anybody is redirected to /start, so asking
-  // again here would be asking a participant to agree a second time to a text
-  // this repository wrote and no board approved.
+  // There is no consent form on this platform: it is handled in the survey,
+  // before anybody is redirected to /start.
   //
   // What did NOT go away is the RECORD. The voice socket closes 4403 for any
   // participant whose record does not carry consent, and that record is the

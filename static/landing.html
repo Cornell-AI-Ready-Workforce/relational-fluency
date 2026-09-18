@@ -136,7 +136,6 @@
   .foot-contact .who { color: var(--fg); font-weight: 500; }
   .foot-contact a { color: var(--accent); }
   .foot-contact a:hover { color: var(--accent-deep); }
-  .foot-contact .irb { display: block; font-size: 12px; }
   /* An unfilled field shows its slot rather than vanishing. Dashed and greyed so
      it reads as "nobody has set this yet" and can never be mistaken for a real
      contact, which is the only thing that would make it worse than nothing. */
@@ -662,15 +661,6 @@
       box.appendChild(row);
     } else {
       box.appendChild(slot('Contact email'));
-    }
-
-    if (isFilled(c.irb_protocol)) {
-      const irb = document.createElement('span');
-      irb.className = 'irb';
-      irb.textContent = 'IRB protocol ' + c.irb_protocol;
-      box.appendChild(irb);
-    } else {
-      box.appendChild(slot('IRB protocol'));
     }
 
     box.hidden = false;

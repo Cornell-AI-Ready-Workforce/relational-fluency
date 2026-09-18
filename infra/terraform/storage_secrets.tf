@@ -77,20 +77,18 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "study_data" {
 # it" was true only for as long as somebody remembered to delete things by hand
 # — which, on a versioned bucket, has never once happened anywhere.
 #
-# THE NUMBER IS NOT IN THIS REPOSITORY ON PURPOSE. It is an IRB-approved figure
-# and that period has to be copied from the approved document. A default
-# here would be this file answering a question that was asked of the protocol,
-# and it would be a *plausible* answer, which is what makes it dangerous: the
-# apply succeeds, the bucket starts expiring objects on a schedule nobody
-# approved, and the first person to notice is an auditor. No default means
-# `tofu plan` stops and asks.
+# THE PERIOD IS THE PI'S DECISION. On 2026-09-17 it was decided not to expire
+# recordings at all, so the default is 0 and the rule below carries no
+# `expiration` block. A positive number here makes S3 delete recordings on
+# that schedule, so it is set deliberately, never guessed.
 variable "study_data_retention_days" {
-  description = "Days a study object is kept before S3 expires it. Must be the period the approved consent text and the IRB protocol state — see config/consent.yaml. No default on purpose: this repository is not entitled to invent it."
+  description = "Days a study object is kept before S3 expires it. 0 (the default, decided by the PI on 2026-09-17) means no expiration rule: recordings are kept until somebody deletes them."
   type        = number
+  default     = 0
 
   validation {
-    condition     = var.study_data_retention_days >= 1
-    error_message = "study_data_retention_days must be a positive number of days, as approved by the IRB. S3 measures expiration in whole days from object creation; there is no way to express 'never' here — omit the lifecycle rule for that."
+    condition     = var.study_data_retention_days >= 0
+    error_message = "study_data_retention_days must be 0 (keep indefinitely) or a positive number of whole days."
   }
 }
 
@@ -101,18 +99,18 @@ variable "study_data_retention_days" {
 # `expiration` rule does NOT delete the object. It writes a delete marker and
 # makes the current version noncurrent, where that version stays — stored,
 # billed and fully readable by anyone with s3:GetObjectVersion — forever. A
-# study that told its IRB "deleted after N days" would be keeping all of it,
+# study that promised "deleted after N days" would be keeping all of it,
 # and `aws s3 ls` would agree that the prefix was empty, because the plain LIST
 # only sees current versions. So noncurrent versions are handled explicitly
 # below, and this is the window for that second clock.
 #
 # This one DOES have a default, and the difference from the variable above is
-# the point: it is not the IRB's number. It is an operational recovery window —
+# the point: it is not the retention period. It is an operational recovery window —
 # how long a superseded copy stays available after something overwrites an
 # object — and 30 days is a recovery window, not a promise made to a
 # participant. See the worst-case note on the rules themselves.
 variable "study_data_superseded_version_days" {
-  description = "Days a superseded (noncurrent) object version survives after being replaced. An operational recovery window, not the IRB retention period — see study_data_retention_days."
+  description = "Days a superseded (noncurrent) object version survives after being replaced. An operational recovery window, not the retention period — see study_data_retention_days."
   type        = number
   default     = 30
 
@@ -159,7 +157,7 @@ variable "study_data_superseded_version_days" {
 # study_data_retention_days is deleted on S3's first evaluation cycle — within
 # 24-48 hours, with no further confirmation. That may be exactly right. It is
 # not a decision an apply should make silently, so verify the ages first (see
-# the handover commands) and get the answer from the IRB, not from here.
+# the handover commands) and get the answer from the PI, not from here.
 resource "aws_s3_bucket_lifecycle_configuration" "study_data" {
   bucket = aws_s3_bucket.study_data.id
 
@@ -175,7 +173,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "study_data" {
     # would be invisible: `aws s3 ls` shows current versions only, so the prefix
     # reads empty while every superseded recording is still there.
     precondition {
-      condition     = var.study_data_superseded_version_days <= var.study_data_retention_days
+      condition     = var.study_data_retention_days == 0 || var.study_data_superseded_version_days <= var.study_data_retention_days
       error_message = "study_data_superseded_version_days must not exceed study_data_retention_days: a noncurrent version would then outlive the retention period the consent text promises."
     }
   }
@@ -189,8 +187,14 @@ resource "aws_s3_bucket_lifecycle_configuration" "study_data" {
       prefix = "encounters/"
     }
 
-    expiration {
-      days = var.study_data_retention_days
+    # No expiration when the retention period is 0: current recordings are
+    # kept indefinitely and the rule only cleans up superseded versions, delete
+    # markers and dead multipart uploads.
+    dynamic "expiration" {
+      for_each = var.study_data_retention_days > 0 ? [1] : []
+      content {
+        days = var.study_data_retention_days
+      }
     }
 
     noncurrent_version_expiration {
@@ -217,8 +221,14 @@ resource "aws_s3_bucket_lifecycle_configuration" "study_data" {
       prefix = "steering-logs/"
     }
 
-    expiration {
-      days = var.study_data_retention_days
+    # No expiration when the retention period is 0: current recordings are
+    # kept indefinitely and the rule only cleans up superseded versions, delete
+    # markers and dead multipart uploads.
+    dynamic "expiration" {
+      for_each = var.study_data_retention_days > 0 ? [1] : []
+      content {
+        days = var.study_data_retention_days
+      }
     }
 
     noncurrent_version_expiration {
