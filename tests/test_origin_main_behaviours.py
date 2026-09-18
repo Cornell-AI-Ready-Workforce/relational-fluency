@@ -97,7 +97,9 @@ def test_the_deployed_route_is_not_folded_into_plain_flash():
 @pytest.mark.parametrize("model,rate,wait,text_items,openai", [
     (GEMINI, 16000, 1.5, True, False),
     (NATIVE, 24000, 4.5, True, False),
-    (GPT, 16000, 1.5, True, True),
+    # 0.0: server VAD is off on this family and the bridge replies only on
+    # commit, so there is no auto-fired reply to wait for (2026-09-18).
+    (GPT, 16000, 0.0, True, True),
 ])
 def test_the_five_answers_she_reached_by_name_still_answer(
         model, rate, wait, text_items, openai, monkeypatch):

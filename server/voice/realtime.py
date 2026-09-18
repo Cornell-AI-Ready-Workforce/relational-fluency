@@ -263,6 +263,12 @@ class RealtimeCapabilities:
     autofire_at_created: bool = False
     # Whether the session dict may carry a transcription language hint.
     transcription_language_hint: bool = True
+    # Session-level cap on a reply's output tokens (audio tokens included), or
+    # None to leave the family's default. Measured 2026-09-18 on gpt-realtime:
+    # 90 tokens cut a reply at 12 words mid-sentence, about 7.5 tokens per
+    # spoken word, so 380 is a ceiling near 50 words that only trims a
+    # monologue and never a normal two-sentence turn.
+    max_output_tokens: Optional[int] = None
     # Voices from ANOTHER family that this family will play instead. The
     # scenario bank names Gemini voices; a bank entry is not a typo, and a
     # rejected voice takes the character brief down with it.
@@ -486,7 +492,13 @@ REALTIME_FAMILIES = {
         end_of_turn_silence_ms=0,
         # 16 kHz in; the bridge accepts the browser's capture rate unchanged.
         input_rate=CLIENT_RATE,
-        autofire_wait=1.5,
+        # Server VAD is off on this family and the bridge only replies on
+        # commit, so there is never an auto-fired reply to wait for: every
+        # tenth of a second spent here is added straight to the participant's
+        # wait (1.5 s per turn on 2026-09-18, on top of the model's own 2.3 s
+        # to first audio).
+        max_output_tokens=380,
+        autofire_wait=0.0,
         accepts_text_items=True,
         # Server VAD is off on this family, so fanned-in colleague audio no
         # longer fires a reply -- but it does still land in the member's own
@@ -1529,6 +1541,10 @@ class RealtimeVoiceSession:
             # docstring gives: a later update without it would hand the
             # gateway's default window back and the pause split with it.
             session["turn_detection"] = self.turn_detection
+        if caps.max_output_tokens:
+            # Accepted by the bridge on the gpt route as `max_output_tokens`
+            # (the older `max_response_output_tokens` is rejected as unknown).
+            session["max_output_tokens"] = caps.max_output_tokens
         return session
 
     async def _send(self, payload: dict) -> None:

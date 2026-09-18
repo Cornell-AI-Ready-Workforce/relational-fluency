@@ -265,6 +265,17 @@ run, so under design 1 the exclusion never applies. See
   simulated participant: 1:1 (S2B) 4/4 replies with the ladder intact, group
   (S4A) routed correctly with zero errors, interjection stops playback.
 
+**Latency on the gpt route (measured 2026-09-18).** End of the participant's
+speech to the character's first audio, in a room: VAD end-of-turn 0.9 s, the
+director's routing call (about 1 s on `nto.gemini-3.1-flash-lite`; 2.6 to
+5.5 s on `nto.gemini-2.5-flash`, which production had been using), no wait at
+all for an auto-fired reply (there is none on this route; the 1.5 s wait it
+inherited was pure delay), then the model's own 2.0 to 2.5 s to first audio.
+After the fixes: 2.5 to 4.3 s from end of turn to first audio (was 4.6 to
+7.5 s). A direct address skips the director. Replies are capped at 380 output
+tokens (about 50 words) as a guard against monologues. `gpt-realtime-2.1-mini`
+starts 0.3 s sooner and finishes in half the time, at some cost in quality.
+
 **Alternatives.** `gpt-realtime-2.1` also works on the same gateway and *does*
 provide server VAD natively — useful as a comparison or fallback.
 `nto.gemini-live-2.5-flash-native-audio` exists but was not re-tested after the
