@@ -780,6 +780,7 @@ class RealtimeVoiceSessionRunner:
         # transcript, 1:1 only (see REPLAY_KEEP_S and _replay_speech). Cleared
         # by every user_transcript, at a character switch, and after a replay.
         self._replay_pcm = bytearray()
+        self._replay_pending = False   # a replayed line not yet heard/answered
         # Set when the 1:1 pump has closed a socket ITSELF because the gateway
         # ignored a request and its retry: _reconnect_after_gateway_close then
         # rebuilds despite the close being ours, and replays the line.
@@ -4263,6 +4264,7 @@ class RealtimeVoiceSessionRunner:
                 # The gateway has heard the participant up to here, so there
                 # is nothing to replay (see REPLAY_KEEP_S).
                 self._replay_pcm.clear()
+                self._replay_pending = False
                 await self._record_user_turn(
                     ev["text"], garbled=bool(ev.get("garbled")))
 
@@ -4724,6 +4726,13 @@ class RealtimeVoiceSessionRunner:
             await _await_transcript(buf, grace, stop=stop, settled=settled)
 
             text = _clean_agent_text("".join(buf))
+            # The character has answered: whatever line was replayed into
+            # this session has been heard, so it must not be replayed again
+            # on a later reconnect. (Only a 1:1 finalize reaches here; room
+            # members never replay.)
+            if text and rt is self.rt and getattr(self, "_replay_pending", False):
+                self._replay_pcm.clear()
+                self._replay_pending = False
             buf.clear()
             # The same two strips the group path applies. Seen live in the
             # S3A one-on-ones (2026-09-17): Jordan opening with "(The meeting
@@ -6562,7 +6571,16 @@ class RealtimeVoiceSessionRunner:
         # them, and the buffer is spent either way: a fresh socket is not
         # handed a line the old one already answered.
         speech = self._replay_speech()
-        self._replay_pcm.clear()
+        # NOT cleared here. On 2026-09-18 the gateway dropped the socket twice
+        # in seven seconds; the first replay went into a socket that died
+        # before answering, and because the buffer was spent on replay the
+        # second reconnect could only replay what had been said since, so the
+        # first half of the participant's sentence was lost. The buffer is
+        # spent when the gateway has demonstrably heard it: its transcription
+        # of the participant arrives (see the user_transcript branch), or the
+        # character answers (see _finalize_turn). Until then a further drop
+        # replays the whole line again.
+        self._replay_pending = bool(speech)
         replayed_ms = 0
         if speech and hasattr(new_rt, "replay_input"):
             try:

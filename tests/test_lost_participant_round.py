@@ -467,8 +467,53 @@ def test_a_socket_that_ignored_the_retry_is_rebuilt_at_once_and_the_line_replaye
         assert runner.rt is second
         assert len(second.replays) == 1, "the unanswered line went into the new session"
         assert len(second.replays[0]) >= 900 * 32
-        assert runner._replay_pcm == bytearray(), "spent"
-        second.end()          # a real gateway close, nothing said since
+        # Replaying does not spend the line: this socket has not yet shown it
+        # heard it. On 2026-09-18 the gateway dropped a socket twice in seven
+        # seconds and the first half of the participant's sentence was lost
+        # because the first replay had emptied the buffer.
+        assert runner._replay_pcm and runner._replay_pending, "kept until heard or answered"
+        second.end()          # dies before transcribing or answering
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            if len(FakeRT.built) >= 3 and runner.rt is FakeRT.built[2]:
+                break
+        third = FakeRT.built[2]
+        assert len(third.replays) == 1, "the still-unheard line goes into the next session too"
+        assert len(third.replays[0]) >= 900 * 32
+        third.end()
+        await asyncio.wait_for(relay, timeout=5)
+
+    asyncio.run(scenario())
+
+
+def test_a_replayed_line_the_gateway_heard_is_spent(monkeypatch):
+    """The complement: once the rebuilt session transcribes the participant,
+    the gateway has demonstrably heard the replayed line, the buffer is spent,
+    and a later rebuild is handed nothing."""
+    monkeypatch.setattr(rt_mod, "RECONNECT_LIMIT", 2)
+    monkeypatch.setattr(rvs, "RealtimeVoiceSession", FakeRT)
+    runner, session, ws = make_runner("S2A")
+    first = FakeRT()
+    runner.rt = first
+    runner._keep_for_replay(pcm(900, 3000))
+
+    async def scenario():
+        relay = asyncio.ensure_future(runner._model_to_client())
+        first.feed({"type": "error", "recoverable": True, "retry_unanswered": True,
+                    "message": "the gateway did not answer the retry for 8s; the turn was abandoned"})
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            if len(FakeRT.built) >= 2 and runner.rt is FakeRT.built[1]:
+                break
+        second = FakeRT.built[1]
+        assert len(second.replays) == 1
+        second.feed({"type": "user_transcript", "text": "Hello, Morgan.", "garbled": False})
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            if not runner._replay_pending:
+                break
+        assert runner._replay_pcm == bytearray() and not runner._replay_pending, "spent once heard"
+        second.end()
         for _ in range(100):
             await asyncio.sleep(0.02)
             if len(FakeRT.built) >= 3 and runner.rt is FakeRT.built[2]:
