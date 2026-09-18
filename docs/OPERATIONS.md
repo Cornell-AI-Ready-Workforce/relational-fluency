@@ -486,7 +486,9 @@ python tools/encounter_health.py --all data/sessions     # exit 0 only if every 
 
 ### What a wave sounds like: lost audio, and the retry
 
-On `nto.gemini-live-2.5-flash` through the gateway a reply's voice can stop
+On `nto.gemini-live-2.5-flash` through the gateway (the plain sibling of the
+native-audio model the study now runs; the bars below were calibrated there and
+have not been re-measured on the native-audio route) a reply's voice can stop
 short of its own caption (about 1 reply in 9) or never start at all (before
 this build, 45 s of dead air per stall, median 47.4 s, with the participant's
 own turns refused meanwhile). The bridge now notices both and asks the gateway

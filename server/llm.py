@@ -306,7 +306,7 @@ def provenance() -> dict:
     return {
         "gateway": gateway_base_url(),
         "text_model": _cfg("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite"),
-        "realtime_model": _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash"),
+        "realtime_model": _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio"),
     }
 
 
@@ -344,7 +344,7 @@ _MODEL_ROLES = (
     ("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite", "the actor's text engine", True),
     ("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite", "the director", True),
     ("STEERING_MODEL", "nto.gemini-3.1-flash-lite", "the steering reviewer", True),
-    ("REALTIME_MODEL", "nto.gemini-live-2.5-flash", "the voice socket", True),
+    ("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio", "the voice socket", True),
     ("TRANSCRIBE_MODEL", "nto.gemini-2.5-pro", "the re-transcriber, offline", False),
 )
 
@@ -363,8 +363,8 @@ def _served_model_ids(payload: object) -> set | None:
     What is deliberately NOT read here is the `mode` field. It looks like the
     way to catch a REALTIME_MODEL pointed at a chat model, and on the live
     gateway it is populated for the gpt entries and null for every nto.gemini
-    one - including nto.gemini-live-2.5-flash, the model the study actually
-    runs. A rule keyed on it would flag the correct configuration.
+    one - including nto.gemini-live-2.5-flash-native-audio, the model the study
+    actually runs. A rule keyed on it would flag the correct configuration.
     """
     entries = payload.get("data") if isinstance(payload, dict) else payload
     if not isinstance(entries, list):

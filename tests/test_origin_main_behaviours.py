@@ -371,12 +371,37 @@ def test_barge_in_ms_is_still_the_operators_name_for_the_barge_bar(monkeypatch):
      'scope.', 'I think we should cut scope.'),
     ('Just a normal reply with no marker at all.',
      'Just a normal reply with no marker at all.'),
+    # Seen live 2026-09-17 (docs/rooms-verification.md): the note paraphrased,
+    # or opened and never closed. Nothing spoken survives it.
+    ('(Context, not meant for you to repeat: Jordan just said out loud to the '
+     'group: "I stopped the second pass.") What do you need from me?',
+     'What do you need from me?'),
+    ('(Alex speaks again: "You can say that again. Two people quit and '
+     'leadership will not even discuss pay.', ''),
+    ('(Casey just said "Sorry, but I think it\'s probably all of it.', ''),
 ])
 def test_a_parroted_context_note_is_stripped_whole(reply, expected):
     """df1ab83. The native-audio route opens by reading the room's own note out
     loud. The room knows exactly what it told him, so the note comes off -- all
     of it, including the punctuation that closed it."""
     assert rvs._strip_context_echo(reply, []) == expected
+
+
+@pytest.mark.parametrize("reply,expected", [
+    ("(Casey pauses.) I agree, for now.", "I agree, for now."),
+    ("(The meeting has ended. Alex and Casey have left. It is just the two of "
+     "you in the room now.) I stopped doing the second pass three weeks ago.",
+     "I stopped doing the second pass three weeks ago."),
+    ("(The user hasn't spoken yet, I should wait for their response.)", ""),
+    ("(Context, not meant for you to repeat:", ""),
+    ("(Context, not", ""),
+    ("I agree (for now) with the plan.", "I agree (for now) with the plan."),
+])
+def test_a_narrated_lead_in_comes_off_balanced_or_not(reply, expected):
+    """2026-09-17, live S3A rooms and one-on-ones: a note the model opened and
+    never closed used to survive as the caption, and the 1:1 path applied no
+    strip at all."""
+    assert rvs._strip_narration(reply) == expected
 
 
 @pytest.mark.parametrize("text,is_direction", [

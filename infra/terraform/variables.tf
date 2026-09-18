@@ -42,7 +42,7 @@ variable "llm_base_url" {
 variable "actor_model" {
   description = "Speech-to-speech model the participant talks to. Frozen for the study wave — the agent is the measurement instrument."
   type        = string
-  default     = "nto.gemini-live-2.5-flash"
+  default     = "nto.gemini-live-2.5-flash-native-audio"
 }
 
 variable "director_model" {
