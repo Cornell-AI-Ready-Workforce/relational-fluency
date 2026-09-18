@@ -87,7 +87,7 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
 - AC: arriving from the app pre-fills the three fields; completing the survey
   marks the Connect assignment complete.
 
-**1.3 App: hand-off to Survey 2** — S · app
+**1.3 App: hand-off to Survey 2** — S · app — note: the page appends `run`, `code`, `pid` (not `run_id`/`participantId`); Survey 2's embedded-data fields must use those names, or change `static/v2.html`. Also: `QUALTRICS_SURVEY_ID` in `.env` still points at the survey named "[Don't USE] … Aug 2026"; a newer "AIW - Relational Fluency - Connect Study 1" (SV_bClj80jCRO4Dmdw, 2026-09-15) exists and is inactive.
 - `SURVEY_RETURN_URL` = Survey 2 anonymous link (Terraform var + `.env`).
 - Completion screen shows the code, then auto-continues after ~10 s (button stays).
 - Confirm the query keys the app appends match the embedded-data names in 1.2.
@@ -108,7 +108,7 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
 - AC: a run created without `qid` records nothing; with it, records everything;
   no consent text is served by the app.
 
-**1.6 Join script for two surveys** — S · analysis
+**1.6 Join script for two surveys** — S · analysis ✅ 2026-09-17: set `QUALTRICS_SURVEY2_ID`; `python -m server.qualtrics join` joins Survey 1 → run → Survey 2 (on `run`, then `code`) and lists Survey 2 orphans.
 - `server/qualtrics.py` takes two survey ids and produces one table:
   participant, Survey 1 response, run (order, forms, completion), four session
   ids, Survey 2 response.
@@ -166,7 +166,7 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
 
 ### E3 — Group rooms (S3, S4)
 
-**3.1 Live verification of rooms on the production model** — M · JL
+**3.1 Live verification of rooms on the production model** — M · JL ✅ 2026-09-17
 - Reference: behaviour at `53bc440` (captions survive, no duplicate captions,
   no parroted context notes, no consecutive unnamed turns for one character,
   held replies play when the floor moves).
@@ -174,14 +174,17 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
   replies, missing captions, mid-reply cut-offs. Compare against the same runs
   on a `53bc440` checkout.
 - AC: a short table of the counts for both builds, committed to
-  `docs/rooms-verification.md`.
+  `docs/rooms-verification.md`. **Done** — driven with a scripted participant
+  on `nto.gemini-live-2.5-flash-native-audio` (the model the study runs; the
+  default moved to it the same day). See the page for the counts and the
+  caveats.
 
-**3.2 Fix room regressions found in 3.1** — L (unknown until 3.1) · JL
+**3.2 Fix room regressions found in 3.1** — L (unknown until 3.1) · JL — partly done 2026-09-17: parroted context notes in captions fixed (PR 18). Open: a room does not rebuild after the gateway drops every socket; second-speaker latency of 3–5 s; ~1 uncaptioned turn per room. See `docs/rooms-verification.md`.
 - Likely suspects from the audit layer: `_direct_member` "sends nothing" on the
   Gemini family; the 1500 ms `server_vad` window; retry/replay paths in a room.
 - AC: `HEAD` matches or beats `53bc440` on the 3.1 counts.
 
-**3.3 Room docs** — S
+**3.3 Room docs** — S ✅ 2026-09-17 (README, scenario-spec, rooms-verification page)
 - Remove "group rooms are not runnable live on this gateway" and "demo and
   field 1:1 only" from README, `docs/OPERATIONS.md`, `docs/migration-plan.md`;
   describe the room architecture as it actually runs.
@@ -212,7 +215,7 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
   the encounter completes regardless. Record both on the events trail.
 - AC: no encounter in the pilot exceeds 13:00.
 
-**4.4 Duration report** — S · analysis
+**4.4 Duration report** — S · analysis ✅ 2026-09-17: `tools/encounter_health.py` prints duration, turns, floor/wrap/ceiling marks per encounter.
 - `tools/encounter_health.py` prints per-encounter duration, turns, floor and
   ceiling events; used in the pilot review.
 
