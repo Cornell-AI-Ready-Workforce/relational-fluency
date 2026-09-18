@@ -42,8 +42,8 @@
 #   rollback-with-a-success-message this block exists to prevent.
 container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:4940a40"
 
-# Live voice model. Native-audio route (nto.gemini-live-2.5-flash is being
-# deprecated); verified for 1:1 and group rooms on 5a45420, 2026-09-08.
+# Live voice model. gpt-realtime-2.1 since 2026-09-18: the Gemini live routes
+# are being deprecated and the native-audio one is losing sessions to a gateway-side Vertex credentials error.
 #
 # THIS VALUE AND server/voice/realtime.py REALTIME_FAMILIES MOVE TOGETHER. The
 # server resolves REALTIME_MODEL to a family row to decide input sample rate,
@@ -55,7 +55,7 @@ container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluen
 # set this line; do not change one without the other.
 #
 # The fallback for the deprecation is `gpt-realtime-2.1`, which also has a row.
-actor_model = "nto.gemini-live-2.5-flash-native-audio"
+actor_model = "gpt-realtime-2.1"
 
 # Retention: study_data_retention_days defaults to 0 = no expiration rule
 # (PI decision, 2026-09-17: recordings are kept until deleted by hand). To
