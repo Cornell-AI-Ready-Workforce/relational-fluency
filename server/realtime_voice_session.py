@@ -283,6 +283,34 @@ def _strip_narration(text: str) -> str:
     return t
 
 
+_DEFERRAL = re.compile(
+    r"^\s*(?:i['\u2019]ll|i will|i['\u2019]m|i am|let me)\s+(?:"
+    r"(?:wait|hold(?:ing)?)\s+(?:for|on|to hear|and hear|and let)\s+(?:what\s+)?(?:[A-Z][a-z]+(?:\s+(?:answers|speaks|finishes|responds|to|says|has|is)\b|\s*[.!?,]|\s*$)|others?\b|them\b|everyone\b)"
+    r"|(?:stay|keep)\s+quiet\b|hang back\b|sit this one out\b|pass on (?:this|that)\b"
+    r"|let\s+(?:[A-Z][a-z]+|others?|them)\s+(?:answer|speak|go|respond|finish|take|start)\b"
+    r"|leave\s+(?:it|that|this)\s+to\s+[A-Z][a-z]+\b"
+    r"|not\s+answering\s+that\b)"
+    r"|^\s*(?:go ahead|over to),?\s+[A-Z][a-z]+\b"
+    r"|^\s*after\s+[A-Z][a-z]+\s+(?:answers|speaks|finishes|responds)\b"
+    r"|^\s*you asked\s+[A-Z][a-z]+\b"
+    r"|^\s*that(?:['\u2019]s| is)\s+(?:for|[A-Z][a-z]+['\u2019]s)\s",
+    re.I,
+)
+
+
+def _is_deferral(text: str) -> bool:
+    """A character announcing it will wait for someone else instead of
+    speaking or staying quiet: 'I'll wait for Casey to answer.', 'I'll wait
+    and hear what Jordan says.' The gpt route produces these when granted the
+    floor on a turn addressed to another character; they are turn-taking
+    narration, not a line, and read as filler to the participant."""
+    t = (text or "").strip()
+    if not t or len(t) > 240:
+        return False
+    first = re.split(r"(?<=[.!?])\s+", t, maxsplit=1)[0]
+    return bool(_DEFERRAL.match(first))
+
+
 def _is_stage_direction(text: str) -> bool:
     """'[Priya remains quiet.]' or '[Silence]': the model narrating instead of
     speaking. Treated as no reply; the native-audio route does this sometimes."""
@@ -2348,7 +2376,13 @@ class RealtimeVoiceSessionRunner:
                     # in _record_user_turn while dropping the second source it
                     # exists to reconcile, which left the filter with nothing to
                     # do but delete real speech.
-                    if relays_colleagues_as_text(rt.model):
+                    # ...but NOT on the OpenAI route: its members are transcribed
+                    # only when their buffer is committed, which happens at a
+                    # floor grant rather than at each turn, so several turns
+                    # arrive merged and late (7 captions for 5 utterances,
+                    # 2026-09-18). The scribe is committed per turn there and
+                    # is the reliable source.
+                    if relays_colleagues_as_text(rt.model) and not is_openai_realtime(rt.model):
                         await self._record_user_turn(
                             ev["text"], garbled=bool(ev.get("garbled")))
                     continue
@@ -2941,6 +2975,9 @@ class RealtimeVoiceSessionRunner:
         # '(Casey pauses.) I agree (for now)' is still a spoken reply.
         before_narration = text
         text = _strip_narration(text)
+        if _is_deferral(text):
+            self.session.store.event("deferral_output", agent_id=agent.id, text=text)
+            text = ""
         # A standalone direction may have been stripped in full. Retain its
         # original text for the diagnostic, while recording no spoken reply.
         direction_text = text or before_narration
@@ -4743,6 +4780,9 @@ class RealtimeVoiceSessionRunner:
             if before_narration and not text:
                 self.session.store.event("stage_direction_output",
                                          agent_id=agent_id, text=before_narration)
+            if _is_deferral(text):
+                self.session.store.event("deferral_output", agent_id=agent_id, text=text)
+                text = ""
             text, retry_head = self._retry_head_if_empty(agent_id, text, retried)
             # See _instructions: the note is spent once the actor has spoken
             # under it, and the _steer() re-brief in this method's finally is
@@ -5946,6 +5986,16 @@ class RealtimeVoiceSessionRunner:
             # and never somebody else's. Every branch below fills both lists or
             # neither.
             followup_intents: List[Optional[str]] = []
+            # On the gpt route, a second voice granted the floor after the
+            # addressed character has answered does not chime in the way the
+            # Gemini characters do; it narrates that it is waiting ("I'm
+            # holding for Chris.", "I'll stay quiet and let Jordan answer
+            # that."), which reads as filler. There, a direct address is
+            # answered by the addressee alone.
+            addressee_answered = bool(named) and named == first and any(
+                is_openai_realtime(getattr(m, "model", "") or "")
+                for m in room.sessions.values()
+            )
             if named and named != first:
                 # A name spoken THIS turn is a direct address and overrides the
                 # director's planned sequence — and with it the direction the
@@ -5954,6 +6004,8 @@ class RealtimeVoiceSessionRunner:
                 # than inheriting a note meant for another character.
                 followups.append(named)
                 followup_intents.append(None)
+            elif addressee_answered:
+                self.session.store.event("followups_skipped_after_address", agent_id=first)
             elif routed_seq is not None:
                 # Honour the director's ORDERED sequence from the first route()
                 # call (e.g. [A, B, A]) instead of discarding it and re-deciding
