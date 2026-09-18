@@ -41,6 +41,10 @@ from .storage import DATA_DIR
 # Cornell brand on 11 Sep 2026.
 BASE = setting("QUALTRICS_BASE_URL", "https://yul1.qualtrics.com").rstrip("/")
 SURVEY = setting("QUALTRICS_SURVEY_ID", "")
+# Survey 2, the one the app sends a finished participant back to. Its
+# responses carry the app's query keys as embedded data: `run`, `code`, `pid`
+# (static/v2.html builds the return link with exactly those names).
+SURVEY2 = setting("QUALTRICS_SURVEY2_ID", "")
 EXPORT_DIR = DATA_DIR / "qualtrics"
 
 
@@ -190,6 +194,50 @@ def join_with_runs(responses: List[dict]) -> List[dict]:
     return rows
 
 
+def join_two(responses1: List[dict], responses2: List[dict]) -> List[dict]:
+    """One row per Survey 1 response: Survey 1, the run, its encounters, Survey 2.
+
+    Survey 2 is matched on the run: its embedded `run` (or `run_id`) equals the
+    run id the app appended to the return link; `code` is the fallback, for a
+    response whose run field did not pipe. A Survey 2 response nobody's run
+    claims is listed under `orphans_survey2` on the last row's sibling key so
+    it is not silently lost.
+    """
+    from .runs import completion_code
+    rows = join_with_runs(responses1)
+    by_run: Dict[str, dict] = {}
+    by_code: Dict[str, dict] = {}
+    for resp in responses2:
+        flat = _flatten(resp)
+        v = flat["values"]
+        rid = (v.get("run") or v.get("run_id") or "").strip()
+        code = (v.get("code") or "").strip()
+        if rid:
+            by_run.setdefault(rid, flat)
+        if code:
+            by_code.setdefault(code, flat)
+    claimed = set()
+    for row in rows:
+        run = row.get("run")
+        s2 = None
+        matched = None
+        if run:
+            s2 = by_run.get(run["run_id"])
+            matched = "run" if s2 else None
+            if s2 is None and run.get("completion_code"):
+                s2 = by_code.get(run["completion_code"])
+                matched = "code" if s2 else None
+        if s2 is not None:
+            claimed.add(s2["response_id"])
+        row["survey2"] = None if s2 is None else {
+            "response_id": s2["response_id"], "finished": s2["finished"],
+            "recorded": s2["recorded"], "matched_by": matched,
+        }
+    orphans = [_flatten(r)["response_id"] for r in responses2
+               if _flatten(r)["response_id"] not in claimed]
+    return rows + ([{"orphans_survey2": orphans}] if orphans else [])
+
+
 def main(argv: List[str]) -> int:
     cmd = argv[0] if argv else "help"
     if cmd == "whoami":
@@ -202,6 +250,18 @@ def main(argv: List[str]) -> int:
         out = EXPORT_DIR / f"responses_{int(time.time())}.json"
         out.write_text(json.dumps(responses, indent=2), encoding="utf-8")
         print(f"{len(responses)} responses -> {out}")
+        return 0
+    if cmd == "join" and SURVEY2:
+        rows = join_two(export_responses(), export_responses(SURVEY2))
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        out = EXPORT_DIR / f"joined2_{int(time.time())}.json"
+        out.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        real = [r for r in rows if "response_id" in r]
+        linked = sum(1 for r in real if r["run"])
+        both = sum(1 for r in real if r.get("survey2"))
+        orphans = next((r["orphans_survey2"] for r in rows if "orphans_survey2" in r), [])
+        print(f"{len(real)} Survey 1 responses, {linked} linked to runs, "
+              f"{both} with a Survey 2 response, {len(orphans)} Survey 2 orphans -> {out}")
         return 0
     if cmd == "join":
         rows = join_with_runs(export_responses())

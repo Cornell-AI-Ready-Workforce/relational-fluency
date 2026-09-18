@@ -56,7 +56,21 @@ The merge did not check or change AWS. Use
 the backend and migrate existing state, then verify the state and running
 image before applying.
 
-This page documents **two** paths; their status at the inspection was:
+**Account check, 17 September 2026 (read-only, with `jinsook-cli`):** the
+state **is** in the shared state bucket (`platform/terraform.tfstate`, 50
+resources) and `tofu init` against it works. The live service runs task
+revision **40** at image `3d3cbfc`, which is what `terraform.tfvars` pins, so
+an apply would not roll the image back. `tofu plan` (with a placeholder
+retention period) shows **9 to add, 2 to change, 1 to destroy**: the EFS file
+system, access point, two mount targets, security group, backup policy, the
+task role's EFS grant and the bucket lifecycle rule are created; the task
+definition is replaced (it gains the `/data` volume and `DATA_DIR`,
+`DEFAULT_RUN_VARIANT`, `CLAUDE_MODEL`); the service and target group are
+updated in place. Still no EFS file system exists and the live revision has no
+volume. The apply waits on one number, `study_data_retention_days`, which is
+the IRB's (see [Lifecycle and retention](#webcam-recordings-and-the-study-bucket)).
+
+This page documents **two** paths; their status at the 12 September inspection was:
 
 | Path | Status | Use it for |
 |---|---|---|

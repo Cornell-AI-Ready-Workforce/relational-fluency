@@ -332,11 +332,44 @@ def steered_fraction(counts: Counter) -> str:
     return f"{directions}/{pairs} replies steered"
 
 
+def duration_line(session_dir: Path, events: List[dict], counts: Counter) -> str:
+    """Study 1 plan 4.4: how long the encounter ran against its floor and stop.
+
+    Duration from the manifest's started_at/ended_at; turns from the events;
+    the encounter clock's own marks (floor_held, ceiling_wrap, ceiling_reached)
+    so the pilot review can see which encounters the floor actually held and
+    which the ceiling ended.
+    """
+    dur = None
+    try:
+        m = json.loads((session_dir / "manifest.json").read_text(encoding="utf-8"))
+        if m.get("started_at") and m.get("ended_at"):
+            dur = float(m["ended_at"]) - float(m["started_at"])
+    except (OSError, ValueError, TypeError):
+        pass
+    if dur is None:
+        walls = [e.get("wall") for e in events if isinstance(e.get("wall"), (int, float))]
+        dur = (max(walls) - min(walls)) if len(walls) >= 2 else None
+    when = "duration ?" if dur is None else f"duration {int(dur // 60)}m{int(dur % 60):02d}s"
+    marks = []
+    if counts.get("floor_held"):
+        marks.append(f"floor held {counts['floor_held']}x")
+    if counts.get("ceiling_wrap"):
+        marks.append("wrap called")
+    if counts.get("ceiling_reached"):
+        marks.append("stopped at ceiling")
+    return (f"{when} · {counts.get('user_turn', 0)} participant turns · "
+            f"{counts.get('assistant_turn', 0)} agent turns"
+            + (" · " + ", ".join(marks) if marks else ""))
+
+
 def report(session_dir: Path, verbose: bool) -> bool:
     ok, findings, notes, counts = check(session_dir)
     name = session_dir.name
     steered = steered_fraction(counts)
     print(f"{'PASS' if ok else 'FAIL'}  {name}" + (f"   ({steered})" if steered else ""))
+    events, _ = read_events(session_dir / "events.jsonl")
+    print(f"        {duration_line(session_dir, events, counts)}")
     if verbose and counts:
         for t, n in counts.most_common():
             print(f"        {n:5d}  {t}")
