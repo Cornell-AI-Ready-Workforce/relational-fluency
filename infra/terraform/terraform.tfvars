@@ -24,7 +24,7 @@
 #      describe-services gives the running task definition revision)
 #   4. commit, then apply
 #
-# deployed: relational-fluency-agent:41, registered by tofu apply on 2026-09-17 with this tag; rollout completed 23:45, /health ok.
+# deployed: relational-fluency-agent:41 carries 3d3cbfc; this tag (5093dcd) is built and pushed, awaiting the apply that registers 42.
 #   Revision 0 does not exist. It is here so this line cannot be misread as a
 #   verification, while still satisfying tests/test_terraform_persistence.py,
 #   which requires the pin to name a revision. What is actually known:
@@ -40,7 +40,7 @@
 #   replace the 0 with the real running revision and today's date, and commit
 #   that in the same change. Applying against an unverified pin is exactly the
 #   rollback-with-a-success-message this block exists to prevent.
-container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:3d3cbfc"
+container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:5093dcd"
 
 # Live voice model. Native-audio route (nto.gemini-live-2.5-flash is being
 # deprecated); verified for 1:1 and group rooms on 5a45420, 2026-09-08.
