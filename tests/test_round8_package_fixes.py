@@ -301,8 +301,7 @@ const { bootV2, vm } = require('./stub.js');
 const PAGE = process.argv[2];
 const CFG = { version: 'v1.0', title: 'Consent',
               body: 'We record your microphone audio and webcam video.',
-              contact: { pi_name: 'Dr Rivera', email: 'pi@example.invalid',
-                         irb_protocol: 'IRB-9999' } };
+              contact: { pi_name: 'Dr Rivera', email: 'pi@example.invalid' } };
 
 async function card(status, reason) {
   const b = bootV2(PAGE, '?run=r_1&participant_id=p_test&consent=1');

@@ -162,14 +162,11 @@ Until a first apply completes in a new environment, its hostname does not
 resolve at all — the DNS records are ALB aliases created by this process, so
 "server not found" is the expected state beforehand.
 
-**The apply will stop and ask for one variable, and that is the check
-working rather than a fault.** `study_data_retention_days` is the number of days
-the bucket keeps a recording before the lifecycle rule in
-`storage_secrets.tf` expires it; it is the period the approved consent
-document promises, and a default here would be this repository inventing an
-IRB figure. See
-[Lifecycle and retention](#webcam-recordings-and-the-study-bucket) before
-answering it.
+**Retention.** `study_data_retention_days` defaults to 0: no expiration rule,
+recordings are kept until deleted by hand (PI decision, 2026-09-17). A
+positive number in `terraform.tfvars` makes the lifecycle rule in
+`storage_secrets.tf` expire recordings after that many days. See
+[Lifecycle and retention](#webcam-recordings-and-the-study-bucket).
 
 Answer it once, in `terraform.tfvars`, beside the committed image pin. It is not
 a secret, and having the running wave's retention period in git history is worth
@@ -778,24 +775,17 @@ laptop never exhibits:
   honouring that request today takes a version-aware delete, not an ordinary
   one.
 
-The rule is now **written**, in `infra/terraform/storage_secrets.tf`
-(`aws_s3_bucket_lifecycle_configuration.study_data`), and deliberately left
-unable to apply until the IRB supplies the number:
+The rule is **written**, in `infra/terraform/storage_secrets.tf`
+(`aws_s3_bucket_lifecycle_configuration.study_data`):
 
-- `study_data_retention_days` has **no default**. It is the period the approved
-  consent document promises. **The lifecycle rule and the consent document are
-  one decision, and the document is the half that has to be settled first** —
-  a bucket that expires objects at a date the form does
-  not mention is deleting research data early, and a bucket that keeps them
-  forever while the form promises a date is the same mistake pointing the other
-  way. `tofu plan` stops and asks; do not answer it from this page.
+- `study_data_retention_days` defaults to **0**: no `expiration` block, so
+  current recordings are kept until deleted by hand (PI decision,
+  2026-09-17). A positive number expires them after that many days.
 - `study_data_superseded_version_days` (default 30) is how long a superseded
-  version survives after being overwritten — an operational recovery window,
-  not the IRB's number — and a precondition refuses any value longer than the
-  retention period, because on a versioned bucket an `expiration` rule does
-  **not** delete the bytes, it makes them noncurrent. The true worst case for a
-  byte is retention + 30 days; set the window to 1 if the protocol's wording is
-  strict enough that this matters.
+  version survives after being overwritten — an operational recovery window —
+  and, when a retention period is set, a precondition refuses any value longer
+  than it, because on a versioned bucket an `expiration` rule does **not**
+  delete the bytes, it makes them noncurrent.
 - Every rule that deletes data is scoped to `encounters/` and `steering-logs/`
   — the two prefixes the task role can write — so a hand-made export or backup
   in the same bucket is never on a schedule nobody told its owner about. Each
@@ -813,7 +803,6 @@ unable to apply until the IRB supplies the number:
 
 | Symptom | Cause |
 |---|---|
-| `tofu apply` stops asking for `study_data_retention_days` | Working as designed — the bucket lifecycle rule needs the IRB's retention period and this repository is not entitled to invent it. See [Lifecycle and retention](#webcam-recordings-and-the-study-bucket) |
 | `tofu plan` proposes to CREATE the bucket, roles or certificate | The state for this stack is missing. **Stop**; do not apply. See [Read this first](#read-this-first-the-runbook-and-the-practice-have-diverged) |
 | `Unknown parameter in input: "taskDefinitionArn"` from `register-task-definition` | The read-only fields were not stripped from `td.json` — [step 4a](#4a-the-path-in-use-register-a-task-definition-point-the-service-at-it) |
 | `not authorized to perform: iam:PassRole` | Your identity, not the role it names. See [Who can run which step](#who-can-run-which-step) |
@@ -848,14 +837,11 @@ Terraform that is supposed to be the source of truth.
    cannot say who has it. Ask the Cornell AWS administrator for the account, and
    have the answer before a wave rather than during one.
 3. **What is the retention period for audio, video and transcripts?**
-   the consent document has to state the retention period, and the
-   bucket lifecycle rule and the consent text are one decision. The rule is
-   written in `storage_secrets.tf` and waits on `study_data_retention_days`,
-   which has no default. The IRB protocol settles it; the PI is who to ask.
-4. **Is there a second copy of anything?** Nothing archives session audio,
-   transcripts or events to S3, and the volume that would hold them does not
-   exist yet. Whether the IRB data-management plan requires a backup, and where
-   it would live, is a question for the PI and the IRB office.
+   Decided 2026-09-17: none. Recordings are kept until deleted by hand
+   (`study_data_retention_days = 0`).
+4. **Is there a second copy of anything?** Since 2026-09-17 every closed
+   encounter is archived to the study bucket (`server/archive.py`); the EFS
+   volume is the other copy once the planned apply has run.
 5. **Did any of revisions 35–37 differ in a way worth keeping?** They were
    registered by hand and there is no record of what changed between them.
    `aws ecs describe-task-definition --task-definition relational-fluency-agent:35`

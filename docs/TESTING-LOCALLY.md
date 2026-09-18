@@ -112,7 +112,7 @@ personality, opening severity, and the planted beats that four rounds of work
 moved into it. And the participant's own speech is fully recorded and
 transcribed in both 1:1 and group — the dependent variable is intact.
 
-The decision about whether to stay on this model is a PI and IRB decision,
+The decision about whether to stay on this model is the PI's,
 because the consent form names the provider. It is written up separately, in the
 `PI-DECISION-realtime-model.md` memo that accompanies this repository.
 
@@ -362,8 +362,7 @@ See [OPERATIONS → Sending them back](OPERATIONS.md#sending-them-back).
 ## The contact sentence every participant reads
 
 Every completion and withdrawal screen ends with a contact line built from
-`STUDY_CONTACT_NAME`, `STUDY_CONTACT_EMAIL` and `STUDY_IRB_PROTOCOL` (served on
+`STUDY_CONTACT_NAME` and `STUDY_CONTACT_EMAIL` (served on
 `/api/run/config`). With none of them set — every local checkout — it reads
 "…contact the study team, using the contact details in the survey that sent
-you here." Set the three in `.env` to see the real sentence. Consent itself is
-taken outside this platform; the app shows no consent form.
+you here." Set the two in `.env` to see the real sentence.

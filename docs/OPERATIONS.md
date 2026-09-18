@@ -122,7 +122,7 @@ optional, because nothing downstream of the write exists yet:
   fat-fingered `tofu destroy`, or a corrupted write takes the only copy of an
   irreplaceable encounter with it.
 - **There is no deletion path.** No retention rule and no per-participant erase,
-  so a withdrawal request under the IRB data-management plan has to be carried
+  so a withdrawal request under the study's data-management plan has to be carried
   out by hand on the volume. Know that before you promise a participant one.
   The bucket half of that request is harder than it looks: the study bucket is
   versioned, so an ordinary delete leaves the bytes behind as a noncurrent
@@ -569,7 +569,7 @@ until you have confirmed, with the `describe-task-definition` check at the top
 of this page, that the running task actually mounts the EFS `/data` volume;
 until then a rollout still takes the records with it. Once it does mount,
 pulling is no longer a race — but EFS remains the only copy and nothing archives
-to S3, so still pull each wave and keep it under the IRB data-management plan.
+to S3, so still pull each wave and keep it under the study's data-management plan.
 
 ```bash
 # List encounters on the server

@@ -49,3 +49,4 @@ terraform.rc
 /*.db
 /S[1-4][AB]_*.json
 /o_S[1-4][AB]_*.json
+infra/terraform/tfplan.bin

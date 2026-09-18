@@ -47,7 +47,7 @@ canonical specs, grounded in an analysis of 39,301 r/antiwork posts, are in
 CloudResearch Connect ── recruits and pays; participantId on the survey URL
         │
         ▼
-Qualtrics, Survey 1 ──── consent (IRB text), self-report battery
+Qualtrics, Survey 1 ──── consent, self-report battery
         │                last page links to the app, in a new tab:
         │                /start?pid=${e://Field/participantId}&qid=${e://Field/ResponseID}
         ▼
@@ -137,7 +137,7 @@ direction per turn, but on the configured Gemini family
 accepted and silently discarded, so the per-turn steering does not reach the
 character. That was measured on the model's plain sibling; the native-audio
 route is treated the same way until someone probes it. The encounter is unaffected as
-a recording; whether to stay on this model is a PI and IRB decision, written up
+a recording; whether to stay on this model is the PI's decision, written up
 in the `PI-DECISION-realtime-model.md` memo that accompanies this repository.
 The measurements behind that, and behind the runner's recovery constants, are
 in [`docs/field-notes.md`](docs/field-notes.md).
@@ -247,13 +247,13 @@ variable. The ones that decide whether a wave works:
 | Variable | What it does |
 |---|---|
 | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY` | The Cornell LiteLLM gateway and a virtual key for it. Every model call goes through here. |
-| `REALTIME_MODEL`, `REALTIME_VOICE` | The speech-to-speech model and its default voice. Changing the model family is an IRB matter, because the consent form names the provider. |
+| `REALTIME_MODEL`, `REALTIME_VOICE` | The speech-to-speech model and its default voice. Changing the model family changes where participant speech is sent; that is the PI's decision. |
 | `DEFAULT_RUN_VARIANT` | `A` for Study 1. Which parallel form every construct is served. |
 | `ENCOUNTER_MIN_SECONDS`, `ENCOUNTER_WRAP_SECONDS`, `ENCOUNTER_MAX_SECONDS` | The encounter clock: 420, 720, 780 by default. |
 | `SESSION_KEY` | The researcher credential. Gates `/test`, `/researcher` and the downloads on any deployment; empty on a laptop. |
 | `SURVEY_RETURN_URL`, `SURVEY_RETURN_LABEL` | Where the completion screen sends the participant: the second Qualtrics survey. |
 | `QUALTRICS_API_TOKEN`, `QUALTRICS_SURVEY_ID`, `QUALTRICS_BASE_URL` | For pulling survey responses and joining them to runs. The base URL has to be the datacenter host (`yul1`), not the brand host. |
-| `STUDY_CONTACT_NAME`, `STUDY_CONTACT_EMAIL`, `STUDY_IRB_PROTOCOL` | The contact sentence on every completion and withdrawal screen. |
+| `STUDY_CONTACT_NAME`, `STUDY_CONTACT_EMAIL` | The contact sentence on every completion and withdrawal screen. |
 | `DATA_DIR` | Where runs, sessions and the index are written. On the deployed task this must be the persistent volume. |
 | `AWS_*` | Credentials that let the server sign webcam upload URLs for the study bucket. |
 
@@ -308,7 +308,7 @@ Runs are `data/runs/<run_id>.json` and carry the order, the cohort, the
 Qualtrics id and the completion code; `GET /api/runs` exports them with the
 researcher key. Participant audio, video and transcripts are PII: `data/`,
 `logs/`, `*.wav` and `.env` are gitignored and must stay that way, and study
-data belongs in the encrypted S3 bucket under the IRB data-management plan,
+data belongs in the encrypted S3 bucket under the study's data-management plan,
 never in the repository.
 
 Checking a capture, and joining it to the survey:
@@ -345,8 +345,7 @@ The study service runs on ECS/Fargate behind an ALB at
 Every live task-definition revision so far was registered by hand with the AWS
 CLI. The Terraform under `infra/terraform/` describes the stack and, since
 17 September 2026, its state is confirmed in the shared state bucket, so
-`tofu plan` works; the first apply adds the persistent `/data` volume and waits
-on the IRB's retention period. The release path in use, the permissions each
+`tofu plan` works; the first apply adds the persistent `/data` volume. The release path in use, the permissions each
 step needs, and the state of that apply are in
 [`docs/DEPLOY-AWS.md`](docs/DEPLOY-AWS.md#read-this-first-the-runbook-and-the-practice-have-diverged).
 Operating a wave — health, logs, the participant URLs, pulling data off the
@@ -371,7 +370,7 @@ Open before a wave, in dependency order, tracked in
    surveys.
 4. Play through the four scenarios and settle the scenario text.
 5. Confirm webcam capture on all seven browser and OS combinations.
-6. Decide the realtime model (PI, then IRB).
+6. Decide the realtime model (PI).
 
 ## Further reading
 

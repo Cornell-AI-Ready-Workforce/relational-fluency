@@ -2929,13 +2929,11 @@ async def api_run_config(key: Optional[str] = None):
     return {
         "return_url": os.getenv("SURVEY_RETURN_URL", "").strip(),
         "return_label": os.getenv("SURVEY_RETURN_LABEL", "Return to the survey"),
-        # Who a participant contacts about the study. Consent and its contact
-        # details live outside this platform (2026-09-17); these three feed the
-        # closing and withdrawal cards, and the page falls back to "the study
+        # Who a participant contacts about the study. These two feed the
+        # closing and withdrawal cards; the page falls back to "the study
         # team" when they are blank.
         "contact_name": os.getenv("STUDY_CONTACT_NAME", "").strip(),
         "contact_email": os.getenv("STUDY_CONTACT_EMAIL", "").strip(),
-        "irb_protocol": os.getenv("STUDY_IRB_PROTOCOL", "").strip(),
     }
 
 

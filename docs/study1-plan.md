@@ -25,7 +25,7 @@ CloudResearch Connect
   │  participantId on the survey URL
   ▼
 Qualtrics — Survey 1              embedded: participantId, ResponseID
-  consent (IRB-approved text, version X)
+  consent
   self-report battery
   last page: link → app (opens new tab)
   │  /start?participantId=${e://Field/participantId}&qid=${e://Field/ResponseID}
@@ -72,8 +72,6 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
 
 **1.1 Survey 1: consent + self-report, hands off to the app** — M · Qualtrics
 - Embedded data `participantId` from the Connect URL; `ResponseID` piped.
-- Consent block is the IRB-approved text; its version string is what
-  `UPSTREAM_CONSENT_VERSION` will name.
 - Screener/attention items for headset, webcam, desktop browser.
 - Final page: app link with `participantId` and `qid`, opens in a new tab;
   survey set to record partial responses so an abandoned Survey 1 is still a row.
@@ -231,7 +229,7 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
   fallback stays (it puts video on the ephemeral disk).
 - AC: 3 browsers × 1 run each; every encounter has an S3 object and a receipt.
 
-**5.2 Persistent storage for audio, transcript and events** — L · infra — half done 2026-09-17: every closed encounter is archived to `s3://<study bucket>/encounters/<id>/` (`server/archive.py`, off by `ARCHIVE_SESSIONS_TO_S3=0`). EFS: state confirmed in the shared bucket, `tofu plan` = 9 add / 2 change / 1 destroy; apply waits on `study_data_retention_days` (IRB) and a go.
+**5.2 Persistent storage for audio, transcript and events** — L · infra — half done 2026-09-17: every closed encounter is archived to `s3://<study bucket>/encounters/<id>/` (`server/archive.py`, off by `ARCHIVE_SESSIONS_TO_S3=0`). EFS: state confirmed in the shared bucket, `tofu plan` = 9 add / 2 change / 1 destroy; no retention rule (PI, 2026-09-17: recordings are kept); apply planned and handed over.
 - Records today live on the task's ephemeral disk; a deploy loses them. Choose
   EFS mount at `/data` (Terraform exists on the audit branch) or per-encounter
   archive to S3 at completion. Prefer both: EFS for durability during the wave,
@@ -316,8 +314,7 @@ L researcher console, `/ws/researcher`, `director.html`, steering — hold.
 **9.1 Internal walkthrough (n = 3)** — S — full chain from Connect to Survey 2.
 **9.2 Pilot (n = 5–10) on Connect** — M — review durations, audio quality,
 video completeness, room behaviour, dropout; fix list.
-**9.3 IRB amendment** — external — video capture, consent wording, retention;
-the consent version in E1.5 is whatever the IRB approves.
+**9.3 Ethics paperwork** — external; not tracked in this app.
 **9.4 Go/no-go checklist** — S — every AC above green; PI sign-off.
 **9.5 Wave 1: 100 participants × 4 encounters.**
 
