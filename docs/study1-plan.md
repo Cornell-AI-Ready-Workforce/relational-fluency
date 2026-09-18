@@ -231,7 +231,7 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
   fallback stays (it puts video on the ephemeral disk).
 - AC: 3 browsers × 1 run each; every encounter has an S3 object and a receipt.
 
-**5.2 Persistent storage for audio, transcript and events** — L · infra
+**5.2 Persistent storage for audio, transcript and events** — L · infra — half done 2026-09-17: every closed encounter is archived to `s3://<study bucket>/encounters/<id>/` (`server/archive.py`, off by `ARCHIVE_SESSIONS_TO_S3=0`). EFS: state confirmed in the shared bucket, `tofu plan` = 9 add / 2 change / 1 destroy; apply waits on `study_data_retention_days` (IRB) and a go.
 - Records today live on the task's ephemeral disk; a deploy loses them. Choose
   EFS mount at `/data` (Terraform exists on the audit branch) or per-encounter
   archive to S3 at completion. Prefer both: EFS for durability during the wave,
@@ -303,7 +303,7 @@ L researcher console, `/ws/researcher`, `director.html`, steering — hold.
   `ENCOUNTER_MIN_SECONDS`, `DEFAULT_RUN_VARIANT=A`, `REALTIME_MODEL` as decided.
 - AC: `/health` reports all of them set; a study-cohort run records.
 
-**8.2 Terraform state** — M · infra
+**8.2 Terraform state** — M · infra ✅ 2026-09-17: state is in `relational-fluency-tfstate-540586745717/platform/terraform.tfstate` (50 resources); `tofu init`/`plan` work.
 - `53bc440` added a shared state backend and a second-deployer setup. Confirm
   state is recovered or rebuilt so E5.2 is applied by Terraform, not by hand.
 

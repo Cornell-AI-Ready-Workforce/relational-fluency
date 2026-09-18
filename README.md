@@ -343,10 +343,11 @@ expected eight.
 The study service runs on ECS/Fargate behind an ALB at
 `rf.ai-ready-workforce.ai.cornell.edu`, from the image `Dockerfile` builds.
 Every live task-definition revision so far was registered by hand with the AWS
-CLI: the Terraform under `infra/terraform/` describes the stack, but its state
-is not in the account, so `tofu apply` is not the release procedure today. The
-release path in use, the permissions each step needs, and what it will take to
-get back to Terraform are in
+CLI. The Terraform under `infra/terraform/` describes the stack and, since
+17 September 2026, its state is confirmed in the shared state bucket, so
+`tofu plan` works; the first apply adds the persistent `/data` volume and waits
+on the IRB's retention period. The release path in use, the permissions each
+step needs, and the state of that apply are in
 [`docs/DEPLOY-AWS.md`](docs/DEPLOY-AWS.md#read-this-first-the-runbook-and-the-practice-have-diverged).
 Operating a wave — health, logs, the participant URLs, pulling data off the
 server — is [`docs/OPERATIONS.md`](docs/OPERATIONS.md).

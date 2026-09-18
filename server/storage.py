@@ -570,6 +570,13 @@ class SessionStore:
                    WHERE id = ?""",
                 (ended_at, round(duration, 3), n_turns, self.id),
             )
+        # The analysis copy (Study 1 plan 5.2): everything above goes to the
+        # study bucket beside the webcam video, in a thread, best effort.
+        try:
+            from .archive import archive_session_later
+            archive_session_later(self.dir)
+        except Exception:  # noqa: BLE001, never fail a session close on this
+            log.exception("could not start the archive for %s", self.id)
 
 
 # ---------- The encounter clock ----------
