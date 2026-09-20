@@ -87,6 +87,33 @@ The pre-wave checks — the join key, the return URL, the port, a headset — ar
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md#read-this-before-collecting-anything)
 and [`docs/TESTING-LOCALLY.md`](docs/TESTING-LOCALLY.md).
 
+## The deployed app
+
+The study runs at **https://rf.ai-ready-workforce.ai.cornell.edu** (ECS/Fargate
+behind an ALB; `api.rf.ai-ready-workforce.ai.cornell.edu` is the same service
+under its API name). These are the links that matter, exactly as deployed:
+
+| Who | Link | Notes |
+|---|---|---|
+| Participant, from Qualtrics | `https://rf.ai-ready-workforce.ai.cornell.edu/start?pid=${e://Field/participantId}&qid=${e://Field/ResponseID}` | Piped text fills the two values. Shows an entry-check page with a Continue button, then the four encounters. The bare base URL with the same parameters forwards here. |
+| Team member, internal test run | `https://rf.ai-ready-workforce.ai.cornell.edu/test?name=YOURNAME&key=RESEARCHER_KEY` | Four encounters, `cohort=internal`, no seven-minute floor. Requires the researcher key since 2026-09-17. Use a fresh name each time; a reused name resumes that run. |
+| Team member, one scenario | `https://rf.ai-ready-workforce.ai.cornell.edu/v2?scenario=S3A` | Straight into a scene (S1A..S4B). No run, no gate, not joined to any survey. For previewing only. |
+| Researcher | `https://rf.ai-ready-workforce.ai.cornell.edu/director?key=RESEARCHER_KEY` | Steering trail per encounter, coverage against the scenario plan. |
+| Researcher | `https://rf.ai-ready-workforce.ai.cornell.edu/researcher?key=RESEARCHER_KEY` | Live console: watch a session, adjust knobs, inject notes. |
+| Researcher | `https://rf.ai-ready-workforce.ai.cornell.edu/evidence?key=RESEARCHER_KEY` | Evidence trace view. |
+| Anyone | `https://rf.ai-ready-workforce.ai.cornell.edu/health` | Liveness, the live model, active session count. Check before every deploy. |
+
+The researcher key is the `relational-fluency/agent-api-key` secret:
+
+```bash
+aws secretsmanager get-secret-value --secret-id relational-fluency/agent-api-key --query SecretString --output text
+```
+
+Data lands on the persistent `/data` volume and every closed encounter is
+archived to `s3://relational-fluency-study-data/encounters/<session_id>/`.
+Operating the deployment (health, logs, counting sessions, pulling data,
+releasing a build) is in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
 ## How the app works
 
 ```
@@ -156,7 +183,10 @@ in [`docs/field-notes.md`](docs/field-notes.md).
 | `infra/terraform/` | The ECS/Fargate stack, the study bucket, secrets |
 | `reddit-analysis/` | The corpus analysis the scenarios were grounded in |
 
-## Quick start
+## Quick start (local development)
+
+Everything below runs the app on your own machine against the same Cornell
+gateway. For the live study links see [The deployed app](#the-deployed-app).
 
 **Python 3.11, 3.12 or 3.13.** 3.12 is the reference version — it is what the
 production image and CI's pinned leg run. `requirements.txt` says what changes
@@ -342,11 +372,12 @@ expected eight.
 
 The study service runs on ECS/Fargate behind an ALB at
 `rf.ai-ready-workforce.ai.cornell.edu`, from the image `Dockerfile` builds.
-Every live task-definition revision so far was registered by hand with the AWS
-CLI. The Terraform under `infra/terraform/` describes the stack and, since
-17 September 2026, its state is confirmed in the shared state bucket, so
-`tofu apply` on 17 September added the persistent `/data` volume (revision 41). The release path in use, the permissions each
-step needs, and the state of that apply are in
+Releases go through the Terraform under `infra/terraform/`: build and push the
+image, pin its tag in `terraform.tfvars`, commit, `tofu apply`. State lives in
+the shared bucket `relational-fluency-tfstate-540586745717`, so any deployer
+sees the same stack; the persistent `/data` volume landed this way on 17
+September 2026 (revision 41) and the model switches since. The release path,
+the permissions each step needs, and how to add a second deployer are in
 [`docs/DEPLOY-AWS.md`](docs/DEPLOY-AWS.md#read-this-first-the-runbook-and-the-practice-have-diverged).
 Operating a wave — health, logs, the participant URLs, pulling data off the
 server — is [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
