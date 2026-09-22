@@ -25,7 +25,7 @@ curl -s "https://rf.ai-ready-workforce.ai.cornell.edu/api/runs?key=$SESSION_KEY"
 # 4. Load (re-run any time; it replaces per-encounter rows)
 .venv/bin/pip install "psycopg[binary]"
 .venv/bin/python tools/load_analysis_db.py --dsn postgresql://postgres:rf@localhost:5433/rf \
-    --archive ~/Desktop/RF_archive/encounters --scenarios scenarios/v3 [--runs ~/Desktop/RF_archive/runs.json]
+    --archive ~/Desktop/RF_archive/encounters --scenarios scenarios/v3 --s3-media [--runs ~/Desktop/RF_archive/runs.json]
 
 # 5. Query
 docker exec -it rf-analysis-db psql -U postgres -d rf -c "SET search_path TO rf" \

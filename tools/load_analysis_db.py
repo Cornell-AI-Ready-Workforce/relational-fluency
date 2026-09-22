@@ -453,6 +453,52 @@ def load_recovered(cur, index_csv: Path, archive: Path, s3_prefix: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Media rows from the bucket listing
+# ---------------------------------------------------------------------------
+
+def load_s3_media(cur, s3_prefix: str) -> int:
+    """One media row per audio/video object in the archive. record.json is
+    written when the encounter closes, before the browser has finished
+    uploading webcam.webm, so its `video` list is usually empty; the bucket is
+    the truth about what was captured."""
+    import boto3
+    assert s3_prefix.startswith("s3://")
+    bucket, _, prefix = s3_prefix[5:].partition("/")
+    cur.execute("SELECT encounter_id FROM encounter")
+    known = {r[0] for r in cur.fetchall()}
+    kinds = {".webm": "webcam_video", ".mp4": "webcam_video", ".wav": None, ".mp3": "participant_audio"}
+    n = 0
+    paginator = boto3.client("s3").get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for o in page.get("Contents", []):
+            rel = o["Key"][len(prefix):]
+            sid, _, name = rel.partition("/")
+            if sid not in known or not name:
+                continue
+            ext = Path(name).suffix.lower()
+            if ext not in kinds:
+                continue
+            kind = kinds[ext]
+            agent = None
+            if kind is None:  # .wav: user_audio.wav | assistant_audio[_<agent>].wav
+                if name.startswith("user_audio"):
+                    kind = "participant_audio"
+                else:
+                    kind = "agent_audio"
+                    stem = Path(name).stem
+                    agent = stem.split("assistant_audio_", 1)[1] if "assistant_audio_" in stem else None
+            cur.execute(
+                """INSERT INTO media (encounter_id, kind, agent_id, s3_key, bytes, format, uploaded_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (s3_key) DO UPDATE SET bytes = EXCLUDED.bytes, agent_id = EXCLUDED.agent_id,
+                       uploaded_at = EXCLUDED.uploaded_at""",
+                (sid, kind, agent, f"s3://{bucket}/{o['Key']}", o["Size"], ext.lstrip("."),
+                 o["LastModified"]))
+            n += 1
+    return n
+
+
+# ---------------------------------------------------------------------------
 # Runs export (optional)
 # ---------------------------------------------------------------------------
 
@@ -532,6 +578,10 @@ def main() -> int:
     ap.add_argument("--scenarios", type=Path, default=Path("scenarios/v3"))
     ap.add_argument("--runs", type=Path, help="/api/runs export (JSON list)")
     ap.add_argument("--s3-prefix", default="s3://relational-fluency-study-data/encounters/")
+    ap.add_argument("--s3-media", action="store_true",
+                    help="list the S3 bucket and add media rows (audio/video sizes) for every "
+                         "encounter; the record is written before the webcam upload lands, so "
+                         "this is the only way has_video is right")
     ap.add_argument("--recovered-index", type=Path,
                     help="tools/recover_from_video.py index CSV; default: _recovered_index_*.csv in --archive")
     args = ap.parse_args()
@@ -552,6 +602,8 @@ def main() -> int:
             if idx:
                 print(f"recovered from video: {load_recovered(cur, idx, args.archive, args.s3_prefix)} "
                       f"(index {idx.name})")
+            if args.s3_media:
+                print(f"media from S3: {load_s3_media(cur, args.s3_prefix)} objects")
             if args.runs:
                 runs = json.loads(args.runs.read_text(encoding="utf-8"))
                 if isinstance(runs, dict) and "detail" in runs and len(runs) == 1:
