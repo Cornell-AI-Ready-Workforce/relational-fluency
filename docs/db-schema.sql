@@ -171,12 +171,14 @@ CREATE TABLE encounter (
     run_id              text REFERENCES run,        -- NULL for direct /v2?scenario= links
     slot                smallint,                   -- encounter_index within the run
     participant_id      text REFERENCES participant,
-    scenario_id         text NOT NULL REFERENCES scenario,
+    scenario_id         text REFERENCES scenario,   -- NULL only on a recovered encounter
+                                                    -- whose scenario the video could not tell
     cohort              text NOT NULL,
     started_at          timestamptz NOT NULL,
     ended_at            timestamptz,
     duration_s          numeric(8,1),
-    status              text NOT NULL,              -- closed, abandoned, ...
+    status              text NOT NULL,              -- closed | recovered (rebuilt from video
+                                                    -- after the 2026-09-17 data loss) | ...
     -- provenance: what produced the data
     gateway             text NOT NULL,
     realtime_model      text NOT NULL,
@@ -273,8 +275,9 @@ CREATE TABLE trigger_firing (
     agent_id            text,
     probing             boolean NOT NULL DEFAULT false,
     esci_items          text[],
-    outcome             text NOT NULL CHECK (outcome IN ('fired','undelivered')),
-    undelivered_reason  text,                       -- floor_grant_failed, ...
+    outcome             text NOT NULL CHECK (outcome IN ('fired','undelivered','deferred')),
+    reason              text,                       -- undelivered: floor_grant_failed; deferred: why
+    routed_to           text,                       -- deferred: the agent it was handed to
     UNIQUE (encounter_id, trigger_id, plan_index, t)
 );
 
@@ -450,7 +453,7 @@ CREATE TABLE deployment (
 -- ---------------------------------------------------------------------------
 
 CREATE VIEW v_encounter_summary AS
-SELECT e.encounter_id, e.run_id, e.slot, e.participant_id, e.cohort,
+SELECT e.encounter_id, e.run_id, e.slot, e.participant_id, e.cohort, e.status,
        e.scenario_id, s.construct, s.variant,
        e.started_at, e.duration_s, e.realtime_model, e.director_model,
        e.participant_turns, e.agent_turns, e.stage_directions,
@@ -462,7 +465,7 @@ SELECT e.encounter_id, e.run_id, e.slot, e.participant_id, e.cohort,
                 WHERE m.encounter_id = e.encounter_id AND m.kind = 'webcam_video') AS has_video,
        e.participant_channel_losses, e.script_mismatch_turns
 FROM encounter e
-JOIN scenario s USING (scenario_id);
+LEFT JOIN scenario s USING (scenario_id);
 
 CREATE VIEW v_participant_progress AS
 SELECT r.run_id, r.participant_id, r.cohort, r.created_at, r.arm,
@@ -481,7 +484,7 @@ SELECT e.encounter_id, e.scenario_id, s.construct,
        array_agg(DISTINCT item) FILTER (WHERE item IS NOT NULL) AS items_exercised,
        (SELECT count(*) FROM esci_item i WHERE i.construct = s.construct) AS items_in_construct
 FROM encounter e
-JOIN scenario s USING (scenario_id)
+LEFT JOIN scenario s USING (scenario_id)
 LEFT JOIN stage_direction d ON d.encounter_id = e.encounter_id
 LEFT JOIN LATERAL unnest(d.esci_items) AS item ON true
 GROUP BY e.encounter_id, e.scenario_id, s.construct;

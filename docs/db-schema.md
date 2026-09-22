@@ -1,8 +1,39 @@
 # Analysis database schema (draft 1)
 
 Draft of 2026-09-22. DDL is in [`db-schema.sql`](db-schema.sql) (PostgreSQL;
-loads clean on Postgres 16). This is a proposal for review, not something the
+loads clean on Postgres 16). The loader is
+[`tools/load_analysis_db.py`](../../tools/load_analysis_db.py); it has been run
+against the full S3 archive (66 encounters: 20 with records, 46 rebuilt from
+video) into a local Postgres. This is a proposal for review, not something the
 app uses yet.
+
+## Running it locally
+
+```bash
+# 1. Postgres in Docker (persists in the rf-analysis-pgdata volume)
+docker run -d --name rf-analysis-db -p 5433:5432 -e POSTGRES_PASSWORD=rf -e POSTGRES_DB=rf \
+    -v rf-analysis-pgdata:/var/lib/postgresql/data postgres:16-alpine
+docker exec -i rf-analysis-db psql -q -U postgres -d rf -f - < docs/db-schema.sql
+
+# 2. The archive, records only (no audio/video needed)
+aws s3 sync s3://relational-fluency-study-data/encounters/ ~/Desktop/RF_archive/encounters/ \
+    --exclude "*" --include "*.json" --include "*.jsonl" --include "*.md" --include "*.csv"
+
+# 3. Optional: the run documents (fills order row, arm, Qualtrics id, withdrawals)
+curl -s "https://rf.ai-ready-workforce.ai.cornell.edu/api/runs?key=$SESSION_KEY" > ~/Desktop/RF_archive/runs.json
+
+# 4. Load (re-run any time; it replaces per-encounter rows)
+.venv/bin/pip install "psycopg[binary]"
+.venv/bin/python tools/load_analysis_db.py --dsn postgresql://postgres:rf@localhost:5433/rf \
+    --archive ~/Desktop/RF_archive/encounters --scenarios scenarios/v3 [--runs ~/Desktop/RF_archive/runs.json]
+
+# 5. Query
+docker exec -it rf-analysis-db psql -U postgres -d rf -c "SET search_path TO rf" \
+    -c "SELECT * FROM v_encounter_summary ORDER BY started_at DESC LIMIT 20"
+```
+
+Any SQL client works on `localhost:5433`, database `rf`, user `postgres`,
+password `rf`, schema `rf`.
 
 ## Scope: what this database is for
 
@@ -119,10 +150,15 @@ live service.
 - **Unsteered vs. lost.** `stage_direction.direction` NULL means the turn ran
   without a direction; a missing row means the log was lost. The record keeps
   that distinction and so does the table.
-- **Trigger outcomes are rows, not booleans.** `trigger_fired` is append-only
-  in the event log and `trigger_undelivered` cancels it by `index`; the loader
-  nets them, and coverage against the plan is a query (`v_encounter_summary`),
-  not a column.
+- **Trigger outcomes are rows, not booleans.** `trigger_fired`,
+  `trigger_deferred` and `trigger_undelivered` (which cancels a fired row by
+  `index`) each become a `trigger_firing` row with its `outcome`; coverage
+  against the plan is a query (`v_encounter_summary`), not a column.
+- **Recovered encounters are first-class rows.** The 46 sessions rebuilt from
+  webcam video after the 2026-09-17 data loss load as `encounter.status =
+  'recovered'` with the diarised transcript in `transcript_version`; 13 of
+  them have `scenario_id` NULL because the video could not tell which form
+  ran. Filter on `status = 'closed'` for the fully instrumented set.
 - **Survey answers stay JSON** until the instrument scoring (WEIP, ESCI
   self-report) is fixed; a typed view per instrument comes then.
 
