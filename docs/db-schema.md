@@ -2,7 +2,7 @@
 
 Draft of 2026-09-22. DDL is in [`db-schema.sql`](db-schema.sql) (PostgreSQL;
 loads clean on Postgres 16). The loader is
-[`tools/load_analysis_db.py`](../../tools/load_analysis_db.py); it has been run
+[`tools/load_analysis_db.py`](../tools/load_analysis_db.py); it has been run
 against the full S3 archive (66 encounters: 20 with records, 46 rebuilt from
 video) into a local Postgres. This is a proposal for review, not something the
 app uses yet.
