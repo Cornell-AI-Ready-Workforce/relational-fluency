@@ -554,6 +554,9 @@ def main() -> int:
                       f"(index {idx.name})")
             if args.runs:
                 runs = json.loads(args.runs.read_text(encoding="utf-8"))
+                if isinstance(runs, dict) and "detail" in runs and len(runs) == 1:
+                    sys.exit(f"{args.runs} is an API error, not an export: {runs['detail']!r}. "
+                             "Re-run the curl with the current SESSION_KEY.")
                 if isinstance(runs, dict):
                     runs = runs.get("runs") or runs.get("items") or []
                 print(f"runs: {load_runs(cur, runs)} from export")
