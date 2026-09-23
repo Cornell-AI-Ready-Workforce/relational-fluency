@@ -24,9 +24,9 @@ something to respond to.
 
 | | Construct | Scenario (form A, Study 1) | Cast | Shape |
 |---|---|---|---|---|
-| S1 | Conflict Management | Taken credit | Riley (colleague who pushes) · Sam (peer who took it) | 1:1 → 1:1 |
+| S1 | Conflict Management | Taken credit | Riley (colleague who pushes) · Sam (peer who took it) | 1:1 (2 min, fixed) → 1:1 |
 | S2 | Influence | Promised raise and a competing offer | Morgan (manager) | 1:1 → 1:1 |
-| S3 | Inspirational Leadership | After resignations over pay | Alex · Jordan · Casey (a team) | group meeting → brief one-on-ones |
+| S3 | Inspirational Leadership | After resignations over pay | Alex · Jordan · Casey (a team) | one group meeting |
 | S4 | Teamwork | Planning an internal rollout | Priya · Dan · Chris (a working group) | group → group |
 
 Each construct also has a **form B**, a parallel form with the same trigger

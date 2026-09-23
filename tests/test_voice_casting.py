@@ -63,8 +63,8 @@ ROSTER_ORDER_ON_GPT = ["alloy", "ash", "ballad"]
 # The casting, as the specs record it. Second column is the Gemini name the
 # bank has used for four rounds; third is the gpt voice measured against it.
 CASTING = {
-    "S1A": [("riley", "Fenrir", "verse"), ("sam", "Charon", "ash")],
-    "S1B": [("mel", "Fenrir", "verse"), ("drew", "Charon", "ash")],
+    "S1A": [("riley", "Aoede", "coral"), ("sam", "Charon", "ash")],
+    "S1B": [("mel", "Aoede", "coral"), ("drew", "Charon", "ash")],
     "S2A": [("morgan", "Kore", "coral")],
     "S2B": [("sasha", "Kore", "coral")],
     "S3A": [("alex", "Fenrir", "verse"), ("jordan", "Charon", "ash"),
@@ -213,7 +213,7 @@ def test_the_unqualified_field_still_carries_the_gemini_name():
     taught about families, so it must not start changing under the model."""
     for model in (GEMINI, GPT):
         scenario = load_scenario("S1A", "p_test")
-        assert [a.voice_id for a in scenario.cast] == ["Fenrir", "Charon"], (
+        assert [a.voice_id for a in scenario.cast] == ["Aoede", "Charon"], (
             f"voice_id moved while compiling for {model}"
         )
 

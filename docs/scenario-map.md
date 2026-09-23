@@ -7,12 +7,12 @@ Regenerate with `python tools/gen_scenario_map.py`.
 
 | ID | Construct | Var | Pair | Agents | Interaction 1 | Interaction 2 |
 |---|---|---|---|---|---|---|
-| `S1A` | conflict management | A | `S1B` | Riley, Sam | **1:1** — Riley corners you (Riley) | **1:1** — Hallway run-in with Sam (Sam) |
-| `S1B` | conflict management | B | `S1A` | Mel, Drew | **1:1** — Mel pings you first thing (Mel) | **1:1** — Coffee-machine run-in with Drew (Drew) |
+| `S1A` | conflict management | A | `S1B` | Riley, Sam | **1:1** — Riley corners you (Riley), fixed at 2 min, then hands off | **1:1** — Hallway run-in with Sam (Sam), the rest of the encounter |
+| `S1B` | conflict management | B | `S1A` | Mel, Drew | **1:1** — Mel pings you first thing (Mel), fixed at 2 min, then hands off | **1:1** — Coffee-machine run-in with Drew (Drew), the rest of the encounter |
 | `S2A` | influence | A | `S2B` | Morgan | **1:1** — Making the case (Morgan) | **1:1** — The deflection ladder (Morgan) |
 | `S2B` | influence | B | `S2A` | Sasha | **1:1** — Making the case (Sasha) | **1:1** — The deflection ladder (Sasha) |
-| `S3A` | inspirational leadership | A | `S3B` | Alex, Jordan, Casey | **group** — Team meeting (Alex + Jordan + Casey) | **1:1 series** — Brief one-on-ones (Jordan + Casey) |
-| `S3B` | inspirational leadership | B | `S3A` | Toni, Lee, Ari | **group** — Team meeting (Toni + Lee + Ari) | **1:1 series** — Brief one-on-ones (Lee + Ari) |
+| `S3A` | inspirational leadership | A | `S3B` | Alex, Jordan, Casey | **group** — Team meeting (Alex + Jordan + Casey); Jordan's shut-down and Casey's two fears surface in the room | — (one scene since 2026-09-23) |
+| `S3B` | inspirational leadership | B | `S3A` | Toni, Lee, Ari | **group** — Team meeting (Toni + Lee + Ari); Lee's shut-down and Ari's two fears surface in the room | — (one scene since 2026-09-23) |
 | `S4A` | teamwork | A | `S4B` | Dan, Priya, Chris | **group** — Working session (Dan + Priya + Chris) | **group** — The close, who owns what (Dan + Priya + Chris) |
 | `S4B` | teamwork | B | `S4A` | Dan, Priya, Chris | **group** — Working session (Dan + Priya + Chris) | **group** — The close, speaking roles & credit (Dan + Priya + Chris) |
 

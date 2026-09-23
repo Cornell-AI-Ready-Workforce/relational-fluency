@@ -42,9 +42,9 @@ agents:
     role: colleague who sets the scene and pushes
     display_role: colleague on your team
     realtime_voice:
-      gemini-live: Fenrir
-      gpt-realtime: verse
-    voice: Fenrir
+      gemini-live: Aoede  # Riley is a woman; ~170 Hz (was Fenrir, 2026-09-23)
+      gpt-realtime: coral  # ~190 Hz (was verse)
+    voice: Aoede
     system_prompt: |
       You are Riley. You sit two desks from the participant on the analytics team, you started the same month, and right now you are angrier about this than they are.
 
@@ -230,6 +230,15 @@ interactions:
     agent: riley
     label: "Riley corners you"
     kind: context_and_push
+    # Fixed at two minutes (2026-09-23): everyone meets Sam, with most of the
+    # encounter still to run, and nobody is offered a choice about it. At the
+    # mark the runner briefs Riley that her next line is her last, with the
+    # hand-off below, and moves on once she has said it
+    # (realtime_voice_session._brief_handoff). The move-on control is hidden.
+    timebox_seconds: 120
+    handoff: >-
+      You have to get back to your desk. Close this in your own way, and let
+      them know Sam is out by the elevators right now.
     opening: >-
       Sam presented your analysis again, third time. Reply-all with the original
       file and let everyone connect the dots.

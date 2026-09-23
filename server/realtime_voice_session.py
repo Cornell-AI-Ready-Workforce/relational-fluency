@@ -766,6 +766,8 @@ class RealtimeVoiceSessionRunner:
         self._fired: List[str] = []
         self._last_activity = time.time()
         self._turns_this_interaction = 0
+        self._handoff_briefed = False
+        self._handoff_probed = False
         self._interaction_started_at = time.time()
         # The encounter clock (storage.encounter_timing): floor, wrap, hard
         # stop, measured from here — the socket opening, which is when the
@@ -787,6 +789,9 @@ class RealtimeVoiceSessionRunner:
         # can reach it at once, and without this a second advance that arrives
         # while one is in flight double-increments and skips a scored beat.
         self._advancing = False
+        # A timeboxed interaction's closing line has been briefed / forced.
+        self._handoff_briefed = False
+        self._handoff_probed = False
         # Every finalize runs as a task — from the 1:1 pump, from a room
         # member's pump, and from either barge-in path. References are kept for
         # two reasons: so exceptions are retrieved (logged) instead of silently
@@ -1453,6 +1458,8 @@ class RealtimeVoiceSessionRunner:
             if self._interaction_mode() == "one_to_one_series" and self._series_idx + 1 < len(agents):
                 self._series_idx += 1
                 self._turns_this_interaction = 0
+                self._handoff_briefed = False
+                self._handoff_probed = False
                 self._interaction_started_at = time.time()
                 if not await self._enter(agents[self._series_idx],
                                          new_interaction=False):
@@ -1468,6 +1475,8 @@ class RealtimeVoiceSessionRunner:
             self._series_idx = 0
             self._trigger_idx = 0
             self._turns_this_interaction = 0
+            self._handoff_briefed = False
+            self._handoff_probed = False
             self._interaction_started_at = time.time()
             if not await self._enter(self._resolve_agents()[0],
                                      new_interaction=True):
@@ -1479,7 +1488,13 @@ class RealtimeVoiceSessionRunner:
             self._advancing = False
 
     def _next_beat_hint(self) -> Optional[dict]:
-        """Who comes next, so the UI can offer a way to move on."""
+        """Who comes next, so the UI can offer a way to move on.
+
+        None for a timeboxed interaction: the clock moves it on, and the
+        participant is not offered a choice about whether to meet the next
+        character."""
+        if self._timebox_seconds() is not None:
+            return None
         agents = self._resolve_agents()
         if self._interaction_mode() == "one_to_one_series" and self._series_idx + 1 < len(agents):
             nxt = agents[self._series_idx + 1]
@@ -1495,6 +1510,88 @@ class RealtimeVoiceSessionRunner:
                     "agent_name": " and ".join(names),
                     "label": nxt_i.get("label", "")}
         return None
+
+    def _timebox_seconds(self) -> Optional[float]:
+        """A fixed length for this interaction, from the spec's `timebox_seconds`.
+
+        S1's opening conversation with the instigating colleague runs two
+        minutes and then hands over to the counterpart whether or not the
+        participant has finished with them: every participant meets Sam, and
+        meets him with most of the encounter still to run. None for an
+        interaction the turn-and-time gate paces (the study default).
+        """
+        raw = self._interaction().get("timebox_seconds")
+        try:
+            v = float(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return None
+        return v if v and v > 0 else None
+
+    async def _brief_handoff(self, elapsed: float) -> None:
+        """Ask the current character to close the conversation on its next turn.
+
+        The smooth version of a timebox. Cutting straight to the next scene
+        left Riley mid-argument and Sam appearing under a banner, which read as
+        the page breaking rather than the day moving on. Instead the actor gets
+        a director note that its next line is its last, with the scenario's
+        own `handoff` text (Sam is by the elevators; Drew is at the coffee
+        machine), and the runner advances once that line has been spoken. The
+        note is recorded as a stage direction like any planted beat, so the
+        transcript pairs the closing line with what produced it.
+        """
+        async with self._brief_lock:
+            if self._handoff_briefed:
+                return
+            nxt = (self.interactions[self.segment + 1]
+                   if self.segment + 1 < len(self.interactions) else {})
+            spec = nxt.get("agents") or nxt.get("agent")
+            spec = [spec] if isinstance(spec, str) else (spec or [])
+            by_id = {a.id: a for a in self.cast}
+            names = ", ".join(by_id[a].name for a in spec if a in by_id)
+            close = str(self._interaction().get("handoff") or "").strip()
+            if not close:
+                close = "You have to get going, so bring this to a natural close"
+                close += f" and mention that {names} is around right now." if names else "."
+            direction = (
+                "This is your last turn in this conversation. " + close +
+                " One or two sentences, in your own words, picking up from "
+                "whatever they just said. Do not open a new question and do "
+                "not wait for an answer."
+            )
+            instructions = self._instructions() + self._director_note(direction)
+            try:
+                acked = await self._deliver_brief(self.rt, instructions)
+            except Exception as exc:  # noqa: BLE001 - retried at the next turn
+                self.session.store.event(
+                    "handoff_brief_failed", interaction=self._interaction_id(),
+                    segment=self.segment, agent_id=self.agent_id,
+                    message=redact_key(str(exc)),
+                )
+                return
+            self._handoff_briefed = True
+            self._pending_direction = {
+                "acked": acked,
+                "turn": self._turn_index,
+                "segment": self.segment,
+                "interaction": self._interaction_id(),
+                "agent_id": self.agent_id,
+                "agent_name": self.agent.name,
+                "voice": getattr(self.rt, "voice", None),
+                "stage_direction": direction,
+                "trigger_id": None,
+                "esci": [],
+                "probing": False,
+                "source": "handoff",
+                "instructions_sha256": hashlib.sha256(instructions.encode()).hexdigest()[:16],
+                "director_model": (self.director.model if getattr(self, "director", None)
+                                   else provenance()["text_model"]),
+            }
+            self.session.store.event("stage_direction", **self._pending_direction)
+            self.session.store.event(
+                "handoff_briefed", interaction=self._interaction_id(),
+                segment=self.segment, agent_id=self.agent_id,
+                seconds=round(elapsed, 1), next=names or None,
+            )
 
     async def _announce_opening(self) -> None:
         """The first interaction needs the same scene banner as later ones."""
@@ -4642,6 +4739,31 @@ class RealtimeVoiceSessionRunner:
         if await self._at_ceiling():
             return
 
+        # A timeboxed interaction (S1's two minutes with the instigating
+        # colleague) ends on the clock: the first turn to finish past the
+        # mark gets the closing-line brief, the turn that speaks it moves the
+        # encounter on. Beats still unfired are written down as unreached
+        # rather than performed late in the wrong scene.
+        tb = self._timebox_seconds()
+        if tb is not None and not self.is_group() and not self._is_last_segment():
+            elapsed = time.time() - self._interaction_started_at
+            if elapsed >= tb:
+                if not self._handoff_briefed:
+                    await self._brief_handoff(elapsed)
+                    return
+                self.session.store.event(
+                    "interaction_timeboxed",
+                    interaction=self._interaction_id(),
+                    turns=self._turns_this_interaction,
+                    seconds=round(elapsed, 1),
+                    unreached_triggers=[t.get("id") for t in
+                                        self._triggers()[self._trigger_idx:]],
+                )
+                self._turns_this_interaction = 0
+                if not await self._advance_segment():
+                    await self._send({"type": "encounter_complete"})
+                return
+
         if self._next_trigger() is not None:
             return  # beats remain in this interaction
 
@@ -5079,6 +5201,8 @@ class RealtimeVoiceSessionRunner:
         # Serialised against _steer's own re-brief as well: two session.updates
         # on one wire do not merge, the later simply replaces the earlier.
         async with self._brief_lock:
+            if self._handoff_briefed:
+                return  # the closing line is briefed; no beat goes in over it
             trigger = self._next_trigger()
             if trigger is None:
                 return
@@ -5376,6 +5500,15 @@ class RealtimeVoiceSessionRunner:
                 # Tracked, so an interaction change cancels the probe instead of
                 # leaving it holding the floor into the next scene.
                 self._spawn_group_turn(self._probe_room())
+                continue
+            if self._handoff_briefed and not self._handoff_probed:
+                # The closing line is briefed and the participant has gone
+                # quiet on it: have the character say it, so the handover does
+                # not wait on a line that is not coming.
+                self._handoff_probed = True
+                self._last_activity = time.time()
+                await self.rt.send_audio(b"\x00" * 3200)
+                await self.rt.commit_turn()
                 continue
             trigger = self._next_trigger()
             if trigger is None or not trigger.get("on_silence"):

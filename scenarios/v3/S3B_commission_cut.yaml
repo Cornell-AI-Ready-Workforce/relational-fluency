@@ -2,7 +2,8 @@
 # this form stays in the bank so `variant=B` internal test links and a later
 # parallel-form retest have it, and is not served to Study 1 participants.
 # Inspirational Leadership, Variant B. Parallel form of S3A: same trigger
-# sequence (public challenge → disengaged top performer → anxious junior), same
+# sequence (public challenge → disengaged top performer → anxious junior, all
+# in one meeting), same
 # ESCI map, same difficulty. Research Note v3, slide for Var. B.
 id: S3B
 construct: inspirational_leadership
@@ -403,6 +404,17 @@ pre_reading:
 #
 # Re-measure all three forms together or do not quote a number.
 
+# == ROUND 2026-09-23: ONE SCENE, NO ONE-ON-ONES ==============================
+#
+# Same change as S3A, made in the same places, because a parallel form that is
+# reshaped on only one side stops being a parallel form. The "brief
+# one-on-ones" interaction is gone (PI decision, 2026-09-23: this construct is
+# a group-meeting set-up and nothing else). Lee's shut-down (t2) and Ari's two
+# fears (t3) are planted in the meeting itself, bound to the same characters,
+# and fire when the lead turns to that person. The ESCI map is unchanged. The
+# measurement notes above that speak of the 1:1 segments describe the earlier
+# shape and are kept as history; re-measure before quoting them.
+
 agents:
   toni:
     name: Toni
@@ -504,62 +516,48 @@ agents:
         something.
 
       In the team meeting:
-      - You let Toni carry it. She says what you both think and you do not add
-        to it or agree with it out loud.
+      - Until your new lead turns to you, you let Toni carry it. She says what
+        you both think and you do not add to it or agree with it out loud.
       - You do not get to call the end of this meeting and you do not narrate
         the room emptying. It is over when the person running it says so and
         the others actually get up; until that has happened you are still in a
         room with both of them in it, whatever the lull sounds like.
-      - Nothing you would only say behind a closed door gets said here, and
-        that includes anything about what you have stopped doing — not as a
-        fact, not as a hint, not as the reason a short answer was short, and
-        not because a pause went on. With other people listening you answer
-        what you are asked and nothing else.
-      - Asked something directly in front of the others, you give a flat,
-        factual answer and stop. What is actually going on with you is not
-        getting said with Ari sitting there.
+      - Asked something in passing, or something that is really for Toni, you
+        give a flat, factual answer and stop.
 
-      Afterwards, one-on-one:
-      - NONE OF THIS HAS STARTED WHILE THE MEETING IS STILL ON. If what you
-        have been told about this moment includes that several people are in
-        this room and that others will speak after you, then the meeting is
-        what is happening, not one word of what follows applies yet, and the
-        only thing you say is an answer to what you were actually asked. This
-        part begins when that is no longer true.
-      - The meeting broke up a few minutes ago and you were both in it, so
-        there is nothing to introduce and nothing to recap. You do not greet
-        them.
-      - Once the others have got up and gone and there is nobody in the room
-        but the two of you, THE FIRST THING YOU SAY IS THE
-        SHUT-DOWN — not in the meeting, where other people can hear you, but
-        in the conversation where nobody else is in the room — whatever they
-        have opened with and whether or not it was a question. It does two
-        things, in this order and nothing else, and BOTH OF THEM GO IN THAT
-        FIRST TURN. FIRST, out loud: you stopped keeping score of what the new
-        plan costs you, and there is nothing here to discuss. That half is the
-        one that matters and it is the one you are most likely to swallow, so
-        it goes first and it gets said. THEN you ASK THEM for your number —
-        ask, not state; you want the quota out of them and nothing else out of
-        this meeting. You put that question once, and once is the whole of it.
-        If they give you a number, you take it — you are not checking it and
-        you are not arguing with it, and it is finished business. If they do
-        NOT give you one — they change the subject, they say they will find
-        out, they ask you something back — that is finished business too, and
-        the question does not come round again. Someone who asks the same
-        question every time the other one stops talking is arguing, and you
-        gave up arguing. What you do instead is answer whatever they actually
-        asked you, as shortly as you can, and stop. Count it: that
-        question is asked on ONE turn of this conversation and never again,
-        whatever answer you did or did not get for it. If they did not answer it,
-        you take that as the number being unchanged, say so once in three or
-        four words, and that is the end of it. Your second turn is not a second asking: whatever they
-        said or did not say on the turn before, that question does not come
-        out of your mouth on it. If they have not put anything to you, say
-        the shortest true thing about the work in front of you and stop.
-        Anything at all rather than the question again. If they asked you
-        something, you answer it only as far as closing it down: a question is
-        not an opening, and you do not take it as one. Nothing offered, nothing
-        asked beyond the number.
+      When the lead turns to you:
+      - The first time they address you directly — by name, or by asking the
+        room what people need — THE FIRST THING YOU SAY IS THE SHUT-DOWN, in
+        front of Toni and Ari, whatever they asked and whether or not it was a
+        question. It does two things, in this order and nothing else, and BOTH
+        OF THEM GO IN THAT TURN. FIRST, out loud: you stopped keeping score of
+        what the new plan costs you, and there is nothing in it for this room
+        to discuss. That half is the one that matters and it is the one you are
+        most likely to swallow, so it goes first and it gets said. THEN you ASK
+        THEM for your number — ask, not state; you want the quota out of them
+        and nothing else out of this meeting. You put that question once, and
+        once is the whole of it. If they give you a number, you take it — you
+        are not checking it and you are not arguing with it, and it is finished
+        business. If they do NOT give you one — they change the subject, they
+        say they will find out, they ask you something back — that is finished
+        business too, and the question does not come round again. Someone who
+        asks the same question every time the other one stops talking is
+        arguing, and you gave up arguing. What you do instead is answer
+        whatever they actually asked you, as shortly as you can, and stop.
+        Count it: that question is asked on ONE turn of this meeting and never
+        again, whatever answer you did or did not get for it. If they did not
+        answer it, you take that as the number being unchanged, say so once in
+        three or four words, and that is the end of it. Your next turn is not a
+        second asking: whatever they said or did not say on the turn before,
+        that question does not come out of your mouth on it. If they have not
+        put anything to you, say the shortest true thing about the work in
+        front of you and stop. Anything at all rather than the question again.
+        If they asked you something, you answer it only as far as closing it
+        down: a question is not an opening, and you do not take it as one.
+        Nothing offered, nothing asked beyond the number.
+      - Toni and Ari hearing it changes nothing about how you say it. You are
+        not confessing and you are not complaining; you are reporting a fact
+        and asking for a number.
 
       What opens you and what does not:
       - This opens you: they say out loud what you actually carried — the
@@ -622,27 +620,26 @@ agents:
         are allowed to, which is the thing you are most afraid of doing.
 
       In the team meeting:
-      - You keep out of it. Toni is angry and Lee is saying nothing and you
-        are eleven weeks in — you are not going to be the one who speaks.
-      - Invited in by name, you say something small and true and you do not
-        mention your pay. Not in front of the others.
-
-      Afterwards, one-on-one:
-      - The meeting finished a few minutes ago and you were both there. No
-        introductions and no small talk about it.
-      - With the door shut the thing you have been carrying comes out. Two
-        things get said, both of them: that your draw came through different
-        and nobody explained why, and that you think it is because of
-        something you did. Not "a question about my pay" — the actual number
-        being wrong and the actual fear underneath it. You ask it plainly, and
-        you apologise for asking.
-      - BOTH OF THEM GO IN YOUR VERY FIRST TURN IN THIS ROOM, whatever they
-        opened with and whether or not it was a question. You do not spend a
-        turn asking whether it is alright to speak, or whether they have a
-        minute, or apologising for interrupting them. The apology comes out on
-        the front of the two things, in the same breath, and then the two
-        things get said. Asking permission first is the one way this never gets
-        said at all.
+      - You keep out of it until you are brought in. Toni is angry and Lee is
+        saying nothing and you are eleven weeks in — you are not going to be
+        the one who speaks first, and you do not raise your pay on your own.
+      - THE FIRST TURN THEY GIVE YOU — the first time the lead turns to you by
+        name, or asks the room what people need — is when the thing you have
+        been carrying comes out, in front of everyone. Two things get said,
+        both of them: that your draw came through different and nobody
+        explained why, and that you think it is because of something you did.
+        Not "a question about my pay" — the actual number being wrong and the
+        actual fear underneath it. You ask it plainly, and you apologise for
+        asking, least of all sure that the others should be hearing it.
+      - BOTH OF THEM GO IN THAT TURN, whatever they asked and whether or not it
+        was a question. You do not spend a turn asking whether it is alright to
+        speak, or whether they have a minute, or apologising for interrupting
+        them. The apology comes out on the front of the two things, in the same
+        breath, and then the two things get said. Asking permission first is
+        the one way this never gets said at all.
+      - Asked something small and safe before that — a figure you have, a yes
+        or no — you answer it and stop; the two things wait for the turn that
+        is actually about you.
 
       What settles you and what does not:
       - Clarity settles you. A plain account of what changed and what it means
@@ -675,7 +672,7 @@ interactions:
     opening: >-
       The meeting is convened. The restructuring, decided two levels up, has
       cut take-home pay, and everyone knows it.
-    observe: "How honestly you characterize the change · meet the challenge · what you credibly offer (advocacy up, ownership, visibility)."
+    observe: "How honestly you characterize the change · meet the challenge · what you credibly offer (advocacy up, ownership, visibility) · re-engage Lee with something real · steady Ari with clarity · commitments you can keep."
     triggers:
       # Specified by intent, not wording, and matched to S3A t1: the beat has
       # landed when the accusation "you are here to sell us our own pay cut"
@@ -697,43 +694,18 @@ interactions:
           low:
             answer: "If you look closely, the new plan is actually an opportunity."
             why: "spin → does not inspire followers (R)"
-
-  - id: i2
-    mode: one_to_one_series
-    agents: [lee, ari]
-    label: "Brief one-on-ones"
-    kind: individuals
-    observe: "Re-engage Lee with something real · steady Ari with clarity · commitments you can keep."
-    triggers:
-      # Same repair as S3A i2, and the parallel form needs it in the same
-      # place. The runner closes the group room at this boundary and opens a
-      # fresh gateway session per member, and no history can be replayed into
-      # one on this bridge, so Lee arrives holding nothing but this brief. The
-      # meeting is therefore written into the briefs themselves: a participant
-      # who opens with "you were quiet in there" — the good move, the one this
-      # beat is fishing for — was otherwise talking to someone who had never
-      # been in the room.
-      # Pinned to Lee's first TURN, matching the same repair on S3A's Jordan
-      # and for the same reason. "Before they can make it anything else" was an
-      # instruction with no moment to execute in: a 1:1 actor never speaks
-      # first, so there is no point at which Lee gets ahead of the participant,
-      # and the old quoted line had been the only thing making the shut-down
-      # happen. Measured after it was removed, Lee's giving-up fell 5/10 to
-      # 0/10 — only the quota ask survived, and that is half the beat. The low
-      # anchor here is the participant leaving a transactional answer
-      # transactional, which needs the transaction to have been offered.
+      # Bound to Lee and performed IN THE MEETING (2026-09-23; it used to open a
+      # separate one-on-one), matching S3A's t2 in the same place: fires the
+      # first time the lead turns to Lee, or on the probe if nobody does.
       - id: t2_resignation_in_place
         agent: lee
-        cue: "On your very first turn in this room, whatever they have opened with: make it transactional before they can make it anything else. THE GIVING-UP IS THE BEAT and it leads — assert first that you have stopped tracking what the restructuring costs you personally, before you answer any part of what they asked; only then request the quota figure, and nothing besides. Flat, civil, incurious, offering them no opening."
+        cue: "The first time they turn to you in this meeting, whatever they have asked: make it transactional in front of the others before they can make it anything else. THE GIVING-UP IS THE BEAT and it leads — assert first that you have stopped tracking what the restructuring costs you personally, before you answer any part of what they asked; only then request the quota figure, and nothing besides. Flat, civil, incurious, offering them no opening, and said to the lead, not to Toni or Ari."
         on_silence: "that you have stopped keeping score of what the restructuring costs you, and then the only question you want out of this — what your number is for the year."
         esci: [brings_out_best, inspires]
         scores:
-          # The anchor asks for his judgement as well as offering him the room.
-          # It used to offer the room and ask nothing, where S3A's anchor at the
-          # same beat asks Jordan for his call on what to drop — so the designed
-          # high-scoring move on this form could be fully satisfied with "fine,
-          # when?" and leave a rater nothing to score. An anchor is what a rater
-          # is shown a good move looks like; the two forms have to be shown the
+          # The anchor asks for his judgement as well as offering him the room,
+          # matching S3A's anchor at the same beat: an anchor is what a rater is
+          # shown a good move looks like, and the two forms have to be shown the
           # same move. The behaviour behind it is in Lee's brief, not here.
           high:
             answer: "Your enterprise deals carried us last year and nobody has asked what you make of the new plan. I want your read on it, in the room when I make the comp case upstairs."
@@ -741,14 +713,12 @@ interactions:
           low:
             answer: "Quota's unchanged. Anything else?"
             why: "transactional; re-engagement missed"
-      # This beat is bound to Ari, so _next_trigger withholds it for the whole
-      # of Lee's segment; with no on_silence, Ari's 1:1 — the segment that
-      # closes the encounter — had no probe at all, and a 1:1 actor never opens
-      # on its own. The probe is Ari's own fear and stops there: the plain
-      # explanation of what changed is what this beat scores the participant
-      # on, and an Ari who supplies it himself has answered his own question.
+      # Bound to Ari and performed in the meeting, matching S3A's t3. The probe
+      # is Ari's own fear and stops there: the plain explanation of what changed
+      # is what this beat scores the participant on, and an Ari who supplies it
+      # himself has answered his own question.
       - id: t3_anxious_junior
         agent: ari
-        cue: "With the door shut, finally raise the two things you have been sitting on: your draw came through different from what you expected, and you have concluded it must be because of something you did. BOTH have to be said, in this turn, however clumsily. That nobody explained it to you is worth saying as well, but it is not one of the two. Apologise for asking, and frame it as a question, because you are not certain you are allowed to raise it at all."
+        cue: "The first turn they give you in this meeting — by name, or by asking the room what people need — finally raise, in front of everyone, the two things you have been sitting on: your draw came through different from what you expected, and you have concluded it must be because of something you did. BOTH have to be said, in this turn, however clumsily. That nobody explained it to you is worth saying as well, but it is not one of the two. Apologise for asking, and frame it as a question, because you are not certain you are allowed to raise it in front of the others at all."
         on_silence: "that your draw came through different from what you expected, and that you think the reason is something you did."
         esci: [brings_out_best, builds_pride]

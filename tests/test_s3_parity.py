@@ -95,11 +95,14 @@ def beat(sid, iid, index):
 
 
 def performer_beat(sid):
-    return beat(sid, "i2", 0)
+    """t2, the performer's shut-down: the second beat of the meeting since
+    2026-09-23, when the one-on-one interaction that used to carry it was
+    removed and the beat re-planted in the room."""
+    return beat(sid, "i1", 1)
 
 
 def junior_beat(sid):
-    return beat(sid, "i2", 1)
+    return beat(sid, "i1", 2)
 
 
 def norm(text):
@@ -119,8 +122,8 @@ def test_the_three_forms_are_one_construct_with_one_esci_map(sid):
 @pytest.mark.parametrize("sid", FORMS)
 def test_the_beats_sit_in_the_same_places(sid):
     modes = [i["mode"] for i in spec(sid)["interactions"]]
-    assert modes == [i["mode"] for i in spec("S3A")["interactions"]]
-    for iid in ("i1", "i2"):
+    assert modes == [i["mode"] for i in spec("S3A")["interactions"]] == ["group"]
+    for iid in ("i1",):
         mine = [t.get("esci") for t in interaction(sid, iid)["triggers"]]
         theirs = [t.get("esci") for t in interaction("S3A", iid)["triggers"]]
         assert mine == theirs, f"{sid} {iid} scores different ESCI items"
@@ -128,9 +131,8 @@ def test_the_beats_sit_in_the_same_places(sid):
 
 @pytest.mark.parametrize("sid", FORMS)
 def test_every_beat_names_the_character_it_belongs_to(sid):
-    # Without this _next_trigger cannot withhold the junior's beat for the
-    # whole of the performer's 1:1 segment, and one character spends the
-    # other's beat in the other's absence.
+    # The director grants the floor to a beat's owner and the silence probe
+    # routes to them; an unbound beat would be spent by whoever spoke first.
     for i in spec(sid)["interactions"]:
         for t in i["triggers"]:
             assert t.get("agent") in spec(sid)["agents"], (sid, t["id"])
@@ -187,19 +189,19 @@ def test_the_probe_carries_the_withdrawal_and_not_only_the_ask(sid):
         f"{sid} t2's probe drops the one-time ask: {probe!r}")
 
 
-FIRST_TURN = "BOTH OF THEM GO IN THAT FIRST TURN"
+FIRST_TURN = "BOTH OF THEM GO IN THAT TURN"
+CUE_PIN = "the first time they turn to you in this meeting"
 
 
 @pytest.mark.parametrize("sid", FORMS)
 def test_both_halves_of_the_shut_down_are_pinned_to_the_first_turn(sid):
-    """Pinned to the first TURN, not to a moment before speech: nothing in a
-    1:1 speaks first, so an instruction to get ahead of the participant has no
-    moment to execute in. The pin is not the defect this round repaired - all
-    three forms carried it and all three obeyed it - but it is what keeps the
-    ask from arriving a turn after the withdrawal, and only one form said it in
-    the brief as well as in the cue."""
+    """Pinned to the TURN the lead first gives the performer, not to a moment
+    before speech: a room member speaks only when granted the floor, so an
+    instruction to get ahead of the participant has no moment to execute in.
+    The pin is what keeps the ask from arriving a turn after the withdrawal,
+    and both forms say it in the brief as well as in the cue."""
     assert FIRST_TURN in brief(sid, "performer"), sid
-    assert "very first turn in this room" in norm(performer_beat(sid)["cue"]), sid
+    assert CUE_PIN in norm(performer_beat(sid)["cue"]).lower(), sid
 
 
 # ── t3: the junior's two fears are two KINDS of fear ───────────────────────
@@ -233,7 +235,8 @@ def test_the_juniors_probe_names_both_halves_rather_than_referring_to_them(sid):
 
 @pytest.mark.parametrize("sid", FORMS)
 def test_the_junior_is_told_both_fears_go_in_her_first_turn(sid):
-    assert "VERY FIRST TURN IN THIS ROOM" in brief(sid, "junior"), sid
+    assert "THE FIRST TURN THEY GIVE YOU" in brief(sid, "junior"), sid
+    assert FIRST_TURN in brief(sid, "junior"), sid
 
 
 # ── bounds that are only bounds if all three carry the same one ────────────
@@ -268,33 +271,45 @@ def test_the_juniors_carry_the_same_bound_in_the_same_words(sid, rule):
     assert norm(rule) in brief(sid, "junior"), sid
 
 
-# ── the handover the construct historically breaks on ──────────────────────
+# ── one scene: the beats are staged in the meeting, in the same words ───────
 
 @pytest.mark.parametrize("sid", FORMS)
 @pytest.mark.parametrize("part", ["performer", "junior"])
-def test_the_one_to_one_characters_neither_greet_nor_recap(sid, part):
-    """i2 opens a fresh gateway session per member, so the actor arrives
-    holding nothing but its brief. The meeting is therefore written into the
-    brief: a participant who opens with "you were quiet in there" - the move
-    this beat is fishing for - would otherwise be talking to somebody who had
-    never been in the room, and the actor greets a colleague it spoke to thirty
-    seconds ago."""
+def test_the_briefs_no_longer_stage_a_one_on_one(sid, part):
+    """The one-on-one interaction was removed on 2026-09-23. A brief that still
+    told the character to keep something "until the door is shut" would hold
+    the scored beat for a scene that never comes, and the beat would land
+    nowhere — which is the failure S3B's header records from the days when
+    Lee spent his line in the meeting and then had nothing for the 1:1."""
     text = brief(sid, part).lower()
-    assert "meeting" in text and (
-        "broke up a few minutes ago" in text or "finished a few minutes ago" in text
-    ), f"{sid} {part} does not know the meeting just happened"
-    assert "no introductions" in text or "you do not greet them" in text, sid
+    for phrase in ("one-on-one", "door is shut", "door shut",
+                   "broke up a few minutes ago", "finished a few minutes ago",
+                   "behind a closed door"):
+        assert phrase not in text, f"{sid} {part} still stages a one-on-one: {phrase!r}"
 
 
 @pytest.mark.parametrize("sid", FORMS)
-def test_the_private_beats_stay_out_of_the_group_room(sid):
-    """The other half of the same hazard: a brief is carried on every turn of
-    the encounter, so the 1:1 beat is available to the actor during the
-    meeting, and S3A's and S3B's performers were both measured spending it
-    there. Each performer is told, in the meeting section, that the private
-    thing keeps until the door is shut."""
+def test_the_performer_still_cannot_end_the_meeting(sid):
+    """The room has one exit and it is the lead's. Measured before this rule
+    existed, the performer declared the meeting over in 14 to 23 meetings of
+    24 to reach a private beat early; with the beat now IN the meeting the
+    temptation is smaller, and the rule stays."""
     text = brief(sid, "performer")
-    assert "Nothing you would only say behind a closed door gets said here" in text, sid
+    assert "You do not get to call the end of this meeting" in text, sid
+    assert "you do not narrate the room emptying" in text, sid
+
+
+def test_the_two_forms_stage_the_shut_down_in_the_same_words():
+    """Cross-form identity at the point the construct historically breaks: the
+    sentence that says WHEN the shut-down happens and that it happens in front
+    of the others."""
+    spans = {}
+    for sid in FORMS:
+        text = brief(sid, "performer")
+        a = text.index("The first time they address you directly")
+        b = text.index("THE FIRST THING YOU SAY IS THE SHUT-DOWN")
+        spans[sid] = text[a:b]
+    assert len(set(spans.values())) == 1, spans
 
 
 # ── the file itself ────────────────────────────────────────────────────────

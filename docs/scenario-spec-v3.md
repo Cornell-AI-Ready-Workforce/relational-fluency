@@ -86,8 +86,8 @@ over, relabelling ideas) are themselves the measurement.
 | Influence | A | Promised raise & competing offer | Morgan (budget-constrained manager) | 1:1 — making the case | 1:1 — the deflection ladder |
 | Influence | B | Hybrid under an RTO mandate | Sasha (manager squeezed from above) | 1:1 — making the case | 1:1 — the deflection ladder |
 | Influence | C | Stopping the Monday pack | Imani (manager exposed, not squeezed) | 1:1 — making the case | 1:1 — the deflection ladder |
-| Inspirational Leadership | A | After resignations | Alex (cynic) · Jordan (disengaged) · Casey (anxious junior) | **group — team meeting** | 1:1 — brief one-on-ones |
-| Inspirational Leadership | B | After a commission cut | Toni (cynic) · Lee (disengaged) · Ari (anxious junior) | **group — team meeting** | 1:1 — brief one-on-ones |
+| Inspirational Leadership | A | After resignations | Alex (cynic) · Jordan (disengaged) · Casey (anxious junior) | **group — team meeting** (all three beats) | — (one-on-ones removed 2026-09-23) |
+| Inspirational Leadership | B | After a commission cut | Toni (cynic) · Lee (disengaged) · Ari (anxious junior) | **group — team meeting** (all three beats) | — (one-on-ones removed 2026-09-23) |
 | Inspirational Leadership | C | A system nobody asked for | Bex (cynic) · Rafa (disengaged) · Noor (anxious junior) | **group — team meeting** | 1:1 — brief one-on-ones |
 | Teamwork | A | Planning an internal rollout | Priya (excluded) · Dan (dominates) · Chris (neutral) | **group — 4-person working session** | **group — the close** |
 | Teamwork | B | Preparing a client presentation | Priya · Dan · Chris | **group — working session** | **group — the close** |

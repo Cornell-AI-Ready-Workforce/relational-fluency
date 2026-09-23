@@ -186,7 +186,7 @@ def test_a_voice_from_the_other_family_is_refused_too(on_model):
     on_model(GPT)
     runner, _ = make_runner("S1A")
     roster = rt_mod.capabilities_for(GPT).voices
-    assert "Fenrir" == runner.cast[0].voice_id, "S1A's casting changed"
+    assert "Aoede" == runner.cast[0].voice_id, "S1A's casting changed"
     for agent in runner.cast:
         assert runner._voice_for(agent) in roster
 
@@ -199,7 +199,7 @@ def test_a_gemini_scenario_voice_survives_on_gemini(on_model):
     outright would silently recast every v3 scenario."""
     on_model(GEMINI)
     runner, _ = make_runner("S1A")
-    assert runner._voice_for(runner.cast[0]) == "Fenrir"
+    assert runner._voice_for(runner.cast[0]) == "Aoede"
     assert runner._voice_for(runner.cast[1]) == "Charon"
 
 

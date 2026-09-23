@@ -105,15 +105,18 @@ def _counterpart_brief(sid: str) -> str:
 
 
 def _performer_brief(sid: str) -> str:
-    """S3's withdrawn high performer: the FIRST agent of the 1:1 series.
+    """S3's withdrawn high performer: the character the meeting's SECOND beat
+    is bound to (the shut-down, t2). Since 2026-09-23 the whole encounter is
+    one group meeting; the beat used to open a separate one-on-one.
 
-    Found through the interaction rather than by name, so a recast form keeps
-    working.
+    Found through the beat rather than by name, so a recast form keeps working.
     """
     spec = v3.load_spec(sid)
-    series = [i for i in spec["interactions"] if i["mode"] == "one_to_one_series"]
-    assert len(series) == 1, f"{sid}: expected one one_to_one_series interaction"
-    return spec["agents"][series[0]["agents"][0]]["system_prompt"]
+    meeting = [i for i in spec["interactions"] if i["mode"] == "group"]
+    assert len(meeting) == 1, f"{sid}: expected exactly one group interaction"
+    beats = meeting[0]["triggers"]
+    assert len(beats) >= 2, f"{sid}: the shut-down beat is missing from the meeting"
+    return spec["agents"][beats[1]["agent"]]["system_prompt"]
 
 
 def _influencer_brief(sid: str) -> str:
@@ -238,44 +241,35 @@ def test_the_performer_does_not_get_to_end_the_meeting(sid):
 
 
 @pytest.mark.parametrize("sid", S3)
-def test_the_group_room_suppression_names_the_stopping(sid):
-    """S3B's copy used to name only "asking them for your number".
-
-    A suppression clause that does not mention the withdrawal cannot suppress
-    it, and the three briefs disagreeing at this point is the text-parity half
-    of the same defect.
-    """
+def test_the_shutdown_is_staged_in_the_meeting_on_an_observable_event(sid):
+    """Since 2026-09-23 there is no one-on-one: the shut-down happens in the
+    meeting, the first time the lead turns to the performer. "The lead turns to
+    you" is a thing the actor can check, where "afterwards" was a phase label.
+    The beat still lives in the OPENING BRIEF - a mid-session session.update is
+    inert on the configured model - it is only the stage that changed."""
     brief = _norm(_performer_brief(sid))
-    assert "anything about what you have stopped doing" in brief, (
-        f"{sid}: the meeting-room suppression no longer covers the withdrawal."
-    )
-
-
-def test_the_three_leadership_forms_suppress_in_the_same_words():
-    """Cross-form identity at the point the construct historically breaks."""
-    spans = {sid: _span(_performer_brief(sid),
-                        "Nothing you would only say behind a closed door",
-                        "Asked something directly") for sid in S3}
-    assert len(set(spans.values())) == 1, (
-        "the three Inspirational Leadership briefs no longer suppress the "
-        "private disclosure in the same words:\n"
-        + "\n\n".join(f"{k}: {v}" for k, v in spans.items())
-    )
-
-
-@pytest.mark.parametrize("sid", S3)
-def test_the_shutdown_waits_for_an_observable_event(sid):
-    """"Afterwards, one-on-one" is a phase label; "the others have gone" is a
-    thing the actor can check. The beat still lives in the OPENING BRIEF -- a
-    mid-session session.update is inert on the configured model -- it is only
-    the condition on it that changed."""
-    brief = _norm(_performer_brief(sid))
-    assert "Once the others have got up and gone" in brief, (
+    assert "The first time they address you directly" in brief, (
         f"{sid}: the shut-down is no longer hung on an observable event."
     )
     assert "THE FIRST THING YOU SAY IS THE SHUT-DOWN" in brief, (
-        f"{sid}: the shut-down is no longer the first thing said in the 1:1. "
-        "That beat is what t2 scores and it has to stay in the opening brief."
+        f"{sid}: the shut-down is no longer the first thing said when the lead "
+        "turns to them. That beat is what t2 scores and it has to stay in the "
+        "opening brief."
+    )
+    assert "one-on-one" not in brief.lower() and "closed door" not in brief.lower(), (
+        f"{sid}: the brief still stages a private scene that no longer exists."
+    )
+
+
+def test_the_leadership_forms_stage_the_shutdown_in_the_same_words():
+    """Cross-form identity at the point the construct historically breaks."""
+    spans = {sid: _span(_performer_brief(sid),
+                        "The first time they address you directly",
+                        "THE FIRST THING YOU SAY IS THE SHUT-DOWN") for sid in S3}
+    assert len(set(spans.values())) == 1, (
+        "the Inspirational Leadership briefs no longer stage the shut-down in "
+        "the same words:\n"
+        + "\n\n".join(f"{k}: {v}" for k, v in spans.items())
     )
 
 

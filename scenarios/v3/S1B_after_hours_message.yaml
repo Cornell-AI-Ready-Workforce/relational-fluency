@@ -232,9 +232,9 @@ agents:
     # The pusher is now Fenrir on both forms and the counterpart Charon on
     # both. Nothing else about either character changed.
     realtime_voice:
-      gemini-live: Fenrir  # ~116 Hz earlier; 115 Hz re-measured 2026-09-12
-      gpt-realtime: verse  # ~120 Hz earlier; 160 Hz re-measured 2026-09-12
-    voice: Fenrir
+      gemini-live: Aoede  # ~170 Hz; matched to S1A's Riley (2026-09-23, was Fenrir)
+      gpt-realtime: coral  # ~190 Hz (was verse)
+    voice: Aoede
     # Mirrors Riley in S1A, including the reason none of it is in quotation
     # marks: driven on the gateway against the quoted version, the actor read
     # the needle out whole — "Or you could just ignore it, I guess. Engaging
@@ -618,6 +618,12 @@ interactions:
     agent: mel
     label: "Mel pings you first thing"
     kind: context_and_push
+    # Same two-minute timebox and hand-off as S1A's interaction 1, so the
+    # parallel form paces identically.
+    timebox_seconds: 120
+    handoff: >-
+      You have to jump on a call. Close this in your own way, and let them
+      know Drew is over at the coffee machine right now.
     opening: >-
       Saw Drew's message last night, copying Priya and Tom? Out of line.
       Reply-all just as hard, receipts attached.
