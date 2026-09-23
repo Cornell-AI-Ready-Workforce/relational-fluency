@@ -51,9 +51,11 @@ turn where Morgan fired the rung-3 beat and what the participant said back",
 and later to hold the human ratings and model scores that Phases 2 and 3
 produce. Nothing in it is a source of truth that the files are not.
 
-Suggested engine: **PostgreSQL** (RDS in the study account, or a local
-instance loaded from the S3 archive for a single analyst). The same DDL runs
-on DuckDB with minor edits for quick exploration straight off the archive.
+Engine: **PostgreSQL 16 on RDS** in the study account (decided 2026-09-23;
+`infra/terraform/analysis_db.tf`, instance `relational-fluency-analysis`,
+administered by Tanvi). The local Docker instance below is the same schema
+for development. Setup and access are in
+[`OPERATIONS.md` → "Analysis database"](OPERATIONS.md#analysis-database).
 
 ## The shape
 
@@ -164,13 +166,12 @@ live service.
 
 ## Open questions
 
-1. **Hosting.** RDS Postgres in the study account (one more thing to run, but
-   shareable and permissioned) versus each analyst loading the archive into a
-   local Postgres or DuckDB (nothing to run; no shared state). The DDL is the
-   same either way; the choice is about who queries it and how often.
-2. **Loader ownership.** Nightly job in the study account, or a
-   `python -m tools.load_analysis_db` an analyst runs by hand before a wave
-   review?
+1. **Hosting.** Decided 2026-09-23: RDS Postgres in the study account
+   (`analysis_db.tf`), Tanvi administers it.
+2. **Loader ownership.** For now the loader is run by hand from a laptop
+   with `--dsn` pointing at RDS (see OPERATIONS.md). A scheduled ECS task
+   running the same script nightly is the natural next step; the security
+   group already admits the platform tasks.
 3. **Turn alignment for ratings.** Raters point at turns; `rating.evidence_turn_ids`
    assumes the rating UI shows `turn.seq`. Confirm against the Phase 2 rater
    pipeline when it is revived.

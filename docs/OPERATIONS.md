@@ -1107,3 +1107,64 @@ one-click return is missing.
 > before any wave, and understand that whatever host you configure **receives
 > the run id, the completion code and the participant key**, so it must be a URL
 > it is acceptable to send those three things to.
+
+## Analysis database
+
+The schema in [`db-schema.sql`](db-schema.sql) runs as **RDS Postgres 16**,
+instance `relational-fluency-analysis`, database `rf`
+(`infra/terraform/analysis_db.tf`). It is a *copy* of the study data loaded
+from the S3 archive by `tools/load_analysis_db.py`; the archive stays the
+record, and the instance can be dropped and rebuilt from the bucket.
+**Tanvi (`tanvi-cli`) administers it.** Cost is about $16/month.
+
+### First-time setup (administrator)
+
+```bash
+# 1. Create it (part of the normal tofu plan/apply; takes ~10 minutes)
+cd infra/terraform && tofu apply
+
+# 2. Where it is, and the master password RDS generated (never in git)
+tofu output -raw analysis_db_endpoint
+SECRET=$(tofu output -raw analysis_db_master_secret_arn)
+aws secretsmanager get-secret-value --secret-id "$SECRET" --region us-east-1 --query SecretString --output text
+#    -> {"username":"rf_admin","password":"..."}  (paste the password when psql asks)
+
+# 3. Let your own address in, then re-apply. Find it with: curl -s https://checkip.amazonaws.com
+#    infra/terraform/terraform.tfvars:
+#      analysis_db_allowed_cidrs = ["203.0.113.7/32"]
+tofu apply
+
+# 4. Schema and roles (TLS is required; psql negotiates it by default)
+HOST=$(tofu output -raw analysis_db_endpoint)
+psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -f ../../docs/db-schema.sql
+psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -f ../../docs/db-roles.sql
+psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -c '\password rf_loader'
+psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -c '\password rf_analyst'
+```
+
+### Loading (whoever runs the refresh)
+
+```bash
+aws s3 sync s3://relational-fluency-study-data/encounters/ ~/RF_archive/encounters/ \
+    --exclude "*" --include "*.json" --include "*.jsonl" --include "*.md" --include "*.csv"
+KEY=$(aws secretsmanager get-secret-value --secret-id relational-fluency/agent-api-key --region us-east-1 --query SecretString --output text)
+curl -s "https://rf.ai-ready-workforce.ai.cornell.edu/api/runs?key=$KEY" > ~/RF_archive/runs.json
+.venv/bin/python tools/load_analysis_db.py \
+    --dsn "postgresql://rf_loader@${HOST%:*}/rf?sslmode=require" \
+    --archive ~/RF_archive/encounters --scenarios scenarios/v3 --s3-media --runs ~/RF_archive/runs.json
+```
+
+It is idempotent: rerun after every sync. `PGPASSWORD=...` in the environment
+avoids the prompt.
+
+### Giving an analyst access
+
+1. Add their address to `analysis_db_allowed_cidrs` in `terraform.tfvars`
+   and `tofu apply` (the security group is the only door; nothing else
+   changes).
+2. Give them the `rf_analyst` password. That role reads every table and view
+   except `participant_identity`, and may write ratings. Connection string:
+   `postgresql://rf_analyst@<endpoint>/rf?sslmode=require`, schema `rf`.
+3. Remove the address when they leave the project.
+
+Never hand out `rf_admin`; it exists to run the two SQL files above.
