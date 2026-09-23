@@ -7,12 +7,12 @@ Regenerate with `python tools/gen_scenario_map.py`.
 
 | ID | Construct | Var | Pair | Agents | Interaction 1 | Interaction 2 |
 |---|---|---|---|---|---|---|
-| `S1A` | conflict management | A | `S1B` | Riley, Sam | **1:1** — Riley corners you (Riley), fixed at 2 min, then hands off | **1:1** — Hallway run-in with Sam (Sam), the rest of the encounter |
-| `S1B` | conflict management | B | `S1A` | Mel, Drew | **1:1** — Mel pings you first thing (Mel), fixed at 2 min, then hands off | **1:1** — Coffee-machine run-in with Drew (Drew), the rest of the encounter |
+| `S1A` | conflict management | A | `S1B` | Riley, Sam | **1:1** — Riley corners you (Riley) | **1:1** — Hallway run-in with Sam (Sam) |
+| `S1B` | conflict management | B | `S1A` | Mel, Drew | **1:1** — Mel pings you first thing (Mel) | **1:1** — Coffee-machine run-in with Drew (Drew) |
 | `S2A` | influence | A | `S2B` | Morgan | **1:1** — Making the case (Morgan) | **1:1** — The deflection ladder (Morgan) |
 | `S2B` | influence | B | `S2A` | Sasha | **1:1** — Making the case (Sasha) | **1:1** — The deflection ladder (Sasha) |
-| `S3A` | inspirational leadership | A | `S3B` | Alex, Jordan, Casey | **group** — Team meeting (Alex + Jordan + Casey); Jordan's shut-down and Casey's two fears surface in the room | — (one scene since 2026-09-23) |
-| `S3B` | inspirational leadership | B | `S3A` | Toni, Lee, Ari | **group** — Team meeting (Toni + Lee + Ari); Lee's shut-down and Ari's two fears surface in the room | — (one scene since 2026-09-23) |
+| `S3A` | inspirational leadership | A | `S3B` | Alex, Jordan, Casey | **group** — Team meeting (Alex + Jordan + Casey) | — |
+| `S3B` | inspirational leadership | B | `S3A` | Toni, Lee, Ari | **group** — Team meeting (Toni + Lee + Ari) | — |
 | `S4A` | teamwork | A | `S4B` | Dan, Priya, Chris | **group** — Working session (Dan + Priya + Chris) | **group** — The close, who owns what (Dan + Priya + Chris) |
 | `S4B` | teamwork | B | `S4A` | Dan, Priya, Chris | **group** — Working session (Dan + Priya + Chris) | **group** — The close, speaking roles & credit (Dan + Priya + Chris) |
 
@@ -46,11 +46,11 @@ high/low sample answers from the research note, used as judge anchors.
 | `S2B` | `i2` | `t5_rung4_the_package` | anticipates, multiple_approaches, through_discussion | probe scored |
 | `S2B` | `i2` | `t6_rung4_fairness` | self_interest, anticipates, key_people | probe scored |
 | `S3A` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe scored |
-| `S3A` | `i2` | `t2_jordans_flat_fine` | brings_out_best, inspires | probe scored |
-| `S3A` | `i2` | `t3_caseys_overload` | brings_out_best, builds_pride | probe |
+| `S3A` | `i1` | `t2_jordans_flat_fine` | brings_out_best, inspires | probe scored |
+| `S3A` | `i1` | `t3_caseys_overload` | brings_out_best, builds_pride | probe |
 | `S3B` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe scored |
-| `S3B` | `i2` | `t2_resignation_in_place` | brings_out_best, inspires | probe scored |
-| `S3B` | `i2` | `t3_anxious_junior` | brings_out_best, builds_pride | probe |
+| `S3B` | `i1` | `t2_resignation_in_place` | brings_out_best, inspires | probe scored |
+| `S3B` | `i1` | `t3_anxious_junior` | brings_out_best, builds_pride | probe |
 | `S4A` | `i1` | `t1_priya_interrupted` | solicits_input, encourages_participation, not_cooperate_r | probe scored |
 | `S4A` | `i1` | `t2_idea_relabelled` | respectful, encourages_cooperation | probe |
 | `S4A` | `i1` | `t3_decisions_close_with_priya_silent` | encourages_participation, solicits_input | probe |
