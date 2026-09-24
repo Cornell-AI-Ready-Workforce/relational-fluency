@@ -369,17 +369,24 @@ def _strip_narration(text: str) -> str:
     return t
 
 
+# A name slot: a capitalised word, matched case-SENSITIVELY inside a pattern
+# that is otherwise case-insensitive. Under the old blanket re.I the slot
+# matched any word, so "That's for you to set.", "Go ahead and tell me..." and
+# "You asked me for a number..." read as deferrals and were blanked from the
+# record although the participant heard them (fix plan #23 (a) 7). "That's
+# for" now also needs a name after it; alone it matched every "that's for".
+_NAME = r"(?-i:[A-Z][a-z]+)"
 _DEFERRAL = re.compile(
     r"^\s*(?:i['\u2019]ll|i will|i['\u2019]m|i am|let me)\s+(?:"
-    r"(?:wait|hold(?:ing)?)\s+(?:for|on|to hear|and hear|and let)\s+(?:what\s+)?(?:[A-Z][a-z]+(?:\s+(?:answers|speaks|finishes|responds|to|says|has|is)\b|\s*[.!?,]|\s*$)|others?\b|them\b|everyone\b)"
+    r"(?:wait|hold(?:ing)?)\s+(?:for|on|to hear|and hear|and let)\s+(?:what\s+)?(?:" + _NAME + r"(?:\s+(?:answers|speaks|finishes|responds|to|says|has|is)\b|\s*[.!?,]|\s*$)|others?\b|them\b|everyone\b)"
     r"|(?:stay|keep)\s+quiet\b|hang back\b|sit this one out\b|pass on (?:this|that)\b"
-    r"|let\s+(?:[A-Z][a-z]+|others?|them)\s+(?:answer|speak|go|respond|finish|take|start)\b"
-    r"|leave\s+(?:it|that|this)\s+to\s+[A-Z][a-z]+\b"
+    r"|let\s+(?:" + _NAME + r"|others?|them)\s+(?:answer|speak|go|respond|finish|take|start)\b"
+    r"|leave\s+(?:it|that|this)\s+to\s+" + _NAME + r"\b"
     r"|not\s+answering\s+that\b)"
-    r"|^\s*(?:go ahead|over to),?\s+[A-Z][a-z]+\b"
-    r"|^\s*after\s+[A-Z][a-z]+\s+(?:answers|speaks|finishes|responds)\b"
-    r"|^\s*you asked\s+[A-Z][a-z]+\b"
-    r"|^\s*that(?:['\u2019]s| is)\s+(?:for|[A-Z][a-z]+['\u2019]s)\s",
+    r"|^\s*(?:go ahead|over to),?\s+" + _NAME + r"\b"
+    r"|^\s*after\s+" + _NAME + r"\s+(?:answers|speaks|finishes|responds)\b"
+    r"|^\s*you asked\s+" + _NAME + r"\b"
+    r"|^\s*that(?:['\u2019]s| is)\s+(?:for\s+" + _NAME + r"|" + _NAME + r"['\u2019]s)\b",
     re.I,
 )
 
@@ -389,12 +396,30 @@ def _is_deferral(text: str) -> bool:
     speaking or staying quiet: 'I'll wait for Casey to answer.', 'I'll wait
     and hear what Jordan says.' The gpt route produces these when granted the
     floor on a turn addressed to another character; they are turn-taking
-    narration, not a line, and read as filler to the participant."""
+    narration, not a line, and read as filler to the participant.
+
+    A match is a classification, not a deletion: the callers blank the line
+    only when none of its audio reached the participant (see
+    _keep_deferral), because a spoken deferral is still something the
+    participant heard and answered."""
     t = (text or "").strip()
     if not t or len(t) > 240:
         return False
     first = re.split(r"(?<=[.!?])\s+", t, maxsplit=1)[0]
     return bool(_DEFERRAL.match(first))
+
+
+def _keep_deferral(audio_ms: int) -> bool:
+    """Whether a reply _is_deferral matched keeps its text in the record.
+
+    Blanked only when no audio of it was relayed (audio_ms 0): then it was
+    narration nobody heard, as before. A deferral with audio keeps its text
+    and is flagged `deferral` on the turn, because blanking it wrote
+    transcript_missing ("the character spoke and no transcript arrived") over
+    a line the participant had just heard. DEFERRAL_BLANK_AUDIBLE=1 blanks
+    audible ones too (the pre-2026-09-23f rule). Either way the text is in a
+    deferral_output event with `kept`."""
+    return audio_ms > 0 and not _realtime.deferral_blank_audible()
 
 
 def _is_stage_direction(text: str) -> bool:
@@ -865,6 +890,9 @@ class RealtimeVoiceSessionRunner:
         # echo guard to the window in which playback echo is physically
         # possible; see _is_echo and ECHO_WINDOW_SECONDS.
         self._recent_agent_texts: List[tuple] = []
+        # agent_id -> (words, relayed ms) over that character's whole, uncut
+        # turns: its measured speaking rate for heard_text (_heard_wpm).
+        self._speech_rate: Dict[str, tuple] = {}
         self._last_group_speaker: Optional[str] = None
         self._turn_index = 0
         self._pending_direction: Optional[dict] = None
@@ -3342,9 +3370,14 @@ class RealtimeVoiceSessionRunner:
         # '(Casey pauses.) I agree (for now)' is still a spoken reply.
         before_narration = text
         text = _strip_narration(text)
+        deferral = False
         if _is_deferral(text):
-            self.session.store.event("deferral_output", agent_id=agent.id, text=text)
-            text = ""
+            ms = turn_audio.audio_ms(audio_bytes)
+            deferral = _keep_deferral(ms)
+            self.session.store.event("deferral_output", agent_id=agent.id,
+                                     text=text, audio_ms=ms, kept=deferral)
+            if not deferral:
+                text = ""
         # A standalone direction may have been stripped in full. Retain its
         # original text for the diagnostic, while recording no spoken reply.
         direction_text = text or before_narration
@@ -3355,14 +3388,16 @@ class RealtimeVoiceSessionRunner:
         await self._finalize_member_inner(agent, text, interrupted=interrupted,
                                           audio_bytes=audio_bytes,
                                           audio_unterminated=audio_unterminated,
-                                          retried=retried, reply_end=reply_end)
+                                          retried=retried, reply_end=reply_end,
+                                          deferral=deferral)
 
     async def _finalize_member_inner(self, agent, text: str,
                                      *, interrupted: bool = False,
                                      audio_bytes: int = 0,
                                      audio_unterminated: bool = False,
                                      retried: bool = False,
-                                     reply_end: Optional[dict] = None) -> None:
+                                     reply_end: Optional[dict] = None,
+                                     deferral: bool = False) -> None:
         """Close one character's turn in a group room.
 
         This was lost in a refactor once, and the symptom was total: every pump
@@ -3440,6 +3475,12 @@ class RealtimeVoiceSessionRunner:
         # the last utterance it managed to hear would make the record assert
         # that the participant said a specific sentence immediately before turns
         # they said nothing before. Say the channel was lost instead.
+        delivered_ms = turn_audio.audio_ms(audio_bytes)
+        cap_cut = _reply_end(reply_end)["cap_truncated"]
+        # See _finalize_turn: a retry head's audio was the earlier attempt's.
+        heard = ({} if retry_head else self._heard_fields(
+            agent.id, text, delivered_ms, interrupted=interrupted,
+            cap_truncated=cap_cut))
         self.session.store.event(
             "steering_pair",
             # Where this turn happened, stated on the TURN.
@@ -3469,7 +3510,10 @@ class RealtimeVoiceSessionRunner:
                    # to tell a truncated delivery from a bad one.
                    "interrupted": interrupted,
                    # See _reply_end: the cap ended this line, not the actor.
-                   "cap_truncated": _reply_end(reply_end)["cap_truncated"]},
+                   "cap_truncated": cap_cut,
+                   # See _finalize_turn.
+                   "heard_text": heard.get("heard_text"),
+                   "deferral": deferral},
             participant=None if self._scribe_lost else self._last_user_text,
             participant_channel="lost" if self._scribe_lost else "ok",
             # The line above was too short-voiced to trust (see
@@ -3480,7 +3524,6 @@ class RealtimeVoiceSessionRunner:
         # belonging to a character who has not spoken yet keeps waiting for them.
         if direction is not None and direction is self._pending_direction:
             self._pending_direction = None
-        delivered_ms = turn_audio.audio_ms(audio_bytes)
         # The playback clock's idea of what is currently in the participant's
         # ears. Written here because this is where the whole line is finally
         # known; the cursor itself was advanced chunk by chunk as it was sent.
@@ -3494,7 +3537,16 @@ class RealtimeVoiceSessionRunner:
             audio_ms=delivered_ms,
             **_reply_end(reply_end),
             **self._play_clock_fields(self._member_states.get(agent.id)),
+            # See _heard_fields. From the bytes relayed for this turn, not
+            # from play_clock_*: the heard_text of a playback_cut is the
+            # clock's estimate, and the two are kept apart on purpose.
+            **heard,
+            deferral=deferral,
         )
+        if not retry_head:
+            self._note_speech_rate(agent.id, text, delivered_ms,
+                                   interrupted=interrupted,
+                                   cap_truncated=cap_cut)
         if not interrupted:
             self._note_audio_shortfall(agent.id, text, delivered_ms,
                                        audio_unterminated)
@@ -5527,9 +5579,17 @@ class RealtimeVoiceSessionRunner:
             if before_narration and not text:
                 self.session.store.event("stage_direction_output",
                                          agent_id=agent_id, text=before_narration)
+            # Taken here, not beside assistant_turn, because the deferral
+            # rule and heard_text below both depend on it.
+            delivered_ms = turn_audio.audio_ms(audio_bytes)
+            deferral = False
             if _is_deferral(text):
-                self.session.store.event("deferral_output", agent_id=agent_id, text=text)
-                text = ""
+                deferral = _keep_deferral(delivered_ms)
+                self.session.store.event("deferral_output", agent_id=agent_id,
+                                         text=text, audio_ms=delivered_ms,
+                                         kept=deferral)
+                if not deferral:
+                    text = ""
             text, retry_head = self._retry_head_if_empty(agent_id, text, retried)
             # See _instructions: the note is spent once the actor has spoken
             # under it, and the _steer() re-brief in this method's finally is
@@ -5586,6 +5646,12 @@ class RealtimeVoiceSessionRunner:
                     segment=self.segment,
                 )
                 direction = None
+            cap_cut = _reply_end(reply_end)["cap_truncated"]
+            # A retry head's audio was the earlier attempt's, so it gets no
+            # estimate from this turn's bytes.
+            heard = ({} if retry_head else self._heard_fields(
+                agent_id, text, delivered_ms, interrupted=interrupted,
+                cap_truncated=cap_cut))
             self.session.store.event(
                 "steering_pair",
                 # The 1:1 half of the same gap; see _finalize_member_inner.
@@ -5604,7 +5670,12 @@ class RealtimeVoiceSessionRunner:
                     "interrupted": interrupted,
                     # The same question from the other side: the reply cap
                     # ended this line, not the actor (see _reply_end).
-                    "cap_truncated": _reply_end(reply_end)["cap_truncated"],
+                    "cap_truncated": cap_cut,
+                    # Roughly what of `text` was heard, on those two kinds of
+                    # turn (see _heard_fields); None on every other turn.
+                    "heard_text": heard.get("heard_text"),
+                    # A spoken deferral kept in the record (_keep_deferral).
+                    "deferral": deferral,
                 },
                 participant=self._last_user_text,
                 # See _finalize_member_inner.
@@ -5615,7 +5686,6 @@ class RealtimeVoiceSessionRunner:
                 round(time.time() - self._turn_started_at, 3)
                 if self._turn_started_at else None
             )
-            delivered_ms = turn_audio.audio_ms(audio_bytes)
             self.session.store.event(
                 "assistant_turn", agent_id=agent_id, text=text,
                 latency_s=latency, segment=self.segment, transcript_missing=missing,
@@ -5628,7 +5698,15 @@ class RealtimeVoiceSessionRunner:
                 # cap_truncated, response_status, status_reason, output_items,
                 # output_tokens; see _reply_end.
                 **_reply_end(reply_end),
+                # generated_text / heard_text / heard_estimate on an
+                # interrupted or cap-cut turn; see _heard_fields.
+                **heard,
+                deferral=deferral,
             )
+            if not retry_head:
+                self._note_speech_rate(agent_id, text, delivered_ms,
+                                       interrupted=interrupted,
+                                       cap_truncated=cap_cut)
             if not interrupted:
                 self._note_audio_shortfall(agent_id, text, delivered_ms,
                                            audio_unterminated)
@@ -7251,6 +7329,66 @@ class RealtimeVoiceSessionRunner:
             # relayed, and the shortfall is ours to explain.
             gateway_abandoned_audio=unterminated,
         )
+
+    # A character's own rate needs this much clean speech behind it before
+    # heard_text trusts it over HEARD_TEXT_WPM, and is kept inside this band:
+    # a whole turn with a long trailing pause would otherwise read as a slow
+    # speaker. 140-200 wpm is turn_audio's measured healthy range.
+    _RATE_MIN_MS = 10_000
+    _RATE_BAND_WPM = (110.0, 230.0)
+
+    def _note_speech_rate(self, agent_id: str, text: str, delivered_ms: int,
+                          *, interrupted: bool, cap_truncated: bool) -> None:
+        """Add a whole, uncut turn to this character's measured speaking rate
+        (words over relayed ms), the calibration _heard_fields uses. Only a
+        turn whose audio is a plausible delivery of all of its words counts:
+        not interrupted, not cut by the cap, not short by turn_audio's rule,
+        at least MIN_WORDS words and 2 s of audio."""
+        if interrupted or cap_truncated or delivered_ms < 2000:
+            return
+        words = turn_audio.word_count(text)
+        if words < turn_audio.MIN_WORDS or turn_audio.shortfall(text, delivered_ms):
+            return
+        rates = getattr(self, "_speech_rate", None)
+        if rates is None:
+            rates = self._speech_rate = {}
+        w, ms = rates.get(agent_id, (0, 0))
+        rates[agent_id] = (w + words, ms + delivered_ms)
+
+    def _heard_wpm(self, agent_id: str) -> tuple:
+        """(wpm, source) for this character's heard_text estimate."""
+        w, ms = (getattr(self, "_speech_rate", None) or {}).get(agent_id, (0, 0))
+        if _realtime.heard_text_calibrate() and ms >= self._RATE_MIN_MS and w:
+            lo, hi = self._RATE_BAND_WPM
+            return min(max(w / ms * 60_000, lo), hi), "encounter"
+        return _realtime.heard_text_wpm(), "default"
+
+    def _heard_fields(self, agent_id: str, text: str, delivered_ms: int, *,
+                      interrupted: bool, cap_truncated: bool) -> dict:
+        """generated_text / heard_text for an assistant_turn (fix plan #23
+        (b) 6), on the two kinds of turn whose recorded line is not what was
+        heard: interrupted (the participant cut in) and cap_truncated (the
+        text ran ahead of audio the cap stopped). `text` stays the generated
+        line on the turn; these sit beside it so the analysis can choose the
+        column raters score. Empty on every other turn, where the two are the
+        same line, and on a turn with no text. See turn_audio.heard_estimate
+        for what the estimate is and is not."""
+        if not text or not (interrupted or cap_truncated):
+            return {}
+        wpm, source = self._heard_wpm(agent_id)
+        est = turn_audio.heard_estimate(text, delivered_ms, wpm)
+        return {
+            "generated_text": text,
+            "heard_text": est["heard_text"],
+            "heard_estimate": {
+                "basis": "relayed_audio",
+                "audio_ms": delivered_ms,
+                "heard_words": est["heard_words"],
+                "generated_words": est["generated_words"],
+                "wpm": est["wpm"],
+                "wpm_source": source,
+            },
+        }
 
     async def _retry_reply(self, rt, agent_id: str, ev: dict, *,
                            has_floor: bool = True) -> bool:

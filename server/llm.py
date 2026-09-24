@@ -383,6 +383,17 @@ def text_client() -> AsyncAnthropic:
 #                finished PLAYING, looked at every 1 s (was: from generation
 #                end, every 12 s, so 12-24 s late on its own clock and ~4 s of
 #                real silence). Knobs and values in `pacing`.
+#   2026-09-23f  record accuracy (issue #23). A reply read as turn-taking
+#                narration ("I'll wait for Casey.") is blanked only when none
+#                of its audio was relayed; a spoken one keeps its text and is
+#                flagged `deferral` (DEFERRAL_BLANK_AUDIBLE=1 blanks it, as
+#                before). The deferral match's name slots are case-sensitive,
+#                so "That's for you to set.", "Go ahead and tell me..." and
+#                "You asked me for a number..." are no longer blanked. An
+#                interrupted or cap-truncated assistant_turn carries
+#                generated_text, heard_text (the words that fit in the audio
+#                relayed for it) and heard_estimate; `text` is unchanged.
+#                Knobs and values in `record`.
 #
 # ROOM_PACING_VERSION:
 #   2026-09-23a  as d6f319d.
@@ -400,7 +411,7 @@ def text_client() -> AsyncAnthropic:
 #                kept). A participant resuming within ROOM_SPLIT_TURN_S of
 #                their own commit no longer cancels the reply to it
 #                (split_turn_extended). Plus the probe clock under 23e.
-PIPELINE_VERSION = "2026-09-23e"
+PIPELINE_VERSION = "2026-09-23f"
 ROOM_PACING_VERSION = "2026-09-23c"
 
 
@@ -414,7 +425,8 @@ def provenance(model: Optional[str] = None) -> dict:
     """
     # Imported here, not at the top: server.voice.realtime imports this module.
     from .voice.realtime import (audio_provenance, bridge_provenance,
-                                 pacing_provenance, turn_gate_provenance)
+                                 pacing_provenance, record_provenance,
+                                 turn_gate_provenance)
 
     realtime = _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio")
     return {
@@ -443,6 +455,9 @@ def provenance(model: Optional[str] = None) -> dict:
         # (pipeline 2026-09-23e, room pacing 2026-09-23c); see
         # pacing_provenance.
         "pacing": pacing_provenance(),
+        # The deferral rule and the heard_text estimate (pipeline
+        # 2026-09-23f); see record_provenance.
+        "record": record_provenance(),
         "pipeline_version": PIPELINE_VERSION,
         "room_pacing_version": ROOM_PACING_VERSION,
     }

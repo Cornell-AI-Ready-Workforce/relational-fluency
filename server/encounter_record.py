@@ -140,6 +140,18 @@ def build(session_dir: Path) -> Dict[str, Any]:
                 # issue #23), so the line may end mid-word. None on turns
                 # recorded before the flag existed, which is NOT "not cut".
                 "cap_truncated": actor.get("cap_truncated"),
+                # Roughly the words of `text` the participant heard, on an
+                # interrupted or cap-truncated turn: the words that fit in
+                # the audio relayed for it (pipeline 2026-09-23f; see
+                # RealtimeVoiceSessionRunner._heard_fields). `text` stays the
+                # generated line, so the analysis chooses which one raters
+                # score. None on any other turn (the two are the same line)
+                # and on turns recorded before the field existed.
+                "heard_text": actor.get("heard_text"),
+                # A line the runner read as turn-taking narration ("I'll wait
+                # for Casey.") but kept because it was spoken; None before
+                # 2026-09-23f, when such lines were blanked.
+                "deferral": actor.get("deferral"),
             })
 
     turns.sort(key=lambda t: t.get("t") or 0)

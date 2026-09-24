@@ -103,6 +103,7 @@ import websockets
 # Config comes from server.llm so the .env file wins over ambient environment:
 # a stray exported variable must not be able to redirect study traffic.
 from ..llm import gateway_api_key, gateway_base_url, setting, setting_if_set
+from .turn_audio import WPM as _WPM
 from .turn_audio import shortfall as _audio_shortfall, word_count as _word_count
 
 try:  # audioop was removed in Python 3.13 (PEP 594); fall back to pure Python.
@@ -1129,6 +1130,49 @@ def pacing_provenance() -> dict:
         "probe_tick_s": probe_tick_s(),
         "probe_idle_from": ("playback" if probe_idle_from_playback()
                             else "activity"),
+    }
+
+
+def deferral_blank_audible() -> bool:
+    """DEFERRAL_BLANK_AUDIBLE, default off. A reply the runner reads as a
+    deferral ("I'll wait for Casey to answer.") is blanked from the record
+    only when none of its audio was relayed; one the participant heard keeps
+    its text and is flagged `deferral` (fix plan #23 (b) 7). On blanks every
+    deferral, as before 2026-09-23f. The text is in deferral_output either
+    way."""
+    return _on_setting("DEFERRAL_BLANK_AUDIBLE", "0")
+
+
+def heard_text_wpm() -> float:
+    """HEARD_TEXT_WPM, default turn_audio.WPM (170). The speaking rate that
+    turns a cut turn's relayed audio into a word count for `heard_text`
+    until the character has enough clean turns of its own to measure one
+    (HEARD_TEXT_CALIBRATE)."""
+    return min(max(_float_setting("HEARD_TEXT_WPM", _WPM), 60.0), 400.0)
+
+
+def heard_text_calibrate() -> bool:
+    """HEARD_TEXT_CALIBRATE, default on. `heard_text` uses the character's
+    own rate in this encounter (words over relayed audio on its whole,
+    uncut turns) once there is enough of it; off uses HEARD_TEXT_WPM
+    throughout."""
+    return _on_setting("HEARD_TEXT_CALIBRATE")
+
+
+def record_provenance() -> dict:
+    """What the runner does to an agent line before it is recorded
+    (pipeline 2026-09-23f). `deferral_names` is not a knob: the regex's name
+    slots are case-sensitive since 2026-09-23f."""
+    return {
+        "deferral_blank": ("always" if deferral_blank_audible()
+                           else "no_audio_only"),
+        "deferral_names": "case_sensitive",
+        "heard_text": {
+            "turns": "interrupted_or_cap_truncated",
+            "basis": "relayed_audio",
+            "wpm": heard_text_wpm(),
+            "calibrate": heard_text_calibrate(),
+        },
     }
 
 

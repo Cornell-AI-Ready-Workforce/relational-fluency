@@ -311,6 +311,68 @@ provenance says 24000; the rate follows each session's model from
 > the exclusion starts applying again. Both mechanisms exist in the merged
 > code; the default is A.
 
+## What changed on 2026-09-23 (pipeline_version 2026-09-23a to 2026-09-23f)
+
+Fixes for issues #21-#25, landed mid-study. Every record carries
+`pipeline_version` and `room_pacing_version` (on `realtime_session_started`,
+and in `/health` under `gateway`), plus the knob values that ran (`turn_gate`,
+`pacing`, `record`, `cancelled_output`, `input_rate`,
+`input_transcription_model`, `max_output_tokens`). Split the archive on those
+fields, not on deploy dates. Each change below is reversible without a code
+change unless it says "no knob". The full per-version notes are the comment
+above `PIPELINE_VERSION` in `server/llm.py`.
+
+| Version | Change | To reverse |
+|---|---|---|
+| 23a | Instrumentation only: `turn_timing`, page `play_start`/`play_end` acks, `client_audio_settings`, and `cap_truncated`/`response_status` on `assistant_turn`. | nothing to reverse |
+| 23b | gpt route: participant audio sent at 24 kHz. It was sent at 16 kHz and read by the gateway as 24 kHz. | no knob (defect) |
+| 23b | Live transcriber `gpt-4o-transcribe` (was `whisper-1`). | `INPUT_TRANSCRIPTION_MODEL=whisper-1` |
+| 23b | Reply cap 1200 tokens (was 380). | `REALTIME_MAX_OUTPUT_TOKENS=380` |
+| 23b | Page end-of-encounter drain up to 45 s (was 12). | no knob (`AUDIO_DRAIN_MAX_S` in `static/v2.html`) |
+| 23c | Silence probe commits its pad on a cleared buffer; the pad's transcript is suppressed (`probe_pad`). | no knob |
+| 23c | Filler/punctuation-only transcript over at most 80 ms of voice is suppressed (`no_speech`). | `PARTICIPANT_DROP_VOICED_MS=-1` |
+| 23c | Turn with under 600 ms of voice is tagged `low_confidence` and kept out of steering (and out of the director unless it names someone). | `PARTICIPANT_MIN_VOICED_MS=0` |
+| 23c | Gateway buffer cleared on the first `speech_started` after a commit, with 600 ms pre-roll. | `INPUT_BUFFER_RESTART=0` (`INPUT_PREROLL_MS`) |
+| 23c | Room near-duplicate filter needs 90% overlap (was 60%). | `PARTICIPANT_DEDUPE_OVERLAP=0.6` |
+| 23c | A replayed line's transcript is not a second `user_turn`. | no knob |
+| room 23b | Utterances queued behind a held floor are routed together. | `ROOM_MERGE_QUEUED_TURNS=0` |
+| 23d | gpt route: what the gateway sends after a barge-in cancel is dropped (`cancelled_output_dropped`), not played or recorded as a second turn. | `CANCELLED_OUTPUT_DISCARD=0` |
+| 23d | A reply delivered as several output items is recorded as all of them. Before, the last item replaced the others. | no knob |
+| room 23c | gpt floor grant is the commit alone. A `response.create` is sent only if nothing starts within 3 s. | `ROOM_COMMIT_ONLY_GRANT=0` (`ROOM_GRANT_UNANSWERED_S`) |
+| room 23c | A held reply with no audio, or one cut short by the suppression cancel, is not adopted (`held_reply_refused`). | `ROOM_ADOPT_GUARD=0` |
+| room 23c | A participant resuming within 1.5 s of their own commit does not cancel the reply to it (`split_turn_extended`). | `ROOM_SPLIT_TURN_S=0` |
+| 23e | Room `heard_seconds`/`total_seconds` are per turn (they accumulated across a member's turns). | no knob (record fix) |
+| 23e | Silence probe counts from when the last reply finished playing, checked every 1 s. | `PROBE_IDLE_FROM_PLAYBACK=0`, `PROBE_TICK_SECONDS=12` |
+| 23f | A reply read as a deferral ("I'll wait for Casey.") is blanked only when none of its audio was relayed. A spoken one keeps its text and is flagged `deferral`. The match's name slots are case-sensitive, so lines such as "That's for you to set." are no longer blanked. | `DEFERRAL_BLANK_AUDIBLE=1` (the regex fix has no knob) |
+| 23f | Interrupted and cap-truncated `assistant_turn`s carry `generated_text`, `heard_text` and `heard_estimate`. `heard_text` is the words that fit in the audio relayed, at the character's own measured rate or `HEARD_TEXT_WPM` (170). `text` is unchanged. The record also carries `heard_text` beside `text`. | record only; `HEARD_TEXT_WPM`, `HEARD_TEXT_CALIBRATE=0` |
+
+Caveats for analysis:
+
+- **Archived gpt encounters heard participants at 1.5x.** This covers
+  everything before `2026-09-23c`, including `23b`. On `23b` the 24 kHz fix
+  reached only sessions built with an explicit model, even though provenance
+  says 24000. The actor and the live transcriber both heard the participant
+  fast and pitched up. Treat those live participant transcripts, and the
+  actor's reactions to tone, as not comparable. Use the offline
+  re-transcription (`python -m server.retranscribe`).
+- **Turns may be cap-cut from 2026-09-18 16:04 EDT (commit 7ec0e00) to
+  `23b`.** The 380-token cap stopped replies mid-word at about 10.5-14 s. The
+  record kept the words the text stream had run ahead to, which were never
+  spoken. `cap_truncated` exists only from `23a`; before that, a missing value
+  means unknown, not uncut.
+- **Room `playback_cut` values before `23e` are invalid archive-wide.**
+  `heard_seconds`/`total_seconds` accumulated across turns (159.5 s, 284.4 s).
+- **`heard_text` is an estimate.** On an interrupted turn it is an upper
+  bound: the page drops audio it had queued at the barge-in, and the page's
+  own `play_end` acks say what it played. Which column raters score
+  (`text`/generated or `heard_text`) is the researcher's decision.
+- **Other effects on earlier records.** Before `23d`, 1:1 `agent_audio_short`
+  events were mostly phantom tail turns after a barge-in, and a two-item
+  reply lost its first item. Before `23f`, an audible deferral was recorded as
+  `transcript_missing`; its text is in that turn's `deferral_output` event.
+  Before `23c`, phantom participant turns also reached `steering_pair` and
+  `knob_set` rows.
+
 ## The seven-minute floor, and the thirteen-minute stop
 
 Every study encounter runs **at least 7:00** and **at most 13:00**, measured
