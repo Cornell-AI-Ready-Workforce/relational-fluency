@@ -516,6 +516,14 @@ PIPELINE_VERSION = "2026-09-24c"
 ROOM_PACING_VERSION = "2026-09-24b"
 
 
+def _voice_style_provenance():
+    try:
+        from .voice_style import provenance as _vp
+        return _vp()
+    except Exception:  # noqa: BLE001 - provenance must never break a session
+        return None
+
+
 def provenance(model: Optional[str] = None) -> dict:
     """Recorded with each session so the record shows what served it.
 
@@ -561,6 +569,9 @@ def provenance(model: Optional[str] = None) -> dict:
         "record": record_provenance(),
         "pipeline_version": PIPELINE_VERSION,
         "room_pacing_version": ROOM_PACING_VERSION,
+        # None unless VOICE_STYLE_FILE is set (a listening test): an accent is
+        # part of the stimulus, so a styled session must say so.
+        "voice_style": _voice_style_provenance(),
     }
 
 

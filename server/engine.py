@@ -140,6 +140,15 @@ class AgentEngine:
         parts.append(f"You are **{self.agent.name}** in this conversation.")
         parts.append("")
         parts.append(self.agent.system_prompt)
+        # Accent and tone, only when a researcher has pointed VOICE_STYLE_FILE
+        # at a style file for a listening test (server/voice_style.py). Unset,
+        # which is how the study runs, adds nothing.
+        from .voice_style import style_for
+        sound = style_for(getattr(self.scenario, "id", None), self.agent.id)
+        if sound:
+            parts.append("")
+            parts.append("## How you sound")
+            parts.append(sound)
         tone = self.persona.tone_fragments()
         if tone:
             # Emitted only when a knob is actually off neutral. The heading used
