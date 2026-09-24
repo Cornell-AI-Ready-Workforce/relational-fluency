@@ -231,6 +231,27 @@ Transcription is hinted to English on every route (`TRANSCRIPTION_LANG=en`;
 blank to disable) and the actors are told to speak English regardless of
 what they think they heard.
 
+Two more knobs on the gpt realtime route (`server/voice/realtime.py`), both
+read per session and both written to every record's provenance
+(`input_transcription_model`, `max_output_tokens`), so a change shows up in
+the data without anyone having to remember when it was made:
+
+- `INPUT_TRANSCRIPTION_MODEL` — the live participant transcriber. Default
+  `gpt-4o-transcribe` since pipeline `2026-09-23b` (issue #21); set
+  `whisper-1` to go back. Only the gpt route sends it; the Gemini routes
+  transcribe on their own and ignore this.
+- `REALTIME_MAX_OUTPUT_TOKENS` — the per-reply output-token cap, audio
+  included (~20 tokens per second of voice). Default `1200` (about a minute
+  of speech), a runaway guard only; blank or `0` sends no cap. The 380 used
+  from 2026-09-18 cut replies mid-word at 10.5-14 s (issue #23). A value
+  that is not a positive integer is ignored and the default stands.
+
+Participant audio goes to the gpt route at 24 kHz (the page captures 16 kHz
+and the server resamples). Before pipeline `2026-09-23b` it went at 16 kHz
+and the gateway read it as 24 kHz, so every earlier gpt encounter's actor and
+live transcriber heard the participant 1.5x fast; use the offline
+re-transcription for those.
+
 > **What A-only does to the S1/Teamwork rule.** `FORM_EXCLUSIONS` in
 > `server/runs.py` bars **S1A from any run that also contains Teamwork** — the
 > two overlap on grounded content (1,631 shared groundings against 77 for the

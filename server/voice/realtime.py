@@ -102,7 +102,7 @@ import websockets
 
 # Config comes from server.llm so the .env file wins over ambient environment:
 # a stray exported variable must not be able to redirect study traffic.
-from ..llm import gateway_api_key, gateway_base_url, setting
+from ..llm import gateway_api_key, gateway_base_url, setting, setting_if_set
 from .turn_audio import shortfall as _audio_shortfall, word_count as _word_count
 
 try:  # audioop was removed in Python 3.13 (PEP 594); fall back to pure Python.
@@ -244,7 +244,9 @@ class RealtimeCapabilities:
     # when this differs. 24 kHz on native-audio is not a preference: at 16 kHz
     # that route accepts the session and then stays silent forever — no
     # transcription, no reply, no error (2026-09-08, after nine other config
-    # variants were tried first).
+    # variants were tried first). The gpt route is 24 kHz too, and its failure
+    # at 16 kHz was quieter still: accepted, answered, and heard 1.5x fast
+    # (issue #21, see that row).
     input_rate: int = CLIENT_RATE
     # Seconds to let the bridge start its own reply before asking for one.
     # ~1 s on plain flash, ~3.3 s on native-audio; asking early collides.
@@ -264,10 +266,10 @@ class RealtimeCapabilities:
     # Whether the session dict may carry a transcription language hint.
     transcription_language_hint: bool = True
     # Session-level cap on a reply's output tokens (audio tokens included), or
-    # None to leave the family's default. Measured 2026-09-18 on gpt-realtime:
-    # 90 tokens cut a reply at 12 words mid-sentence, about 7.5 tokens per
-    # spoken word, so 380 is a ceiling near 50 words that only trims a
-    # monologue and never a normal two-sentence turn.
+    # None to leave the family's default. Audio costs ~20 tokens per second of
+    # voice and the reply's text shares the same budget, so a cap is a length
+    # in SECONDS, and a short one cuts the voice mid-word (issue #23). Read it
+    # through max_output_tokens_for(), which applies the operator's override.
     max_output_tokens: Optional[int] = None
     # Voices from ANOTHER family that this family will play instead. The
     # scenario bank names Gemini voices; a bank entry is not a typo, and a
@@ -475,7 +477,24 @@ REALTIME_FAMILIES = {
         # `conversation.item.input_audio_transcription.completed` on every
         # turn. The study measures the participant; this key is the channel.
         needs_input_transcription=True,
-        input_transcription_model="whisper-1",
+        # gpt-4o-transcribe, not whisper-1 (issue #21), language from
+        # TRANSCRIPTION_LANG, no prompt, no noise_reduction. Replayed
+        # 2026-09-23 at the corrected 24 kHz, 3 repetitions, 32 clips: on the
+        # 16 hard windows from the 09-23 sessions whisper-1 wrote words that
+        # were not said in 24 of 48 transcripts ("Thank you." for "Casey" and
+        # "Priya?", "Silence. Silence. Silence.", "Bye-bye." for "Hi, Riley")
+        # and gpt-4o-transcribe in 8 (4 of them "Hi Barley" / "No, that's"
+        # misspellings of real words); neither returned nothing where a word
+        # was spoken. It is NOT better on pure silence: on digital zeros and
+        # room tone it invented in 7 of 12 ("Hello.", "Welcome", once French)
+        # against whisper-1's 3, and 3 of its 96 answers were not English
+        # despite the language hint. So a commit with no speech in it is still
+        # a phantom turn waiting to happen, on either model. 0 failures in 96;
+        # ~0.2 s slower to the transcript (median 0.70 s vs 0.51 s). A prompt
+        # made it invent MORE (diag track1), hence none; gpt-4o-mini-transcribe
+        # answered in Korean with language=en and is not an option.
+        # INPUT_TRANSCRIPTION_MODEL=whisper-1 restores the old transcriber.
+        input_transcription_model="gpt-4o-transcribe",
         # Server VAD does not merely fire early here, it CUTS THE TURN UP. The
         # same 4.7 s utterance arrived as two participant transcripts ("Hello."
         # / "I want to talk about the missed deadline last week."), an empty
@@ -490,15 +509,30 @@ REALTIME_FAMILIES = {
         # to match and the gpt path is left exactly as it was.
         end_of_turn=None,
         end_of_turn_silence_ms=0,
-        # 16 kHz in; the bridge accepts the browser's capture rate unchanged.
-        input_rate=CLIENT_RATE,
+        # 24 kHz in (issue #21). This row used to say 16 kHz "straight
+        # through", and the bridge did accept the frames, but it READ them as
+        # 24 kHz: the gateway's own VAD put a 2.0 s onset at 1332 ms and the
+        # input audio-token count came out 2/3 of the true duration (diag
+        # track2 ratecheck), so both the transcriber and the actor heard every
+        # participant 1.5x fast and about seven semitones high. send_audio
+        # resamples the browser's CLIENT_RATE up to this, as it already did
+        # for native-audio. Re-measured through send_audio on 2026-09-23: onset
+        # at 2004 ms, and 68 input audio tokens for 6.9 s appended (10/s).
+        input_rate=24000,
         # Server VAD is off on this family and the bridge only replies on
         # commit, so there is never an auto-fired reply to wait for: every
         # tenth of a second spent here is added straight to the participant's
         # wait (1.5 s per turn on 2026-09-18, on top of the model's own 2.3 s
         # to first audio).
-        max_output_tokens=380,
         autofire_wait=0.0,
+        # A runaway guard, not a length control (issue #23). 380 was set on
+        # 2026-09-18 as "a ceiling near 50 words", but the budget is shared by
+        # audio (~20 tokens per second of voice) and the reply's text, so it
+        # stopped the voice mid-word at 10.5-14 s and the reply ended
+        # status=incomplete with nothing else noticing. 1200 is about a minute
+        # of speech; reply length is the brief's job. REALTIME_MAX_OUTPUT_TOKENS
+        # overrides it (see max_output_tokens_for).
+        max_output_tokens=1200,
         accepts_text_items=True,
         # Server VAD is off on this family, so fanned-in colleague audio no
         # longer fires a reply -- but it does still land in the member's own
@@ -659,8 +693,9 @@ def input_rate_for_model(model: str) -> int:
 
     The native-audio Gemini route silently ignores 16 kHz input: the session
     stays open and never transcribes or replies (found 2026-09-08 after nine
-    config variants failed; 24 kHz input fixed it immediately). The other
-    Gemini route and the OpenAI route accept 16 kHz.
+    config variants failed; 24 kHz input fixed it immediately). The OpenAI
+    route also reads 24 kHz, and at 16 kHz it did not go silent but heard the
+    participant 1.5x fast (issue #21). The plain Gemini route takes 16 kHz.
     """
     caps = capabilities_for(model)
     if caps is not None:
@@ -704,10 +739,8 @@ def audio_provenance(model: str) -> dict:
     rate = input_rate_for_model(model)
     return {
         "input_rate": rate,
-        "input_transcription_model": (
-            (caps.input_transcription_model or None)
-            if caps is not None and caps.needs_input_transcription else None),
-        "max_output_tokens": caps.max_output_tokens if caps is not None else None,
+        "input_transcription_model": input_transcription_model_for(caps) or None,
+        "max_output_tokens": max_output_tokens_for(caps),
         "resampler": resampler_name(GATEWAY_OUTPUT_RATE, CLIENT_RATE),
         "input_resampler": resampler_name(CLIENT_RATE, rate),
     }
@@ -834,6 +867,44 @@ def transcription_language() -> str:
     mute either Gemini route.
     """
     return os.getenv("TRANSCRIPTION_LANG", "en")
+
+
+def input_transcription_model_for(caps: Optional[RealtimeCapabilities]) -> str:
+    """The transcriber this family's sessions ask for, or "" where none is.
+
+    INPUT_TRANSCRIPTION_MODEL overrides the row, and only on a family whose row
+    says the key is needed (the gpt route): the Gemini rows transcribe on their
+    own, and sending a key they were never measured with is a risk taken on the
+    family whose failure mode is a silent mute. Read per call, not at import,
+    so _session_payload and audio_provenance cannot disagree about it.
+    """
+    if caps is None or not caps.needs_input_transcription:
+        return ""
+    return setting("INPUT_TRANSCRIPTION_MODEL", "") or caps.input_transcription_model
+
+
+def max_output_tokens_for(caps: Optional[RealtimeCapabilities]) -> Optional[int]:
+    """The reply cap this family's sessions send, or None for no cap.
+
+    REALTIME_MAX_OUTPUT_TOKENS overrides the row's value: a positive integer
+    replaces it, and blank or 0 sends no cap at all (the gateway then reports
+    "inf"). Unset, negative or not a number, the row stands; a typo must not
+    quietly uncap a live study. Applied only where the row carries a cap,
+    because only the gpt route was measured to accept the key (the older
+    max_response_output_tokens is rejected there as unknown).
+    """
+    if caps is None or not caps.max_output_tokens:
+        return None
+    raw = setting_if_set("REALTIME_MAX_OUTPUT_TOKENS")
+    if raw is None:
+        return caps.max_output_tokens
+    if raw in ("", "0"):
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return caps.max_output_tokens
+    return value if value > 0 else caps.max_output_tokens
 
 
 def voice_for_model(voice: str, model: str) -> str:
@@ -1569,7 +1640,7 @@ class RealtimeVoiceSession:
             session["tools"] = self.tools
         if caps.needs_input_transcription:
             session["input_audio_transcription"] = {
-                "model": caps.input_transcription_model,
+                "model": input_transcription_model_for(caps),
             }
         # The language hint, from origin/main cabc1dd, and the reason it is not
         # optional here: our own live runs had the transcriber return a Russian
@@ -1585,9 +1656,9 @@ class RealtimeVoiceSession:
         # the first frame of each.
         #
         # It rides on whatever input_audio_transcription the row already built,
-        # so the gpt route gets {"model": "whisper-1", "language": "en"} and the
-        # gemini routes get {"language": "en"} -- the shapes each was measured
-        # with.
+        # so the gpt route gets {"model": "gpt-4o-transcribe", "language":
+        # "en"} and the gemini routes get {"language": "en"} -- the shapes each
+        # was measured with.
         lang = transcription_language()
         if lang and caps.transcription_language_hint:
             hint = dict(session.get("input_audio_transcription") or {})
@@ -1601,10 +1672,11 @@ class RealtimeVoiceSession:
             # docstring gives: a later update without it would hand the
             # gateway's default window back and the pause split with it.
             session["turn_detection"] = self.turn_detection
-        if caps.max_output_tokens:
+        cap = max_output_tokens_for(caps)
+        if cap:
             # Accepted by the bridge on the gpt route as `max_output_tokens`
             # (the older `max_response_output_tokens` is rejected as unknown).
-            session["max_output_tokens"] = caps.max_output_tokens
+            session["max_output_tokens"] = cap
         return session
 
     async def _send(self, payload: dict) -> None:
@@ -2190,10 +2262,15 @@ class RealtimeVoiceSession:
             # The bridge is already answering this turn; a commit + create
             # here produces a second, paraphrased reply on top of it.
             return
-        if self.pending_input < 3200:
+        # 100 ms at the rate the gateway reads. pending_input counts bytes as
+        # they went on the wire, i.e. AFTER send_audio's resample, so the bar
+        # is derived from input_rate: the old fixed 3200 was 100 ms only at
+        # 16 kHz and would read as 67 ms of a 24 kHz buffer.
+        if self.pending_input < self.input_rate * 2 // 10:
             # Committing an empty buffer kills the session on this bridge;
             # pad with 300 ms of silence if an auto-fire consumed the audio.
-            await self.send_audio(b"\x00" * 9600)
+            # The pad is CLIENT_RATE PCM, like everything send_audio takes.
+            await self.send_audio(b"\x00" * (CLIENT_RATE * 2 * 3 // 10))
         await self.commit_input()
         if is_openai_realtime(self.model):
             # Through the bridge, the commit itself starts the reply on the

@@ -502,6 +502,23 @@ def rating_code_secret(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def realtime_row_defaults(monkeypatch):
+    """The gpt row's transcriber and reply cap, as the row states them.
+
+    INPUT_TRANSCRIPTION_MODEL and REALTIME_MAX_OUTPUT_TOKENS are read per
+    session (server/voice/realtime.py), so an operator who exported one to try
+    a transcriber or lift the cap would otherwise run a different suite from
+    everyone else, and the tests that pin the provenance would fail on a
+    machine and not on the code. Same reasoning as RUN_CODE_SECRET above. A
+    test that exercises the knobs sets them itself; monkeypatch applies in
+    order, so theirs wins. (A value in the repo's .env still wins over both,
+    by llm's file-over-ambient rule; there is none today.)
+    """
+    monkeypatch.delenv("INPUT_TRANSCRIPTION_MODEL", raising=False)
+    monkeypatch.delenv("REALTIME_MAX_OUTPUT_TOKENS", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def offline_boot_preflights(monkeypatch):
     """The two credentialed seams the app probes at boot, answered offline.
 

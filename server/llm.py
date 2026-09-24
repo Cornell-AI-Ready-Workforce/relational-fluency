@@ -31,6 +31,19 @@ def setting(name: str, default: str = "") -> str:
     return _cfg(name, default)
 
 
+def setting_if_set(name: str) -> Optional[str]:
+    """The value of `name` as configured, or None where it is set nowhere.
+
+    Same precedence as setting(), but a blank value comes back as "" instead
+    of being replaced by a default: for a knob where blank means "off" (e.g.
+    REALTIME_MAX_OUTPUT_TOKENS=, no reply cap at all), "unset" and "set to
+    nothing" are different instructions."""
+    if name in _FILE:
+        return (_FILE.get(name) or "").strip()
+    value = os.getenv(name)
+    return None if value is None else value.strip()
+
+
 def gateway_base_url() -> str:
     # LLM_BASE_URL is this project's own explicit var (fine to read from .env or
     # ambient env). ANTHROPIC_BASE_URL, however, is resolved from .env / the
@@ -315,7 +328,16 @@ def text_client() -> AsyncAnthropic:
 #   2026-09-23a  instrumentation only (turn_timing, play_start/play_end,
 #                client_audio_settings, cap_truncated); behaviour identical
 #                to d6f319d.
-PIPELINE_VERSION = "2026-09-23a"
+#   2026-09-23b  gpt route: participant audio sent at 24 kHz (was 16 kHz,
+#                read by the gateway as 24 kHz, i.e. heard 1.5x fast);
+#                live transcriber gpt-4o-transcribe (was whisper-1); reply
+#                cap 1200 tokens (was 380, which cut replies at 10.5-14 s);
+#                page end-of-encounter drain up to 45 s (was 12). Each is
+#                also in its own provenance field; INPUT_TRANSCRIPTION_MODEL
+#                and REALTIME_MAX_OUTPUT_TOKENS can undo two of them, and the
+#                record says which values ran whatever this string says.
+#                Room pacing logic unchanged (rooms get the same audio fixes).
+PIPELINE_VERSION = "2026-09-23b"
 ROOM_PACING_VERSION = "2026-09-23a"
 
 

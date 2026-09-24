@@ -99,7 +99,9 @@ def test_the_deployed_route_is_not_folded_into_plain_flash():
     (NATIVE, 24000, 4.5, True, False),
     # 0.0: server VAD is off on this family and the bridge replies only on
     # commit, so there is no auto-fired reply to wait for (2026-09-18).
-    (GPT, 16000, 0.0, True, True),
+    # 24000: origin/main said 16 kHz here, and the gateway read those frames
+    # as 24 kHz, 1.5x fast (issue #21); this one value is no longer hers.
+    (GPT, 24000, 0.0, True, True),
 ])
 def test_the_five_answers_she_reached_by_name_still_answer(
         model, rate, wait, text_items, openai, monkeypatch):
@@ -328,8 +330,9 @@ def test_the_transcription_language_hint_rides_on_every_session(model, monkeypat
         f"{model}: no language hint on the session payload"
     )
     if is_openai_realtime(model):
-        assert tx.get("model") == "whisper-1", (
-            "the gpt route transcribes the participant with whisper-1 (210fbfc)"
+        # whisper-1 from 210fbfc until issue #21 (pipeline 2026-09-23b).
+        assert tx.get("model") == "gpt-4o-transcribe", (
+            "the gpt route transcribes the participant with gpt-4o-transcribe"
         )
     monkeypatch.setenv("TRANSCRIPTION_LANG", "")
     sess = rt_mod.RealtimeVoiceSession(instructions="x", model=model)

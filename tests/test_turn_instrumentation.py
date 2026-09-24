@@ -64,15 +64,17 @@ def in_a_loop(fn):
 
 def test_provenance_names_what_the_bridge_does_to_the_audio_per_model():
     gpt = llm.provenance(GPT)
-    # The values the gpt row sends TODAY; issue #21's fix changes input_rate
-    # and the transcriber, and this is where that change becomes visible.
-    assert gpt["input_rate"] == 16000
-    assert gpt["input_transcription_model"] == "whisper-1"
-    assert gpt["max_output_tokens"] == 380
+    # The values the gpt row sends since pipeline 2026-09-23b (issues #21 and
+    # #23); before it they were 16000, whisper-1 and 380, and this is where
+    # that change is visible on every record.
+    assert gpt["input_rate"] == 24000
+    assert gpt["input_transcription_model"] == "gpt-4o-transcribe"
+    assert gpt["max_output_tokens"] == 1200
     assert gpt["resampler"] == realtime.resampler_name(
         realtime.GATEWAY_OUTPUT_RATE, realtime.CLIENT_RATE)
     assert gpt["resampler"] in ("audioop.ratecv", "linear-py")
-    assert gpt["input_resampler"] is None, "16 kHz goes to the gateway unconverted"
+    assert gpt["input_resampler"] in ("audioop.ratecv", "linear-py"), (
+        "the browser's 16 kHz is resampled up to the 24 kHz the gateway reads")
     native = llm.provenance(NATIVE)
     assert native["input_rate"] == 24000
     assert native["input_resampler"] is not None
@@ -139,9 +141,9 @@ def test_the_record_carries_the_new_provenance_and_the_microphone(tmp_path):
     ])
     rec = encounter_record.build(sdir)
     prov = rec["provenance"]
-    assert prov["input_rate"] == 16000
-    assert prov["input_transcription_model"] == "whisper-1"
-    assert prov["max_output_tokens"] == 380
+    assert prov["input_rate"] == 24000
+    assert prov["input_transcription_model"] == "gpt-4o-transcribe"
+    assert prov["max_output_tokens"] == 1200
     assert prov["pipeline_version"] == llm.PIPELINE_VERSION
     assert prov["room_pacing_version"] == llm.ROOM_PACING_VERSION
     assert prov["resampler"] and "input_resampler" in prov

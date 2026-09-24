@@ -218,7 +218,7 @@ def test_the_session_dict_is_flat_and_carries_only_what_the_family_needs():
         # syllables from an English-speaking participant, and the
         # participant transcript is the measurement. Verified 2026-09-08
         # not to mute either Gemini route.
-    assert sent["input_audio_transcription"] == {"model": "whisper-1",
+    assert sent["input_audio_transcription"] == {"model": "gpt-4o-transcribe",
                                                 "language": "en"}
     assert "turn_detection" in sent and sent["turn_detection"] is None
     assert "audio" not in sent and "modalities" not in sent
@@ -266,7 +266,7 @@ def test_connect_sends_the_table_row_not_a_hardcoded_shape(monkeypatch):
     asyncio.run(go())
     update = gw.updates()[0]["session"]
     assert update["voice"] == "cedar"
-    assert update["input_audio_transcription"] == {"model": "whisper-1",
+    assert update["input_audio_transcription"] == {"model": "gpt-4o-transcribe",
                                                   "language": "en"}
     assert update["turn_detection"] is None
 

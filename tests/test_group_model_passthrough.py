@@ -186,7 +186,7 @@ def test_the_session_dict_is_built_from_the_rooms_family(real_sessions):
     assert payload["turn_detection"] is None
     # See tests/test_final_realtime.py: the language hint rides on the same
     # dict, on every family and on every session.update, not only at connect.
-    assert payload["input_audio_transcription"] == {"model": "whisper-1",
+    assert payload["input_audio_transcription"] == {"model": "gpt-4o-transcribe",
                                                     "language": "en"}
     # And the frame that actually went out says the same.
     _, wire = real_sessions[0]

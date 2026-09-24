@@ -346,12 +346,27 @@ def test_no_model_setting_is_missing_from_the_table():
     """Allowlists rot the other way too: a model variable added to server/ and
     not to the table is a model the boot check does not look at, and nothing
     else in the codebase would notice."""
-    named = {n for n, _, _, _ in EXPECTED_ROLES}
+    named = {n for n, _, _, _ in EXPECTED_ROLES} | set(NOT_IN_THE_CATALOG)
     seen = set()
     for path in _server_sources():
         seen.update(re.findall(r'(?:setting|_cfg)\(\s*"([A-Z_]*MODEL)"\s*,',
                                path.read_text(encoding="utf-8")))
     assert seen <= named, f"not checked at boot: {sorted(seen - named)}"
+
+
+# Model settings the boot check CANNOT check, each with the reason. Not a
+# convenience list: a name goes here only when checking it against /v1/models
+# would flag the correct configuration.
+NOT_IN_THE_CATALOG = {
+    # The participant transcriber inside the gpt realtime session (issue #21).
+    # It is named in session.update, not called on its own, and the gateway's
+    # /v1/models lists neither whisper-1 nor gpt-4o-transcribe (catalog read
+    # 2026-09-23), so a row in _MODEL_ROLES would report the working default
+    # as "not served". What ran is on every record instead
+    # (provenance.input_transcription_model).
+    "INPUT_TRANSCRIPTION_MODEL":
+        "a realtime-session field, not a model the catalog lists",
+}
 
 
 # --- the redaction gap the same round found ----------------------------------
