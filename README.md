@@ -2,30 +2,7 @@
 
 Relational Fluency is a research platform from the Cornell **AI-Ready Workforce Initiative** (PI Kizilcec, IRB0151104). A participant has four voice conversations with AI characters in workplace situations, each lasting 7–12 minutes. The platform records the participant's audio, transcript and webcam video. The recordings are used to measure **relational fluency**: how well a person handles the relationship side of work. This repository holds the voice app, the scenario specs and the AWS deployment.
 
-The design follows *Study Design Proposal v2* (Lee, Chun, Zhang, Slama, Joachims, Kizilcec).
-
 **Status (2026-09-23):** the platform is built and the pilot has not run yet. Live app: <https://rf.ai-ready-workforce.ai.cornell.edu> (`/health` shows the status and the live model). Contact: the study team (PI Kizilcec).
-
-## Study phases
-
-| Phase | What happens | Status |
-|---|---|---|
-| 0 Platform | Build the voice app, the eight scenarios and the survey links, then pilot with 5–10 people | In progress; pilot not yet run |
-| 1 Collect ([Study 1](docs/study1-plan.md)) | 100 participants × 4 encounters = 400 encounters, each with video, audio and transcript | Pre-pilot |
-| 2 Human gold labels | 2–3 human raters score each video on the ESCI items. We check that they agree before any modelling. Experts also rate about 40 encounters | Not started; written ESCI permission pending ([`studies/study1/qualtrics/rating-instrument.md`](studies/study1/qualtrics/rating-instrument.md)) |
-| 3 Scorer and feedback | Build an automatic scorer and compare it with the human raters. The feedback quotes 2–3 moments, each with a better alternative | Not started |
-| 4 RCT | Attempt 1, then feedback or self-reflection, then attempt 2 (planned on the unseen form B). The outcome is the change in score | Not started; arms, N, and same vs. parallel form still open |
-
-**Study 1, from the participant's side**
-1. CloudResearch Connect recruits the participant.
-2. Qualtrics Survey 1 takes consent and the self-report battery. Its last page opens the app.
-3. The app runs a camera and microphone check, then four encounters.
-4. A completion screen shows a code.
-5. Qualtrics Survey 2 follows, then the participant goes back to CloudResearch to finish. *This hand-off is not configured yet: `SURVEY_RETURN_URL` is unset, so for now the app does not send participants back to Qualtrics.*
-
-The app has no consent step of its own. The Qualtrics `ResponseID` (`qid`) links each run to its survey response. Each encounter runs 7–12 minutes, with a hard stop at 13:00, and the participant can withdraw at any time.
-
-Study 1 details and open items are in [`docs/study1-plan.md`](docs/study1-plan.md) (§8). The later phases are in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Scenarios
 
