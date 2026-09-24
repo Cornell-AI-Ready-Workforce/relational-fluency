@@ -517,6 +517,7 @@ def _turn_meta(ev: dict) -> dict:
     return {"garbled": bool(ev.get("garbled")), "item_id": ev.get("item_id"),
             "probe": bool(ev.get("probe")), "replay": bool(ev.get("replay")),
             "voiced_ms": ev.get("voiced_ms"),
+            "voiced_span_ms": ev.get("voiced_span_ms"),
             "committed_at": ev.get("committed_at")}
 
 
@@ -890,12 +891,14 @@ class RealtimeVoiceSessionRunner:
         self._turn_end_speech_began: Optional[float] = None
         self._unrouted_user_texts: List[str] = []
         self._last_unrouted_at = 0.0
-        # Participant transcripts that arrived and did NOT reach the
-        # director's input ({reason, text}): suppressed by a gate, or
-        # low_confidence without a cast name. A room turn whose only words
-        # are these is skipped rather than answered (group_turn_skipped,
-        # pipeline 2026-09-24a; see _run_group_turn). Taken with the
-        # unrouted texts, so it never outlives the turn that reads it.
+        # Participant transcripts that arrived and that a gate judged not to
+        # be speech ({reason, text}): implausible_rate, no_speech, probe_pad.
+        # A room turn whose only words are these is skipped rather than
+        # answered (group_turn_skipped, pipeline 2026-09-24a; see
+        # _run_group_turn). A low_confidence line is NOT one of them (24b):
+        # it is a real short answer as often as not, and routes as before.
+        # Taken with the unrouted texts, so it never outlives the turn that
+        # reads it.
         self._unreliable_arrivals: List[dict] = []
         self._preroll = bytearray()
         # (ended_at, agent_id, text), last 6. The timestamp is what bounds the
@@ -1627,8 +1630,14 @@ class RealtimeVoiceSessionRunner:
         # participant and the log; here we simply undo the advance and stay put,
         # so the next turn tries again rather than the encounter continuing
         # under a false heading.
+        # The hand-off flags go back too (P6 review): restored to "not
+        # briefed" past an expired timebox, the proactive hand-off would brief
+        # and probe a second closing line three seconds later, and again after
+        # every refused _enter. Restored as they were, the next turn's
+        # _maybe_advance simply retries the advance.
         before = (self.segment, self._series_idx, self._trigger_idx,
-                  self._turns_this_interaction, self._interaction_started_at)
+                  self._turns_this_interaction, self._interaction_started_at,
+                  self._handoff_briefed, self._handoff_probed)
         try:
             agents = self._resolve_agents()
 
@@ -1643,7 +1652,8 @@ class RealtimeVoiceSessionRunner:
                                          new_interaction=False):
                     (self.segment, self._series_idx, self._trigger_idx,
                      self._turns_this_interaction,
-                     self._interaction_started_at) = before
+                     self._interaction_started_at, self._handoff_briefed,
+                     self._handoff_probed) = before
                 return True
 
             if self.segment + 1 >= len(self.interactions):
@@ -1660,7 +1670,8 @@ class RealtimeVoiceSessionRunner:
                                      new_interaction=True):
                 (self.segment, self._series_idx, self._trigger_idx,
                  self._turns_this_interaction,
-                 self._interaction_started_at) = before
+                 self._interaction_started_at, self._handoff_briefed,
+                 self._handoff_probed) = before
             return True
         finally:
             self._advancing = False
@@ -3653,6 +3664,7 @@ class RealtimeVoiceSessionRunner:
                                 item_id: Optional[str] = None,
                                 probe: bool = False, replay: bool = False,
                                 voiced_ms: Optional[int] = None,
+                                voiced_span_ms: Optional[int] = None,
                                 committed_at: Optional[float] = None) -> None:
         """Record one participant utterance, once, as said.
 
@@ -3668,9 +3680,10 @@ class RealtimeVoiceSessionRunner:
         front of the gateway a second time, `voiced_ms` for how much voice the
         commit held (None where the route cannot say). What is not recorded as
         a turn is written as `user_turn_suppressed` with its text, never
-        dropped: the reason says which rule withheld it. `committed_at` is
-        when that commit went out, which is how a 1:1 reply to it is told
-        from an older one (see _withdraw_reply).
+        dropped: the reason says which rule withheld it. `voiced_span_ms` is
+        where that voice sat (first voiced frame to last), which the rate gate
+        divides by. `committed_at` is when that commit went out, which is how
+        a 1:1 reply to it is told from an older one (see _withdraw_reply).
         """
         def unreliable(reason: str) -> None:
             # For the room: an arrival that will not reach the director.
@@ -3746,10 +3759,13 @@ class RealtimeVoiceSessionRunner:
         # voice (47 words per voiced second; real lines there ran 1.4-6.1),
         # and the director routed on it. Words anywhere in the line count,
         # fillers included, so this is not a phrase list; a real "Thank you."
-        # over 380 ms is 5.3 and kept. See _realtime.implausible_rate.
-        rate = _realtime.implausible_rate(text, voiced_ms)
+        # over 380 ms is 5.3 and kept. Over the voiced SPAN since 24b, which
+        # a quieter voice does not shrink the way it shrinks the voiced
+        # count. See _realtime.implausible_rate.
+        rate = _realtime.implausible_rate(text, voiced_ms, voiced_span_ms)
         if rate is not None:
             suppressed("implausible_rate", words=rate["words"],
+                       voiced_span_ms=voiced_span_ms,
                        words_per_voiced_s=rate["words_per_voiced_s"])
             await self._withdraw_reply(text, "implausible_rate",
                                        committed_at, voiced_ms)
@@ -3873,10 +3889,12 @@ class RealtimeVoiceSessionRunner:
         self._last_user_text = text
         self._last_user_low_confidence = low_confidence
         self._user_utterances += 1
-        if not to_director:
-            # Recorded and captioned below, as before; only the room's
-            # decision to answer it reads this.
-            unreliable("low_confidence")
+        # A low_confidence line is recorded, captioned and routed as before
+        # 24a. 24a also made it skip a room turn when it named nobody, which
+        # left a real short answer ("Yes.", "Two.", "Thank you.", or "Casey?"
+        # transcribed "TC?") unanswered, with no probe unless an on_silence
+        # beat was next (P6 review). The phantoms that rule was aimed at are
+        # the rate gate's; this one is the director's to route on context.
         if low_confidence:
             # `to_director` only where the knob overrides the default rule,
             # so a session double without the keyword still takes the rest.
@@ -3895,6 +3913,7 @@ class RealtimeVoiceSessionRunner:
             "user_turn", text=text, channel="voice", script_mismatch=unclear,
             utterance=self._user_utterances, garbled=garbled,
             item_id=item_id, voiced_ms=voiced_ms,
+            voiced_span_ms=voiced_span_ms,
             low_confidence=low_confidence, replay=replay,
         )
         # The research record keeps the raw text (retranscribe repairs it
@@ -3922,13 +3941,25 @@ class RealtimeVoiceSessionRunner:
         through the bridge's cancel path, its tail dropped as
         cancelled_output, and written as suppressed_turn_reply_cancelled with
         whatever text it had generated; the participant is left with the
-        silence they actually produced, which the watchdog handles as it
-        would any other. One that has already played audio is left alone,
-        because cutting it off mid-word would be a second fault, and written
-        as reply_to_suppressed_turn. A pending stage direction is left
-        pending: the brief is a persistent session.update and governs the
-        next reply. Rooms do this in _run_group_turn instead, before any
-        reply is asked for."""
+        silence they actually produced, which the watchdog treats as it
+        would any other silence (a probe only where the next beat has an
+        on_silence line, or the S1 hand-off). One that has already played
+        audio is left alone, because cutting it off mid-word would be a
+        second fault, and written as reply_to_suppressed_turn.
+
+        Two guards from the P6 review. A reply in flight is only this turn's
+        if no commit has gone out since this turn's own (`committed_at`
+        against the bridge's last_commit_at): a transcript that comes back
+        late, after the participant's next real turn or a probe, must not
+        cancel the reply to THAT, so the reply is kept and written as
+        reply_to_suppressed_turn with kept="later_commit". And a planted beat
+        the cancelled reply was briefed to perform is taken back
+        (_retract_withdrawn_beat): the turn end fired it, and the next turn's
+        brief would otherwise move on to the beat after it, leaving this one
+        counted as reached and never spoken. A hand-off note (no trigger) is
+        left pending: the brief is a persistent session.update and the next
+        reply speaks it. Rooms do this in _run_group_turn instead, before
+        any reply is asked for."""
         if self.room is not None or self.is_group():
             return
         rt = self.rt
@@ -3950,6 +3981,14 @@ class RealtimeVoiceSessionRunner:
         if not (self._speaking or in_flight):
             # Nothing is answering it (a commit that returned early); there
             # is nothing to withdraw.
+            return
+        latest = getattr(rt, "last_commit_at", None)
+        if (committed_at is not None and isinstance(latest, (int, float))
+                and latest > committed_at):
+            # What is in flight answers a later commit (see the docstring).
+            self.session.store.event(
+                "reply_to_suppressed_turn", audio_ms=None, playing=False,
+                kept="later_commit", **fields)
             return
         cancel = getattr(rt, "cancel_unheard_reply", None)
         rid = await cancel() if cancel is not None else None
@@ -3976,6 +4015,44 @@ class RealtimeVoiceSessionRunner:
             "suppressed_turn_reply_cancelled", response_id=rid or None,
             generated_text=generated or None,
             pending_trigger_id=pending.get("trigger_id"), **fields)
+        self._retract_withdrawn_beat()
+
+    def _retract_withdrawn_beat(self) -> None:
+        """Take back the planted beat a withdrawn 1:1 reply was to perform.
+
+        The same discipline _probe_room applies to a grant that failed. The
+        trigger_fired row stays (the log is append-only); trigger_undelivered
+        with the same `index` cancels it for anything that counts coverage
+        (verify_record's _trigger_ledger), the beat index and _fired go back,
+        and the direction is cleared, so the next turn's brief fires the SAME
+        beat again and the reply to that performs it. Where it cannot safely
+        be put back (a brief is being issued this moment, or the beat is no
+        longer the last one spent) it is written stage_direction_unperformed
+        instead, which the ledger nets the same way, and not offered again.
+        Synchronous, so nothing can interleave between the read and the
+        write; never under _brief_lock, whose holder may be waiting on an ack
+        that only the pump calling this can read."""
+        pending = self._pending_direction or {}
+        tid = pending.get("trigger_id")
+        if (not tid or pending.get("agent_id") not in (None, self.agent_id)
+                or pending.get("interaction") != self._interaction_id()):
+            return
+        idx = self._trigger_idx - 1
+        triggers = self._triggers()
+        common = dict(trigger_id=tid, interaction=self._interaction_id(),
+                      segment=self.segment, agent_id=self.agent_id,
+                      reason="reply_withdrawn")
+        if (not self._brief_lock.locked() and 0 <= idx < len(triggers)
+                and triggers[idx].get("id") == tid
+                and self._fired and self._fired[-1] == tid):
+            self.session.store.event(
+                "trigger_undelivered", index=idx,
+                probing=bool(pending.get("probing")), **common)
+            self._trigger_idx = idx
+            self._fired.pop()
+        else:
+            self.session.store.event("stage_direction_unperformed", **common)
+        self._pending_direction = None
 
     async def _switch_character(self, agent):
         """Start a fresh realtime session as `agent`, or None if the gateway refused.
@@ -5666,6 +5743,16 @@ class RealtimeVoiceSessionRunner:
                 if not self._handoff_briefed:
                     await self._brief_handoff(elapsed)
                     return
+                if (self._pending_direction or {}).get("source") == "handoff":
+                    # Briefed, and no reply has taken the note yet: the
+                    # closing line has not been spoken, so this is the end of
+                    # some EARLIER reply (P6 review). Since 24a the watchdog
+                    # can brief and probe the closing line while a previous
+                    # reply's finalize is still in _steer, and that finalize
+                    # then advanced the encounter over the closing line. The
+                    # reply that speaks it takes the note (_take_direction, at
+                    # its finalize) and advances here.
+                    return
                 self.session.store.event(
                     "interaction_timeboxed",
                     interaction=self._interaction_id(),
@@ -6505,6 +6592,10 @@ class RealtimeVoiceSessionRunner:
             return False
         rt = self.rt
         if (rt is None or self._turn_end_pending_ms is not None
+                # A reply still being finalized (its _steer can take 11 s):
+                # its _maybe_advance briefs the hand-off itself, and a brief
+                # from here would race that finalize (P6 review).
+                or self._finalize_tasks
                 or getattr(rt, "responding", False)
                 or getattr(rt, "autofire_active", False)
                 or time.time() - self._quiet_since() < _realtime.handoff_idle_s()):
@@ -6927,10 +7018,10 @@ class RealtimeVoiceSessionRunner:
             # NO ROOM REPLY FOR AN UNRELIABLE LINE (issues #21, #24; pipeline
             # 2026-09-24a). Something arrived for this turn, and all of it
             # was withheld from the director: a transcript a gate suppressed
-            # (implausible_rate, no_speech, probe_pad) or a low_confidence
-            # one that names nobody. Routing on nothing here is what answered
-            # the tester's phantom "I'm not a cat. I'm a cat..." with Jordan
-            # and Alex: the director is handed an empty line and the
+            # (implausible_rate, no_speech, probe_pad); not a low_confidence
+            # one, which routes as before (24b). Routing on nothing here is
+            # what answered the tester's phantom "I'm not a cat. I'm a
+            # cat..." with Jordan and Alex: the director is handed an empty line and the
             # conversation so far, and picks somebody. So the director is not
             # called and nobody is granted the floor; the turn is written as
             # group_turn_skipped with what arrived, and released (the floor

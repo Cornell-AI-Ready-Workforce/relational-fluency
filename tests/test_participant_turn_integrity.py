@@ -498,8 +498,10 @@ def test_the_gate_is_in_provenance_with_its_defaults():
         "room_dedupe_second_source": False,
         # Voice and rate gates (pipeline 2026-09-24a).
         "participant_commit_min_voiced_ms": 300,
-        "participant_max_words_per_voiced_s": 8.0,
+        "participant_max_words_per_voiced_s": 16.0,
         "participant_rate_gate_max_voiced_ms": 1500,
+        # 2026-09-24b (P6 review): over the voiced span, default 16.
+        "participant_rate_over": "voiced_span",
     }
 
 

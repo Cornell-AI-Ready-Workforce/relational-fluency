@@ -434,6 +434,36 @@ Caveats for analysis:
   `stage_direction_unperformed` rows. Re-run it on the archive rather than
   comparing old reports.
 
+## What changed on 2026-09-24, review fixes (pipeline_version 2026-09-24b, room_pacing_version 2026-09-24b)
+
+Fixes from the review of `24a`. The rate-gate numbers come from replaying the
+tester's `s_1790217895_4025d8` audio at +6 to -12 dB through the runner's own
+VAD. The voiced count of a real line shrinks when the speaker is a little
+quieter, but its words stay the same. At 2.5 dB quieter, "Does that sound
+good?" counted 460 ms, or 8.7 words per voiced second, which `24a` would have
+suppressed. The span from the first voiced frame to the last stays put. Over
+the span, every real line ran at most 6.2 words per second from +6 to -6 dB,
+and the phantoms ran 44-56 at every level.
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 24b | The rate gate divides by the voiced span, not the voiced count. The limit is now 16 (was 8), about 2.6x above the real lines and 2.6x below the phantoms. `voiced_span_ms` is on `user_turn` and `user_turn_suppressed`, and `turn_gate.participant_rate_over` says `voiced_span`. The ceiling still applies to the voiced count. | `PARTICIPANT_RATE_OVER` (`voiced_span`; `voiced_count` with `PARTICIPANT_MAX_WORDS_PER_VOICED_S=8` restores `24a`), `PARTICIPANT_MAX_WORDS_PER_VOICED_S` (16) |
+| room 24b | A `low_confidence` line that names nobody no longer skips the room turn. `24a` left real one-word answers unanswered ("Yes.", "Two.", "Thank you.", and "Casey?" transcribed as "TC?"). Those lines route as they did before `24a`, on context. Only a gate suppression (`implausible_rate`, `no_speech`, `probe_pad`) writes `group_turn_skipped`. | `PARTICIPANT_LOW_CONFIDENCE_DIRECTOR=all` still hands short lines to the director as text |
+| 24b | 1:1: a suppressed turn's transcript that arrives after a later commit (the participant's next turn, or a probe) no longer cancels that later commit's reply. It is written as `reply_to_suppressed_turn` with `kept: "later_commit"`. | none |
+| 24b | 1:1: when a reply is withdrawn, the planted beat it was briefed to perform is given back. The event is `trigger_undelivered` (reason `reply_withdrawn`, same `index`), and the next turn fires the same beat again. If a brief is being sent at that moment, `stage_direction_unperformed` (reason `reply_withdrawn`) is written instead. `verify_record` nets out both. | none |
+| 24b | Sometimes the bridge's cancel of a reply that had no id yet reached the gateway too early, and the gateway answered `response_cancel_not_active`. The bridge now cancels that reply again once it is named. The reply's `cancelled_output_dropped` row carries `recancelled: true`, and the error no longer reaches the page. | none |
+| 24b | S1 hand-off: the watchdog does not brief or probe the closing line while an earlier reply is still being finalized (its steering review can take 11 s). The timebox advances only once the reply that speaks the closing line has taken its note. When the next character's session is refused, the hand-off stays spent, so no second closing line is asked for, and the next turn retries the advance. | `HANDOFF_IDLE_S` (3), as before |
+
+Caveats for analysis:
+
+- On `24a`, a real short line from a quiet speaker could be
+  `user_turn_suppressed{implausible_rate}`. The text is on the row. Rows with
+  `words_per_voiced_s` under about 16 are worth reading before treating them
+  as phantoms.
+- On `24a`, a room turn whose only line was `low_confidence` has
+  `group_turn_skipped` with reason `low_confidence`. That participant line got
+  no reply.
+
 ## The seven-minute floor, and the thirteen-minute stop
 
 Every study encounter runs **at least 7:00** and **at most 13:00**, measured

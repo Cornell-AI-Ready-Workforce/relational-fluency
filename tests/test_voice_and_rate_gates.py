@@ -37,8 +37,8 @@ from server import verify_record  # noqa: E402
 from server.voice import realtime as R  # noqa: E402
 
 from test_participant_turn_integrity import (  # noqa: E402
-    GPT, LOUD, QUIET, DeadMember, _room, bridge, in_a_loop, runner_for,
-    send_ms,
+    GPT, LOUD, QUIET, DeadMember, _room, bridge, in_a_loop, next_transcript,
+    runner_for, send_ms,
 )
 from test_final_record import (  # noqa: E402,F401  (fixture)
     _base_events, _check, _write_session, sessions_root,
@@ -260,7 +260,7 @@ def test_a_fast_talker_over_a_long_turn_is_not_rate_gated():
     runner, session, _ = runner_for("S2A")
     asyncio.run(runner._record_user_turn(text, voiced_ms=1600))
     assert session.store.of("user_turn")
-    assert R.implausible_rate(text, 1499) is not None
+    assert R.implausible_rate(text, 1200) is not None   # 16.7 under the ceiling
 
 
 def test_no_rate_gate_where_the_voice_cannot_be_counted():
@@ -326,14 +326,24 @@ def test_the_cat_phantom_gets_no_reply_in_a_room(monkeypatch):
     assert runner._unreliable_arrivals == []
 
 
-def test_a_short_line_naming_nobody_gets_no_reply(monkeypatch):
+@pytest.mark.parametrize("text,voiced", [
+    ("Thank you.", 380), ("Two.", 520), ("Yes.", 450), ("Great, how about TC?", 560)])
+def test_a_short_line_naming_nobody_is_still_answered(monkeypatch, text, voiced):
+    """P6 review: 24a skipped a room turn whose only line was low_confidence
+    and named nobody, so a real one-word answer (or "Casey?" transcribed
+    "TC?") got no reply and, with no on_silence beat next, no probe either.
+    It routes as it did before 24a: the director is called, on context (the
+    short line is not its input unless the knob says "all"), and the floor
+    is offered."""
     runner, session, _ = _dead_room_runner(monkeypatch)
-    asyncio.run(runner._record_user_turn("Thank you.", voiced_ms=380))
+    asyncio.run(runner._record_user_turn(text, voiced_ms=voiced))
+    (turn,) = session.store.of("user_turn")
+    assert turn["low_confidence"] is True, "still flagged in the record"
     _run(runner)
-    assert session.store.of("user_turn"), "still recorded and captioned"
-    (skip,) = session.store.of("group_turn_skipped")
-    assert skip["reason"] == "low_confidence" and skip["text"] == "Thank you."
-    assert session.director.calls == []
+    assert not session.store.of("group_turn_skipped")
+    assert session.director.calls, "the director is asked"
+    assert session.store.of("floor_grant_failed"), "the floor was offered"
+    assert runner._unreliable_arrivals == []
 
 
 def test_a_short_line_naming_someone_is_still_routed(monkeypatch):
@@ -440,7 +450,7 @@ async def test_a_named_reply_is_cancelled_by_name():
     await send_ms(rt, LOUD, 340)
     await rt.commit_turn()
     rt._response_created_id = "resp_N"
-    await runner._record_user_turn(CAT, voiced_ms=340, committed_at=time.time() - 1)
+    await runner._record_user_turn(CAT, voiced_ms=340, committed_at=rt.last_commit_at)
     (ev,) = session.store.of("suppressed_turn_reply_cancelled")
     assert ev["response_id"] == "resp_N"
     assert "resp_N" in rt._discard_ids
@@ -453,7 +463,7 @@ async def test_a_reply_opened_by_text_alone_is_withdrawn_from_the_page():
     await rt.commit_turn()
     runner._speaking = True
     runner._agent_text = ["Okay, ", "so "]
-    await runner._record_user_turn(CAT, voiced_ms=340, committed_at=time.time() - 1)
+    await runner._record_user_turn(CAT, voiced_ms=340, committed_at=rt.last_commit_at)
     (ev,) = session.store.of("suppressed_turn_reply_cancelled")
     assert ev["generated_text"] == "Okay, so"
     assert ws.frames("assistant_interrupted")
@@ -602,3 +612,245 @@ def test_verify_reports_an_unperformed_beat_as_not_reached(sessions_root):
     assert detail.startswith(f"1/{len(expected)} (0 volunteered, 1 probed)")
     assert f"unperformed: {t1}" in detail
     assert t1 in detail.split("missed: ")[1]
+
+
+# --------------------------------------------------------------------------
+# 7. P6 review (pipeline 2026-09-24b)
+# --------------------------------------------------------------------------
+#
+# The rate is taken over the voiced SPAN. Replaying the tester's WAV quieter
+# (scratchpad p6/review_fixes/gate_sweep.py), the voiced count of a real line
+# shrinks while its words do not; the span stays put. (voiced ms / span ms):
+#
+#   "Does that sound good?"                      0 dB 660/820  -2.5 dB 460/680
+#                                                -4 dB 400/640
+#   "Right. Sounds good. Casey, are you there?"  -7 dB 360/440
+#   phantoms                                     CAT 340/340, GOODBYE 300/340
+
+QUIETER = [("Does that sound good?", 460, 680), ("Does that sound good?", 400, 640),
+           ("Right. Sounds good. Casey, are you there?", 360, 440)]
+
+
+@pytest.mark.parametrize("text,voiced,span", QUIETER)
+def test_a_quieter_real_line_is_kept(text, voiced, span):
+    assert R.implausible_rate(text, voiced, span) is None
+    runner, session, _ = runner_for("S2A")
+    asyncio.run(runner._record_user_turn(text, voiced_ms=voiced,
+                                         voiced_span_ms=span))
+    (turn,) = session.store.of("user_turn")
+    assert turn["voiced_span_ms"] == span
+    assert not session.store.of("user_turn_suppressed")
+
+
+def test_the_measure_of_24a_would_have_dropped_them(monkeypatch):
+    """At 24a's bar of 8 over the voiced count, the first two were
+    suppressed (8.7 and 10.0 w/s); over the span at 16 nothing is. The knobs
+    put 24a's measure back."""
+    monkeypatch.setenv("PARTICIPANT_MAX_WORDS_PER_VOICED_S", "8")
+    monkeypatch.setenv("PARTICIPANT_RATE_OVER", "voiced_count")
+    assert R.implausible_rate("Does that sound good?", 460, 680) is not None
+    assert R.implausible_rate("Does that sound good?", 400, 640) is not None
+    assert llm.provenance(GPT)["turn_gate"]["participant_rate_over"] == "voiced_count"
+    monkeypatch.setenv("PARTICIPANT_RATE_OVER", "voiced_span")
+    assert R.implausible_rate("Does that sound good?", 460, 680) is None   # 5.9
+
+
+def test_without_a_span_the_count_is_used_and_the_quieter_line_still_kept():
+    assert R.implausible_rate("Does that sound good?", 460) is None   # 8.7
+
+
+@pytest.mark.parametrize("text,voiced,span", [(CAT, 340, 340), (GOODBYE, 300, 340)])
+def test_the_phantoms_are_still_suppressed_over_their_span(text, voiced, span):
+    runner, session, _ = runner_for("S2A")
+    asyncio.run(runner._record_user_turn(text, voiced_ms=voiced,
+                                         voiced_span_ms=span))
+    (sup,) = session.store.of("user_turn_suppressed")
+    assert sup["reason"] == "implausible_rate"
+    assert sup["voiced_span_ms"] == span and sup["words_per_voiced_s"] > 40
+    assert not session.store.of("user_turn")
+
+
+@in_a_loop
+async def test_the_bridge_measures_the_span_and_hands_it_on():
+    rt = bridge()
+    await send_ms(rt, QUIET, 200)
+    await send_ms(rt, LOUD, 100)
+    await send_ms(rt, QUIET, 300)
+    await send_ms(rt, LOUD, 60)
+    await send_ms(rt, QUIET, 400)
+    await rt.commit_input()
+    rt.ws.feed(type="conversation.item.input_audio_transcription.completed",
+               item_id="x", transcript="Yes, I can.")
+    ev = await next_transcript(rt)
+    assert ev["voiced_ms"] == 160 and ev["voiced_span_ms"] == 460
+    # A clear or a commit starts the next count from nothing.
+    await send_ms(rt, LOUD, 40)
+    await rt.clear_input()
+    await send_ms(rt, QUIET, 100)
+    await rt.commit_input()
+    assert rt._commit_tags[-1]["voiced_span_ms"] == 0
+    assert rt._commit_tags[-1]["voiced_ms"] == 0
+
+
+def test_the_rate_measure_is_in_provenance():
+    gate = llm.provenance(GPT)["turn_gate"]
+    assert gate["participant_rate_over"] == "voiced_span"
+    assert gate["participant_max_words_per_voiced_s"] == 16.0
+    assert llm.PIPELINE_VERSION >= "2026-09-24b"
+    assert llm.ROOM_PACING_VERSION >= "2026-09-24b"
+
+
+@in_a_loop
+async def test_a_late_transcript_does_not_cancel_the_reply_to_a_later_commit():
+    """C1 (a phantom) is answered and done; the participant's real C2 goes
+    out and its reply is in flight, unheard; only then does C1's transcript
+    come back and fail the rate gate. The reply is C2's and stays."""
+    runner, session, ws, rt = _one_to_one()
+    await send_ms(rt, LOUD, 340)
+    await rt.commit_turn()
+    c1 = rt.last_commit_at
+    rt._end_response()                       # C1's reply is over
+    await asyncio.sleep(0.01)
+    await send_ms(rt, LOUD, 1200)
+    assert await rt.commit_turn() is True    # C2, its reply in flight
+    assert rt.last_commit_at > c1 and rt.responding
+    rt.ws.sent.clear()
+    await runner._record_user_turn(CAT, voiced_ms=340, committed_at=c1)
+    assert "response.cancel" not in rt.ws.types()
+    assert rt.responding, "C2's reply is untouched"
+    (ev,) = session.store.of("reply_to_suppressed_turn")
+    assert ev["kept"] == "later_commit" and ev["text"] == CAT
+    assert not session.store.of("suppressed_turn_reply_cancelled")
+    assert session.store.of("user_turn_suppressed"), "the phantom is still on record"
+
+
+async def _fired_then_withdrawn(runner, rt):
+    async def deliver(rt_, instructions):
+        return True
+    runner._deliver_brief = deliver
+    await runner._brief_next_beat(probing=False)    # the turn end spends t1
+    assert runner._trigger_idx == 1 and runner._pending_direction["trigger_id"]
+    await send_ms(rt, LOUD, 340)
+    await rt.commit_turn()
+    await runner._record_user_turn(CAT, voiced_ms=340,
+                                   committed_at=rt.last_commit_at)
+
+
+@in_a_loop
+async def test_a_withdrawn_reply_gives_its_beat_back():
+    """S2A: the phantom's turn end fired t1, and its reply was cancelled
+    before any of it played. t1 is retracted and re-offered, so the next
+    turn's brief fires it again rather than moving on to t2."""
+    runner, session, ws, rt = _one_to_one()
+    t1 = runner._next_trigger()["id"]
+    await _fired_then_withdrawn(runner, rt)
+    (cancel,) = session.store.of("suppressed_turn_reply_cancelled")
+    assert cancel["pending_trigger_id"] == t1
+    (und,) = session.store.of("trigger_undelivered")
+    assert und["trigger_id"] == t1 and und["index"] == 0
+    assert und["reason"] == "reply_withdrawn"
+    assert runner._trigger_idx == 0 and runner._fired == []
+    assert runner._pending_direction is None
+    # The participant's next real turn: the same beat, at the same index.
+    await runner._brief_next_beat(probing=False)
+    fired = session.store.of("trigger_fired")
+    assert [(e["trigger_id"], e["index"]) for e in fired] == [(t1, 0), (t1, 0)]
+    ledger = verify_record._trigger_ledger(session.store.events)
+    assert [e["trigger_id"] for e in ledger["performed"]] == [t1]
+    assert [e["trigger_id"] for e in ledger["undelivered"]] == [t1]
+
+
+@in_a_loop
+async def test_a_withdrawn_beat_that_cannot_go_back_is_written_unperformed():
+    runner, session, ws, rt = _one_to_one()
+    t1 = runner._next_trigger()["id"]
+
+    async def deliver(rt_, instructions):
+        return True
+    runner._deliver_brief = deliver
+    await runner._brief_next_beat(probing=False)
+    await send_ms(rt, LOUD, 340)
+    await rt.commit_turn()
+    async with runner._brief_lock:            # a brief is going out right now
+        await runner._record_user_turn(CAT, voiced_ms=340,
+                                       committed_at=rt.last_commit_at)
+    (un,) = session.store.of("stage_direction_unperformed")
+    assert un["trigger_id"] == t1 and un["reason"] == "reply_withdrawn"
+    assert not session.store.of("trigger_undelivered")
+    assert runner._trigger_idx == 1 and runner._pending_direction is None
+    ledger = verify_record._trigger_ledger(session.store.events)
+    assert ledger["performed"] == [] and len(ledger["unperformed"]) == 1
+
+
+@in_a_loop
+async def test_a_hand_off_note_survives_a_withdrawn_reply():
+    runner, session, ws, rt = _one_to_one()
+    runner._pending_direction = {"trigger_id": None, "source": "handoff",
+                                 "agent_id": runner.agent_id,
+                                 "interaction": runner._interaction_id()}
+    await send_ms(rt, LOUD, 340)
+    await rt.commit_turn()
+    await runner._record_user_turn(CAT, voiced_ms=340,
+                                   committed_at=rt.last_commit_at)
+    assert session.store.of("suppressed_turn_reply_cancelled")
+    assert runner._pending_direction["source"] == "handoff"
+    assert not session.store.of("trigger_undelivered")
+    assert not session.store.of("stage_direction_unperformed")
+
+
+async def _drain(rt, until=("cancelled_output",), n=12):
+    agen = rt.events()
+    got = []
+    try:
+        while len(got) < n:
+            e = await asyncio.wait_for(agen.__anext__(), 1)
+            got.append(e)
+            if e["type"] in until:
+                break
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        await agen.aclose()
+    return got
+
+
+@in_a_loop
+async def test_an_unnamed_cancel_that_missed_is_sent_again_once_named():
+    """cancel_unheard_reply's cancel reached the gateway before the reply
+    existed (response_cancel_not_active); the reply it then creates is
+    cancelled once named, and nothing of the miss reaches the page."""
+    from test_bridge_correctness import adelta, created, done, tdelta, types
+    rt = bridge()
+    await send_ms(rt, LOUD, 340)
+    await rt.commit_turn()
+    assert await rt.cancel_unheard_reply() == ""
+    rt.ws.sent.clear()
+    rt.ws.feed(type="error", error={"type": "invalid_request_error",
+                                    "code": "response_cancel_not_active",
+                                    "message": "no active response"})
+    for frame in (created("resp_L"), tdelta("resp_L", "it_1", "Sure, "),
+                  adelta("resp_L", "it_1"), done("resp_L", "cancelled")):
+        rt.ws.feed(**frame)
+    got = await _drain(rt)
+    assert rt.ws.types() == ["response.cancel"], "cancelled again, once"
+    assert "error" not in types(got) and "agent_audio" not in types(got)
+    (co,) = [e for e in got if e["type"] == "cancelled_output"]
+    assert co["response_id"] == "resp_L" and co["recancelled"] is True
+
+
+@in_a_loop
+async def test_an_unnamed_cancel_that_landed_is_not_sent_twice():
+    from test_bridge_correctness import adelta, created, done, types
+    rt = bridge()
+    await send_ms(rt, LOUD, 340)
+    await rt.commit_turn()
+    await rt.cancel_unheard_reply()
+    rt.ws.sent.clear()
+    for frame in (created("resp_H"), adelta("resp_H", "it_1"),
+                  done("resp_H", "cancelled")):
+        rt.ws.feed(**frame)
+    got = await _drain(rt)
+    assert "response.cancel" not in rt.ws.types()
+    (co,) = [e for e in got if e["type"] == "cancelled_output"]
+    assert "recancelled" not in co
+    assert "agent_audio" not in types(got)

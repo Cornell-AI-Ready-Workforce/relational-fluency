@@ -534,7 +534,8 @@ def realtime_row_defaults(monkeypatch):
                  # Voice and rate gates, the hand-off clock (2026-09-24a).
                  "PARTICIPANT_COMMIT_MIN_VOICED_MS",
                  "PARTICIPANT_MAX_WORDS_PER_VOICED_S",
-                 "PARTICIPANT_RATE_GATE_MAX_VOICED_MS", "HANDOFF_IDLE_S"):
+                 "PARTICIPANT_RATE_GATE_MAX_VOICED_MS", "HANDOFF_IDLE_S",
+                 "PARTICIPANT_RATE_OVER"):
         monkeypatch.delenv(knob, raising=False)
 
 

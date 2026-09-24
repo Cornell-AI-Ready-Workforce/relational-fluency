@@ -74,7 +74,13 @@ async def _s1(monkeypatch):
     await runner._brief_next_beat(probing=False)
     assert not _events(runner, "trigger_fired")
 
-    # The turn that speaks the closing line moves the encounter on.
+    # The end of some other reply does not: the note is still pending, so
+    # the closing line has not been spoken (P6 review).
+    await runner._maybe_advance()
+    assert not advanced
+    # The turn that speaks the closing line takes the note at its finalize,
+    # and moves the encounter on.
+    assert runner._take_direction()["source"] == "handoff"
     await runner._maybe_advance()
     assert advanced == [0]
     tb = _events(runner, "interaction_timeboxed")[-1]
@@ -142,7 +148,9 @@ def test_a_silent_participant_is_handed_off_once_the_timebox_is_up(on_model, mon
         # Asked once: the next tick does nothing more.
         assert await runner._proactive_handoff() is False
         assert runner.rt.committed == 1
-        # The turn that speaks the closing line moves the encounter on, as before.
+        # The turn that speaks the closing line moves the encounter on, as
+        # before: its finalize takes the note, then advances.
+        runner._take_direction()
         await runner._maybe_advance()
         assert advanced == [0]
         assert _events(runner, "interaction_timeboxed")
@@ -242,3 +250,110 @@ def test_the_hand_off_clock_is_a_knob(monkeypatch):
     assert R.handoff_idle_s() == 3.0
     monkeypatch.setenv("HANDOFF_IDLE_S", "5")
     assert llm.provenance(GPT)["pacing"]["handoff_idle_s"] == 5.0
+
+
+# --------------------------------------------------------------------------
+# P6 review. F1: the proactive hand-off raced a finalize still in _steer, and
+# that finalize then advanced over the closing line. F2: a refused _enter
+# rolled the hand-off flags back to "not briefed", and the watchdog asked for
+# a second closing line.
+# --------------------------------------------------------------------------
+
+def test_a_finalize_still_steering_is_not_overtaken_by_the_hand_off(on_model, monkeypatch):
+    """S1, timebox 120 s: reply R1 ends past the mark and its finalize
+    spends a long time in _steer. The watchdog must not brief and probe the
+    closing line meanwhile; R1's own _maybe_advance briefs it, the watchdog
+    then probes, and only the closing line's finalize advances."""
+    on_model(GPT)
+    monkeypatch.setenv("TRANSCRIPT_GRACE_SECONDS", "0.05")
+
+    async def go():
+        runner, advanced = _timeboxed(monkeypatch)
+        steering = asyncio.Event()
+
+        async def slow_steer():
+            steering.set()
+            await asyncio.sleep(0.4)       # the LLM review ("up to eleven seconds")
+        runner._steer = slow_steer
+        settled = asyncio.Event()
+        settled.set()
+        runner._spawn_finalize(runner._finalize_turn(
+            runner.agent_id, runner.agent, runner.rt, ["Fair enough."], None,
+            settled=settled))
+        await asyncio.wait_for(steering.wait(), 2)
+        # R1 has played and the participant has been quiet: every other guard
+        # of the hand-off is clear.
+        runner._last_activity = runner._play_cursor = time.time() - 10
+        assert await runner._proactive_handoff() is True
+        assert not runner._handoff_briefed and runner.rt.committed == 0
+        await asyncio.gather(*runner._finalize_tasks)
+        # R1's finalize briefed the closing line and did not advance.
+        assert runner._handoff_briefed and not advanced
+        assert len(_events(runner, "handoff_briefed")) == 1
+        runner._last_activity = runner._play_cursor = time.time() - 10
+        assert await runner._proactive_handoff() is True
+        assert runner._handoff_probed and runner.rt.committed == 1
+        runner._take_direction()            # the closing line's finalize
+        await runner._maybe_advance()
+        assert advanced == [0]
+    asyncio.run(go())
+
+
+def test_an_earlier_finalize_cannot_advance_over_an_unspoken_closing_line(on_model, monkeypatch):
+    on_model(GPT)
+
+    async def go():
+        runner, advanced = _timeboxed(monkeypatch)
+        assert await runner._proactive_handoff() is True
+        assert runner._handoff_probed          # the closing line is being asked for
+        # A finalize that was already under way reaches _maybe_advance.
+        await runner._maybe_advance()
+        assert not advanced
+        assert not _events(runner, "interaction_timeboxed")
+    asyncio.run(go())
+
+
+def test_a_refused_advance_keeps_the_hand_off_spent(on_model, monkeypatch):
+    on_model(GPT)
+
+    async def go():
+        runner, _ = make_runner("S1A")
+        runner.rt = FakeRT()
+
+        async def _send(m):
+            pass
+        runner._send = _send
+
+        async def _deliver(rt, instructions):
+            return True
+        runner._deliver_brief = _deliver
+
+        async def _no():
+            return False
+        runner._at_ceiling = _no
+        entered = []
+
+        async def _enter(agent, new_interaction):
+            entered.append(agent.id)
+            return len(entered) > 1            # the gateway refuses once
+        runner._enter = _enter
+        runner._trigger_idx = len(runner._triggers())
+        now = time.time()
+        runner._interaction_started_at = now - 125
+        runner._last_activity = runner._play_cursor = now - 10
+        assert await runner._proactive_handoff() is True
+        runner._take_direction()               # the closing line is spoken
+        await runner._maybe_advance()          # ... and _enter is refused
+        assert entered and runner.segment == 0
+        assert runner._handoff_briefed and runner._handoff_probed
+        # No second closing line: the watchdog has nothing to ask for.
+        assert await runner._proactive_handoff() is False
+        assert runner.rt.committed == 1
+        assert len(_events(runner, "handoff_briefed")) == 1
+        assert len(_events(runner, "handoff_probed")) == 1
+        # The next turn's end retries the advance, and it goes through.
+        await runner._maybe_advance()
+        assert len(entered) == 2
+        assert runner.segment == 1 or runner._series_idx == 1
+        assert not runner._handoff_briefed and not runner._handoff_probed
+    asyncio.run(go())

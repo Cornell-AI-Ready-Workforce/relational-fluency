@@ -446,6 +446,27 @@ def text_client() -> AsyncAnthropic:
 #                when performed; stage_direction_unperformed and
 #                trigger_undelivered are netted out and named. Knobs in
 #                `turn_gate` and `pacing`.
+#   2026-09-24b  P6 review. The rate gate divides by the voiced SPAN (first
+#                voiced frame to last since the commit; voiced_span_ms on
+#                the tag, user_turn and user_turn_suppressed), not the voiced
+#                count, and PARTICIPANT_MAX_WORDS_PER_VOICED_S defaults to 16
+#                (was 8): the count shrank on a 2.5 dB quieter replay of the
+#                tester's WAV until "Does that sound good?" read 8.7 w/s; over
+#                the span every real line stays <= 6.2 from +6 to -6 dB (and
+#                is kept down to -11 dB) and the phantoms >= 44
+#                (turn_gate.participant_rate_over). 1:1:
+#                a suppressed turn's late transcript no longer cancels the
+#                reply to a later commit (reply_to_suppressed_turn,
+#                kept="later_commit"); a withdrawn reply gives its planted
+#                beat back (trigger_undelivered, reason "reply_withdrawn",
+#                re-fired at the next turn; stage_direction_unperformed where
+#                it cannot go back); an unnamed cancel the gateway answered
+#                with response_cancel_not_active is sent again once the reply
+#                is named (cancelled_output_dropped.recancelled). S1: the
+#                proactive hand-off waits out a reply still being finalized,
+#                the timebox advances only once the closing-line note has
+#                been taken by the reply that speaks it, and a refused
+#                advance keeps the hand-off flags (no second closing line).
 #
 # ROOM_PACING_VERSION:
 #   2026-09-23a  as d6f319d.
@@ -481,8 +502,13 @@ def text_client() -> AsyncAnthropic:
 #                3; a gpt reply took 5.09 s to first audio and the fallback
 #                create at 3.03 s was refused) and holds the bridge's own
 #                REQUEST_UNANSWERED_S off for that window.
-PIPELINE_VERSION = "2026-09-24a"
-ROOM_PACING_VERSION = "2026-09-24a"
+#   2026-09-24b  a low_confidence line that names nobody no longer skips the
+#                room turn: 24a left a real short answer ("Yes.", "Two.",
+#                "Thank you.", "Casey?" heard as "TC?") unanswered. It
+#                routes as before 24a, on context; only a gate suppression
+#                (implausible_rate, no_speech, probe_pad) skips the turn.
+PIPELINE_VERSION = "2026-09-24b"
+ROOM_PACING_VERSION = "2026-09-24b"
 
 
 def provenance(model: Optional[str] = None) -> dict:
