@@ -216,7 +216,8 @@ class Session:
     # --- shared history helpers ---
 
     def append_user(self, text: str, *, low_confidence: bool = False,
-                    names_cast: bool = False) -> None:
+                    names_cast: bool = False,
+                    to_director: Optional[bool] = None) -> None:
         entry = {
             "speaker": "user",
             "text": text,
@@ -230,6 +231,11 @@ class Session:
             # it only when it names a cast member (`names_cast`).
             entry["low_confidence"] = True
             entry["names_cast"] = bool(names_cast)
+            # Whether the director reads it after all
+            # (PARTICIPANT_LOW_CONFIDENCE_DIRECTOR); None is the default rule,
+            # a turn that names a cast member.
+            entry["to_director"] = (bool(names_cast) if to_director is None
+                                    else bool(to_director))
         self.shared_history.append(entry)
 
     def append_agent(self, agent_id: str, text: str) -> None:

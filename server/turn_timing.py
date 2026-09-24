@@ -63,11 +63,10 @@ MAX_ACK_LAG_S = 60.0
 
 
 class _ParticipantTurn:
-    __slots__ = ("stages", "grants", "replies")
+    __slots__ = ("stages", "replies")
 
     def __init__(self) -> None:
         self.stages: dict = {}
-        self.grants: dict = {}
         self.replies = 0
 
 
@@ -101,6 +100,14 @@ class TurnTimer:
         # sent to that turn and so must this.
         self._current: Optional[dict] = None
         self._open: dict = {}
+        # agent_id -> (the participant turn current at the grant, when). The
+        # reply a grant draws answers THAT turn, even when the participant has
+        # spoken again before its first audio (a room split turn, a queued
+        # turn): tied to the newest turn instead, its row carried the later
+        # turn's vad_speech_end and commit_sent, reply_index 0 and no
+        # grant_sent, and understated speech-end-to-first-audio by the length
+        # of the later utterance.
+        self._grants: dict = {}
 
     def _t(self, when: Optional[float] = None) -> float:
         return round((time.time() if when is None else when) - self._t0, 3)
@@ -139,7 +146,7 @@ class TurnTimer:
     @_guard
     def grant_sent(self, agent_id: str) -> None:
         if self._pt is not None:
-            self._pt.grants[agent_id] = self._t()
+            self._grants[agent_id] = (self._pt, self._t())
 
     # ── the character's side ────────────────────────────────────────────
     @_guard
@@ -147,11 +154,16 @@ class TurnTimer:
         """assistant_started is going to the page. Returns the turn number the
         page is told, which is what its acks name."""
         self._seq += 1
-        pt = self._pt
+        pt, grant_at = self._pt, None
+        grant = self._grants.pop(agent_id, None)
+        if grant is not None and any(grant[0] is r for r in self._recent):
+            # Still one of the last few turns; older than that, the grant drew
+            # no reply and this one is not its answer.
+            pt, grant_at = grant
         rec = {
             "turn": self._seq, "agent_id": agent_id, "pt": pt,
             "reply_index": pt.replies if pt is not None else None,
-            "grant_sent": pt.grants.pop(agent_id, None) if pt is not None else None,
+            "grant_sent": grant_at,
             "first_audio_from_gateway": None, "first_audio_to_client": None,
             "assistant_done": None, "first_audio_played": None,
             "play_end": None, "play_end_interrupted": None,

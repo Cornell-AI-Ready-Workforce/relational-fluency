@@ -396,6 +396,16 @@ def build(session_dir: Path) -> Dict[str, Any]:
             # values (pipeline 2026-09-23e / room pacing 2026-09-23c); None
             # before they were written.
             "pacing": realtime.get("pacing"),
+            # And the other knob blocks the same event carries, for the same
+            # reason: each can be flipped without a version bump, so without
+            # them two halves of a wave run under different gates read the
+            # same here. The participant-turn gate (23c), the bridge's
+            # cancelled-output and multi-item handling (23d) and the deferral
+            # / heard_text rules (23f); None before they were written.
+            "turn_gate": realtime.get("turn_gate"),
+            "cancelled_output": realtime.get("cancelled_output"),
+            "agent_transcript_items": realtime.get("agent_transcript_items"),
+            "record": realtime.get("record"),
         },
         # The participant's microphone as the browser reported it
         # (track.getSettings() and the user agent; see the

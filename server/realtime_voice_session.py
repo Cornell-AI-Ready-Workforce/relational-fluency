@@ -884,7 +884,9 @@ class RealtimeVoiceSessionRunner:
         self._transcripts_arrived = 0
         self._replay_marker: Optional[int] = None
         self._turn_end_arrivals: Optional[int] = None
+        self._turn_end_speech_began: Optional[float] = None
         self._unrouted_user_texts: List[str] = []
+        self._last_unrouted_at = 0.0
         self._preroll = bytearray()
         # (ended_at, agent_id, text), last 6. The timestamp is what bounds the
         # echo guard to the window in which playback echo is physically
@@ -976,6 +978,10 @@ class RealtimeVoiceSessionRunner:
         # agent_audio branch of _pump_events).
         self._turn_response_id: Optional[str] = None
         self._barged_response_id: Optional[str] = None
+        # The bridge's cancelled_output summaries by reply id, the last few:
+        # what an interrupted turn with no text of its own is filled from
+        # (see _text_from_cancelled_output).
+        self._cancelled_summaries: Dict[str, dict] = {}
         # Held replies are flushed to the client faster than real time, so the
         # server can finish a turn seconds before the participant has heard
         # it. This clock tracks when audio already sent will finish playing,
@@ -2287,6 +2293,7 @@ class RealtimeVoiceSessionRunner:
                     # suppression latches must not read it as such.
                     _record_cancelled_output(self.session.store, agent.id,
                                              self.segment, ev)
+                    self._note_cancelled_output(ev)
                     if (state["barged_in"] and not state["announced"]
                             and not ev.get("late")):
                         # The barge-in's finalize is waiting on this reply's
@@ -2328,8 +2335,22 @@ class RealtimeVoiceSessionRunner:
                     # suppressed to its own response_done. Output under
                     # ANOTHER response id is the fresh reply arriving first;
                     # the refused one is then over as far as this pump cares.
+                    #
+                    # A response_done under another id is the same news: the
+                    # fresh reply ended before sending a frame (0 ms room
+                    # replies, S4A sims), and the gateway may never send the
+                    # cancelled one's done at all (see cancel_response).
+                    # Swallowed as the refused reply's end, it left the floor
+                    # held with nothing finalized and the room silent for the
+                    # whole group_turn_timeout. It now falls through to the
+                    # ordinary finalize, which releases the floor. A done with
+                    # no id cannot be told apart and is still swallowed; the
+                    # gpt gateway names its replies.
                     frid = ev.get("response_id")
-                    if (etype in ("agent_audio", "agent_transcript_delta")
+                    new_output = etype in ("agent_audio",
+                                           "agent_transcript_delta")
+                    new_end = etype == "response_done" and not ev.get("stale")
+                    if ((new_output or new_end)
                             and frid and st.hold_id and frid != st.hold_id):
                         state["suppressing"] = False
                         state["held"] = []
@@ -2804,6 +2825,12 @@ class RealtimeVoiceSessionRunner:
                     # observes those late deltas while the loop keeps consuming.
                     announced_now = state["announced"]
                     state["announced"] = False
+                    # And the member state's own mark, set by _announce when
+                    # a streaming hold was adopted (_flush_held): nothing
+                    # else on that path takes it down, and left up it made
+                    # every later barge-in on this member read its PREVIOUS
+                    # turn's clock as the line cut off (see holder_heard).
+                    st.announced = False
                     state["finalized"] = True
                     audio_now = state.get("audio_bytes", 0)
                     state["audio_bytes"] = 0
@@ -2897,7 +2924,9 @@ class RealtimeVoiceSessionRunner:
                                      settled=None, audio_bytes: int = 0,
                                      audio_unterminated: bool = False,
                                      retried: bool = False,
-                                     reply_end: Optional[dict] = None) -> None:
+                                     reply_end: Optional[dict] = None,
+                                     cut_response_id: Optional[str] = None
+                                     ) -> None:
         """Grace-wait for a member's transcript, then close the turn.
 
         Runs as its own task so the pump's async-for keeps advancing and can
@@ -2933,6 +2962,11 @@ class RealtimeVoiceSessionRunner:
             )
         text = "".join(buf).strip()
         buf.clear()
+        if interrupted and not text:
+            # See _finalize_turn: a barge-in before any transcript arrived.
+            text = self._text_from_cancelled_output(
+                agent.id, text, cut_response_id,
+                turn_audio.audio_ms(audio_bytes))
         if not announced and not text:
             # Nothing at all came back: release the floor quietly rather than
             # writing a blank turn — but ONLY if this agent actually holds the
@@ -3597,7 +3631,12 @@ class RealtimeVoiceSessionRunner:
         if self.room is None:
             return False
         model = getattr(self.rt, "model", "") or realtime_model()
-        return relays_colleagues_as_text(model)
+        # ...and NOT on the gpt route, which relays colleagues as text too but
+        # whose member transcripts _pump_member does not forward (see its
+        # user_transcript branch): the scribe is the only source there, and
+        # the filter was deleting a participant's "Priya, are you there?" as
+        # a copy of their "Priya?" three seconds earlier.
+        return _realtime.room_has_second_transcriber(model)
 
     async def _record_user_turn(self, text: str, *, garbled: bool = False,
                                 item_id: Optional[str] = None,
@@ -3779,18 +3818,28 @@ class RealtimeVoiceSessionRunner:
         low_confidence = (voiced_ms is not None
                           and voiced_ms < _realtime.min_voiced_ms())
         named = self._named_in(text) if low_confidence else None
+        # Whether the room director reads it (PARTICIPANT_LOW_CONFIDENCE_
+        # DIRECTOR): every sure turn, a short one that names somebody, and
+        # every short one when the knob says "all".
+        to_director = (not low_confidence or named is not None
+                       or _realtime.low_confidence_director() == "all")
         self._last_user_norm, self._last_user_at = norm, now
         self._last_user_text = text
         self._last_user_low_confidence = low_confidence
         self._user_utterances += 1
         if low_confidence:
-            self.session.append_user(text, low_confidence=True,
-                                     names_cast=named is not None)
+            # `to_director` only where the knob overrides the default rule,
+            # so a session double without the keyword still takes the rest.
+            self.session.append_user(
+                text, low_confidence=True, names_cast=named is not None,
+                **({"to_director": True}
+                   if to_director and named is None else {}))
         else:
             self.session.append_user(text)
         unrouted = getattr(self, "_unrouted_user_texts", None)
-        if unrouted is not None and (not low_confidence or named):
+        if unrouted is not None and to_director:
             unrouted.append(text)
+            self._last_unrouted_at = now
         unclear = _script_mismatch(text)
         self.session.store.event(
             "user_turn", text=text, channel="voice", script_mismatch=unclear,
@@ -4323,6 +4372,7 @@ class RealtimeVoiceSessionRunner:
                 # What the routing wait counts from (see _run_group_turn):
                 # taken now, before the task can queue behind a held floor.
                 self._turn_end_arrivals = self._transcripts_arrived
+                self._turn_end_speech_began = self._speech_started_at
                 self._spawn_group_turn(self._run_group_turn())
         else:
             # Brief first, then decide whether to commit. The bridge
@@ -4371,8 +4421,12 @@ class RealtimeVoiceSessionRunner:
                     direction_applies_next_turn=bool(self._pending_direction),
                 )
             else:
-                await self.rt.commit_turn()
-                _timer(self).commit_sent()
+                # Only a commit that went out: commit_turn is a no-op while a
+                # reply is in flight, and a stage marked for it matched this
+                # turn's transcript to a commit that never happened. (None is
+                # a session that does not say; it is taken at its word.)
+                if await self.rt.commit_turn() is not False:
+                    _timer(self).commit_sent()
 
     # ── participant -> model ───────────────────────────────────────────────
     async def _client_to_model(self) -> None:
@@ -4500,6 +4554,11 @@ class RealtimeVoiceSessionRunner:
                         # talked over.
                         speaking_id = self.room.speaking
                         speaker = self.room.session_for(speaking_id)
+                        # The reply being cut off, named before the cancel
+                        # forgets it (see _text_from_cancelled_output).
+                        cut_rid = getattr(speaker, "_response_created_id", None)
+                        if not isinstance(cut_rid, str):
+                            cut_rid = None
                         if speaker is not None:
                             try:
                                 await speaker.cancel_response()
@@ -4557,6 +4616,7 @@ class RealtimeVoiceSessionRunner:
                                     # (not recovered) rather than never.
                                     retried=bool(getattr(
                                         speaker, "_retry_in_flight", False)),
+                                    cut_response_id=cut_rid,
                                 )
                             )
                         else:
@@ -4596,6 +4656,11 @@ class RealtimeVoiceSessionRunner:
                                 and (self._last_played or {}).get("agent_id")
                                 not in (None, speaking_id)):
                             self._cut_last_played()
+                        if cut_st is not None:
+                            # This turn is closed now; see the pump's
+                            # response_done finalize for why the mark must
+                            # not outlive it.
+                            cut_st.announced = False
                         self._barged = True
                         self._play_cursor = time.time()
                         await self._send({"type": "assistant_interrupted"})
@@ -4637,6 +4702,7 @@ class RealtimeVoiceSessionRunner:
                             # participant talked over still gets its outcome.
                             retried=bool(getattr(self.rt, "_retry_in_flight",
                                                  False)),
+                            cut_response_id=self._barged_response_id,
                         ))
                         # The page drops what it had scheduled; so does the
                         # playback clock (as the room branch does above).
@@ -4908,6 +4974,7 @@ class RealtimeVoiceSessionRunner:
                 # the record still holds everything the model produced.
                 _record_cancelled_output(self.session.store, self.agent_id,
                                          self.segment, ev)
+                self._note_cancelled_output(ev)
                 if (not self._speaking and self._settling_settled is not None
                         and ev.get("response_id") == self._barged_response_id
                         and not ev.get("late")):
@@ -5499,7 +5566,8 @@ class RealtimeVoiceSessionRunner:
                              settled=None, audio_bytes: int = 0,
                              audio_unterminated: bool = False,
                              retried: bool = False,
-                             reply_end: Optional[dict] = None) -> None:
+                             reply_end: Optional[dict] = None,
+                             cut_response_id: Optional[str] = None) -> None:
         """Close out an agent turn once its transcript has settled.
 
         response.done can arrive before the transcript events that belong to the
@@ -5562,6 +5630,11 @@ class RealtimeVoiceSessionRunner:
             await _await_transcript(buf, grace, stop=stop, settled=settled)
 
             text = _clean_agent_text("".join(buf))
+            if interrupted and not text:
+                # A barge-in before any transcript of this reply arrived.
+                text = _clean_agent_text(self._text_from_cancelled_output(
+                    agent_id, text, cut_response_id,
+                    turn_audio.audio_ms(audio_bytes)))
             # The character has answered: whatever line was replayed into
             # this session has been heard, so it must not be replayed again
             # on a later reconnect. (Only a 1:1 finalize reaches here; room
@@ -6513,6 +6586,12 @@ class RealtimeVoiceSessionRunner:
         if arrived_at is None:
             arrived_at = self._transcripts_arrived
         self._turn_end_arrivals = None
+        # And when this turn's speech began, taken at the same moment (the
+        # participant may be speaking again by the time the floor frees).
+        speech_began = getattr(self, "_turn_end_speech_began", None)
+        if speech_began is None:
+            speech_began = getattr(self, "_speech_started_at", 0.0)
+        self._turn_end_speech_began = None
         if self.room is None:
             return
         # asyncio.Lock queues waiters, so a turn spoken while another is being
@@ -6563,11 +6642,28 @@ class RealtimeVoiceSessionRunner:
             # still owes a transcript for a commit it has already made, so an
             # utterance spoken just before the floor came free is routed with
             # the others rather than left behind.
+            #
+            # An utterance already waiting unrouted is evidence enough where
+            # the scribe can say what it still owes, i.e. where it commits its
+            # own buffer (the gpt route). On the Gemini routes it commits
+            # nothing and `owed` is always False, so a transcript that landed
+            # after its OWN turn had stopped waiting made this turn route at
+            # once on those old words; its own transcript then did the same to
+            # the next turn, and the room stayed one utterance behind for good.
+            # There, what is waiting counts only if the latest of it arrived
+            # after this turn's speech began (a transcript that lands while
+            # the participant is still talking is this turn's); otherwise the
+            # turn waits for a transcript since it ended, and the old words
+            # are routed with it.
+            counts_owed = bool(getattr(room.scribe, "owns_input_buffer", False))
+            began = speech_began or 0.0
             deadline = time.time() + float(os.getenv("ROUTE_TRANSCRIPT_WAIT", "6"))
             wait_s = max(0.0, deadline - time.time())
             while time.time() < deadline:
-                heard = (bool(self._unrouted_user_texts)
-                         or self._transcripts_arrived != arrived_at)
+                waiting = bool(self._unrouted_user_texts) and (
+                    counts_owed
+                    or getattr(self, "_last_unrouted_at", 0.0) >= began)
+                heard = waiting or self._transcripts_arrived != arrived_at
                 owed = getattr(room.scribe, "awaiting_transcript", None)
                 if heard and not (owed is not None and owed(wait_s)):
                     break
@@ -7362,6 +7458,49 @@ class RealtimeVoiceSessionRunner:
             lo, hi = self._RATE_BAND_WPM
             return min(max(w / ms * 60_000, lo), hi), "encounter"
         return _realtime.heard_text_wpm(), "default"
+
+    def _note_cancelled_output(self, ev: dict) -> None:
+        """Keep a cancelled reply's summary for its interrupted turn's
+        finalize. Not a frame that trailed the reply's done (`late`): that is
+        a scrap after the summary, not the summary."""
+        rid = ev.get("response_id")
+        if not rid or ev.get("late"):
+            return
+        d = getattr(self, "_cancelled_summaries", None)
+        if d is None:
+            d = self._cancelled_summaries = {}
+        d[rid] = ev
+        while len(d) > 16:
+            d.pop(next(iter(d)))
+
+    def _text_from_cancelled_output(self, agent_id: str, text: str,
+                                    rid: Optional[str],
+                                    delivered_ms: int) -> str:
+        """The text of an interrupted turn that played audio and got no
+        transcript before the cancel: the words the bridge dropped with the
+        cancelled reply's tail (2026-09-23d). Before that the post-cancel
+        transcript .done filled such a turn; with it dropped the turn was
+        written text="" and transcript_missing, "the character spoke and no
+        transcript arrived", while its line sat in cancelled_output_dropped.
+        The filling is written down (interrupted_text_from_cancelled_output)
+        with the reply id that links the two; `text` is returned unchanged
+        whenever it is not empty, nothing played, or nothing was dropped."""
+        if text or not rid or delivered_ms <= 0:
+            return text
+        ev = (getattr(self, "_cancelled_summaries", None) or {}).get(rid)
+        if not ev:
+            return text
+        lines = [t.strip() for t in ev.get("transcripts") or []
+                 if isinstance(t, str) and t.strip()]
+        recovered = (" ".join(lines) if lines
+                     else (ev.get("text") or "").strip())
+        if not recovered:
+            return text
+        self.session.store.event(
+            "interrupted_text_from_cancelled_output", agent_id=agent_id,
+            segment=self.segment, response_id=rid, text=recovered,
+            audio_ms=delivered_ms)
+        return recovered
 
     def _heard_fields(self, agent_id: str, text: str, delivered_ms: int, *,
                       interrupted: bool, cap_truncated: bool) -> dict:

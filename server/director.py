@@ -315,8 +315,11 @@ def _format_transcript(shared_history: list, name_lookup: dict,
     # director only when it names someone: "Priya?" on 400 ms of voice is
     # still an address, while a transcriber's guess over near-silence is not a
     # thing the participant said for the room to answer (issue #21).
+    # `to_director` is the runner's reading of that rule with
+    # PARTICIPANT_LOW_CONFIDENCE_DIRECTOR applied ("all" lets every one in).
     shared_history = [e for e in shared_history
-                      if not e.get("low_confidence") or e.get("names_cast")]
+                      if not e.get("low_confidence") or e.get("names_cast")
+                      or e.get("to_director")]
     recent = shared_history[-max_turns:]
     lines = []
     for entry in recent:

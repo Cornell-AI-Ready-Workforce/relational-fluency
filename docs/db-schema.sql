@@ -185,6 +185,10 @@ CREATE TABLE encounter (
     text_model          text,
     director_model      text,
     steering_model      text,                       -- provenance.steering_model (since 2026-09-23)
+    pipeline_version    text,                       -- provenance.pipeline_version (since 2026-09-23)
+    room_pacing_version text,                       -- provenance.room_pacing_version
+    pipeline_provenance jsonb,                      -- the knob values that ran: turn_gate, pacing,
+                                                    -- record, cancelled_output, input_rate, ...
     deploy_revision     int,                        -- ECS task-definition revision, if known
     spec_sha256         text,                       -- spec_fingerprint.sha256 at the time
     spec_trigger_ids    text[],                     -- spec_fingerprint.trigger_ids

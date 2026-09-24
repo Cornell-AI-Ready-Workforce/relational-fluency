@@ -355,6 +355,20 @@ def text_client() -> AsyncAnthropic:
 #                sending 16 kHz (read as 24 kHz) while provenance said 24000.
 #                From 2026-09-23c the rate follows each session's model, so a
 #                23b record's input_rate is not what its gpt sessions sent.
+#                The same held on the NATIVE-AUDIO route, which this entry
+#                did not say until 2026-09-23g: runner- and room-built
+#                native-audio sessions sent 16 kHz raw on every version
+#                before 23c while 23a/23b provenance said input_rate 24000
+#                and input_resampler audioop.ratecv, and from 23c they send
+#                24 kHz resampled. Measured 2026-09-24 through the bridge's
+#                own send_audio, on a session built as the runner builds it:
+#                the gateway reads that route
+#                at 24 kHz too, 157 input audio tokens at 24 kHz against 108
+#                for the same audio sent 16 kHz (0.69, i.e. 2/3), so pre-23c
+#                native-audio encounters were heard 1.5x fast as well. The
+#                transcript came back either way ("Oh yeah. So I'm actually
+#                having a competing offer." / "Yeah, so I'm ..."), with the
+#                same onset of the reply (6.2 s).
 #   2026-09-23d  bridge correctness (issue #23): on the gpt route, what the
 #                gateway still sends for a reply after a barge-in cancel is
 #                no longer played or made into a second turn (that was the
@@ -394,6 +408,24 @@ def text_client() -> AsyncAnthropic:
 #                generated_text, heard_text (the words that fit in the audio
 #                relayed for it) and heard_estimate; `text` is unchanged.
 #                Knobs and values in `record`.
+#   2026-09-23g  review fixes. gpt rooms: the near-duplicate filter no
+#                longer runs where the scribe is the only transcriber (it
+#                deleted "Priya, are you there?" as a copy of "Priya?");
+#                turn_gate.room_dedupe_second_source says where it runs.
+#                1:1 and rooms: an interrupted turn that played audio and got
+#                no transcript before the cancel takes its text from the
+#                dropped tail (interrupted_text_from_cancelled_output) and is
+#                no longer transcript_missing; a barge-in inside a retry's
+#                window discards the retry's reply (and a resumed head) as
+#                cancelled_output instead of playing it. Record: record.json
+#                provenance carries turn_gate, cancelled_output,
+#                agent_transcript_items and record; a floor holder's
+#                announced mark no longer outlives its turn (the stale
+#                playback_cut of 23e by the adopt path); turn_timing binds a
+#                reply to the participant turn current at its grant, and
+#                commit_sent is marked only for a commit that went out.
+#                PARTICIPANT_LOW_CONFIDENCE_DIRECTOR (default "named", as
+#                before) can give the director every short turn.
 #
 # ROOM_PACING_VERSION:
 #   2026-09-23a  as d6f319d.
@@ -411,8 +443,17 @@ def text_client() -> AsyncAnthropic:
 #                kept). A participant resuming within ROOM_SPLIT_TURN_S of
 #                their own commit no longer cancels the reply to it
 #                (split_turn_extended). Plus the probe clock under 23e.
-PIPELINE_VERSION = "2026-09-23f"
-ROOM_PACING_VERSION = "2026-09-23c"
+#   2026-09-23d  review fixes. A refused hold no longer swallows the fresh
+#                reply's done when that reply ends empty (the floor was held
+#                for the whole group turn timeout); the commit-only grant no
+#                longer takes a cancelled reply's kept tail as the commit's
+#                answer, so its one fallback create goes out; on the Gemini
+#                routes an utterance left unrouted before this turn's speech
+#                began no longer routes the turn on its own (the room ran one
+#                utterance behind): the turn waits for its own transcript and
+#                routes on both.
+PIPELINE_VERSION = "2026-09-23g"
+ROOM_PACING_VERSION = "2026-09-23d"
 
 
 def provenance(model: Optional[str] = None) -> dict:
@@ -447,7 +488,7 @@ def provenance(model: Optional[str] = None) -> dict:
         **audio_provenance(model or realtime),
         # The participant-turn gate's knob values (pipeline 2026-09-23c); see
         # server/voice/realtime.py turn_gate_provenance.
-        "turn_gate": turn_gate_provenance(),
+        "turn_gate": turn_gate_provenance(model or realtime),
         # cancelled_output ("discard"/"relay") and agent_transcript_items
         # (pipeline 2026-09-23d); see bridge_provenance.
         **bridge_provenance(model or realtime),

@@ -162,10 +162,13 @@ class FakeSession:
         self.shared_history = []
         self.steering_log = []
 
-    def append_user(self, text, *, low_confidence=False, names_cast=False):
+    def append_user(self, text, *, low_confidence=False, names_cast=False,
+                    to_director=None):
         entry = {"speaker": "user", "text": text}
         if low_confidence:
-            entry.update(low_confidence=True, names_cast=bool(names_cast))
+            entry.update(low_confidence=True, names_cast=bool(names_cast),
+                         to_director=(bool(names_cast) if to_director is None
+                                      else bool(to_director)))
         self.shared_history.append(entry)
 
     def append_agent(self, agent_id, text):
@@ -485,6 +488,11 @@ def test_the_gate_is_in_provenance_with_its_defaults():
         "input_buffer_restart": True,
         "participant_dedupe_overlap": 0.9,
         "room_merge_queued_turns": True,
+        # Review fixes (pipeline 2026-09-23g): the director rule is a knob,
+        # and whether a room on this model runs the near-duplicate filter at
+        # all (not on gpt, whose scribe is the only transcriber).
+        "participant_low_confidence_director": "named",
+        "room_dedupe_second_source": False,
     }
 
 

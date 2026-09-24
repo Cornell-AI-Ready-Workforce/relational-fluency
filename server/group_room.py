@@ -713,10 +713,30 @@ class GroupRoom:
 
         A reply can be complete before this looks (response.done came 2.3 s
         after response.created in the probes), and its done clears every
-        in-flight flag, so output that arrived after the commit counts too."""
+        in-flight flag, so output that arrived after the commit counts too.
+
+        Except output of a reply already cancelled when the commit went out.
+        A suppressed reply on this route is cancelled with its tail KEPT
+        (_pump_member's discard_tail=False), and that tail re-binds
+        _response_created_id and moves every output clock read here: the wait
+        returned "started" on it, the one fallback create was never sent, and
+        a commit that started nothing left the member silent for the whole
+        group turn timeout. While any such reply is outstanding, only a reply
+        under a name that is neither cancelled nor known at the commit counts,
+        by its response.created or its done."""
         deadline = since + max(limit, 0.0)
+        stale = set(getattr(rt, "_cancelled_ids", None) or ())
+
+        def _ids():
+            return (set(getattr(rt, "_created_ids", None) or ())
+                    | set(getattr(rt, "_done_ids", None) or ()))
+        known = _ids()
         while True:
-            if (getattr(rt, "_response_created_id", None)
+            if stale:
+                rid = getattr(rt, "_response_created_id", None)
+                if (rid and rid not in stale) or (_ids() - known - stale):
+                    return "started"
+            elif (getattr(rt, "_response_created_id", None)
                     or getattr(rt, "_response_saw_output", False)
                     or getattr(rt, "autofire_active", False)
                     or (getattr(rt, "_last_output_at", 0.0) or 0.0) >= since

@@ -272,7 +272,16 @@ is written as a `user_turn_suppressed` event with its text and `reason`
   transcript. `0` restores the old behaviour.
 - `PARTICIPANT_DEDUPE_OVERLAP` — default `0.9`, the share of the shorter
   line's words that makes two transcripts within 5 s one utterance on a room
-  route with a second transcriber (was 0.6).
+  route with a second transcriber (was 0.6). Only native-audio rooms have
+  one: from `2026-09-23g` the filter does not run on gpt rooms, whose scribe
+  is the only transcriber (`turn_gate.room_dedupe_second_source`). The 0.9
+  bar has not been measured against native-audio member-vs-scribe pairs;
+  check it before a native-audio pilot.
+- `PARTICIPANT_LOW_CONFIDENCE_DIRECTOR` — default `named`: a
+  `low_confidence` turn reaches the room director only when it names a cast
+  member. `all` gives the director every one of them (a real "No." is about
+  350 ms of voice); the steering review skips them either way. From
+  `2026-09-23g`.
 - `ROOM_MERGE_QUEUED_TURNS` — default `1`: utterances spoken while a room's
   floor is held are routed together when it frees
   (`user_turns_merged_for_routing`); each stays its own `user_turn`. `0`
@@ -290,7 +299,13 @@ re-transcription for those. Under `2026-09-23b` itself the 24 kHz reached only
 sessions built with an explicit model, which the runner and the room do not
 do, so a `2026-09-23b` gpt encounter was still sent 16 kHz even though its
 provenance says 24000; the rate follows each session's model from
-`2026-09-23c`.
+`2026-09-23c`. The native-audio route was affected the same way: its runner-
+and room-built sessions sent 16 kHz raw before `2026-09-23c` (provenance on
+`23a`/`23b` says 24000 and `audioop.ratecv`, which is wrong) and 24 kHz
+resampled from `23c`. The gateway reads that route at 24 kHz as well
+(measured 2026-09-24: 157 input audio tokens at 24 kHz against 108 for the
+same audio at 16 kHz), so earlier native-audio encounters were also heard
+1.5x fast.
 
 > **What A-only does to the S1/Teamwork rule.** `FORM_EXCLUSIONS` in
 > `server/runs.py` bars **S1A from any run that also contains Teamwork** — the
@@ -311,13 +326,16 @@ provenance says 24000; the rate follows each session's model from
 > the exclusion starts applying again. Both mechanisms exist in the merged
 > code; the default is A.
 
-## What changed on 2026-09-23 (pipeline_version 2026-09-23a to 2026-09-23f)
+## What changed on 2026-09-23 (pipeline_version 2026-09-23a to 2026-09-23g)
 
 Fixes for issues #21-#25, landed mid-study. Every record carries
 `pipeline_version` and `room_pacing_version` (on `realtime_session_started`,
 and in `/health` under `gateway`), plus the knob values that ran (`turn_gate`,
 `pacing`, `record`, `cancelled_output`, `input_rate`,
-`input_transcription_model`, `max_output_tokens`). Split the archive on those
+`input_transcription_model`, `max_output_tokens`). From `23g` record.json's
+`provenance` carries all of them too, and the analysis DB's `encounter` row
+has `pipeline_version`, `room_pacing_version` and `pipeline_provenance` (the
+loader adds the columns to an older database). Split the archive on those
 fields, not on deploy dates. Each change below is reversible without a code
 change unless it says "no knob". The full per-version notes are the comment
 above `PIPELINE_VERSION` in `server/llm.py`.
@@ -326,6 +344,7 @@ above `PIPELINE_VERSION` in `server/llm.py`.
 |---|---|---|
 | 23a | Instrumentation only: `turn_timing`, page `play_start`/`play_end` acks, `client_audio_settings`, and `cap_truncated`/`response_status` on `assistant_turn`. | nothing to reverse |
 | 23b | gpt route: participant audio sent at 24 kHz. It was sent at 16 kHz and read by the gateway as 24 kHz. | no knob (defect) |
+| 23c | The input rate follows each session's model: runner- and room-built gpt AND native-audio sessions went from 16 kHz raw to 24 kHz resampled. | no knob (defect) |
 | 23b | Live transcriber `gpt-4o-transcribe` (was `whisper-1`). | `INPUT_TRANSCRIPTION_MODEL=whisper-1` |
 | 23b | Reply cap 1200 tokens (was 380). | `REALTIME_MAX_OUTPUT_TOKENS=380` |
 | 23b | Page end-of-encounter drain up to 45 s (was 12). | no knob (`AUDIO_DRAIN_MAX_S` in `static/v2.html`) |
@@ -344,12 +363,17 @@ above `PIPELINE_VERSION` in `server/llm.py`.
 | 23e | Room `heard_seconds`/`total_seconds` are per turn (they accumulated across a member's turns). | no knob (record fix) |
 | 23e | Silence probe counts from when the last reply finished playing, checked every 1 s. | `PROBE_IDLE_FROM_PLAYBACK=0`, `PROBE_TICK_SECONDS=12` |
 | 23f | A reply read as a deferral ("I'll wait for Casey.") is blanked only when none of its audio was relayed. A spoken one keeps its text and is flagged `deferral`. The match's name slots are case-sensitive, so lines such as "That's for you to set." are no longer blanked. | `DEFERRAL_BLANK_AUDIBLE=1` (the regex fix has no knob) |
+| 23g | gpt rooms: the near-duplicate filter is off (the scribe is the only transcriber). | no knob (defect) |
+| 23g | An interrupted turn that played audio and had no transcript before the cancel takes its text from the dropped tail (`interrupted_text_from_cancelled_output`); it is no longer `transcript_missing`. | `CANCELLED_OUTPUT_DISCARD=0` restores the pre-23d relay |
+| 23g | A barge-in during a retry's window drops the retry's reply as `cancelled_output_dropped` instead of playing it. | `CANCELLED_OUTPUT_DISCARD=0` |
+| 23g | Record: knob blocks in record.json provenance; a stale `playback_cut` from an adopted hold no longer written; `turn_timing` rows tied to the participant turn of their grant, `commit_sent` only for a commit that went out. | record only |
+| room 23d | A refused hold no longer swallows an empty fresh reply's done (the floor was held for 45 s); a cancelled reply's tail no longer counts as the commit-only grant's answer; Gemini rooms no longer route one utterance behind after a late transcript. | no knob (defects) |
 | 23f | Interrupted and cap-truncated `assistant_turn`s carry `generated_text`, `heard_text` and `heard_estimate`. `heard_text` is the words that fit in the audio relayed, at the character's own measured rate or `HEARD_TEXT_WPM` (170). `text` is unchanged. The record also carries `heard_text` beside `text`. | record only; `HEARD_TEXT_WPM`, `HEARD_TEXT_CALIBRATE=0` |
 
 Caveats for analysis:
 
-- **Archived gpt encounters heard participants at 1.5x.** This covers
-  everything before `2026-09-23c`, including `23b`. On `23b` the 24 kHz fix
+- **Archived gpt and native-audio encounters heard participants at 1.5x.**
+  This covers everything before `2026-09-23c`, including `23b`. On `23b` the 24 kHz fix
   reached only sessions built with an explicit model, even though provenance
   says 24000. The actor and the live transcriber both heard the participant
   fast and pitched up. Treat those live participant transcripts, and the

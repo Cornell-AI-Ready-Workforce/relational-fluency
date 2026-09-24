@@ -520,8 +520,17 @@ def realtime_row_defaults(monkeypatch):
     for knob in ("PARTICIPANT_MIN_VOICED_MS", "PARTICIPANT_DROP_VOICED_MS",
                  "INPUT_PREROLL_MS", "INPUT_BUFFER_RESTART",
                  "PARTICIPANT_DEDUPE_OVERLAP", "ROOM_MERGE_QUEUED_TURNS",
+                 "PARTICIPANT_LOW_CONFIDENCE_DIRECTOR",
                  # The bridge's cancelled-tail discard (pipeline 2026-09-23d).
-                 "CANCELLED_OUTPUT_DISCARD"):
+                 "CANCELLED_OUTPUT_DISCARD",
+                 # Room reply lifecycle and the probe clock (2026-09-23e,
+                 # room pacing 2026-09-23c).
+                 "ROOM_COMMIT_ONLY_GRANT", "ROOM_GRANT_UNANSWERED_S",
+                 "ROOM_ADOPT_GUARD", "ROOM_SPLIT_TURN_S", "PROBE_TICK_SECONDS",
+                 "PROBE_IDLE_FROM_PLAYBACK", "PROBE_AFTER_SECONDS",
+                 # Record accuracy (2026-09-23f).
+                 "DEFERRAL_BLANK_AUDIBLE", "HEARD_TEXT_WPM",
+                 "HEARD_TEXT_CALIBRATE"):
         monkeypatch.delenv(knob, raising=False)
 
 
