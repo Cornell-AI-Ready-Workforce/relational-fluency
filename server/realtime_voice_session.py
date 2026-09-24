@@ -27,6 +27,8 @@ import time
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from .director import Director, DIRECTOR_MAX_SPEAKERS
+# Per-turn latency stages and the page's playback acks (issue #25). Record only.
+from .turn_timing import NullTimer, TurnTimer
 
 
 #: A sentence boundary the transcript stream ran together: a full stop,
@@ -148,6 +150,16 @@ class _MemberState:
     def drop(self, why: str = "") -> None:
         self.held = []
         self.mode = "idle"
+
+
+_NULL_TIMER = NullTimer()
+
+
+def _timer(owner):
+    """The turn clock of `owner`, or one that records nothing. Through a
+    getattr because several runner methods are exercised on bare test doubles
+    that never had one; instrumentation must not be what breaks them."""
+    return getattr(owner, "_timing", None) or _NULL_TIMER
 
 
 def _reply_end(ev: Optional[dict]) -> dict:
@@ -532,8 +544,6 @@ from .voice import realtime as _realtime
 # The one check that can tell a line the participant HEARD from a line the
 # record merely says was spoken. See server/voice/turn_audio.py.
 from .voice import turn_audio
-# Per-turn latency stages and the page's playback acks (issue #25). Record only.
-from .turn_timing import TurnTimer
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -3319,7 +3329,7 @@ class RealtimeVoiceSessionRunner:
         """
         # Arrival, not acceptance: a transcript this method goes on to drop
         # as a duplicate or an echo still arrived when it arrived.
-        self._timing.transcript_arrived()
+        _timer(self).transcript_arrived()
         if not text:
             if garbled:
                 self.session.store.event(
@@ -3837,7 +3847,7 @@ class RealtimeVoiceSessionRunner:
             # Every turn the page never confirmed the end of, written now with
             # what is known; after the finalizes above, so their
             # assistant_done is on it.
-            self._timing.flush()
+            _timer(self).flush()
             await self._close_room()
             if self.rt:
                 await self.rt.close()
@@ -3918,7 +3928,7 @@ class RealtimeVoiceSessionRunner:
             # nothing, pays for nothing, and the path that works
             # today is not touched.
             if await self.room.close_participant_turn():
-                self._timing.commit_sent()
+                _timer(self).commit_sent()
             # Tracked (see _spawn_group_turn) so an interaction
             # switch can cancel whichever turn holds self._floor.
             #
@@ -3985,7 +3995,7 @@ class RealtimeVoiceSessionRunner:
                 )
             else:
                 await self.rt.commit_turn()
-                self._timing.commit_sent()
+                _timer(self).commit_sent()
 
     # ── participant -> model ───────────────────────────────────────────────
     async def _client_to_model(self) -> None:
@@ -4232,7 +4242,7 @@ class RealtimeVoiceSessionRunner:
                     # VAD's own mark, before any confirm window: a withdrawn
                     # end is superseded by the next one, which is the end the
                     # reply then answers.
-                    self._timing.speech_end()
+                    _timer(self).speech_end()
                     confirm = self._end_of_turn_confirm_ms()
                     if confirm > 0 and not (self.is_group() and self.room is not None):
                         # THE PAUSE SPLIT, 1:1. The runner's bar (900 ms) fired
@@ -4692,7 +4702,7 @@ class RealtimeVoiceSessionRunner:
         if msg.get("type") == "playback":
             # The page saying a turn's first chunk started playing, or its
             # scheduled audio ended (static/v2.html; server/turn_timing.py).
-            self._timing.ack(msg)
+            _timer(self).ack(msg)
             return
         if msg.get("type") == "client_audio_settings":
             self._record_client_audio(msg)
@@ -4735,13 +4745,16 @@ class RealtimeVoiceSessionRunner:
         the tester's chain was near-digitally silent for most of 09-23 and
         nothing said which device or browser it was. Record only; nothing
         here changes how the audio is handled."""
-        if self._client_audio_reports >= 4:
+        reports = getattr(self, "_client_audio_reports", 0)
+        if reports >= 4:
             return
-        self._client_audio_reports += 1
+        self._client_audio_reports = reports + 1
         raw = msg.get("settings")
         raw = raw if isinstance(raw, dict) else {}
         settings = {}
         for key in self._CLIENT_AUDIO_KEYS:
+            if key not in raw:
+                continue       # absent is not the same fact as reported-null
             v = raw.get(key)
             if isinstance(v, bool) or v is None:
                 settings[key] = v
@@ -4749,7 +4762,14 @@ class RealtimeVoiceSessionRunner:
                 settings[key] = round(float(v), 6) if isinstance(v, float) else v
             elif isinstance(v, str):
                 settings[key] = v[:40]
-        ua = msg.get("user_agent")
+        # From the socket's own upgrade request rather than from the page:
+        # the same string navigator.userAgent returns, and the page is kept
+        # from reading it at all (tests/test_browser_compat.py).
+        ua = None
+        try:
+            ua = self.ws.headers.get("user-agent")
+        except Exception:  # noqa: BLE001 - a socket double without headers
+            ua = None
         self.session.store.event(
             "client_audio_settings", settings=settings,
             user_agent=ua[:400] if isinstance(ua, str) else None,
@@ -5819,7 +5839,7 @@ class RealtimeVoiceSessionRunner:
         """
         if self.room is None:
             return None
-        self._timing.grant_sent(agent_id)
+        _timer(self).grant_sent(agent_id)
         self.room.speaking = agent_id
         if await self.adopt_member(agent_id):
             return self.room.session_for(agent_id)
@@ -5947,6 +5967,10 @@ class RealtimeVoiceSessionRunner:
                     routed = await self.director.route(
                         self.session.shared_history, fresh
                     )
+                    # turn_timing's director stage: the decision, not the
+                    # director_route line, which is written only after the
+                    # first speaker has finished.
+                    _timer(self).director_decided()
                     route_fallback = next(
                         (r for r in routed if r.get("fallback")), None
                     )
@@ -6270,6 +6294,9 @@ class RealtimeVoiceSessionRunner:
                     routed = await self.director.route(
                         self.session.shared_history, fresh
                     )
+                    # A named first speaker skipped the director; this is
+                    # then its first decision this turn (turn_timing).
+                    _timer(self).director_decided()
                 except Exception as exc:  # noqa: BLE001, never break the room
                     self.session.store.event(
                         "director_error", message=redact_key(str(exc))
@@ -6307,7 +6334,6 @@ class RealtimeVoiceSessionRunner:
             # joining director_error on timestamp — a join nothing in this repo
             # performs. Director._fallback already tags its entry for exactly
             # this; carry the tag rather than dropping it.
-            self._timing.director_decided()
             self.session.store.event(
                 "director_route", speakers=[first] + followups, addressed=named,
                 fallback=route_fallback is not None,
@@ -7220,10 +7246,11 @@ class RealtimeVoiceSessionRunner:
         """When the bridge serving `agent_id` saw its latest reply's first
         audio (RealtimeVoiceSession.first_audio_at), for turn_timing."""
         rt = None
-        if self.room is not None and agent_id is not None:
-            rt = self.room.session_for(agent_id)
+        room = getattr(self, "room", None)
+        if room is not None and agent_id is not None:
+            rt = room.session_for(agent_id)
         if rt is None:
-            rt = self.rt
+            rt = getattr(self, "rt", None)
         return getattr(rt, "first_audio_at", None)
 
     async def _send_bytes(self, payload: bytes) -> None:
@@ -7232,9 +7259,15 @@ class RealtimeVoiceSessionRunner:
         except Exception:  # noqa: BLE001
             self._closed = True
             return
+        # The first chunk of the page's current turn: turn_timing's
+        # first_audio_to_client, and the bridge's own first-delta time beside
+        # it. Guarded whole, because this runs on the participant's audio path.
         timing = getattr(self, "_timing", None)
         if timing is not None:
-            cur = timing._current
-            if cur is not None and cur.get("first_audio_to_client") is None:
-                timing.audio_to_client(
-                    self._first_gateway_audio_at(cur.get("agent_id")))
+            try:
+                cur = timing._current
+                if cur is not None and cur.get("first_audio_to_client") is None:
+                    timing.audio_to_client(
+                        self._first_gateway_audio_at(cur.get("agent_id")))
+            except Exception:  # noqa: BLE001 - instrumentation only
+                pass

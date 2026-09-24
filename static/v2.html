@@ -2198,8 +2198,10 @@
         settings.baseLatency = audioCtx.baseLatency;
         settings.outputLatency = audioCtx.outputLatency;
       }
-      ws.send(JSON.stringify({ type: 'client_audio_settings', settings: settings,
-                               user_agent: (navigator && navigator.userAgent) || '' }));
+      // The browser itself is named by the server, from the socket's own
+      // User-Agent header: the page never reads the UA string (see
+      // tests/test_browser_compat.py; decisions here are capability checks).
+      ws.send(JSON.stringify({ type: 'client_audio_settings', settings: settings }));
     } catch (e) {}
   }
 

@@ -15,7 +15,10 @@ every event's `t` is on):
                               commit_turn, or the room scribe's commit); null
                               where the gateway started its own reply
     transcript_arrived        the participant transcript for that commit
-    director_decided          rooms: the director_route was written
+    director_decided          rooms: the director's first route() of this
+                              participant turn returned (after the first
+                              speaker, when the participant named that one
+                              and only the follow-up was routed)
     grant_sent                rooms: this character was given the floor
     first_audio_from_gateway  the first audio delta of this reply reached the
                               bridge (a held room reply: when it was held)
@@ -255,3 +258,15 @@ class TurnTimer:
             # or "evicted" (the page never confirmed the end).
             written_at=reason,
         )
+
+
+class NullTimer:
+    """A turn clock that records nothing: the runner's class-level default,
+    for the code paths that run on an object whose __init__ never ran."""
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return lambda *args, **kwargs: None
+
+    _current = None
