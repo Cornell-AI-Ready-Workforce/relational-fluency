@@ -1363,6 +1363,23 @@ _FILLERS = frozenset((
 ))
 
 
+def drop_wordless() -> bool:
+    """PARTICIPANT_DROP_WORDLESS, default on. A transcript with no letter or
+    digit in it at all ("." / "..." / "```" / "。") is the transcriber
+    describing a sound, not a participant saying something, at ANY voiced
+    level: written as user_turn_suppressed{no_speech} with its text and never
+    answered. Measured 2026-09-24 on the P6 verification runs: three such
+    lines over 300-500 ms of voice (playback bleed and a breath) were kept as
+    low_confidence turns and a character replied to each. Fillers with letters
+    ("Hmm.", "Okay") are unaffected. 0 turns this off."""
+    return _int_setting("PARTICIPANT_DROP_WORDLESS", 1) != 0
+
+
+def is_wordless(text: str) -> bool:
+    """True for a non-empty transcript with no letter or digit in it."""
+    return bool((text or "").strip()) and re.search(r"[^\W_]", text or "") is None
+
+
 def is_filler_only(text: str) -> bool:
     """True for a transcript with no word in it that is not a filler: "" /
     "." / "..." / "Um..." / "Mhm." / "Hmm, uh."."""
@@ -2341,7 +2358,8 @@ class RealtimeVoiceSession:
             return
         if self.voiced_bar is not None:
             # Voiced audio since the last commit, for the transcript gate. On
-            # the page's own frames (20 ms, CLIENT_RATE), the granularity the
+            # the page's own frames (100 ms, CLIENT_RATE: pcm-worklet.js flushes
+            # every 1600 samples), the granularity the
             # runner's VAD decides on. A bar that cannot be read counts
             # nothing rather than failing the append.
             try:
@@ -3994,6 +4012,22 @@ class RealtimeVoiceSession:
                         # (the response.created branch above), and its
                         # cancelled_output summary says so (`recancelled`).
                         self._recancel_on_created = True
+                        continue
+
+                    if (code == "response_cancel_not_active"
+                            and not self._response_active):
+                        # A cancel that found nothing to cancel, with no reply
+                        # of ours in flight: the unconditional cancel_response()
+                        # _enter sends on a fresh session at an interaction
+                        # boundary (S2A i1 -> i2) is the case seen live. Nothing
+                        # was lost, so it is recorded (voice_error) and never
+                        # reaches the page: relayed as `error` it painted
+                        # "Something went wrong. Please try again." and set the
+                        # page's serverStatedFailure, which makes the next
+                        # ordinary socket drop the fatal kind.
+                        yield {"type": "error", "message": str(ev.get("error")),
+                               "benign": True, "transient": True,
+                               "recoverable": True}
                         continue
 
                     if code == "input_audio_buffer_commit_empty" and self._commit_tags:

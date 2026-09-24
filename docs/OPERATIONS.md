@@ -464,6 +464,21 @@ Caveats for analysis:
   `group_turn_skipped` with reason `low_confidence`. That participant line got
   no reply.
 
+## What changed on 2026-09-24, after verification (pipeline_version 2026-09-24c)
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 24c | A transcript with no letter or digit at all ("..." / "." / "```" / "。") is written as `user_turn_suppressed{no_speech}` at any voiced level, never as a turn. In a room the turn is skipped. The final verification saw three of these, over 300–500 ms of playback bleed or breath, answered as `low_confidence` turns. Fillers with letters ("Hmm.", "Okay") are unchanged. | `PARTICIPANT_DROP_WORDLESS` (1; 0 restores `24b`) |
+| 24c | 1:1: a gateway `response_cancel_not_active` with no reply in flight is recorded as `voice_error` but no longer sent to the page. At the S2A i1→i2 boundary it painted "Something went wrong. Please try again." and marked the next socket drop as fatal. This was already live before this branch. | none |
+
+What the verification established about the tester's S3A "phantoms"
+(`s_1790217895_4025d8`): the two long invented sentences ("I'm not a cat…",
+"Goodbye. Will Lego play more games…") were real short utterances, "Hello?"
+and "Casey?". The new pipeline transcribes them correctly, 3 of 3 times each.
+The invented text came from the old pipeline: 16 kHz audio read as 24 kHz,
+whisper-1, and buffers of up to 44 s. Earlier live transcripts should be
+read with that in mind. The offline re-transcription is the analysis copy.
+
 ## The seven-minute floor, and the thirteen-minute stop
 
 Every study encounter runs **at least 7:00** and **at most 13:00**, measured

@@ -3732,6 +3732,11 @@ class RealtimeVoiceSessionRunner:
         # Arrival, not acceptance: a transcript this method goes on to drop
         # as a duplicate or an echo still arrived when it arrived.
         _timer(self).transcript_arrived()
+        if _realtime.drop_wordless() and _realtime.is_wordless(text):
+            # No letter or digit at all: the transcriber describing a sound,
+            # whatever the voiced count (see voice/realtime.drop_wordless).
+            suppressed("no_speech")
+            return
         if (voiced_ms is not None and voiced_ms <= _realtime.drop_voiced_ms()
                 and _realtime.is_filler_only(text)):
             # The one hard drop, and deliberately narrow: next to no voice in
@@ -5363,6 +5368,10 @@ class RealtimeVoiceSessionRunner:
                     transient=bool(ev.get("transient")),
                     agent_id=self.agent_id,
                 )
+                if ev.get("benign"):
+                    # Recorded above; nothing for the participant to know
+                    # (a cancel with nothing to cancel, see voice/realtime.py).
+                    continue
                 if ev.get("transient"):
                     # A fault the session survived — a discarded audio chunk,
                     # not a lost turn (see voice/realtime.py). Audio deltas

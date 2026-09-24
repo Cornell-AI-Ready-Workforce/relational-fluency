@@ -459,10 +459,12 @@ def test_a_long_turn_is_an_ordinary_turn():
 
 
 def test_where_voiced_audio_cannot_be_counted_no_gate_applies():
-    """Gemini's own commits carry no tag: voiced_ms is None, and the gate
-    neither drops nor tags, which is the behaviour before it existed."""
+    """Gemini's own commits carry no tag: voiced_ms is None, and the voice
+    gates neither drop nor tag, which is the behaviour before they existed.
+    (A line with no letter or digit at all is dropped on every route since
+    24c - that rule does not need a voiced count - so this uses a word.)"""
     runner, session, _ = runner_for("S2A")
-    asyncio.run(runner._record_user_turn("."))
+    asyncio.run(runner._record_user_turn("Okay."))
     (turn,) = session.store.of("user_turn")
     assert turn["low_confidence"] is False and turn["voiced_ms"] is None
 
@@ -470,6 +472,7 @@ def test_where_voiced_audio_cannot_be_counted_no_gate_applies():
 def test_the_gate_thresholds_are_knobs(monkeypatch):
     monkeypatch.setenv("PARTICIPANT_MIN_VOICED_MS", "0")
     monkeypatch.setenv("PARTICIPANT_DROP_VOICED_MS", "-1")
+    monkeypatch.setenv("PARTICIPANT_DROP_WORDLESS", "0")   # 24c's rule, off for this test
     runner, session, _ = runner_for("S2A")
     asyncio.run(runner._record_user_turn(".", voiced_ms=0))
     (turn,) = session.store.of("user_turn")

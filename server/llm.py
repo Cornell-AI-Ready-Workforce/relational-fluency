@@ -507,7 +507,12 @@ def text_client() -> AsyncAnthropic:
 #                "Thank you.", "Casey?" heard as "TC?") unanswered. It
 #                routes as before 24a, on context; only a gate suppression
 #                (implausible_rate, no_speech, probe_pad) skips the turn.
-PIPELINE_VERSION = "2026-09-24b"
+#   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
+#                is suppressed as no_speech at any voiced level
+#                (PARTICIPANT_DROP_WORDLESS), and a gateway
+#                response_cancel_not_active with no reply in flight is
+#                recorded but no longer shown to the participant as an error.
+PIPELINE_VERSION = "2026-09-24c"
 ROOM_PACING_VERSION = "2026-09-24b"
 
 
