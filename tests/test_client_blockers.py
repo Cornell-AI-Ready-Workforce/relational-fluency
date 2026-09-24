@@ -820,7 +820,8 @@ function primed(uploadJs) {
     await b.clock.advance(60000);
     assert(/Finishing here/.test($(b, 'nextTitle').textContent),
       'the upload wait repainted over the goodbye screen: ' + $(b, 'nextTitle').textContent);
-    assert(/CODE1/.test($(b, 'nextBody').innerHTML), 'the partial code was lost on the way out');
+    // No code on this exit since 2026-09-23: it is reached only by finishing the run.
+    assert(!/CODE1/.test($(b, 'nextBody').innerHTML), 'the between-encounter exit handed out the completion code');
   }
 
   // --- leaving the study holds briefly for an in-flight upload ------------
@@ -1041,7 +1042,8 @@ function primed(putAtMs, advanceDelayMs) {
     assert(!/may not have been counted/.test(body),
       'the exit door denied an encounter the run had already recorded: ' + body);
     assert(/counted towards your run/.test(body), 'the door did not say what did happen: ' + body);
-    assert(/CODE1/.test(body), 'the code was lost on the way out');
+    assert(!/CODE1/.test(body), 'the between-encounter exit handed out the completion code');
+    assert(/contact below/.test(body), 'the exit does not say who to tell: ' + body);
   }
 
   // --- a recorder that died mid-encounter is still said on the next screen --
@@ -1553,8 +1555,8 @@ def test_the_end_of_the_road_still_has_a_door():
         "the drop card hands out the completion code again")
     code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
     code = re.sub(r"^\s*//.*$", "", code, flags=re.M)
-    assert "get my code" not in code.lower().replace("get my code and finish", ""), (
-        "the finish-with-code door is back on the drop card")
+    assert "get my code" not in code.lower(), (
+        "a finish-with-code door is back on the page")
 
 def test_every_page_carries_the_tab_icon():
     """One icon, and not the 334 KB one.
