@@ -354,7 +354,7 @@ async function connected(position, total, opts) {
     assert.strictEqual(c.reconnect, 'Reconnect', 'the retry vanished on the second loss');
     assert(c.doors.some(d => /encounter 3 of 4/.test(d)),
       'no door to the next encounter on a repeated loss: ' + JSON.stringify(c.doors));
-    assert(c.doors.includes('Finish here and get my code'), 'no finish door: ' + JSON.stringify(c.doors));
+    assert(!c.doors.includes('Finish here and get my code'), 'the finish-with-code door is back: ' + JSON.stringify(c.doors));
     assert(/second time/.test(c.text) && /stopped early/.test(c.text),
       'the card does not say why the doors are there: ' + c.text);
 
@@ -390,7 +390,7 @@ async function connected(position, total, opts) {
     assert.strictEqual(c.reconnect, null, 'a third attempt is offered after two stated failures');
     assert(c.doors.some(d => /encounter 3 of 4/.test(d)),
       'exhausted card has no door to the next encounter: ' + JSON.stringify(c.doors));
-    assert(c.doors.includes('Finish here and get my code'), JSON.stringify(c.doors));
+    assert(!c.doors.includes('Finish here and get my code'), JSON.stringify(c.doors));
     assert(/twice/.test(c.text) && /go on/.test(c.text), 'the card does not say why: ' + c.text);
     c.press(c.doors.find(d => /encounter 3 of 4/.test(d)));
     await b.clock.advance(1000);
@@ -419,7 +419,8 @@ async function connected(position, total, opts) {
     assert(/CODE-77/.test(b.dom.$('nextBody').innerHTML), 'no completion code: ' + b.dom.$('nextBody').innerHTML);
   }
 
-  // ---- 4. No session ever opened: nothing to advance, so the finish door carries the code
+  // ---- 4. No session ever opened: nothing to advance on and no code door,
+  //         so the retry stays and the card sends them to the study team
   {
     const b = await connected(2, 4, { noSession: true });
     set(b, "sessionId = null;");
@@ -428,12 +429,10 @@ async function connected(position, total, opts) {
     frame(b, { type: 'error', message: 'x' }); drop(b);
     const c = card(b);
     assert(!c.doors.some(d => /encounter 3 of 4/.test(d)), 'a door that /advance answers 400 to: ' + JSON.stringify(c.doors));
-    assert(c.doors.includes('Finish here and get my code'), JSON.stringify(c.doors));
-    c.press('Finish here and get my code');
-    await b.clock.advance(1000);
-    assert(!b.dom.$('dropNote').classList.contains('show'));
-    assert.strictEqual(b.dom.$('nextTitle').textContent, 'Finishing here');
-    assert(/CODE-77/.test(b.dom.$('nextBody').innerHTML), b.dom.$('nextBody').innerHTML);
+    assert(!c.doors.includes('Finish here and get my code'), 'the finish-with-code door is back: ' + JSON.stringify(c.doors));
+    assert.strictEqual(c.reconnect, 'Try again', 'the card is left with nothing to press: ' + JSON.stringify(c));
+    assert(/study team/.test(c.text) && !/your code/.test(c.text), c.text);
+    assert(!/CODE-77/.test(b.dom.$('nextBody').innerHTML || ''), 'a completion code was handed out on a failed start');
   }
 
   // ---- 5. A plain first drop (no stated reason) is the simple reconnect card
