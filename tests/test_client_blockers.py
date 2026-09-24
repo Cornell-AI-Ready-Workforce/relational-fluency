@@ -820,7 +820,8 @@ function primed(uploadJs) {
     await b.clock.advance(60000);
     assert(/Finishing here/.test($(b, 'nextTitle').textContent),
       'the upload wait repainted over the goodbye screen: ' + $(b, 'nextTitle').textContent);
-    assert(/CODE1/.test($(b, 'nextBody').innerHTML), 'the partial code was lost on the way out');
+    // No code on this exit since 2026-09-23: it is reached only by finishing the run.
+    assert(!/CODE1/.test($(b, 'nextBody').innerHTML), 'the between-encounter exit handed out the completion code');
   }
 
   // --- leaving the study holds briefly for an in-flight upload ------------
@@ -1041,7 +1042,8 @@ function primed(putAtMs, advanceDelayMs) {
     assert(!/may not have been counted/.test(body),
       'the exit door denied an encounter the run had already recorded: ' + body);
     assert(/counted towards your run/.test(body), 'the door did not say what did happen: ' + body);
-    assert(/CODE1/.test(body), 'the code was lost on the way out');
+    assert(!/CODE1/.test(body), 'the between-encounter exit handed out the completion code');
+    assert(/contact below/.test(body), 'the exit does not say who to tell: ' + body);
   }
 
   // --- a recorder that died mid-encounter is still said on the next screen --
@@ -1521,38 +1523,40 @@ def test_the_end_of_the_road_still_has_a_door():
     every developer machine and on any deployment nobody configured. So the
     exhausted card could render with a message and nothing to press.
 
-    The finish door is therefore unconditional and does not wait on a fetch. It
-    goes through showClosing, the same surface the "I can't continue" exit uses,
-    so someone who stops here gets what someone who stops anywhere else gets:
-    their completion code, which is what payment depends on.
+    The door that used to guarantee an exit was "Finish here and get my code".
+    It was removed on 2026-09-23 (the researcher's decision: the completion code
+    is reached only through the run). So the guarantee is now held by the two
+    doors that remain, and this test pins both halves: where there is a session
+    to advance on, the exhausted card offers the next encounter; where there is
+    not, the retry stays on the card. And no drop card hands out the code.
     """
     src = V2.read_text(encoding="utf-8")
     exit_fn = src[src.index("function showFailureExit("):]
     exit_fn = exit_fn[:exit_fn.index("\n  $('dropReconnect').addEventListener")]
+    dropped = src[src.index("function onConnectionDropped("):src.index("function showFailureExit(")]
 
     assert "function showFailureExit(exhausted)" in src, (
         "showFailureExit can no longer tell a spent card from a retryable one")
     assert "showFailureExit(true)" in src and "showFailureExit(false)" in src, (
         "both call sites no longer say which state they are in")
 
-    # The door is inside the `if (exhausted)` block, ahead of both network
-    # calls, so no failed request can remove it.
+    # Exhausted with a session: the next encounter, ahead of both network calls.
     door = exit_fn[exit_fn.index("if (exhausted)"):exit_fn.index("contactWho()")]
-    assert "showClosing(" in door, (
-        "the exhausted card has no finish button, so a participant is sealed in")
-    assert "completion_code" in door, (
-        "finishing here does not hand over the completion code, which is what payment needs")
-    assert "$('dropNote').classList.remove('show')" in door, (
-        "the drop card is not dismissed, so it sits over the closing screen")
+    assert "skipEncounter()" in door, (
+        "the exhausted card has no door to the next encounter")
 
-    # And the door must not be behind the return_url lookup.
-    assert door.index("showClosing(") < exit_fn.index("/api/run/config"), (
-        "the finish button is built after the survey lookup, so an unset "
-        "SURVEY_RETURN_URL or a failed fetch can still strand someone")
+    # Exhausted with no session: the retry is kept rather than hidden.
+    no_session = dropped[dropped.index("} else if (exhausted) {"):dropped.index("} else if (fatal) {")]
+    assert "$('dropReconnect').style.display = ''" in no_session, (
+        "a spent card with nothing to advance on hides its only button")
 
-
-LANDING = ROOT / "static" / "landing.html"
-
+    # The code is never handed out from the drop card.
+    assert "showClosing(" not in exit_fn and "completion_code" not in exit_fn, (
+        "the drop card hands out the completion code again")
+    code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    code = re.sub(r"^\s*//.*$", "", code, flags=re.M)
+    assert "get my code" not in code.lower(), (
+        "a finish-with-code door is back on the page")
 
 def test_every_page_carries_the_tab_icon():
     """One icon, and not the 334 KB one.

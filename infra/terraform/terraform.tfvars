@@ -74,4 +74,7 @@ actor_model = "gpt-realtime-2.1"
 # Director (routing + stage directions). 3.1-flash-lite answers a routing call in
 # about 1 s warm; 2.5-flash took 2.6 to 5.5 s in the same test (2026-09-18), and
 # that call sits on the critical path of every group turn.
-director_model = "nto.gemini-3.1-flash-lite"
+# nto.gemini-3.5-flash-lite since 2026-09-23 (was nto.gemini-3.1-flash-lite);
+# see docs/model-benchmark-2026-09-23.md. Recorded per encounter as
+# provenance.director_model.
+director_model = "nto.gemini-3.5-flash-lite"

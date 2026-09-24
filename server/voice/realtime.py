@@ -1845,7 +1845,7 @@ class RealtimeVoiceSession:
         and it must not: re-speaking a capped line would say it twice.
         `output_items` is the number of output items the reply came in,
         from response.output where the frame carries one, else from the
-        output_item.added frames counted while it streamed.
+        output_item.added frames counted while it streamed, else None.
         """
         resp = ev.get("response")
         resp = resp if isinstance(resp, dict) else {}
@@ -1854,8 +1854,15 @@ class RealtimeVoiceSession:
         status = resp.get("status")
         reason = details.get("reason")
         output = resp.get("output")
-        items = (len(output) if isinstance(output, list) and output
-                 else self._response_output_items)
+        # None, not 0, where neither source says anything: the Gemini routes
+        # send no output items and no `output` list at all, and a 0 there
+        # would read as an empty reply.
+        if isinstance(output, list) and output:
+            items = len(output)
+        elif self._response_output_items:
+            items = self._response_output_items
+        else:
+            items = 0 if isinstance(output, list) else None
         usage = resp.get("usage")
         usage = usage if isinstance(usage, dict) else {}
         return {

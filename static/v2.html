@@ -679,9 +679,12 @@
   // instead of a button that loops.
   const TERMINAL_ADVANCE = new Set([400, 403, 404, 409]);
 
-  // The second door out of the completion overlay: their code so far and the
-  // way back to the survey. A server-side fault should cost a participant a
-  // conversation, not their payment.
+  // The second door out of the completion overlay: a way to stop here, and the
+  // way back to the survey. It hands out NO completion code (2026-09-23, the
+  // researcher's decision): the code is reached only by finishing the run, so
+  // leaving between encounters is never a shortcut to it. Stopping is still
+  // always possible, and the card says to tell the study team how far they got,
+  // which is how a server-side fault gets resolved rather than through the code.
   //
   // The default body is written for the failure call sites, where /advance did
   // not land and this last encounter really may not have been counted. The door
@@ -699,9 +702,9 @@
       ('<p>Thank you for the conversations you did have. What you recorded is ' +
        'stored on our side, though this last one may not have been counted ' +
        'towards your run.</p>' +
-       '<p>Take the code below back to the survey, and use the contact below to ' +
-       'tell us how far you got.</p>'),
-      run?.completion_code || '');
+       '<p>Please use the contact below to tell the study team how far you ' +
+       'got.</p>'),
+      '');
   }
 
   // The lost-recording line, consumed once. Whichever screen comes next after
@@ -792,7 +795,7 @@
         $('nextBtn').style.display = 'inline-block';
         $('nextBtn').onclick = () => { advancing = false; onEncounterComplete(opts); };
       }
-      offerExit(terminal ? 'Get my code and finish' : 'I can’t continue, finish here');
+      offerExit(terminal ? 'Finish here' : 'I can’t continue, finish here');
       $('nextOverlay').style.display = 'flex';
       return;
     }
@@ -842,8 +845,8 @@
         '<p>Thank you for the conversations you did have. The one you just ' +
         'finished was counted towards your run, only its video was still ' +
         'uploading, and the study team can see how that ended.</p>' +
-        '<p>Take the code below back to the survey, and use the contact below ' +
-        'to tell us how far you got.</p>');
+        '<p>Please use the contact below to tell the study team how far you ' +
+        'got.</p>');
       $('nextOverlay').style.display = 'flex';
       let outcome = await Promise.race([
         videoUpload.catch(() => ({ ok: false, reason: 'upload_threw' })),
@@ -2198,8 +2201,10 @@
         settings.baseLatency = audioCtx.baseLatency;
         settings.outputLatency = audioCtx.outputLatency;
       }
-      ws.send(JSON.stringify({ type: 'client_audio_settings', settings: settings,
-                               user_agent: (navigator && navigator.userAgent) || '' }));
+      // The browser itself is named by the server, from the socket's own
+      // User-Agent header: the page never reads the UA string (see
+      // tests/test_browser_compat.py; decisions here are capability checks).
+      ws.send(JSON.stringify({ type: 'client_audio_settings', settings: settings }));
     } catch (e) {}
   }
 
@@ -3501,17 +3506,32 @@
     // wording. Static strings only: nothing the server sent reaches innerHTML.
     // Each card says which door it is offering and why, because a participant
     // reading it has just lost a conversation and is deciding what to press.
-    if (exhausted) {
+    if (exhausted && canSkip) {
       $('dropText').innerHTML =
         '<b>This is not working at the moment.</b> It stopped twice before the '
         + 'conversation could get going, so it will not be tried a third time. '
         + 'This is not something you did, and you have not lost your place in the '
-        + 'study or anything you have already done. '
-        + (canSkip
-            ? 'You can go on to the next part of the study without this conversation, '
-              + 'the study team can see that it did not run, or finish here with your code.'
-            : 'You can finish here with your code, and the contact below will want to know.');
+        + 'study or anything you have already done. You can go on to the next part '
+        + 'of the study without this conversation; the study team can see that it '
+        + 'did not run.';
       $('dropReconnect').style.display = 'none';
+      showFailureExit(true);
+    } else if (exhausted) {
+      // Nothing to advance on (the socket was refused before the server's
+      // 'session' frame), and no "finish here with your code" door either:
+      // since 2026-09-23 the completion code is only ever handed out at the end
+      // of the run (researcher's decision). So the retry stays rather than
+      // sealing the participant on a card with nothing to press, and the card
+      // says to tell the study team. A retry that cannot work yet is still a
+      // door; a card with none is the failure this function exists to prevent.
+      $('dropText').innerHTML =
+        '<b>This is not working at the moment.</b> It stopped twice before the '
+        + 'conversation could get going. This is not something you did, and you '
+        + 'have not lost your place in the study or anything you have already done. '
+        + 'Please tell the study team using the contact below. You can try again '
+        + 'in a few minutes.';
+      $('dropReconnect').style.display = '';
+      $('dropReconnect').textContent = 'Try again';
       showFailureExit(true);
     } else if (fatal) {
       $('dropText').innerHTML =
@@ -3557,9 +3577,8 @@
               + 'has dropped. You do not have to keep trying: '
               + (canSkip
                   ? 'you can go on to the next part without it, what was recorded of it '
-                    + 'is kept and the study team can see it stopped early, or finish '
-                    + 'here with your code.'
-                  : 'you can finish here with your code.')
+                    + 'is kept and the study team can see it stopped early.'
+                  : 'please tell the study team using the contact below.')
             : '');
       $('dropReconnect').textContent = 'Reconnect';
       if (repeated) showFailureExit(false);
@@ -3607,14 +3626,15 @@
      sealed onto the scenario screen with a message and nothing to press. That
      is worse than the loop it replaced: a loop at least moves.
 
-     So the doors are unconditional and come first. The next encounter, when
-     there is a session to advance on, is the road forward; showClosing is the
-     same surface the "I can't continue" exit uses, so a participant who stops
-     here gets what one who stops anywhere else gets: their completion code,
-     which is what payment depends on, and the contact. On the exhausted card
-     the next encounter is the primary button, because it is what the card has
-     just told them to do; on a card that still offers a retry, both doors are
-     secondary to it.
+     So the doors come first. The next encounter, when there is a session to
+     advance on, is the road forward. There used to be a second door, "Finish
+     here and get my code", on every card; it was removed on 2026-09-23 (the
+     researcher's decision) so that the completion code, which payment depends
+     on, is only ever reached through the run. Where there is no session to
+     advance on, the retry stays on the card instead, with the contact. On the
+     exhausted card the next encounter is the primary button, because it is
+     what the card has just told them to do; on a card that still offers a
+     retry, it is secondary to it.
 
      The contact and the survey link are appended after the card paints rather
      than awaited before it: both are network calls, and someone looking at a
@@ -3645,25 +3665,12 @@
       go.onclick = () => { skipEncounter(); };
       doors.appendChild(go);
     }
-    // The finish door is on every card that reaches here, and never behind a
-    // network call: it is the one thing that works when nothing else does.
-    const b = document.createElement('button');
-    if (!exhausted || canSkip) b.className = 'secondary';
-    b.textContent = 'Finish here and get my code';
-    b.onclick = () => {
-      // showClosing clears the consent and situation overlays, but this card
-      // is a gate-note rather than an overlay, so without this it stays on
-      // screen over the closing card still saying the encounter stopped.
-      $('dropNote').classList.remove('show');
-      showClosing(
-        'Finishing here',
-        '<p>This encounter could not run, and that is our fault rather than ' +
-        'yours. What you recorded before it stopped is saved.</p>' +
-        '<p>Take the code below back to the survey, and use the contact below ' +
-        'to tell us what happened.</p>',
-        run?.completion_code || '');
-    };
-    doors.appendChild(b);
+    // There is no "finish here and get my code" door (removed 2026-09-23, the
+    // researcher's decision): the completion code is handed out at the end of
+    // the run and nowhere else, so a failed encounter is never a shortcut to
+    // it. The way on is the next encounter when there is a session to advance
+    // on; when there is not, onConnectionDropped keeps the retry on the card,
+    // so it is never left with nothing to press.
     $('dropDoors').appendChild(doors);
 
     contactWho().then(who => {

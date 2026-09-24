@@ -85,7 +85,7 @@ TYPO = "nto.gemini-3.6-flsah"
 # both.
 EXPECTED_ROLES = (
     ("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite", "the actor's text engine", True),
-    ("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite", "the director", True),
+    ("DIRECTOR_MODEL", "nto.gemini-3.5-flash-lite", "the director", True),
     ("STEERING_MODEL", "nto.gemini-3.5-flash-lite", "the steering reviewer", True),
     ("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio", "the voice socket", True),
     ("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash", "the re-transcriber, offline", False),
