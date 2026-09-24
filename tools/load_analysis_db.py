@@ -30,9 +30,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-import psycopg
 import yaml
-from psycopg.types.json import Jsonb
+
+try:
+    import psycopg
+    from psycopg.types.json import Jsonb
+except ImportError:  # pragma: no cover - exercised on CI, which has no driver
+    # The mapping functions (load_encounter, load_runs, ...) only build rows and
+    # hand them to a cursor, so they are importable and testable without the
+    # Postgres driver; tests/test_review_fixes.py drives them with a fake
+    # cursor on a CI runner that does not install it. Writing to a real
+    # database is what needs the driver, and main() says so.
+    psycopg = None
+
+    class Jsonb:  # the shape psycopg's Jsonb exposes to a cursor: .obj
+        def __init__(self, obj):
+            self.obj = obj
 
 CONSTRUCT_LABELS = {
     "conflict_management": "Conflict Management",
@@ -623,6 +636,9 @@ def main() -> int:
                     help="tools/recover_from_video.py index CSV; default: _recovered_index_*.csv in --archive")
     args = ap.parse_args()
 
+    if psycopg is None:
+        sys.exit("tools/load_analysis_db.py needs the Postgres driver: "
+                 "pip install 'psycopg[binary]'")
     with psycopg.connect(args.dsn) as conn:
         conn.execute("SET search_path TO rf, public")
         with conn.cursor() as cur:
