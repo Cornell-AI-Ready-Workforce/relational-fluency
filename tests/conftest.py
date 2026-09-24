@@ -519,7 +519,9 @@ def realtime_row_defaults(monkeypatch):
     # The participant-turn gate's knobs (pipeline 2026-09-23c), same reason.
     for knob in ("PARTICIPANT_MIN_VOICED_MS", "PARTICIPANT_DROP_VOICED_MS",
                  "INPUT_PREROLL_MS", "INPUT_BUFFER_RESTART",
-                 "PARTICIPANT_DEDUPE_OVERLAP", "ROOM_MERGE_QUEUED_TURNS"):
+                 "PARTICIPANT_DEDUPE_OVERLAP", "ROOM_MERGE_QUEUED_TURNS",
+                 # The bridge's cancelled-tail discard (pipeline 2026-09-23d).
+                 "CANCELLED_OUTPUT_DISCARD"):
         monkeypatch.delenv(knob, raising=False)
 
 

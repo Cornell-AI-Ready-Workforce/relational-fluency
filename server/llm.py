@@ -355,6 +355,20 @@ def text_client() -> AsyncAnthropic:
 #                sending 16 kHz (read as 24 kHz) while provenance said 24000.
 #                From 2026-09-23c the rate follows each session's model, so a
 #                23b record's input_rate is not what its gpt sessions sent.
+#   2026-09-23d  bridge correctness (issue #23): on the gpt route, what the
+#                gateway still sends for a reply after a barge-in cancel is
+#                no longer played or made into a second turn (that was the
+#                phantom duplicate turn, the false agent_audio_short and the
+#                blip after the stop); it is written as
+#                cancelled_output_dropped with its text and audio_ms, and an
+#                interrupted turn's text is what arrived before the cancel.
+#                A reply delivered as several output items is recorded (and
+#                captioned) as all of them joined by a space; before, the
+#                last item's line replaced the others. Fields
+#                `cancelled_output` and `agent_transcript_items`;
+#                CANCELLED_OUTPUT_DISCARD=0 restores the relay. Rooms: the
+#                floor holder's tail after a barge-in is dropped the same way;
+#                a suppressed (held) reply keeps its tail, as before.
 #
 # ROOM_PACING_VERSION:
 #   2026-09-23a  as d6f319d.
@@ -362,7 +376,7 @@ def text_client() -> AsyncAnthropic:
 #                together as soon as the floor frees (was: a full
 #                ROUTE_TRANSCRIPT_WAIT and then routed on nothing);
 #                ROOM_MERGE_QUEUED_TURNS=0 routes on the latest alone.
-PIPELINE_VERSION = "2026-09-23c"
+PIPELINE_VERSION = "2026-09-23d"
 ROOM_PACING_VERSION = "2026-09-23b"
 
 
@@ -375,7 +389,8 @@ def provenance(model: Optional[str] = None) -> dict:
     configured REALTIME_MODEL, which is what /health reports.
     """
     # Imported here, not at the top: server.voice.realtime imports this module.
-    from .voice.realtime import audio_provenance, turn_gate_provenance
+    from .voice.realtime import (audio_provenance, bridge_provenance,
+                                 turn_gate_provenance)
 
     realtime = _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio")
     return {
@@ -397,6 +412,9 @@ def provenance(model: Optional[str] = None) -> dict:
         # The participant-turn gate's knob values (pipeline 2026-09-23c); see
         # server/voice/realtime.py turn_gate_provenance.
         "turn_gate": turn_gate_provenance(),
+        # cancelled_output ("discard"/"relay") and agent_transcript_items
+        # (pipeline 2026-09-23d); see bridge_provenance.
+        **bridge_provenance(model or realtime),
         "pipeline_version": PIPELINE_VERSION,
         "room_pacing_version": ROOM_PACING_VERSION,
     }

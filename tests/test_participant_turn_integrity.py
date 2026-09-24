@@ -475,7 +475,8 @@ def test_the_gate_thresholds_are_knobs(monkeypatch):
 
 def test_the_gate_is_in_provenance_with_its_defaults():
     prov = llm.provenance(GPT)
-    assert prov["pipeline_version"] == "2026-09-23c"
+    # At least this package's stamp; a later package moves it on.
+    assert prov["pipeline_version"] >= "2026-09-23c"
     assert prov["room_pacing_version"] == "2026-09-23b"
     assert prov["turn_gate"] == {
         "participant_min_voiced_ms": 600,

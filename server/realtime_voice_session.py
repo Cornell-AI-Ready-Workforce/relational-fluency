@@ -92,17 +92,40 @@ def _resume_seam(buf: List[str], ev: dict) -> str:
     to be said" reached the record. _space_sentence_seams cannot repair that
     one: it only knows a seam by the punctuation at it.
 
+    The other such boundary is `item_start`: the first chunk of a reply's
+    second or later output item (issue #23). gpt-realtime-2.1 answers in two
+    items often enough to matter, each a sentence of its own, and the wire
+    puts nothing between them, so the caption and the record read
+    "...for that.Six months is a start."
+
     Only at those boundaries, and only when both sides need it: a buffer that
     already ends in whitespace, or a chunk that begins with one or with
     punctuation, is left exactly as delivered.
     """
     text = ev.get("text") or ""
-    if not (ev.get("first") and buf and text):
+    if not ((ev.get("first") or ev.get("item_start")) and buf and text):
         return text
     tail = "".join(buf[-2:])
     if not tail or tail[-1].isspace() or not (text[0].isalnum() or text[0] in "\"'("):
         return text
     return " " + text
+
+
+def _record_cancelled_output(store, agent_id, segment, ev: dict) -> None:
+    """Write a bridge `cancelled_output` summary as cancelled_output_dropped.
+
+    `text` is the transcript streamed after the cancel, `transcripts` the
+    whole-line transcript frames that arrived after it (which usually repeat
+    words already in the turn: the text runs ahead of the voice), `audio_ms`
+    the voice that was not played. `late` marks frames that trailed the
+    reply's own response.done."""
+    store.event(
+        "cancelled_output_dropped", agent_id=agent_id, segment=segment,
+        where="bridge", response_id=ev.get("response_id"),
+        audio_ms=ev.get("audio_ms"), audio_deltas=ev.get("audio_deltas"),
+        text=ev.get("text") or "", transcripts=ev.get("transcripts") or [],
+        frames=ev.get("frames"), late=bool(ev.get("late")),
+    )
 
 
 # On every brief, group and 1:1. See the note at the call site.
@@ -890,6 +913,11 @@ class RealtimeVoiceSessionRunner:
         self._member_states: Dict[str, _MemberState] = {}
         self._speech_started_at = 0.0
         self._barged = False
+        # 1:1: the reply the open turn's audio came from, and the reply the
+        # participant last cut off, which gets no second turn (see the
+        # agent_audio branch of _pump_events).
+        self._turn_response_id: Optional[str] = None
+        self._barged_response_id: Optional[str] = None
         # Held replies are flushed to the client faster than real time, so the
         # server can finish a turn seconds before the participant has heard
         # it. This clock tracks when audio already sent will finish playing,
@@ -2188,6 +2216,18 @@ class RealtimeVoiceSessionRunner:
         try:
             async for ev in rt.events():
                 etype = ev["type"]
+                if etype == "cancelled_output":
+                    # See _pump_events. Handled before everything below: it is
+                    # not output of the reply now streaming, and the floor and
+                    # suppression latches must not read it as such.
+                    _record_cancelled_output(self.session.store, agent.id,
+                                             self.segment, ev)
+                    if (state["barged_in"] and not state["announced"]
+                            and not ev.get("late")):
+                        # The barge-in's finalize is waiting on this reply's
+                        # transcript, which was part of what was dropped.
+                        state["settled"].set()
+                    continue
                 has_floor = self.room is not None and self.room.speaking == agent.id
 
                 # The bridge fires its own response after speech-plus-silence,
@@ -2324,7 +2364,9 @@ class RealtimeVoiceSessionRunner:
                         )
                         rt.pending_input = 0
                         try:
-                            await rt.cancel_response()
+                            # The tail is kept: it is what this hold is made
+                            # of, and what a grant can still adopt.
+                            await rt.cancel_response(discard_tail=False)
                         except Exception:  # noqa: BLE001
                             pass
                     # Kept, not relayed: if the floor reaches this reply before
@@ -2335,8 +2377,13 @@ class RealtimeVoiceSessionRunner:
                     # grow in.
                     if etype in ("agent_transcript_delta", "agent_transcript"):
                         if etype == "agent_transcript":
+                            # The whole reply so far, every item's line
+                            # (see _pump_events), so replacing is right.
                             state["held"] = [ev["text"]]
                         elif len(state["held"]) < 400:
+                            # With the space an item boundary needs, as in
+                            # the live branch below.
+                            ev = {**ev, "text": _resume_seam(state["held"], ev)}
                             state["held"].append(ev["text"])
                     elif len(state["held_audio"]) < held_audio_cap:
                         # The voice of the held words, for the same reason and
@@ -2507,6 +2554,8 @@ class RealtimeVoiceSessionRunner:
                             "agent_id": agent.id,
                             "agent_name": agent.name,
                         })
+                    # The whole reply, every output item joined; see the 1:1
+                    # branch.
                     buf[:] = [ev["text"]]
                     if state["announced"]:
                         # The line as the gateway says it was spoken, to the
@@ -2514,6 +2563,7 @@ class RealtimeVoiceSessionRunner:
                         await self._send({
                             "type": "assistant_text_final",
                             "text": ev["text"], "agent_id": agent.id,
+                            "items": ev.get("items") or 1,
                         })
                     # The gateway has declared this reply's transcript complete,
                     # so a finalize already grace-waiting on it can stop now
@@ -4339,6 +4389,7 @@ class RealtimeVoiceSessionRunner:
                         # static/pcm-worklet.js), so it fires on every real
                         # interruption — which is the overlap behaviour S1 and
                         # S2 exist to score.
+                        self._barged_response_id = self._turn_response_id
                         await self.rt.cancel_response()
                         # Clear _speaking and hand the finalize THIS reply's
                         # buffer and direction, then detach both, exactly as the
@@ -4518,8 +4569,27 @@ class RealtimeVoiceSessionRunner:
                 # stops waiting, so it can no longer consume the rest of this
                 # reply's transcript — and it is written FIRST, in the order the
                 # two replies actually happened, which record.json sorts on.
+                rid = ev.get("response_id")
+                if (not self._speaking and rid
+                        and rid == self._barged_response_id
+                        and getattr(rt, "discards_cancelled_output", False)):
+                    # BACKSTOP for the bridge's own discard (see
+                    # RealtimeVoiceSession.cancel_response): audio of the
+                    # reply the participant just cut off. Played, it opened a
+                    # second turn for a 0.2 s tail, which the record then
+                    # flagged agent_audio_short and the participant heard as
+                    # a blip after the stop. The bridge drops these before
+                    # they get here; one reaching this line means it missed,
+                    # so it is written per chunk, loudly.
+                    self.session.store.event(
+                        "cancelled_output_dropped", agent_id=self.agent_id,
+                        segment=self.segment, response_id=rid,
+                        where="runner",
+                        audio_ms=len(ev["pcm"]) // 32)
+                    continue
                 late = self._end_settling() if not self._speaking else []
                 await self._begin_agent_turn()
+                self._turn_response_id = rid
                 if late:
                     self._agent_text.extend(late)
                     # The participant's screen already showed this text under
@@ -4569,6 +4639,10 @@ class RealtimeVoiceSessionRunner:
                 # after response.done is recorded whole rather than as its first
                 # fragment.
                 target = await self._transcript_target(whole_line=True)
+                # Replace, not append: `text` is the whole reply, every output
+                # item's line joined (see the bridge's transcript.done
+                # branch), so a two-item reply's second line no longer
+                # overwrites its first.
                 target[:] = [ev["text"]]
                 if target is self._agent_text:
                     # The page has the deltas; this is the line the gateway
@@ -4580,6 +4654,7 @@ class RealtimeVoiceSessionRunner:
                     await self._send({
                         "type": "assistant_text_final",
                         "text": ev["text"], "agent_id": self.agent_id,
+                        "items": ev.get("items") or 1,
                     })
                 # This event IS the end of the transcript stream, so say so on
                 # whichever turn owns the buffer it just landed in. A finalize
@@ -4590,6 +4665,20 @@ class RealtimeVoiceSessionRunner:
                         self._settling_settled.set()
                 else:
                     self._agent_line_settled = True
+
+            elif etype == "cancelled_output":
+                # What the gateway sent for a reply after it was cancelled
+                # (a barge-in), dropped by the bridge rather than played or
+                # recorded as a turn. Written with its text and duration so
+                # the record still holds everything the model produced.
+                _record_cancelled_output(self.session.store, self.agent_id,
+                                         self.segment, ev)
+                if (not self._speaking and self._settling_settled is not None
+                        and ev.get("response_id") == self._barged_response_id
+                        and not ev.get("late")):
+                    # The cut-off turn is waiting on its transcript, which
+                    # was part of what was dropped: nothing more is coming.
+                    self._settling_settled.set()
 
             elif etype == "user_transcript":
                 # Gemini Live transcribes the participant for us, no separate
