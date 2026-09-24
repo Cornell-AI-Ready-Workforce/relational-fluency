@@ -215,12 +215,22 @@ class Session:
 
     # --- shared history helpers ---
 
-    def append_user(self, text: str) -> None:
-        self.shared_history.append({
+    def append_user(self, text: str, *, low_confidence: bool = False,
+                    names_cast: bool = False) -> None:
+        entry = {
             "speaker": "user",
             "text": text,
             "t": round(time.time() - self.store.started_at, 3),
-        })
+        }
+        if low_confidence:
+            # A turn with too little voice under it to trust its words (see
+            # the runner's _record_user_turn). Kept in the history, so the
+            # researcher view and the reconnect recap still show it, and
+            # flagged so the steering review skips it and the director reads
+            # it only when it names a cast member (`names_cast`).
+            entry["low_confidence"] = True
+            entry["names_cast"] = bool(names_cast)
+        self.shared_history.append(entry)
 
     def append_agent(self, agent_id: str, text: str) -> None:
         self.shared_history.append({

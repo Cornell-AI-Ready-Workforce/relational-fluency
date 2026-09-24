@@ -311,6 +311,12 @@ def _format_transcript(shared_history: list, name_lookup: dict,
     director_error and rotates). An untranscribed turn is shown as such, because
     "Dan: " with nothing after it reads as Dan having said nothing.
     """
+    # A low_confidence participant turn (see Session.append_user) reaches the
+    # director only when it names someone: "Priya?" on 400 ms of voice is
+    # still an address, while a transcriber's guess over near-silence is not a
+    # thing the participant said for the room to answer (issue #21).
+    shared_history = [e for e in shared_history
+                      if not e.get("low_confidence") or e.get("names_cast")]
     recent = shared_history[-max_turns:]
     lines = []
     for entry in recent:

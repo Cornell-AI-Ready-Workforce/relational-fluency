@@ -755,6 +755,31 @@ class GroupRoom:
             return None
         return rt
 
+    async def restart_participant_buffer(self, preroll: bytes) -> Optional[dict]:
+        """Start the scribe's buffer again from `preroll`, once per commit.
+
+        The room half of the runner's _restart_input_buffer (issue #21): the
+        scribe is fanned the participant's microphone continuously, so without
+        this each close_participant_turn committed everything since the last
+        one. Only where the room itself closes the scribe's turns
+        (`floor_is_real`); on a family whose own turn detection closes them a
+        clear would cut into a turn the gateway is segmenting. The fan-out
+        books are restated for what the buffer now holds, the pre-roll alone,
+        on the same speech test hear() applies. None when nothing was done;
+        otherwise what the scribe's buffer held before (see
+        RealtimeVoiceSession.clear_input)."""
+        rt = self.scribe
+        due = getattr(rt, "input_restart_due", None)
+        if rt is None or not self.floor_is_real or due is None or not due():
+            return None
+        gone = await rt.restart_input(preroll)
+        self._fanned_to_scribe = len(preroll)
+        frame = 640
+        self._scribe_heard_speech = any(
+            _frame_rms(preroll[i:i + frame]) >= self._speech_rms
+            for i in range(0, len(preroll), frame))
+        return gone
+
     async def close_participant_turn(self) -> bool:
         """Close the participant's turn on the transcription channel.
 

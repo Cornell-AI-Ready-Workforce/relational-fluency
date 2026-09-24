@@ -246,11 +246,51 @@ the data without anyone having to remember when it was made:
   from 2026-09-18 cut replies mid-word at 10.5-14 s (issue #23). A value
   that is not a positive integer is ignored and the default stands.
 
+Participant-turn integrity (pipeline `2026-09-23c`, issues #21 and #24;
+`server/voice/realtime.py`, `_record_user_turn` in
+`server/realtime_voice_session.py`). Every value below is written to each
+record's provenance under `turn_gate`, and every transcript a rule withholds
+is written as a `user_turn_suppressed` event with its text and `reason`
+(`probe_pad`, `no_speech`, `replay_duplicate`), never discarded:
+
+- A silence probe (the 1:1 watchdog's handoff and beat probes) clears the
+  gateway buffer before its pad and commit, and the pad's transcript is
+  suppressed as `probe_pad`. Not a knob: that transcript is of nobody.
+- `PARTICIPANT_DROP_VOICED_MS` — default `80`. A transcript of nothing but
+  punctuation or fillers ("." / "Um..." / "Mhm.") over at most this much
+  voiced audio is suppressed as `no_speech`. `-1` turns the drop off.
+- `PARTICIPANT_MIN_VOICED_MS` — default `600`. A turn with less voiced audio
+  than this is still recorded and captioned, tagged `low_confidence` (on the
+  `user_turn` event and in the record), and kept out of the steering review;
+  the director sees it only when it names a cast member. `0` tags nothing.
+- `INPUT_BUFFER_RESTART` — default `1`. On the participant's first
+  `speech_started` after a commit, the gateway's input buffer is cleared and
+  the last `INPUT_PREROLL_MS` (default `600`) re-sent, so a turn is no longer
+  transcribed together with everything the microphone sent since the last
+  one (`input_buffer_cleared`). gpt route only (1:1 and the room's scribe);
+  never while a turn end is being confirmed or a room turn awaits its
+  transcript. `0` restores the old behaviour.
+- `PARTICIPANT_DEDUPE_OVERLAP` — default `0.9`, the share of the shorter
+  line's words that makes two transcripts within 5 s one utterance on a room
+  route with a second transcriber (was 0.6).
+- `ROOM_MERGE_QUEUED_TURNS` — default `1`: utterances spoken while a room's
+  floor is held are routed together when it frees
+  (`user_turns_merged_for_routing`); each stays its own `user_turn`. `0`
+  routes on the latest alone. Tracked by `room_pacing_version` `2026-09-23b`.
+
+Voiced audio is counted per commit against the runner's VAD bar at that
+moment; on the Gemini routes the gateway commits on its own, `voiced_ms` is
+null and none of the voiced-audio rules apply.
+
 Participant audio goes to the gpt route at 24 kHz (the page captures 16 kHz
 and the server resamples). Before pipeline `2026-09-23b` it went at 16 kHz
 and the gateway read it as 24 kHz, so every earlier gpt encounter's actor and
 live transcriber heard the participant 1.5x fast; use the offline
-re-transcription for those.
+re-transcription for those. Under `2026-09-23b` itself the 24 kHz reached only
+sessions built with an explicit model, which the runner and the room do not
+do, so a `2026-09-23b` gpt encounter was still sent 16 kHz even though its
+provenance says 24000; the rate follows each session's model from
+`2026-09-23c`.
 
 > **What A-only does to the S1/Teamwork rule.** `FORM_EXCLUSIONS` in
 > `server/runs.py` bars **S1A from any run that also contains Teamwork** — the

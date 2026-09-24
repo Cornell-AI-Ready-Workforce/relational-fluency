@@ -516,6 +516,11 @@ def realtime_row_defaults(monkeypatch):
     """
     monkeypatch.delenv("INPUT_TRANSCRIPTION_MODEL", raising=False)
     monkeypatch.delenv("REALTIME_MAX_OUTPUT_TOKENS", raising=False)
+    # The participant-turn gate's knobs (pipeline 2026-09-23c), same reason.
+    for knob in ("PARTICIPANT_MIN_VOICED_MS", "PARTICIPANT_DROP_VOICED_MS",
+                 "INPUT_PREROLL_MS", "INPUT_BUFFER_RESTART",
+                 "PARTICIPANT_DEDUPE_OVERLAP", "ROOM_MERGE_QUEUED_TURNS"):
+        monkeypatch.delenv(knob, raising=False)
 
 
 @pytest.fixture(autouse=True)

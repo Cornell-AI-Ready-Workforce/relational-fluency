@@ -67,6 +67,12 @@ def build(session_dir: Path) -> Dict[str, Any]:
                 # participant-side twin of the interrupted/transcript_missing
                 # carry on the steering_pair branch below.
                 "script_mismatch": bool(e.get("script_mismatch")),
+                # Too little voice under the words to trust them (issue #21;
+                # PARTICIPANT_MIN_VOICED_MS): recorded and captioned, kept out
+                # of steering. None on turns before the gate existed, and on a
+                # route that cannot count voiced audio, which is NOT "trusted".
+                "low_confidence": e.get("low_confidence"),
+                "voiced_ms": e.get("voiced_ms"),
             })
         elif etype == "assistant_turn" and e.get("channel") == "text":
             # Text-channel agent turns never emit a steering_pair (that comes
