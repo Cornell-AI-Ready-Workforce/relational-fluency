@@ -104,6 +104,32 @@ def shortfall(text: str, delivered_ms: int) -> Optional[dict]:
     }
 
 
+def heard_estimate(text: str, delivered_ms: int, wpm: float = WPM) -> dict:
+    """Roughly the words of `text` that fit in `delivered_ms` of relayed
+    audio at `wpm`: the `heard_text` beside a cut turn's whole line (fix plan
+    #23 (b) 6).
+
+    From the bytes relayed, not from the playback clock, and for two kinds of
+    turn only. On a cap-truncated reply the text stream ran ahead of the
+    audio and the gateway stopped the audio first, so the relayed audio is
+    what was spoken. On an interrupted one it is an UPPER bound: the page
+    drops what it had queued at the barge-in, and what it actually played is
+    in its own play_start / play_end acks. Words in parentheses (spoken
+    stage directions) do count here, so the cut falls where it falls in the
+    text as recorded. A tail cut off is marked with an ellipsis, as
+    playback_cut's heard_text is.
+    """
+    words = (text or "").split()
+    ms = max(0, int(delivered_ms or 0))
+    fit = int(ms / 60_000 * wpm + 0.5)
+    n = min(len(words), fit)
+    heard = " ".join(words[:n])
+    if n < len(words) and heard:
+        heard += "…"
+    return {"heard_text": heard, "heard_words": n,
+            "generated_words": len(words), "wpm": round(float(wpm), 1)}
+
+
 def scan_events(events: Iterable[dict]) -> List[dict]:
     """Every assistant_turn in an encounter whose audio was too short for its
     own words.

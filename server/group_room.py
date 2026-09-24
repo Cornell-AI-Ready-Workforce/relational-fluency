@@ -187,6 +187,14 @@ class GroupRoom:
         # already answering that turn on its own. On an auto-firing family this
         # counts the doubled replies that are no longer being produced.
         self.autofire_grants = 0
+        # Commit-only grants (see give_floor) whose commit started nothing in
+        # ROOM_GRANT_UNANSWERED_S, so the room asked with a response.create
+        # after all. Each is also on the record (grant_fallback_create).
+        self.grant_fallback_creates = 0
+        # How the latest give_floor asked for its reply: {agent_id, via,
+        # waited_s?}; `via` is commit, commit+create_fallback, commit+create,
+        # text_prompt, already_answering, commit_cancelled or commit_moved.
+        self.last_grant: Optional[dict] = None
         # agent id -> bytes of audio this room has fanned to that member since
         # it last held the floor. The room's own books, kept because nothing on
         # the session can answer this: pending_input counts what was appended
@@ -686,6 +694,62 @@ class GroupRoom:
                 return False
             await asyncio.sleep(0.05)
 
+    def _commit_starts_reply(self, model: str) -> bool:
+        """True where give_floor's commit is the whole request: the room's own
+        turn detection is off (`floor_is_real`, so nothing else starts a
+        reply) and the route answers a commit by itself, which is the gpt
+        route (is_openai_realtime, the same test commit_turn uses). Gated by
+        ROOM_COMMIT_ONLY_GRANT."""
+        return (self.floor_is_real and is_openai_realtime(model)
+                and _realtime.room_commit_only_grant())
+
+    async def _commit_answered(self, rt, agent_id: str, since: float,
+                               limit: float) -> str:
+        """Wait up to `limit` s for the reply a commit-only grant's commit
+        should have started. "started" on any sign of it; "cancelled" if the
+        participant cut it off meanwhile (cancel_response sets
+        _cancelled_by_us; commit_input cleared it); "moved" if the floor went
+        to somebody else; else "unanswered".
+
+        A reply can be complete before this looks (response.done came 2.3 s
+        after response.created in the probes), and its done clears every
+        in-flight flag, so output that arrived after the commit counts too.
+
+        Except output of a reply already cancelled when the commit went out.
+        A suppressed reply on this route is cancelled with its tail KEPT
+        (_pump_member's discard_tail=False), and that tail re-binds
+        _response_created_id and moves every output clock read here: the wait
+        returned "started" on it, the one fallback create was never sent, and
+        a commit that started nothing left the member silent for the whole
+        group turn timeout. While any such reply is outstanding, only a reply
+        under a name that is neither cancelled nor known at the commit counts,
+        by its response.created or its done."""
+        deadline = since + max(limit, 0.0)
+        stale = set(getattr(rt, "_cancelled_ids", None) or ())
+
+        def _ids():
+            return (set(getattr(rt, "_created_ids", None) or ())
+                    | set(getattr(rt, "_done_ids", None) or ()))
+        known = _ids()
+        while True:
+            if stale:
+                rid = getattr(rt, "_response_created_id", None)
+                if (rid and rid not in stale) or (_ids() - known - stale):
+                    return "started"
+            elif (getattr(rt, "_response_created_id", None)
+                    or getattr(rt, "_response_saw_output", False)
+                    or getattr(rt, "autofire_active", False)
+                    or (getattr(rt, "_last_output_at", 0.0) or 0.0) >= since
+                    or (getattr(rt, "first_audio_at", 0.0) or 0.0) >= since):
+                return "started"
+            if getattr(rt, "_cancelled_by_us", False):
+                return "cancelled"
+            if self.speaking != agent_id:
+                return "moved"
+            if time.time() >= deadline:
+                return "unanswered"
+            await asyncio.sleep(0.05)
+
     @staticmethod
     def _reply_evidently_started(rt) -> bool:
         """Has this session's gateway actually begun a reply?
@@ -778,6 +842,35 @@ class GroupRoom:
         self._scribe_heard_speech = any(
             _frame_rms(preroll[i:i + frame]) >= self._speech_rms
             for i in range(0, len(preroll), frame))
+        return gone
+
+    def participant_voiced_ms(self) -> Optional[int]:
+        """Voiced audio the scribe has been fanned since its last commit, in
+        ms, where the room closes the scribe's turns itself (`floor_is_real`);
+        None anywhere else, including a scribe that cannot count (see
+        RealtimeVoiceSession.voiced_since_commit). What the runner's
+        pre-commit voice floor reads before close_participant_turn."""
+        rt = self.scribe
+        count = getattr(rt, "voiced_since_commit", None)
+        if rt is None or not self.floor_is_real or count is None:
+            return None
+        return count()
+
+    async def discard_participant_turn(self) -> Optional[dict]:
+        """The other way to end a participant turn on the scribe: not commit
+        it (the pre-commit voice floor, pipeline 2026-09-24a). The scribe's
+        buffer is cleared and its restart re-armed (see
+        RealtimeVoiceSession.discard_input), and the fan-out books that
+        close_participant_turn reads are zeroed with it, so a later close
+        does not count this turn's bytes or its "heard speech". None when
+        there was nothing of ours to discard."""
+        rt = self.scribe
+        discard = getattr(rt, "discard_input", None)
+        if rt is None or not self.floor_is_real or discard is None:
+            return None
+        gone = await discard()
+        self._fanned_to_scribe = 0
+        self._scribe_heard_speech = False
         return gone
 
     async def close_participant_turn(self) -> bool:
@@ -957,6 +1050,13 @@ class GroupRoom:
         decision _client_to_model already makes on the 1:1 path, on the same
         knob.
 
+        On the gpt route that knob is 0, so the "after" wait above ended before
+        the reply's response.created could arrive and every grant sent a
+        response.create behind a reply its commit had already started. There
+        the grant is now the commit alone (see _commit_starts_reply), with a
+        create only after ROOM_GRANT_UNANSWERED_S of nothing; `last_grant`
+        says which happened.
+
         The silence pad is unconditional now. It used to be skipped whenever
         `pending_input` looked large, and pending_input counts only what WE
         appended: the gateway's own commit consumes the buffer without resetting
@@ -975,6 +1075,9 @@ class GroupRoom:
         if rt is None:
             return None
         self.speaking = agent_id
+        # How this grant asked for its reply, for the runner's record (see
+        # _note_grant in the runner). Replaced on every grant.
+        self.last_grant = None
         failures_before = getattr(rt, "send_failures", 0)
         heard_something = self._fanned_since_grant.pop(agent_id, 0) > 0
         model = getattr(rt, "model", "") or self._model or _configured_model()
@@ -1007,6 +1110,8 @@ class GroupRoom:
                 # that route, and that route is what production runs, so this
                 # was not a corner case.
                 self.autofire_grants += 1
+                self.last_grant = {"agent_id": agent_id,
+                                   "via": "already_answering"}
                 return rt
             if grants_via_text_prompt(model):
                 # origin/main 169310c, measured on the deployed native-audio
@@ -1027,6 +1132,7 @@ class GroupRoom:
                     rt.clear_response_state()
                 await rt.inject_text(_TEXT_GRANT_NUDGE)
                 await rt.request_response()
+                self.last_grant = {"agent_id": agent_id, "via": "text_prompt"}
             else:
                 await rt.send_audio(_SILENCE_PAD)
                 # A prior reply whose response.done was lost leaves
@@ -1038,8 +1144,61 @@ class GroupRoom:
                 if rt.responding:
                     rt.clear_response_state()
                 await rt.commit_input()
-                if await self._gateway_answers_on_its_own(rt):
+                if self._commit_starts_reply(model):
+                    # COMMIT ONLY (issue #23, 2026-09-23e). The commit above
+                    # starts this reply by itself on this route, exactly as
+                    # 1:1 commit_turn relies on: response.created came
+                    # 0.41-0.88 s after the commit in five of five probes,
+                    # silence-pad-only commits included (diag
+                    # track3/probe_commit_create, review3/probe_silence_commit).
+                    # The else-branch below ended its wait at autofire_wait=0
+                    # before that frame could arrive and asked again, which put
+                    # "the extra response.create was refused" on almost every
+                    # gpt grant on 2026-09-23 and, where the create was
+                    # granted, a second reply. So the reply is booked as the
+                    # one we asked for, and a create goes out only if nothing
+                    # has started after ROOM_GRANT_UNANSWERED_S.
+                    wait = _realtime.room_grant_unanswered_s()
+                    mark = getattr(rt, "expect_commit_reply", None)
+                    if mark is not None:
+                        # The bridge's own REQUEST_UNANSWERED_S (6 s) waits
+                        # out this grant's window first, now that the window
+                        # is 6 s too (room pacing 2026-09-24a): otherwise its
+                        # reply_missing retry and the fallback create below
+                        # could both ask for this one commit's reply.
+                        try:
+                            mark(hold_s=wait)
+                        except TypeError:   # a double without the keyword
+                            mark()
+                    committed_at = time.time()
+                    outcome = await self._commit_answered(
+                        rt, agent_id, committed_at, wait)
+                    waited = round(time.time() - committed_at, 3)
+                    if outcome == "started":
+                        self.autofire_grants += 1
+                        self.last_grant = {"agent_id": agent_id,
+                                           "via": "commit", "waited_s": waited}
+                    elif outcome == "unanswered":
+                        # Nothing at all for the whole wait: a commit this
+                        # route did not answer. The flags the booking raised
+                        # have no reply behind them and would make
+                        # request_response send nothing, so they go first.
+                        rt.clear_response_state()
+                        await rt.request_response()
+                        self.grant_fallback_creates += 1
+                        self.last_grant = {"agent_id": agent_id,
+                                           "via": "commit+create_fallback",
+                                           "waited_s": waited}
+                    else:
+                        # Cancelled under us (a barge-in) or the floor moved
+                        # on: nobody wants this reply any more, so nothing is
+                        # asked for.
+                        self.last_grant = {"agent_id": agent_id,
+                                           "via": f"commit_{outcome}",
+                                           "waited_s": waited}
+                elif await self._gateway_answers_on_its_own(rt):
                     self.autofire_grants += 1
+                    self.last_grant = {"agent_id": agent_id, "via": "commit"}
                 else:
                     # Nobody started. On the gpt route that is the case
                     # origin/main 210fbfc is about: the COMMIT itself starts
@@ -1058,6 +1217,8 @@ class GroupRoom:
                     if is_openai_realtime(model) and rt.responding:
                         rt.clear_response_state()
                     await rt.request_response()
+                    self.last_grant = {"agent_id": agent_id,
+                                       "via": "commit+create"}
         except Exception:  # noqa: BLE001, a dead session must not kill the turn
             self.sessions.pop(agent_id, None)
             return None

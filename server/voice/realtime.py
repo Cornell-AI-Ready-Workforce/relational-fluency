@@ -103,6 +103,7 @@ import websockets
 # Config comes from server.llm so the .env file wins over ambient environment:
 # a stray exported variable must not be able to redirect study traffic.
 from ..llm import gateway_api_key, gateway_base_url, setting, setting_if_set
+from .turn_audio import WPM as _WPM
 from .turn_audio import shortfall as _audio_shortfall, word_count as _word_count
 
 try:  # audioop was removed in Python 3.13 (PEP 594); fall back to pure Python.
@@ -543,7 +544,11 @@ REALTIME_FAMILIES = {
         relay_colleagues_as_text=True,
         # The COMMIT starts the reply on this route; a response.create on top
         # is rejected as an active-response conflict. give_floor commits and
-        # then clears the response state rather than asking again.
+        # books the reply as requested (expect_commit_reply), and asks with a
+        # response.create only when nothing has started after
+        # ROOM_GRANT_UNANSWERED_S. Until 2026-09-23e this said it did not ask
+        # again, and it did, on every grant: the autofire_wait of 0 below
+        # ended the wait for a reply before response.created could arrive.
         grant_via_text_prompt=False,
         member_tools=True,
         # The first audio delta can trail response.created by several seconds
@@ -979,15 +984,372 @@ def merge_queued_turns() -> bool:
         "0", "false", "no", "off", "")
 
 
-def turn_gate_provenance() -> dict:
-    """The knob values above, as this process will apply them."""
-    return {
+def low_confidence_director() -> str:
+    """PARTICIPANT_LOW_CONFIDENCE_DIRECTOR, default "named": a low_confidence
+    turn (PARTICIPANT_MIN_VOICED_MS) reaches the room director only when it
+    names a cast member, as fix plan #21 (a) 4 set it. "all" gives the
+    director every low_confidence turn, so a real short answer ("No." is
+    about 350 ms of voice) is routed on; the steering review still skips
+    them. Any other value is "named"."""
+    v = setting("PARTICIPANT_LOW_CONFIDENCE_DIRECTOR", "named").strip().lower()
+    return "all" if v == "all" else "named"
+
+
+# ── voice and rate gates (issues #21, #24; pipeline 2026-09-24a) ─────────────
+#
+# Calibrated on the tester's S3A session s_1790217895_4025d8 (production,
+# 2026-09-23), replaying user_audio.wav through this module's SilenceDetector
+# at its effective bar (500 throughout) and counting voiced frames the way
+# send_audio does. Voiced ms per transcribed line, measured since the last
+# commit (and, in brackets, as the branch counts it after restart_input's
+# 600 ms pre-roll):
+#
+#   phantom  "I'm not a cat. I'm a cat. I'm a cat. ..."      340 [340] ms
+#   phantom  "Goodbye. Will Lego play more games in the..."  400 [300] ms
+#   real     "Does that sound good?"                          660 [660] ms
+#   real     "Thank you."                                     680 [380] ms
+#   real     "Two."                                           720 [720] ms
+#   real     "Great, how about TC?"                          1080 [980] ms
+#   real     every other line                              1.3-14 s
+#
+# So no voice floor separates the phantoms from the real short lines (they
+# overlap at 300-400 ms), and the two gates do different jobs: the commit
+# floor throws away what is too little voice to be a turn at all (a cough, a
+# click, a chair), and the rate gate catches a transcript with far more words
+# than its voice could carry. Real lines ran 1.4-6.1 words per voiced second
+# (fastest: "Does that sound good?", 4 words over 660 ms); the phantoms 47
+# and 63 (16 words over 340 ms, 19 over 300).
+#
+# The rate is taken over the voiced SPAN, not the voiced count (P6 review,
+# pipeline 2026-09-24b). The count is how long the voice stayed above a fixed
+# bar, so it shrinks fast when a speaker is a little quieter while their words
+# stay the same: the same WAV replayed 2.5 dB quieter counts "Does that sound
+# good?" as 460 ms (8.7 w/s), 7 dB quieter "Right. Sounds good. Casey, are
+# you there?" as 360 ms (19.4), 11 dB quieter a 22-word line as 640 ms (34).
+# From the first voiced frame to the last, the same lines stay put: from +6
+# to -6 dB every real line under the ceiling ran at most 6.2 words per second
+# of span, and the phantoms, whose voice is one short burst (span = count),
+# 44-56 at every level. Further down the VAD starts splitting lines into
+# several commits; giving each fragment its share of the words, the worst
+# real fragment ran 15.9 (-7 dB, all 7 words of "Right. Sounds good. ..."
+# on a 440 ms capture, so an overestimate), 6.0 (-8 to -10 dB) and 10.8
+# (-11 dB), all kept, and at -12 dB, where the VAD has already lost 6 of 21
+# turns, one fragment is dropped (17.5). Over the count at the same levels
+# a bar of 20 drops 7 real lines from -11 dB and a bar of 8 drops lines from
+# -2.5 dB. Scratchpad p6/review_fixes/gate_sweep.py (and *_span16.txt,
+# *_count_only.txt for the numbers).
+
+def commit_min_voiced_ms() -> int:
+    """PARTICIPANT_COMMIT_MIN_VOICED_MS, default 300. A participant turn the
+    runner's VAD ends with less voiced audio than this since the last commit
+    is not committed at all: the gateway's buffer is cleared, the turn is
+    written as participant_turn_discarded (reason "too_little_voice") and no
+    reply is started. Strictly below: at the default every line of the
+    calibration session is committed, the 300 ms phantom included (the rate
+    gate is what stops that one). The VAD itself opens a turn only on
+    min_speech_ms (250) of net voice, so this floor catches the ones that
+    barely made it. 0 commits every turn, as before."""
+    return max(0, _int_setting("PARTICIPANT_COMMIT_MIN_VOICED_MS", 300))
+
+
+def max_words_per_voiced_s() -> float:
+    """PARTICIPANT_MAX_WORDS_PER_VOICED_S, default 16 (was 8 in 24a). A
+    transcript with more words per second of voiced span than this (first
+    voiced frame to last; the voiced count where the span is not known), over
+    a commit with less than PARTICIPANT_RATE_GATE_MAX_VOICED_MS of voice, is
+    the transcriber inventing (see the calibration above): written as
+    user_turn_suppressed with reason "implausible_rate" and its text, never a
+    user_turn. 16 is the geometric middle of the real lines' worst (6.2) and
+    the phantoms' best (44): about 2.6x of room on each side. 0 turns it
+    off."""
+    return max(0.0, _float_setting("PARTICIPANT_MAX_WORDS_PER_VOICED_S", 16.0))
+
+
+def rate_gate_max_voiced_ms() -> int:
+    """PARTICIPANT_RATE_GATE_MAX_VOICED_MS, default 1500. The rate gate looks
+    only at commits with less voice than this. Over a long turn the voiced
+    count is dominated by real speech and a high ratio means a fast talker
+    (or unvoiced consonants under the bar), not an invention."""
+    return max(0, _int_setting("PARTICIPANT_RATE_GATE_MAX_VOICED_MS", 1500))
+
+
+def rate_over() -> str:
+    """PARTICIPANT_RATE_OVER, default "voiced_span": what the rate gate
+    divides a transcript's words by. "voiced_count" is 24a's measure (the
+    voiced ms alone), for comparison with a record made under it; any other
+    value is the default."""
+    v = setting("PARTICIPANT_RATE_OVER", "voiced_span").strip().lower()
+    return "voiced_count" if v == "voiced_count" else "voiced_span"
+
+
+_RATE_WORDS = re.compile(r"[a-z0-9']+")
+
+
+def transcript_words(text: str) -> int:
+    """Words as the rate gate counts them: runs of letters, digits and
+    apostrophes, so "I'm" is one word and punctuation is none."""
+    return len(_RATE_WORDS.findall((text or "").lower().replace("’", "'")))
+
+
+def implausible_rate(text: str, voiced_ms: Optional[int],
+                     voiced_span_ms: Optional[int] = None) -> Optional[dict]:
+    """The rate gate's verdict on one transcript: None to keep it, else the
+    numbers that condemned it ({words, voiced_ms, voiced_span_ms,
+    words_per_voiced_s}; the rate is None for words over no voice at all).
+    The rate is over `voiced_span_ms` (see the calibration above), or over
+    `voiced_ms` where the span is not known or PARTICIPANT_RATE_OVER says
+    "voiced_count"; the ceiling is on `voiced_ms`, so only commits with
+    little voice in them are looked at. Never applies where the voice could
+    not be counted (voiced_ms None)."""
+    bar = max_words_per_voiced_s()
+    if voiced_ms is None or bar <= 0 or voiced_ms >= rate_gate_max_voiced_ms():
+        return None
+    words = transcript_words(text)
+    if not words:
+        return None
+    # The span can never be shorter than the voice inside it.
+    over = (voiced_ms if voiced_span_ms is None or rate_over() == "voiced_count"
+            else max(voiced_ms, voiced_span_ms))
+    rate = words / (over / 1000.0) if over > 0 else None
+    if rate is not None and rate <= bar:
+        return None
+    return {"words": words, "voiced_ms": voiced_ms,
+            "voiced_span_ms": voiced_span_ms,
+            "words_per_voiced_s": round(rate, 1) if rate is not None else None}
+
+
+def room_has_second_transcriber(model: str) -> bool:
+    """True when a room on `model` hears the participant through more than
+    the scribe: its members are told colleagues' lines in text, so each
+    member's input holds only the participant, AND the runner forwards the
+    members' transcripts, which it does not on the gpt route (members there
+    are transcribed only at a floor grant's commit, merged and late). The
+    room's near-duplicate filter runs only where this is True; anywhere else
+    two transcripts of one utterance cannot happen and the filter could only
+    delete real speech."""
+    return bool(model) and (relays_colleagues_as_text(model)
+                            and not is_openai_realtime(model))
+
+
+def turn_gate_provenance(model: Optional[str] = None) -> dict:
+    """The knob values above, as this process will apply them. With `model`,
+    also whether a room on it runs the near-duplicate filter at all."""
+    out = {
         "participant_min_voiced_ms": min_voiced_ms(),
         "participant_drop_voiced_ms": drop_voiced_ms(),
         "input_preroll_ms": input_preroll_ms(),
         "input_buffer_restart": input_restart_enabled(),
         "participant_dedupe_overlap": dedupe_overlap(),
         "room_merge_queued_turns": merge_queued_turns(),
+        "participant_low_confidence_director": low_confidence_director(),
+        # Pipeline 2026-09-24a: the pre-commit voice floor and the rate gate.
+        "participant_commit_min_voiced_ms": commit_min_voiced_ms(),
+        "participant_max_words_per_voiced_s": max_words_per_voiced_s(),
+        "participant_rate_gate_max_voiced_ms": rate_gate_max_voiced_ms(),
+        # 2026-09-24b: what the rate is taken over (was the voiced count).
+        "participant_rate_over": rate_over(),
+    }
+    if model:
+        out["room_dedupe_second_source"] = room_has_second_transcriber(model)
+    return out
+
+
+# ── bridge correctness (issue #23; pipeline 2026-09-23d) ─────────────────────
+
+def cancelled_output_discard() -> bool:
+    """CANCELLED_OUTPUT_DISCARD, default on. What the gateway still sends for a
+    reply this bridge cancelled (a barge-in, a stale hold, a re-brief) is kept
+    off the participant's speaker and out of the turn, and written instead as
+    a cancelled_output_dropped event with its text and duration. Only on the
+    gpt family, where a cancel was measured to be honoured with a short tail
+    (0.15-0.4 s of audio, diag track3 probe_cancel); on Gemini the cancel is
+    inert and the "tail" is the rest of the reply, which the runner has always
+    treated as a continuation (see _resume_seam), so that route is unchanged.
+    Off ("0") puts back the old relay, the one that re-armed the reply flags
+    and opened a second, phantom turn for the tail."""
+    return setting("CANCELLED_OUTPUT_DISCARD", "1").strip().lower() not in (
+        "0", "false", "no", "off", "")
+
+
+def discards_cancelled_output(model: str) -> bool:
+    """True when sessions on `model` drop a cancelled reply's tail; see
+    cancelled_output_discard."""
+    return is_openai_realtime(model) and cancelled_output_discard()
+
+
+def bridge_provenance(model: str) -> dict:
+    """What the bridge does to the agent's side of the record for `model`.
+
+    `cancelled_output` is "discard" or "relay" (see cancelled_output_discard).
+    `agent_transcript_items` is how a reply the gateway delivers as several
+    output items is recorded: "joined" since 2026-09-23d (every item's line,
+    in order, one space apart); before that the last item's line replaced the
+    others and there was no field."""
+    return {
+        "cancelled_output": ("discard" if discards_cancelled_output(model)
+                             else "relay"),
+        "agent_transcript_items": "joined",
+    }
+
+
+# ── room reply lifecycle and clocks (issues #23, #24; pipeline 2026-09-23e,
+# room pacing 2026-09-23c) ───────────────────────────────────────────────────
+#
+# Same rules as the two sections above: each knob can be put back without a
+# code change, each is read per call, and pacing_provenance writes the values
+# this process applies onto every record.
+
+def _on_setting(name: str, default: str = "1") -> bool:
+    return setting(name, default).strip().lower() not in (
+        "0", "false", "no", "off", "")
+
+
+def room_commit_only_grant() -> bool:
+    """ROOM_COMMIT_ONLY_GRANT, default on. On a family where the commit
+    itself starts the reply (the gpt route, as 1:1 commit_turn already relies
+    on), GroupRoom.give_floor commits and marks the reply requested instead of
+    committing and sending response.create behind it. The pair started the
+    reply twice over: the create was refused ("the gateway had already started
+    this reply; the extra response.create was refused", on almost every gpt
+    grant on 2026-09-23) or granted, which is the duplicate reply. Off puts
+    the commit + response.create back."""
+    return _on_setting("ROOM_COMMIT_ONLY_GRANT")
+
+
+def room_grant_unanswered_s() -> float:
+    """ROOM_GRANT_UNANSWERED_S, default 6.0 (3.0 until room pacing
+    2026-09-24a), at most 15. How long a commit-only grant waits for the
+    reply the commit should have started (response.created came 0.41-0.88 s
+    after the commit in five of five probes, diag track3/review3) before
+    asking with an explicit response.create, which is then the only create
+    for that turn. 3 s was too short: in the P5 S4A sim a gpt reply took
+    5.09 s from grant to first audio, the fallback create went out at 3.03 s
+    and was refused because the commit's own reply had started by then. The
+    grant holds the bridge's REQUEST_UNANSWERED_S off for its own window
+    (expect_commit_reply's hold_s), so the two watchdogs cannot both ask
+    again for one commit."""
+    return min(max(_float_setting("ROOM_GRANT_UNANSWERED_S", 6.0), 0.0), 15.0)
+
+
+def room_adopt_guard() -> bool:
+    """ROOM_ADOPT_GUARD, default on. A held (suppressed) reply is not adopted
+    as a turn when it holds no audio at all, or when the suppression's cancel
+    was honoured (the gpt route), which leaves a fragment: S4A 2026-09-23
+    recorded Priya saying "That works for", audio_ms 0, from exactly such a
+    hold. The refusal is written as held_reply_refused with the held text.
+    Off adopts them as before."""
+    return _on_setting("ROOM_ADOPT_GUARD")
+
+
+def room_split_turn_s() -> float:
+    """ROOM_SPLIT_TURN_S, default 1.5. A participant who starts speaking again
+    within this many seconds of their own last commit is continuing that turn,
+    not interrupting the character now answering it: the barge-in no longer
+    cancels that reply (split_turn_extended is written instead) and the new
+    speech is committed and answered as the next turn. 0 turns it off and
+    every barge-in cancels, as before. Rooms only; the 1:1 end-of-turn window
+    is a separate, deferred decision (fix plan #23 (b) 8)."""
+    return max(0.0, _float_setting("ROOM_SPLIT_TURN_S", 1.5))
+
+
+def probe_after_seconds() -> float:
+    """PROBE_AFTER_SECONDS, default 12, read the way the watchdog always has
+    (the process environment), so this is the value the probe fires on."""
+    try:
+        return float(os.getenv("PROBE_AFTER_SECONDS", "12"))
+    except ValueError:
+        return 12.0
+
+
+def probe_tick_s() -> float:
+    """PROBE_TICK_SECONDS, default 1. How often the silence watchdog looks.
+    It used to sleep PROBE_AFTER_SECONDS between looks, so a probe fired 12-24
+    s after its clock started rather than 12 (diag track4)."""
+    return min(max(_float_setting("PROBE_TICK_SECONDS", 1.0), 0.05),
+               max(probe_after_seconds(), 0.05))
+
+
+def probe_idle_from_playback() -> bool:
+    """PROBE_IDLE_FROM_PLAYBACK, default on. The participant's silence is
+    counted from the later of their last activity and the moment the last
+    reply finished PLAYING (the runner's playback cursor), not from when it
+    finished generating: the gateway delivers about 2.5x faster than real
+    time, so the old clock left a participant about 4 s of actual silence
+    before a 12 s probe. Off counts from activity alone, as before."""
+    return _on_setting("PROBE_IDLE_FROM_PLAYBACK")
+
+
+def handoff_idle_s() -> float:
+    """HANDOFF_IDLE_S, default 3. Once a timeboxed interaction's clock has
+    run out (S1's two minutes), how long the participant has to be silent,
+    on the same playback-aware clock as the probe, before the character is
+    briefed with the closing line and made to say it (pipeline 2026-09-24a).
+    Before, the hand-off was
+    briefed only at the end of the participant's next turn and then probed
+    after PROBE_AFTER_SECONDS: a silent participant waited about 50 s (P5
+    S1A sim, 95-145 s). 0 hands off on the first quiet tick."""
+    return max(0.0, _float_setting("HANDOFF_IDLE_S", 3.0))
+
+
+def pacing_provenance() -> dict:
+    """The knob values above, as this process will apply them.
+    `room_play_clock` is not a knob: "per_turn" since 2026-09-23e, when the
+    room's heard_seconds / playback_cut stopped accumulating across turns."""
+    return {
+        "room_grant": ("commit_only" if room_commit_only_grant()
+                       else "commit_and_create"),
+        "room_grant_unanswered_s": room_grant_unanswered_s(),
+        "room_adopt_guard": room_adopt_guard(),
+        "room_split_turn_s": room_split_turn_s(),
+        "room_play_clock": "per_turn",
+        "probe_after_s": probe_after_seconds(),
+        "probe_tick_s": probe_tick_s(),
+        "probe_idle_from": ("playback" if probe_idle_from_playback()
+                            else "activity"),
+        "handoff_idle_s": handoff_idle_s(),
+    }
+
+
+def deferral_blank_audible() -> bool:
+    """DEFERRAL_BLANK_AUDIBLE, default off. A reply the runner reads as a
+    deferral ("I'll wait for Casey to answer.") is blanked from the record
+    only when none of its audio was relayed; one the participant heard keeps
+    its text and is flagged `deferral` (fix plan #23 (b) 7). On blanks every
+    deferral, as before 2026-09-23f. The text is in deferral_output either
+    way."""
+    return _on_setting("DEFERRAL_BLANK_AUDIBLE", "0")
+
+
+def heard_text_wpm() -> float:
+    """HEARD_TEXT_WPM, default turn_audio.WPM (170). The speaking rate that
+    turns a cut turn's relayed audio into a word count for `heard_text`
+    until the character has enough clean turns of its own to measure one
+    (HEARD_TEXT_CALIBRATE)."""
+    return min(max(_float_setting("HEARD_TEXT_WPM", _WPM), 60.0), 400.0)
+
+
+def heard_text_calibrate() -> bool:
+    """HEARD_TEXT_CALIBRATE, default on. `heard_text` uses the character's
+    own rate in this encounter (words over relayed audio on its whole,
+    uncut turns) once there is enough of it; off uses HEARD_TEXT_WPM
+    throughout."""
+    return _on_setting("HEARD_TEXT_CALIBRATE")
+
+
+def record_provenance() -> dict:
+    """What the runner does to an agent line before it is recorded
+    (pipeline 2026-09-23f). `deferral_names` is not a knob: the regex's name
+    slots are case-sensitive since 2026-09-23f."""
+    return {
+        "deferral_blank": ("always" if deferral_blank_audible()
+                           else "no_audio_only"),
+        "deferral_names": "case_sensitive",
+        "heard_text": {
+            "turns": "interrupted_or_cap_truncated",
+            "basis": "relayed_audio",
+            "wpm": heard_text_wpm(),
+            "calibrate": heard_text_calibrate(),
+        },
     }
 
 
@@ -999,6 +1361,23 @@ _FILLERS = frozenset((
     "um", "umm", "uh", "uhh", "uhm", "er", "erm", "ah", "eh", "hm", "hmm",
     "hmmm", "mm", "mmm", "mhm",
 ))
+
+
+def drop_wordless() -> bool:
+    """PARTICIPANT_DROP_WORDLESS, default on. A transcript with no letter or
+    digit in it at all ("." / "..." / "```" / "。") is the transcriber
+    describing a sound, not a participant saying something, at ANY voiced
+    level: written as user_turn_suppressed{no_speech} with its text and never
+    answered. Measured 2026-09-24 on the P6 verification runs: three such
+    lines over 300-500 ms of voice (playback bleed and a breath) were kept as
+    low_confidence turns and a character replied to each. Fillers with letters
+    ("Hmm.", "Okay") are unaffected. 0 turns this off."""
+    return _int_setting("PARTICIPANT_DROP_WORDLESS", 1) != 0
+
+
+def is_wordless(text: str) -> bool:
+    """True for a non-empty transcript with no letter or digit in it."""
+    return bool((text or "").strip()) and re.search(r"[^\W_]", text or "") is None
 
 
 def is_filler_only(text: str) -> bool:
@@ -1463,7 +1842,8 @@ class RealtimeVoiceSession:
     """One live conversation with the agent.
 
     Emits dicts: {"type": "user_transcript"|"agent_transcript_delta"|
-    "agent_transcript"|"agent_audio"|"response_done"|"error", ...}
+    "agent_transcript"|"agent_audio"|"response_done"|"cancelled_output"|
+    "error", ...}
     Audio is PCM16 resampled to the client's rate.
     """
 
@@ -1532,6 +1912,18 @@ class RealtimeVoiceSession:
         # last restart_input, so a restart happens at most once per commit.
         self.voiced_bar: Optional[Callable[[], int]] = None
         self._voiced_ms = 0.0
+        # Where in the buffer the voice sits (P6 review, pipeline
+        # 2026-09-24b): ms of audio appended since the last commit or clear,
+        # and the offsets of the first voiced frame's start and the last
+        # voiced frame's end in it. The rate gate reads the span between the
+        # two (see implausible_rate); None until a voiced frame arrives.
+        self._appended_ms = 0.0
+        self._voiced_first_ms: Optional[float] = None
+        self._voiced_last_ms: Optional[float] = None
+        # When the latest commit of any kind (turn, probe, replay) went out,
+        # so the runner can tell that a reply in flight answers a LATER
+        # commit than the one it is withdrawing (see last_commit_at).
+        self._last_commit_at = 0.0
         self._commit_tags: list = []
         self._item_tags: dict = {}
         self._saw_committed = False
@@ -1650,9 +2042,46 @@ class RealtimeVoiceSession:
         # a gateway that omits response.created) keeps the old rule: every
         # done ends whatever is in flight.
         self._response_created_id: Optional[str] = None
+        # Extra seconds REQUEST_UNANSWERED_S waits for the reply in flight,
+        # set by a commit-only room grant for its own ROOM_GRANT_UNANSWERED_S
+        # window (see expect_commit_reply) and put down with the reply.
+        self._request_hold_s = 0.0
         self._names_replies = False
         self._created_ids: set = set()
         self._cancelled_ids: set = set()
+        # The replies cancel_response stopped whose tail is being DISCARDED
+        # (see cancelled_output_discard), each with what has been dropped so
+        # far, for the cancelled_output event its response.done hands on.
+        # A subset of _cancelled_ids: retry_response and replay_input cancel
+        # too, but there the gateway can answer the retry by resuming the
+        # cancelled reply under its own id (see the delta branch of events()),
+        # and that answer is the line the participant is waiting for.
+        # `_discarded_done` keeps the names of the ones already closed, so a
+        # frame that trails their response.done is dropped too, not relayed.
+        self._discard_ids: dict = {}
+        self._discarded_done: dict = {}
+        # A barge-in during a retry's window, after its response.create and
+        # before its response.created: there is no name yet to discard, so
+        # the NEXT reply created is the one cut off (see cancel_response).
+        # `_retry_head_id` is the reply the retry abandoned, which the
+        # gateway may answer by resuming (the delta branch of events()).
+        self._discard_next_created = False
+        self._retry_head_id: Optional[str] = None
+        # cancel_unheard_reply cancelled a reply the gateway had not named
+        # yet (`_unnamed_cancel`), and the gateway then said
+        # response_cancel_not_active: the cancel reached it before the reply
+        # existed, so the reply it creates next is live and has to be
+        # cancelled again once named (`_recancel_on_created`). See events().
+        self._unnamed_cancel = False
+        self._recancel_on_created = False
+        # A reply the gateway delivers as several output items (3 of 6 probe
+        # replies on gpt-realtime-2.1, diag track3 fake_two_items): each
+        # item's whole line, in order, under the reply it belongs to, so the
+        # agent_transcript handed on is the whole reply and not the last item.
+        # `_delta_item` is the item the last transcript delta belonged to.
+        self._item_rid: Optional[str] = None
+        self._item_lines: dict = {}
+        self._delta_item: Optional[str] = None
         self.phantom_dones = 0
         self.stale_dones = 0
         # A truncation verdict being held for AUDIO_RETRY_QUIET_S (see the
@@ -1738,6 +2167,12 @@ class RealtimeVoiceSession:
         self._done_ids.clear()
         self._created_ids.clear()
         self._cancelled_ids.clear()
+        self._discard_ids = {}
+        self._discarded_done = {}
+        self._discard_next_created = False
+        self._unnamed_cancel = self._recancel_on_created = False
+        self._retry_head_id = None
+        self._reset_items()
         self._response_created_id = None
         self._names_replies = False
         self._deferred = None
@@ -1746,7 +2181,7 @@ class RealtimeVoiceSession:
         self._commit_tags = []
         self._item_tags = {}
         self._saw_committed = False
-        self._voiced_ms = 0.0
+        self._reset_voice_count()
         self._restart_mark = self.commits - 1
         if not self.api_key:
             raise RuntimeError("No gateway API key (set LITELLM_API_KEY)")
@@ -1923,12 +2358,18 @@ class RealtimeVoiceSession:
             return
         if self.voiced_bar is not None:
             # Voiced audio since the last commit, for the transcript gate. On
-            # the page's own frames (20 ms, CLIENT_RATE), the granularity the
+            # the page's own frames (100 ms, CLIENT_RATE: pcm-worklet.js flushes
+            # every 1600 samples), the granularity the
             # runner's VAD decides on. A bar that cannot be read counts
             # nothing rather than failing the append.
             try:
+                ms = len(pcm16) / 2 / CLIENT_RATE * 1000.0
                 if _rms(pcm16) >= self.voiced_bar():
-                    self._voiced_ms += len(pcm16) / 2 / CLIENT_RATE * 1000.0
+                    self._voiced_ms += ms
+                    if self._voiced_first_ms is None:
+                        self._voiced_first_ms = self._appended_ms
+                    self._voiced_last_ms = self._appended_ms + ms
+                self._appended_ms += ms
             except Exception:  # noqa: BLE001 - never cost the participant audio
                 pass
         if self.input_rate != CLIENT_RATE:
@@ -1979,18 +2420,124 @@ class RealtimeVoiceSession:
         caps = capabilities_for(self.model)
         return bool(caps and caps.needs_turn_detection_null)
 
+    @property
+    def discards_cancelled_output(self) -> bool:
+        """See cancelled_output_discard. Read per call, like the knob."""
+        return discards_cancelled_output(self.model)
+
+    def _reset_items(self) -> None:
+        self._item_rid = None
+        self._item_lines = {}
+        self._delta_item = None
+
+    def _item_line(self, rid: Optional[str], item: Optional[str], text: str) -> str:
+        """The whole reply's line once `item`'s transcript is `text`.
+
+        Keyed by the reply's name, not reset at response.done, because an
+        item's transcript.done can trail its reply's done. Without both a
+        reply name and an item name there is nothing to join on, and the line
+        is the item's own, as it always was."""
+        if not (rid and item):
+            return text
+        if rid != self._item_rid:
+            self._item_rid = rid
+            self._item_lines = {}
+        self._item_lines[item] = text
+        return " ".join(t for t in self._item_lines.values() if t)
+
+    def _discard_frame(self, rid: str, etype: str, ev: dict) -> Optional[dict]:
+        """Account for one frame of a cancelled reply that is not relayed.
+
+        Returns a cancelled_output event to hand on at once for a frame that
+        trails the reply's own response.done (the summary for that reply has
+        already gone); None otherwise."""
+        entry = self._discard_ids.get(rid)
+        late = entry is None
+        if late:
+            entry = {"audio_bytes": 0, "audio_deltas": 0, "text": "",
+                     "transcripts": [], "frames": 0}
+        entry["frames"] += 1
+        if etype in ("response.output_audio.delta", "response.audio.delta"):
+            try:
+                entry["audio_bytes"] += len(base64.b64decode(ev.get("delta") or ""))
+            except (binascii.Error, ValueError):
+                pass
+            entry["audio_deltas"] += 1
+        elif etype in ("response.output_audio_transcript.delta",
+                       "response.audio_transcript.delta"):
+            entry["text"] += ev.get("delta") or ""
+        elif etype in ("response.output_audio_transcript.done",
+                       "response.audio_transcript.done"):
+            if ev.get("transcript"):
+                entry["transcripts"].append(ev["transcript"])
+        if late:
+            if not (entry["audio_bytes"] or entry["text"] or entry["transcripts"]):
+                return None
+            return self._cancelled_output(rid, entry, late=True)
+        return None
+
+    def _discarding(self, rid: Optional[str]) -> bool:
+        return bool(rid) and (rid in self._discard_ids
+                              or rid in self._discarded_done)
+
+    def _close_discard(self, rid: str) -> Optional[dict]:
+        """Stop collecting for `rid` and return what was dropped (None if it
+        was not being collected). Its name is kept, bounded, so a frame that
+        trails it is still dropped."""
+        entry = self._discard_ids.pop(rid, None)
+        self._discarded_done[rid] = True
+        while len(self._discarded_done) > 64:
+            self._discarded_done.pop(next(iter(self._discarded_done)))
+        return entry
+
+    @staticmethod
+    def _cancelled_output(rid: str, entry: dict, *, late: bool = False) -> dict:
+        return {"type": "cancelled_output", "response_id": rid,
+                # Gateway audio is 24 kHz PCM16: 48 bytes per ms.
+                "audio_ms": entry["audio_bytes"] // (GATEWAY_OUTPUT_RATE * 2 // 1000),
+                "audio_deltas": entry["audio_deltas"], "text": entry["text"],
+                "transcripts": list(entry["transcripts"]),
+                "frames": entry["frames"], "late": late,
+                # Cancelled a second time once named (cancel_unheard_reply).
+                **({"recancelled": True} if entry.get("recancelled") else {})}
+
     def _tag_commit(self, *, probe: bool = False, replay: bool = False) -> None:
         """Note a commit about to be sent, and start the next one's count."""
         self.commits += 1
-        voiced, self._voiced_ms = self._voiced_ms, 0.0
+        voiced, span = self._voiced_ms, self._voiced_span_ms()
+        self._reset_voice_count()
+        self._last_commit_at = time.time()
         if not self.owns_input_buffer:
             return
+        counted = self.voiced_bar is not None
         self._commit_tags.append({
-            "voiced_ms": int(round(voiced)) if self.voiced_bar is not None else None,
-            "probe": probe, "replay": replay, "committed_at": time.time(),
+            "voiced_ms": int(round(voiced)) if counted else None,
+            "voiced_span_ms": int(round(span)) if counted else None,
+            "probe": probe, "replay": replay,
+            "committed_at": self._last_commit_at,
         })
         # A gateway that never answers a commit must not grow this forever.
         del self._commit_tags[:-16]
+
+    def _reset_voice_count(self) -> None:
+        """A new buffer: nothing appended to it, nothing voiced in it."""
+        self._voiced_ms = 0.0
+        self._appended_ms = 0.0
+        self._voiced_first_ms = self._voiced_last_ms = None
+
+    def _voiced_span_ms(self) -> float:
+        """First voiced frame's start to last voiced frame's end, since the
+        last commit or clear; 0 with no voiced frame at all."""
+        if self._voiced_first_ms is None or self._voiced_last_ms is None:
+            return 0.0
+        return self._voiced_last_ms - self._voiced_first_ms
+
+    @property
+    def last_commit_at(self) -> float:
+        """When this bridge's latest commit (a turn, a probe or a replay)
+        went out; 0.0 before the first. What _withdraw_reply compares a
+        suppressed transcript's own committed_at against."""
+        return self._last_commit_at
 
     def _tag_for(self, item_id: Optional[str]) -> Optional[dict]:
         """The tag of the commit this transcript came from, taken once."""
@@ -2035,7 +2582,7 @@ class RealtimeVoiceSession:
         gone = self.uncommitted()
         await self._send({"type": "input_audio_buffer.clear"})
         self.pending_input = 0
-        self._voiced_ms = 0.0
+        self._reset_voice_count()
         # The next append is not contiguous with the last one.
         self._in_resample_state = None
         return gone
@@ -2063,6 +2610,60 @@ class RealtimeVoiceSession:
         gone["resent_ms"] = now["buffer_ms"]
         gone["resent_voiced_ms"] = now["buffer_voiced_ms"]
         return gone
+
+    def voiced_since_commit(self) -> Optional[int]:
+        """Voiced audio appended since the last commit or clear, in ms, or
+        None where this session cannot say: no voiced_bar (a room member, a
+        harness), or a buffer the gateway's own turn detection commits, where
+        the count is not tied to any commit of ours."""
+        if self.voiced_bar is None or not self.owns_input_buffer:
+            return None
+        return int(round(self._voiced_ms))
+
+    async def discard_input(self) -> dict:
+        """Throw the participant's uncommitted turn away instead of committing
+        it (the pre-commit voice floor, PARTICIPANT_COMMIT_MIN_VOICED_MS).
+
+        The buffer is cleared exactly as restart_input clears it, and the
+        restart is re-armed: nothing was committed, so without that the next
+        speech_started would find input_restart_due False and the next turn
+        would be committed with everything the microphone sent since this
+        one. Returns what was discarded (see clear_input); the audio itself
+        is still in user_audio.wav."""
+        gone = await self.clear_input()
+        self._restart_mark = self.commits - 1
+        return gone
+
+    async def cancel_unheard_reply(self) -> Optional[str]:
+        """Cancel the reply in flight before any of it has been played, and
+        drop whatever the gateway still sends for it (pipeline 2026-09-24a).
+
+        For a participant turn withdrawn after its commit went out: on this
+        route the commit itself started the reply, and the transcript that
+        showed the turn was invented arrives 0.6-1.6 s later, usually before
+        the reply's first audio (1.9-24.8 s after the commit in the P5 sims).
+        The reply may not have a name yet (its response.created can trail the
+        commit by up to 0.9 s); the gateway handles frames in order, so the
+        next reply it names is this one, and it is marked for discard as a
+        retry's is (see cancel_response). Only where the tail is discarded at
+        all (discards_cancelled_output, the gpt route): elsewhere a cancel is
+        inert and the reply would play anyway. Returns the reply's id where
+        it was known, "" where it was not yet named, None where nothing was
+        done."""
+        if not self.discards_cancelled_output:
+            return None
+        rid = self._response_created_id
+        await self.cancel_response()
+        if not rid:
+            self._discard_next_created = True
+            # The cancel just sent may reach the gateway before the reply
+            # exists, which it answers with response_cancel_not_active; the
+            # reply would then generate in full into the gateway's
+            # conversation, however much of it we drop. events() cancels it
+            # again once it is named, and only then (see _recancel_on_created).
+            self._unnamed_cancel = True
+            self._recancel_on_created = False
+        return rid or ""
 
     def _commit_blocked(self) -> bool:
         """commit_turn's two early returns, as a question."""
@@ -2111,6 +2712,9 @@ class RealtimeVoiceSession:
         # loop.
         self._retries_this_turn = 0
         self._cancelled_by_us = False
+        # A reply to THIS turn is not the one a barge-in cut off.
+        self._discard_next_created = False
+        self._unnamed_cancel = self._recancel_on_created = False
         self._drop_deferred("new_turn")
         await self._send({"type": "input_audio_buffer.commit"})
 
@@ -2150,6 +2754,7 @@ class RealtimeVoiceSession:
         self._audio_absent_hold = 0.0
         self._response_created_id = None
         self._requested = False
+        self._request_hold_s = 0.0
 
     def _request_unanswered(self) -> bool:
         """True when a reply this bridge asked for has drawn nothing at all —
@@ -2169,7 +2774,8 @@ class RealtimeVoiceSession:
             self._audio_absent_hold = time.time()
             return False
         since = max(self._response_started_at, self._audio_absent_hold)
-        return since > 0.0 and (time.time() - since) > REQUEST_UNANSWERED_S
+        return since > 0.0 and (time.time() - since) > (
+            REQUEST_UNANSWERED_S + self._request_hold_s)
 
     # -- audio recovery --------------------------------------------------------
     def _drop_deferred(self, why: str) -> None:
@@ -2428,6 +3034,7 @@ class RealtimeVoiceSession:
         # Sent directly rather than via cancel_response: this is not a barge-in
         # and must not mark the NEXT reply as one we cut off.
         await self._send({"type": "response.cancel"})
+        self._retry_head_id = self._response_created_id
         if self._response_created_id:
             # An absent reply is still nominally open under its own id; its
             # done, if the cancel draws one, is that reply's and not the
@@ -2436,6 +3043,10 @@ class RealtimeVoiceSession:
         self._end_response()
         self._deferred = None
         self._agent_buffer = ""
+        # The runner starts the turn's text over for a retry; the reply's
+        # item lines start over with it, or the abandoned head would come
+        # back joined to the answer when that resumes under the same id.
+        self._reset_items()
         self._cancelled_by_us = False
         self._retries_this_turn += 1
         self._retry_in_flight = True
@@ -2470,11 +3081,16 @@ class RealtimeVoiceSession:
                 or not pcm16):
             return False
         await self._send({"type": "response.cancel"})
+        self._retry_head_id = self._response_created_id
         if self._response_created_id:
             self._cancelled_ids.add(self._response_created_id)
         self._end_response()
         self._deferred = None
         self._agent_buffer = ""
+        # The runner starts the turn's text over for a retry; the reply's
+        # item lines start over with it, or the abandoned head would come
+        # back joined to the answer when that resumes under the same id.
+        self._reset_items()
         self._cancelled_by_us = False
         self._retries_this_turn += 1
         self._retry_in_flight = True
@@ -2521,6 +3137,9 @@ class RealtimeVoiceSession:
         self._requested = True
         self._response_started_at = time.time()
         self._response_saw_output = False
+        self._request_hold_s = 0.0           # see expect_commit_reply
+        self._discard_next_created = False   # see cancel_response
+        self._unnamed_cancel = self._recancel_on_created = False
         await self._send({"type": "response.create"})
 
     def _response_stalled(self) -> bool:
@@ -2558,18 +3177,24 @@ class RealtimeVoiceSession:
         self._requested = True
         self._response_started_at = time.time()
         self._response_saw_output = False
+        self._request_hold_s = 0.0           # see expect_commit_reply
+        self._discard_next_created = False   # see cancel_response
+        self._unnamed_cancel = self._recancel_on_created = False
         await self._send({"type": "response.create"})
 
-    async def commit_turn(self, *, probe: bool = False) -> None:
+    async def commit_turn(self, *, probe: bool = False) -> bool:
         """Close the participant's turn and ask for a reply. Required, the
         gateway will not do this on its own. `probe` tags the commit as a
-        silence probe's pad (see commit_probe), never the participant's."""
+        silence probe's pad (see commit_probe), never the participant's.
+
+        True when the commit went out; False when a reply already in flight
+        made this a no-op (the turn clock's commit_sent reads it)."""
         if self._response_active and not self._response_stalled():
-            return
+            return False
         if self.autofire_active and time.time() - self._last_output_at < 15:
             # The bridge is already answering this turn; a commit + create
             # here produces a second, paraphrased reply on top of it.
-            return
+            return False
         # 100 ms at the rate the gateway reads. pending_input counts bytes as
         # they went on the wire, i.e. AFTER send_audio's resample, so the bar
         # is derived from input_rate: the old fixed 3200 was 100 ms only at
@@ -2584,22 +3209,44 @@ class RealtimeVoiceSession:
             # Through the bridge, the commit itself starts the reply on the
             # OpenAI route; an explicit response.create on top is rejected
             # (active-response conflict) and can yield a second reply.
-            self._response_active = True
-            # ...but the reply still needs a stall clock, or _response_stalled
-            # has nothing to measure from and a reply this route loses latches
-            # _response_active for the rest of the encounter. request_response
-            # sets these three on every other route; this branch returns before
-            # reaching it, so it sets them itself.
-            self._requested = True
-            self._response_started_at = time.time()
-            self._response_saw_output = False
-            return
+            self.expect_commit_reply()
+            return True
         await self.request_response()
+        return True
 
-    async def cancel_response(self) -> None:
+    def expect_commit_reply(self, hold_s: float = 0.0) -> None:
+        """Book the reply a commit has just started as one we asked for.
+
+        For the families where the commit itself starts the reply (the gpt
+        route): commit_turn, and GroupRoom.give_floor since 2026-09-23e, which
+        used to send a response.create behind the commit instead. The reply
+        still needs a stall clock, or _response_stalled has nothing to measure
+        from and a reply this route loses latches _response_active for the
+        rest of the encounter; request_response sets these on every other
+        route. `_requested` also makes REQUEST_UNANSWERED_S watch it, and
+        keeps response.created from reading it as an auto-fire.
+
+        `hold_s` is how long a caller will itself wait for this reply before
+        asking again (GroupRoom.give_floor's ROOM_GRANT_UNANSWERED_S): the
+        bridge's REQUEST_UNANSWERED_S then starts counting only after it, so
+        a grant waiting 6 s and the bridge's own 6 s bar cannot both ask for
+        the same commit's reply (room pacing 2026-09-24a)."""
+        self._response_active = True
+        self._requested = True
+        self._response_started_at = time.time()
+        self._response_saw_output = False
+        self._request_hold_s = max(0.0, float(hold_s or 0.0))
+
+    async def cancel_response(self, *, discard_tail: bool = True) -> None:
         """Barge-in: stop the agent mid-utterance. Sent unconditionally, because
         response.cancel is harmless when nothing is active and a bridge
         auto-fired reply has to be cancellable too.
+
+        `discard_tail`: whatever the gateway still sends for this reply after
+        the cancel is dropped in events() and summarised as cancelled_output
+        (see cancelled_output_discard; gpt family only). The room's
+        suppression of an unsolicited reply passes False, because there the
+        tail is what the hold is made of and a later grant can adopt it.
 
         The reply's whole state is dropped here (_end_response). A cancelled
         response may never produce the
@@ -2618,6 +3265,47 @@ class RealtimeVoiceSession:
         # does not. See _response_created_id and _retry_verdict.
         if self._response_created_id:
             self._cancelled_ids.add(self._response_created_id)
+            if discard_tail and self.discards_cancelled_output:
+                # THE PHANTOM TURN (issue #23, diag track3 fake_cancel_tail):
+                # the gateway sends 0.15-0.4 s of audio and the transcript
+                # frames after a cancel, and each of them used to re-bind the
+                # reply (the delta branch below), put _response_active and
+                # autofire_active back up and reach the runner as audio of a
+                # reply that had just been closed out: a second
+                # assistant_started, a false agent_audio_short and an audible
+                # blip after the participant cut the character off. Named
+                # here, the tail is dropped before any of that bookkeeping.
+                self._discard_ids.setdefault(self._response_created_id, {
+                    "audio_bytes": 0, "audio_deltas": 0, "text": "",
+                    "transcripts": [], "frames": 0})
+                while len(self._discard_ids) > 16:
+                    # A done that never came; its later frames are still
+                    # dropped, and reported one by one (see _discard_frame).
+                    self._close_discard(next(iter(self._discard_ids)))
+        elif (discard_tail and self.discards_cancelled_output
+                and self._retry_in_flight):
+            # The same cut in a retry's window: retry_response has sent its
+            # response.create and the gateway has not yet named the reply,
+            # so there was nothing to put in the discard set and the retry's
+            # answer then played after the participant had cut in (a second
+            # assistant_started, the phantom turn by another door). The
+            # gateway handles our frames in order, so the next reply it
+            # creates is the retry's, and it is cancelled like the head was;
+            # it is marked for discard when its response.created names it.
+            # The head the retry abandoned is dropped too, because the
+            # gateway can answer a retry by resuming it under its own id.
+            # Its done has usually come already (that done is what the retry
+            # answered), so its name comes off _done_ids: the done a resumed
+            # reply ends with is then read, and closes the discard's summary.
+            self._discard_next_created = True
+            head = self._retry_head_id
+            if head:
+                self._done_ids.discard(head)
+                self._created_ids.add(head)
+                self._cancelled_ids.add(head)
+                self._discard_ids.setdefault(head, {
+                    "audio_bytes": 0, "audio_deltas": 0, "text": "",
+                    "transcripts": [], "frames": 0})
         self._cancelled_by_us = True
         self._drop_deferred("cancelled")
         self._end_response()
@@ -2666,8 +3354,9 @@ class RealtimeVoiceSession:
                     and not self._response_saw_output):
                 # The same for a request that has drawn nothing yet: measured
                 # live, a 6 s bar checked every 5 s fired at 8-11 s.
-                left = REQUEST_UNANSWERED_S - (time.time() - max(
-                    self._response_started_at, self._audio_absent_hold))
+                left = (REQUEST_UNANSWERED_S + self._request_hold_s) - (
+                    time.time() - max(self._response_started_at,
+                                      self._audio_absent_hold))
                 timeout = min(timeout, 1.0, max(0.25, left + 0.01))
             try:
                 yield await asyncio.wait_for(ws.recv(), timeout)
@@ -2870,6 +3559,55 @@ class RealtimeVoiceSession:
                 # and cancel_response() track auto-fired replies too. Order
                 # matters: setting _response_active before the autofire test
                 # would make every reply look like one we asked for.
+                frid = ev.get("response_id")
+                if (self._discarding(frid) and etype.startswith("response.")
+                        and etype not in ("response.created", "response.done",
+                                          "response.function_call_arguments.done")):
+                    # A reply cancel_response stopped, still streaming (see
+                    # cancel_response and cancelled_output_discard). Dropped
+                    # BEFORE the bookkeeping below, and that is the point:
+                    # none of it may run for this frame. Re-binding
+                    # _response_created_id to it, or raising _response_active,
+                    # autofire_active or _response_saw_output, is what turned
+                    # the tail into a new turn. And because nothing is raised,
+                    # its response.done can be read as stale without the 45 s
+                    # latch that reading caused when those flags WERE raised
+                    # (the delta branch's comment). What is dropped is not
+                    # lost: it is summed per reply and handed on at the done.
+                    # A tool call's arguments still go through, as before.
+                    late = self._discard_frame(frid, etype, ev)
+                    if late is not None:
+                        yield late
+                    continue
+
+                if etype == "response.created" and self._discard_next_created:
+                    # The retry's reply a barge-in cut off before it had a
+                    # name (see cancel_response). Named now, and discarded
+                    # like any cancelled tail: none of the bookkeeping below
+                    # runs for it, so it raises no flag and its done is read
+                    # as stale. Known as created, or that done would be
+                    # counted a phantom and its summary never written.
+                    self._discard_next_created = False
+                    recancel = self._recancel_on_created
+                    self._unnamed_cancel = self._recancel_on_created = False
+                    crid = (ev.get("response") or {}).get("id")
+                    if crid:
+                        self._names_replies = True
+                        self._created_ids.add(crid)
+                        self._cancelled_ids.add(crid)
+                        entry = self._discard_ids.setdefault(crid, {
+                            "audio_bytes": 0, "audio_deltas": 0, "text": "",
+                            "transcripts": [], "frames": 0})
+                        if recancel:
+                            # cancel_unheard_reply's cancel missed (the
+                            # gateway said response_cancel_not_active before
+                            # it created this reply), so this reply is live:
+                            # cancel it now it exists. Marked on its
+                            # cancelled_output summary.
+                            await self._send({"type": "response.cancel"})
+                            entry["recancelled"] = True
+                        continue
+
                 if etype == "response.created":
                     # A reply the gateway is starting is not the one we cut off.
                     self._cancelled_by_us = False
@@ -2936,7 +3674,10 @@ class RealtimeVoiceSession:
                         # abandoned reply resuming under its own id (no new
                         # created at all), and a reply we cancelled keeps
                         # streaming. Bound here so its done can end it; read as
-                        # stale, that done left the flags up for 45 s.
+                        # stale, that done left the flags up for 45 s. (A reply
+                        # cancel_response stopped with its tail discarded never
+                        # gets here: see the discard at the top of this loop,
+                        # which raises no flag and so can leave none up.)
                         self._names_replies = True
                         self._created_ids.add(drid)
                         self._done_ids.discard(drid)
@@ -3042,10 +3783,26 @@ class RealtimeVoiceSession:
                     # the space back at exactly these boundaries and nowhere
                     # else.
                     first = not self._response_text
+                    # `item_start`: the opening chunk of the reply's second or
+                    # later output item. gpt-realtime-2.1 answered in two
+                    # items in 3 of 6 probe replies ("...keep it practical." +
+                    # "The date is safe because..."), and the items are
+                    # separate sentences with no space between them on the
+                    # wire, so this is a seam exactly like `first` and the
+                    # runner puts the space back at it (see _resume_seam).
+                    item = ev.get("item_id")
+                    item_start = bool(item and not first and self._delta_item
+                                      and item != self._delta_item)
+                    if item:
+                        self._delta_item = item
                     self._agent_buffer += delta
+                    if (item_start and delta and not delta[0].isspace()
+                            and not self._response_text[-1].isspace()):
+                        self._response_text += " "
                     self._response_text += delta
                     yield {"type": "agent_transcript_delta", "text": delta,
-                           "first": first,
+                           "first": first, "item_start": item_start,
+                           "item_id": item,
                            "response_id": ev.get("response_id")}
 
                 elif etype in (
@@ -3056,8 +3813,25 @@ class RealtimeVoiceSession:
                     self._agent_buffer = ""
                     self._restreaming = False
                     if text:
-                        self._response_text = text
-                        yield {"type": "agent_transcript", "text": text}
+                        # One of these arrives per output ITEM, not per reply.
+                        # Handed on as the WHOLE reply so far (every item's
+                        # line, in order, a space apart), because each
+                        # consumer applies it as the authoritative line and
+                        # replaces its buffer with it: handed on per item,
+                        # the second item's line overwrote the first in the
+                        # record, the room's hold and the page's caption
+                        # (diag track3 fake_two_items: spoken "Okay, thanks
+                        # for that. Six months is a start.", recorded "Six
+                        # months is a start."). `item_text` is this item's
+                        # own line, `items` how many are in `text`.
+                        item = ev.get("item_id")
+                        irid = ev.get("response_id") or self._response_created_id
+                        line = self._item_line(irid, item, text)
+                        self._response_text = line
+                        yield {"type": "agent_transcript", "text": line,
+                               "item_id": item, "item_text": text,
+                               "items": (len(self._item_lines)
+                                         if irid and item else 1)}
 
                 elif etype == "conversation.item.input_audio_transcription.completed":
                     raw = (ev.get("transcript") or "").strip()
@@ -3084,7 +3858,14 @@ class RealtimeVoiceSession:
                     meta = {"item_id": item_id,
                             "probe": bool(tag.get("probe")),
                             "replay": bool(tag.get("replay")),
-                            "voiced_ms": tag.get("voiced_ms")}
+                            "voiced_ms": tag.get("voiced_ms"),
+                            # Where that voice sat: what the rate gate
+                            # divides by (pipeline 2026-09-24b).
+                            "voiced_span_ms": tag.get("voiced_span_ms"),
+                            # When the commit went out, so the runner can
+                            # tell a reply to THIS turn from an older one
+                            # (pipeline 2026-09-24a; see _withdraw_reply).
+                            "committed_at": tag.get("committed_at")}
                     if text:
                         yield {"type": "user_transcript", "text": text,
                                "garbled": garbled, **meta}
@@ -3139,10 +3920,21 @@ class RealtimeVoiceSession:
                                    and self._response_active
                                    and self._response_saw_output))
                     cancelled = rid in self._cancelled_ids
+                    discarded = bool(rid) and rid in self._discard_ids
                     if rid:
                         self._done_ids.add(rid)
                         self._created_ids.discard(rid)
                         self._cancelled_ids.discard(rid)
+                    if discarded:
+                        # The end of a reply whose tail was dropped (see the
+                        # discard at the top of this loop). What was dropped
+                        # goes on the record now, and the done is stale by
+                        # construction: nothing of this reply re-armed a flag
+                        # after its cancel, so there is no in-flight state of
+                        # its to put down and it must not end the reply that
+                        # may be streaming now.
+                        yield self._cancelled_output(rid, self._close_discard(rid))
+                        current = False
                     if not current:
                         # A reply that is over from this bridge's point of view
                         # - cancelled by us, or closed out by a watchdog - and
@@ -3153,7 +3945,8 @@ class RealtimeVoiceSession:
                         self.stale_dones += 1
                         yield {"type": "response_done", "stale": True,
                                "audio_unterminated": False, "retried": False,
-                               "retry_reason": None, "retryable": False}
+                               "retry_reason": None, "retryable": False,
+                               **({"cancelled": True} if cancelled else {})}
                         continue
                     # Read BEFORE _end_response puts the flags down.
                     unterminated = (self._response_audio_seen
@@ -3176,6 +3969,10 @@ class RealtimeVoiceSession:
                     self._cancelled_by_us = False
                     if cancelled:
                         verdict["cancelled"] = True
+                    # The reply's own name, where the gateway gives one, so a
+                    # pump holding a latch on a DIFFERENT reply can tell this
+                    # done from that one's (see _pump_member's refused hold).
+                    info["response_id"] = rid
                     if verdict.get("retryable"):
                         # Not yet. Held for AUDIO_RETRY_QUIET_S and yielded by
                         # _deferral_verdict when the window has settled it.
@@ -3204,6 +4001,35 @@ class RealtimeVoiceSession:
                     err = err if isinstance(err, dict) else {}
                     code = str(err.get("code") or "")
                     param = str(err.get("param") or "")
+                    if (code == "response_cancel_not_active"
+                            and self._unnamed_cancel
+                            and self._discard_next_created):
+                        # cancel_unheard_reply's cancel of a reply that had no
+                        # name yet arrived before the gateway had started it.
+                        # Expected, and not a fault of any reply: nothing is
+                        # ended here and nothing reaches the page. The reply
+                        # the gateway creates next is cancelled once named
+                        # (the response.created branch above), and its
+                        # cancelled_output summary says so (`recancelled`).
+                        self._recancel_on_created = True
+                        continue
+
+                    if (code == "response_cancel_not_active"
+                            and not self._response_active):
+                        # A cancel that found nothing to cancel, with no reply
+                        # of ours in flight: the unconditional cancel_response()
+                        # _enter sends on a fresh session at an interaction
+                        # boundary (S2A i1 -> i2) is the case seen live. Nothing
+                        # was lost, so it is recorded (voice_error) and never
+                        # reaches the page: relayed as `error` it painted
+                        # "Something went wrong. Please try again." and set the
+                        # page's serverStatedFailure, which makes the next
+                        # ordinary socket drop the fatal kind.
+                        yield {"type": "error", "message": str(ev.get("error")),
+                               "benign": True, "transient": True,
+                               "recoverable": True}
+                        continue
+
                     if code == "input_audio_buffer_commit_empty" and self._commit_tags:
                         # A commit the gateway refused never becomes an item,
                         # and the gateway answers commits in order, so the

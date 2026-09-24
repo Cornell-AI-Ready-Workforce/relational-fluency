@@ -30,9 +30,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-import psycopg
 import yaml
-from psycopg.types.json import Jsonb
+
+try:
+    import psycopg
+    from psycopg.types.json import Jsonb
+except ImportError:  # pragma: no cover - exercised on CI, which has no driver
+    # The mapping functions (load_encounter, load_runs, ...) only build rows and
+    # hand them to a cursor, so they are importable and testable without the
+    # Postgres driver; tests/test_review_fixes.py drives them with a fake
+    # cursor on a CI runner that does not install it. Writing to a real
+    # database is what needs the driver, and main() says so.
+    psycopg = None
+
+    class Jsonb:  # the shape psycopg's Jsonb exposes to a cursor: .obj
+        def __init__(self, obj):
+            self.obj = obj
 
 CONSTRUCT_LABELS = {
     "conflict_management": "Conflict Management",
@@ -196,6 +209,38 @@ def stub_run(cur, run_id: Optional[str], pid: Optional[str], cohort: str,
         (run_id, pid, cohort, ts(started) or ts(0)))
 
 
+# The provenance keys an analyst splits the archive on (docs/OPERATIONS.md,
+# "What changed on 2026-09-23"). Read from record.json's provenance block, and
+# from the realtime_session_started event for records built before the block
+# carried them.
+PIPELINE_KEYS = ("pipeline_version", "room_pacing_version", "input_rate",
+                 "input_transcription_model", "max_output_tokens", "resampler",
+                 "input_resampler", "turn_gate", "pacing", "record",
+                 "cancelled_output", "agent_transcript_items")
+
+
+def pipeline_provenance(prov: dict, rt_started: dict) -> Dict[str, Any]:
+    """The pipeline stamps and knob values an encounter ran under, record
+    first, the session event where the record has no value."""
+    out = {}
+    for k in PIPELINE_KEYS:
+        v = prov.get(k)
+        if v is None:
+            v = rt_started.get(k)
+        if v is not None:
+            out[k] = v
+    return out
+
+
+def ensure_pipeline_columns(cur) -> None:
+    """Add the pipeline columns to an encounter table created from an older
+    docs/db-schema.sql, so a refresh does not need the database rebuilt."""
+    for col, typ in (("pipeline_version", "text"),
+                     ("room_pacing_version", "text"),
+                     ("pipeline_provenance", "jsonb")):
+        cur.execute(f"ALTER TABLE encounter ADD COLUMN IF NOT EXISTS {col} {typ}")
+
+
 def load_encounter(cur, d: Path, s3_prefix: str) -> Optional[str]:
     manifest = read_json(d / "manifest.json")
     record = read_json(d / "record.json") or {}
@@ -232,6 +277,7 @@ def load_encounter(cur, d: Path, s3_prefix: str) -> Optional[str]:
     vup = record.get("video_upload") or {}
     fp = m.get("spec_fingerprint") or record.get("spec_fingerprint") or {}
     rt_started = next((e for e in events if e.get("type") == "realtime_session_started"), {})
+    pipeline = pipeline_provenance(prov, rt_started)
 
     upsert_participant(cur, pid, cohort, pkey, None, run_id)
     stub_run(cur, run_id, pid, cohort, started)
@@ -254,12 +300,13 @@ def load_encounter(cur, d: Path, s3_prefix: str) -> Optional[str]:
     cur.execute(
         """INSERT INTO encounter (encounter_id, run_id, slot, participant_id, scenario_id, cohort,
                started_at, ended_at, duration_s, status, gateway, realtime_model, text_model,
-               director_model, steering_model, spec_sha256, spec_trigger_ids,
+               director_model, steering_model, pipeline_version, room_pacing_version,
+               pipeline_provenance, spec_sha256, spec_trigger_ids,
                participant_turns, agent_turns, stage_directions, script_mismatch_turns,
                unheard_turns, participant_channel_state, participant_channel_losses,
                untranscribed_s, video_upload_state, video_upload_attempts, video_upload_error,
                archive_uri)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
         (sid, run_id, slot, pid, scenario, cohort, ts(started) or ts(0), ts(ended),
          (round(ended - started, 1) if started and ended else None),
          m.get("status") or "closed",
@@ -269,6 +316,8 @@ def load_encounter(cur, d: Path, s3_prefix: str) -> Optional[str]:
          prov.get("director_model") or next((r.get("director_model") for r in record.get("steering_log") or []
                                              if r.get("director_model")), None),
          prov.get("steering_model"),
+         pipeline.get("pipeline_version"), pipeline.get("room_pacing_version"),
+         Jsonb(pipeline) if pipeline else None,
          fp.get("sha256"), fp.get("trigger_ids"),
          counts.get("participant_turns", 0), counts.get("agent_turns", 0),
          counts.get("stage_directions", 0), counts.get("script_mismatch_turns", 0),
@@ -587,9 +636,13 @@ def main() -> int:
                     help="tools/recover_from_video.py index CSV; default: _recovered_index_*.csv in --archive")
     args = ap.parse_args()
 
+    if psycopg is None:
+        sys.exit("tools/load_analysis_db.py needs the Postgres driver: "
+                 "pip install 'psycopg[binary]'")
     with psycopg.connect(args.dsn) as conn:
         conn.execute("SET search_path TO rf, public")
         with conn.cursor() as cur:
+            ensure_pipeline_columns(cur)
             n_scen = load_scenarios(cur, args.scenarios)
             print(f"scenarios: {n_scen}")
             loaded = skipped = 0

@@ -518,8 +518,25 @@ def realtime_row_defaults(monkeypatch):
     monkeypatch.delenv("REALTIME_MAX_OUTPUT_TOKENS", raising=False)
     # The participant-turn gate's knobs (pipeline 2026-09-23c), same reason.
     for knob in ("PARTICIPANT_MIN_VOICED_MS", "PARTICIPANT_DROP_VOICED_MS",
+                 "PARTICIPANT_DROP_WORDLESS",
                  "INPUT_PREROLL_MS", "INPUT_BUFFER_RESTART",
-                 "PARTICIPANT_DEDUPE_OVERLAP", "ROOM_MERGE_QUEUED_TURNS"):
+                 "PARTICIPANT_DEDUPE_OVERLAP", "ROOM_MERGE_QUEUED_TURNS",
+                 "PARTICIPANT_LOW_CONFIDENCE_DIRECTOR",
+                 # The bridge's cancelled-tail discard (pipeline 2026-09-23d).
+                 "CANCELLED_OUTPUT_DISCARD",
+                 # Room reply lifecycle and the probe clock (2026-09-23e,
+                 # room pacing 2026-09-23c).
+                 "ROOM_COMMIT_ONLY_GRANT", "ROOM_GRANT_UNANSWERED_S",
+                 "ROOM_ADOPT_GUARD", "ROOM_SPLIT_TURN_S", "PROBE_TICK_SECONDS",
+                 "PROBE_IDLE_FROM_PLAYBACK", "PROBE_AFTER_SECONDS",
+                 # Record accuracy (2026-09-23f).
+                 "DEFERRAL_BLANK_AUDIBLE", "HEARD_TEXT_WPM",
+                 "HEARD_TEXT_CALIBRATE",
+                 # Voice and rate gates, the hand-off clock (2026-09-24a).
+                 "PARTICIPANT_COMMIT_MIN_VOICED_MS",
+                 "PARTICIPANT_MAX_WORDS_PER_VOICED_S",
+                 "PARTICIPANT_RATE_GATE_MAX_VOICED_MS", "HANDOFF_IDLE_S",
+                 "PARTICIPANT_RATE_OVER"):
         monkeypatch.delenv(knob, raising=False)
 
 

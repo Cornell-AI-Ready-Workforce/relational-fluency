@@ -460,6 +460,10 @@ def test_it_reaches_that_character_and_not_the_others(monkeypatch):
     """A room is several actors on several sockets. A direction addressed to one
     of them and delivered to all of them would not be steering, it would be the
     scene being played three times over."""
+    # Two commit-only grants to fakes that never start a reply each wait
+    # the whole ROOM_GRANT_UNANSWERED_S (6 s since room pacing
+    # 2026-09-24a); the wait is not what this test is about.
+    monkeypatch.setenv("ROOM_GRANT_UNANSWERED_S", "0.5")
     to_priya = "Ask what the deadline actually was."
     to_chris = "Stay out of it until you are asked."
     runner, session, room = _runner_with_room(

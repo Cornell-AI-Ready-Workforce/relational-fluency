@@ -162,10 +162,13 @@ class FakeSession:
         self.shared_history = []
         self.steering_log = []
 
-    def append_user(self, text, *, low_confidence=False, names_cast=False):
+    def append_user(self, text, *, low_confidence=False, names_cast=False,
+                    to_director=None):
         entry = {"speaker": "user", "text": text}
         if low_confidence:
-            entry.update(low_confidence=True, names_cast=bool(names_cast))
+            entry.update(low_confidence=True, names_cast=bool(names_cast),
+                         to_director=(bool(names_cast) if to_director is None
+                                      else bool(to_director)))
         self.shared_history.append(entry)
 
     def append_agent(self, agent_id, text):
@@ -408,11 +411,14 @@ def test_punctuation_or_filler_over_near_silence_is_suppressed_with_its_text(tex
 def test_words_over_near_silence_are_kept_but_low_confidence():
     """No stock-phrase list: "Thank you very much." is also something a
     participant says. It is kept, captioned and recorded, and held back from
-    steering and the director."""
+    steering and the director. (Over 550 ms of voice: 7.3 words per voiced
+    second, under the rate gate's 8. Over 20 ms, as this test used to say,
+    it is the rate gate's since pipeline 2026-09-24a; see
+    tests/test_voice_and_rate_gates.py.)"""
     runner, session, ws = runner_for("S2A")
-    asyncio.run(runner._record_user_turn("Thank you very much.", voiced_ms=20))
+    asyncio.run(runner._record_user_turn("Thank you very much.", voiced_ms=550))
     (turn,) = session.store.of("user_turn")
-    assert turn["low_confidence"] is True and turn["voiced_ms"] == 20
+    assert turn["low_confidence"] is True and turn["voiced_ms"] == 550
     assert ws.frames("user_transcript"), "the caption still shows"
     (entry,) = session.shared_history
     assert entry["low_confidence"] is True and entry["names_cast"] is False
@@ -453,10 +459,12 @@ def test_a_long_turn_is_an_ordinary_turn():
 
 
 def test_where_voiced_audio_cannot_be_counted_no_gate_applies():
-    """Gemini's own commits carry no tag: voiced_ms is None, and the gate
-    neither drops nor tags, which is the behaviour before it existed."""
+    """Gemini's own commits carry no tag: voiced_ms is None, and the voice
+    gates neither drop nor tag, which is the behaviour before they existed.
+    (A line with no letter or digit at all is dropped on every route since
+    24c - that rule does not need a voiced count - so this uses a word.)"""
     runner, session, _ = runner_for("S2A")
-    asyncio.run(runner._record_user_turn("."))
+    asyncio.run(runner._record_user_turn("Okay."))
     (turn,) = session.store.of("user_turn")
     assert turn["low_confidence"] is False and turn["voiced_ms"] is None
 
@@ -464,6 +472,7 @@ def test_where_voiced_audio_cannot_be_counted_no_gate_applies():
 def test_the_gate_thresholds_are_knobs(monkeypatch):
     monkeypatch.setenv("PARTICIPANT_MIN_VOICED_MS", "0")
     monkeypatch.setenv("PARTICIPANT_DROP_VOICED_MS", "-1")
+    monkeypatch.setenv("PARTICIPANT_DROP_WORDLESS", "0")   # 24c's rule, off for this test
     runner, session, _ = runner_for("S2A")
     asyncio.run(runner._record_user_turn(".", voiced_ms=0))
     (turn,) = session.store.of("user_turn")
@@ -475,8 +484,9 @@ def test_the_gate_thresholds_are_knobs(monkeypatch):
 
 def test_the_gate_is_in_provenance_with_its_defaults():
     prov = llm.provenance(GPT)
-    assert prov["pipeline_version"] == "2026-09-23c"
-    assert prov["room_pacing_version"] == "2026-09-23b"
+    # At least this package's stamp; a later package moves it on.
+    assert prov["pipeline_version"] >= "2026-09-23c"
+    assert prov["room_pacing_version"] >= "2026-09-23b"
     assert prov["turn_gate"] == {
         "participant_min_voiced_ms": 600,
         "participant_drop_voiced_ms": 80,
@@ -484,6 +494,17 @@ def test_the_gate_is_in_provenance_with_its_defaults():
         "input_buffer_restart": True,
         "participant_dedupe_overlap": 0.9,
         "room_merge_queued_turns": True,
+        # Review fixes (pipeline 2026-09-23g): the director rule is a knob,
+        # and whether a room on this model runs the near-duplicate filter at
+        # all (not on gpt, whose scribe is the only transcriber).
+        "participant_low_confidence_director": "named",
+        "room_dedupe_second_source": False,
+        # Voice and rate gates (pipeline 2026-09-24a).
+        "participant_commit_min_voiced_ms": 300,
+        "participant_max_words_per_voiced_s": 16.0,
+        "participant_rate_gate_max_voiced_ms": 1500,
+        # 2026-09-24b (P6 review): over the voiced span, default 16.
+        "participant_rate_over": "voiced_span",
     }
 
 

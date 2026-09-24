@@ -3202,6 +3202,11 @@
         // send twice inside one reply (a room member's line doubled on screen
         // while the record held it once). Only the turn now streaming, only
         // for the character the server names, and never one already closed.
+        // `text` is the WHOLE reply: a reply the gateway delivers as several
+        // output items gets one of these per item, each carrying every item
+        // so far joined (m.items says how many), so replacing is right and an
+        // append would double the line. Per item, the second item's line used
+        // to replace the first on screen (issue #23).
         if (currentTurn && !currentTurn.done && typeof m.text === 'string' && m.text
             && (!m.agent_id || currentTurn.agent_id === m.agent_id)
             && currentTurn.fullText !== m.text) {

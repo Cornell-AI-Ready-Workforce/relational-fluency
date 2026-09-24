@@ -140,6 +140,18 @@ def build(session_dir: Path) -> Dict[str, Any]:
                 # issue #23), so the line may end mid-word. None on turns
                 # recorded before the flag existed, which is NOT "not cut".
                 "cap_truncated": actor.get("cap_truncated"),
+                # Roughly the words of `text` the participant heard, on an
+                # interrupted or cap-truncated turn: the words that fit in
+                # the audio relayed for it (pipeline 2026-09-23f; see
+                # RealtimeVoiceSessionRunner._heard_fields). `text` stays the
+                # generated line, so the analysis chooses which one raters
+                # score. None on any other turn (the two are the same line)
+                # and on turns recorded before the field existed.
+                "heard_text": actor.get("heard_text"),
+                # A line the runner read as turn-taking narration ("I'll wait
+                # for Casey.") but kept because it was spoken; None before
+                # 2026-09-23f, when such lines were blanked.
+                "deferral": actor.get("deferral"),
             })
 
     turns.sort(key=lambda t: t.get("t") or 0)
@@ -380,6 +392,20 @@ def build(session_dir: Path) -> Dict[str, Any]:
             "input_resampler": realtime.get("input_resampler"),
             "pipeline_version": realtime.get("pipeline_version"),
             "room_pacing_version": realtime.get("room_pacing_version"),
+            # The room-grant, hold-adoption, split-turn and probe-clock knob
+            # values (pipeline 2026-09-23e / room pacing 2026-09-23c); None
+            # before they were written.
+            "pacing": realtime.get("pacing"),
+            # And the other knob blocks the same event carries, for the same
+            # reason: each can be flipped without a version bump, so without
+            # them two halves of a wave run under different gates read the
+            # same here. The participant-turn gate (23c), the bridge's
+            # cancelled-output and multi-item handling (23d) and the deferral
+            # / heard_text rules (23f); None before they were written.
+            "turn_gate": realtime.get("turn_gate"),
+            "cancelled_output": realtime.get("cancelled_output"),
+            "agent_transcript_items": realtime.get("agent_transcript_items"),
+            "record": realtime.get("record"),
         },
         # The participant's microphone as the browser reported it
         # (track.getSettings() and the user agent; see the

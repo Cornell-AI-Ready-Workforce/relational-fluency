@@ -571,6 +571,11 @@ class _Turn:
     async def _send(self, msg):
         self.sent.append(msg)
 
+    # The real guard (ROOM_ADOPT_GUARD, 2026-09-23e): adopt_member calls it
+    # on self, so it is under test with adopt_member rather than stubbed.
+    def _refuse_hold(self, agent_id, st):
+        return rvs.RealtimeVoiceSessionRunner._refuse_hold(self, agent_id, st)
+
     # -- the methods under test, unbound
     def adopt(self, agent_id):
         return asyncio.run(
@@ -838,6 +843,10 @@ def test_the_director_may_not_hand_one_character_every_unnamed_turn(monkeypatch)
     rotation is recorded as its own event so the analysis can tell a rotated
     turn from a routed one.
     """
+    # Two commit-only grants to fakes that never start a reply each wait
+    # the whole ROOM_GRANT_UNANSWERED_S (6 s since room pacing
+    # 2026-09-24a); the wait is not what this test is about.
+    monkeypatch.setenv("ROOM_GRANT_UNANSWERED_S", "0.5")
     runner, session, room = _runner_with_room(
         GPT, [{"agent_id": "dan", "intent": "Push back on the date."}],
     )

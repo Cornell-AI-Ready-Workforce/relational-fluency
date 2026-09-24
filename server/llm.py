@@ -355,6 +355,118 @@ def text_client() -> AsyncAnthropic:
 #                sending 16 kHz (read as 24 kHz) while provenance said 24000.
 #                From 2026-09-23c the rate follows each session's model, so a
 #                23b record's input_rate is not what its gpt sessions sent.
+#                The same held on the NATIVE-AUDIO route, which this entry
+#                did not say until 2026-09-23g: runner- and room-built
+#                native-audio sessions sent 16 kHz raw on every version
+#                before 23c while 23a/23b provenance said input_rate 24000
+#                and input_resampler audioop.ratecv, and from 23c they send
+#                24 kHz resampled. Measured 2026-09-24 through the bridge's
+#                own send_audio, on a session built as the runner builds it:
+#                the gateway reads that route
+#                at 24 kHz too, 157 input audio tokens at 24 kHz against 108
+#                for the same audio sent 16 kHz (0.69, i.e. 2/3), so pre-23c
+#                native-audio encounters were heard 1.5x fast as well. The
+#                transcript came back either way ("Oh yeah. So I'm actually
+#                having a competing offer." / "Yeah, so I'm ..."), with the
+#                same onset of the reply (6.2 s).
+#   2026-09-23d  bridge correctness (issue #23): on the gpt route, what the
+#                gateway still sends for a reply after a barge-in cancel is
+#                no longer played or made into a second turn (that was the
+#                phantom duplicate turn, the false agent_audio_short and the
+#                blip after the stop); it is written as
+#                cancelled_output_dropped with its text and audio_ms, and an
+#                interrupted turn's text is what arrived before the cancel.
+#                A reply delivered as several output items is recorded (and
+#                captioned) as all of them joined by a space; before, the
+#                last item's line replaced the others. Fields
+#                `cancelled_output` and `agent_transcript_items`;
+#                CANCELLED_OUTPUT_DISCARD=0 restores the relay. Rooms: the
+#                floor holder's tail after a barge-in is dropped the same way;
+#                a suppressed (held) reply keeps its tail, as before.
+#   2026-09-23e  reply lifecycle and clocks (issues #23, #24). Record: a
+#                room's heard_seconds / playback_cut total_seconds are per
+#                turn (they accumulated across a member's turns: 159.5,
+#                284.4 s), and a barge-in on a floor holder whose reply has
+#                not reached the page is written as the cut of the line that
+#                was playing (it wrote the holder's previous turn); a room
+#                assistant_turn carries play_clock_start / play_clock_end;
+#                an adopted completed hold records the audio
+#                it relayed (was audio_ms 0) and its text once (a whole-line
+#                transcript no longer follows the deltas it replaces). 1:1
+#                and rooms: the silence probe counts from when the last reply
+#                finished PLAYING, looked at every 1 s (was: from generation
+#                end, every 12 s, so 12-24 s late on its own clock and ~4 s of
+#                real silence). Knobs and values in `pacing`.
+#   2026-09-23f  record accuracy (issue #23). A reply read as turn-taking
+#                narration ("I'll wait for Casey.") is blanked only when none
+#                of its audio was relayed; a spoken one keeps its text and is
+#                flagged `deferral` (DEFERRAL_BLANK_AUDIBLE=1 blanks it, as
+#                before). The deferral match's name slots are case-sensitive,
+#                so "That's for you to set.", "Go ahead and tell me..." and
+#                "You asked me for a number..." are no longer blanked. An
+#                interrupted or cap-truncated assistant_turn carries
+#                generated_text, heard_text (the words that fit in the audio
+#                relayed for it) and heard_estimate; `text` is unchanged.
+#                Knobs and values in `record`.
+#   2026-09-23g  review fixes. gpt rooms: the near-duplicate filter no
+#                longer runs where the scribe is the only transcriber (it
+#                deleted "Priya, are you there?" as a copy of "Priya?");
+#                turn_gate.room_dedupe_second_source says where it runs.
+#                1:1 and rooms: an interrupted turn that played audio and got
+#                no transcript before the cancel takes its text from the
+#                dropped tail (interrupted_text_from_cancelled_output) and is
+#                no longer transcript_missing; a barge-in inside a retry's
+#                window discards the retry's reply (and a resumed head) as
+#                cancelled_output instead of playing it. Record: record.json
+#                provenance carries turn_gate, cancelled_output,
+#                agent_transcript_items and record; a floor holder's
+#                announced mark no longer outlives its turn (the stale
+#                playback_cut of 23e by the adopt path); turn_timing binds a
+#                reply to the participant turn current at its grant, and
+#                commit_sent is marked only for a commit that went out.
+#                PARTICIPANT_LOW_CONFIDENCE_DIRECTOR (default "named", as
+#                before) can give the director every short turn.
+#   2026-09-24a  voice and rate gates (issues #21, #24), calibrated on the
+#                tester's S3A session s_1790217895_4025d8. A participant turn
+#                the VAD ends with < PARTICIPANT_COMMIT_MIN_VOICED_MS (300)
+#                of voice since the last commit is not committed: buffer
+#                cleared, participant_turn_discarded, no reply (1:1 and the
+#                room's scribe). A transcript with more than
+#                PARTICIPANT_MAX_WORDS_PER_VOICED_S (8) words per voiced
+#                second over < PARTICIPANT_RATE_GATE_MAX_VOICED_MS (1500) of
+#                voice is user_turn_suppressed{implausible_rate} (the
+#                phantoms ran 47-63, real lines 1.4-6.1); in 1:1 its reply
+#                is cancelled if none of it has played
+#                (suppressed_turn_reply_cancelled), else kept and written as
+#                reply_to_suppressed_turn. S1 hand-off: once the timebox has
+#                run out, HANDOFF_IDLE_S (3) of silence after playback
+#                briefs the closing line and probes for it (was: briefed at
+#                the participant's next turn, probed 12 s after that).
+#                Record: verify_record counts a planted beat as reached only
+#                when performed; stage_direction_unperformed and
+#                trigger_undelivered are netted out and named. Knobs in
+#                `turn_gate` and `pacing`.
+#   2026-09-24b  P6 review. The rate gate divides by the voiced SPAN (first
+#                voiced frame to last since the commit; voiced_span_ms on
+#                the tag, user_turn and user_turn_suppressed), not the voiced
+#                count, and PARTICIPANT_MAX_WORDS_PER_VOICED_S defaults to 16
+#                (was 8): the count shrank on a 2.5 dB quieter replay of the
+#                tester's WAV until "Does that sound good?" read 8.7 w/s; over
+#                the span every real line stays <= 6.2 from +6 to -6 dB (and
+#                is kept down to -11 dB) and the phantoms >= 44
+#                (turn_gate.participant_rate_over). 1:1:
+#                a suppressed turn's late transcript no longer cancels the
+#                reply to a later commit (reply_to_suppressed_turn,
+#                kept="later_commit"); a withdrawn reply gives its planted
+#                beat back (trigger_undelivered, reason "reply_withdrawn",
+#                re-fired at the next turn; stage_direction_unperformed where
+#                it cannot go back); an unnamed cancel the gateway answered
+#                with response_cancel_not_active is sent again once the reply
+#                is named (cancelled_output_dropped.recancelled). S1: the
+#                proactive hand-off waits out a reply still being finalized,
+#                the timebox advances only once the closing-line note has
+#                been taken by the reply that speaks it, and a refused
+#                advance keeps the hand-off flags (no second closing line).
 #
 # ROOM_PACING_VERSION:
 #   2026-09-23a  as d6f319d.
@@ -362,8 +474,46 @@ def text_client() -> AsyncAnthropic:
 #                together as soon as the floor frees (was: a full
 #                ROUTE_TRANSCRIPT_WAIT and then routed on nothing);
 #                ROOM_MERGE_QUEUED_TURNS=0 routes on the latest alone.
-PIPELINE_VERSION = "2026-09-23c"
-ROOM_PACING_VERSION = "2026-09-23b"
+#   2026-09-23c  on the gpt route a floor grant is the commit alone, with a
+#                response.create only when nothing started within
+#                ROOM_GRANT_UNANSWERED_S (grant_fallback_create); it was
+#                commit + create, which drew "the extra response.create was
+#                refused" on nearly every grant and sometimes a second reply.
+#                A held reply with no audio, or one the suppression's cancel
+#                cut short (gpt), is not adopted (held_reply_refused, text
+#                kept). A participant resuming within ROOM_SPLIT_TURN_S of
+#                their own commit no longer cancels the reply to it
+#                (split_turn_extended). Plus the probe clock under 23e.
+#   2026-09-23d  review fixes. A refused hold no longer swallows the fresh
+#                reply's done when that reply ends empty (the floor was held
+#                for the whole group turn timeout); the commit-only grant no
+#                longer takes a cancelled reply's kept tail as the commit's
+#                answer, so its one fallback create goes out; on the Gemini
+#                routes an utterance left unrouted before this turn's speech
+#                began no longer routes the turn on its own (the room ran one
+#                utterance behind): the turn waits for its own transcript and
+#                routes on both.
+#   2026-09-24a  a room turn whose only arrivals were withheld from the
+#                director (suppressed, or low_confidence naming nobody) is
+#                not routed or answered: group_turn_skipped with the text
+#                (a turn for which nothing arrived routes as before); a turn
+#                under the voice floor is never a group turn at all; the
+#                commit-only grant waits ROOM_GRANT_UNANSWERED_S 6 s (was
+#                3; a gpt reply took 5.09 s to first audio and the fallback
+#                create at 3.03 s was refused) and holds the bridge's own
+#                REQUEST_UNANSWERED_S off for that window.
+#   2026-09-24b  a low_confidence line that names nobody no longer skips the
+#                room turn: 24a left a real short answer ("Yes.", "Two.",
+#                "Thank you.", "Casey?" heard as "TC?") unanswered. It
+#                routes as before 24a, on context; only a gate suppression
+#                (implausible_rate, no_speech, probe_pad) skips the turn.
+#   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
+#                is suppressed as no_speech at any voiced level
+#                (PARTICIPANT_DROP_WORDLESS), and a gateway
+#                response_cancel_not_active with no reply in flight is
+#                recorded but no longer shown to the participant as an error.
+PIPELINE_VERSION = "2026-09-24c"
+ROOM_PACING_VERSION = "2026-09-24b"
 
 
 def provenance(model: Optional[str] = None) -> dict:
@@ -375,7 +525,9 @@ def provenance(model: Optional[str] = None) -> dict:
     configured REALTIME_MODEL, which is what /health reports.
     """
     # Imported here, not at the top: server.voice.realtime imports this module.
-    from .voice.realtime import audio_provenance, turn_gate_provenance
+    from .voice.realtime import (audio_provenance, bridge_provenance,
+                                 pacing_provenance, record_provenance,
+                                 turn_gate_provenance)
 
     realtime = _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio")
     return {
@@ -396,7 +548,17 @@ def provenance(model: Optional[str] = None) -> dict:
         **audio_provenance(model or realtime),
         # The participant-turn gate's knob values (pipeline 2026-09-23c); see
         # server/voice/realtime.py turn_gate_provenance.
-        "turn_gate": turn_gate_provenance(),
+        "turn_gate": turn_gate_provenance(model or realtime),
+        # cancelled_output ("discard"/"relay") and agent_transcript_items
+        # (pipeline 2026-09-23d); see bridge_provenance.
+        **bridge_provenance(model or realtime),
+        # Room grant, hold adoption, split turn and silence-probe clock knobs
+        # (pipeline 2026-09-23e, room pacing 2026-09-23c); see
+        # pacing_provenance.
+        "pacing": pacing_provenance(),
+        # The deferral rule and the heard_text estimate (pipeline
+        # 2026-09-23f); see record_provenance.
+        "record": record_provenance(),
         "pipeline_version": PIPELINE_VERSION,
         "room_pacing_version": ROOM_PACING_VERSION,
     }

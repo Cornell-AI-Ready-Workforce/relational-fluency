@@ -272,7 +272,16 @@ is written as a `user_turn_suppressed` event with its text and `reason`
   transcript. `0` restores the old behaviour.
 - `PARTICIPANT_DEDUPE_OVERLAP` — default `0.9`, the share of the shorter
   line's words that makes two transcripts within 5 s one utterance on a room
-  route with a second transcriber (was 0.6).
+  route with a second transcriber (was 0.6). Only native-audio rooms have
+  one: from `2026-09-23g` the filter does not run on gpt rooms, whose scribe
+  is the only transcriber (`turn_gate.room_dedupe_second_source`). The 0.9
+  bar has not been measured against native-audio member-vs-scribe pairs;
+  check it before a native-audio pilot.
+- `PARTICIPANT_LOW_CONFIDENCE_DIRECTOR` — default `named`: a
+  `low_confidence` turn reaches the room director only when it names a cast
+  member. `all` gives the director every one of them (a real "No." is about
+  350 ms of voice); the steering review skips them either way. From
+  `2026-09-23g`.
 - `ROOM_MERGE_QUEUED_TURNS` — default `1`: utterances spoken while a room's
   floor is held are routed together when it frees
   (`user_turns_merged_for_routing`); each stays its own `user_turn`. `0`
@@ -290,7 +299,13 @@ re-transcription for those. Under `2026-09-23b` itself the 24 kHz reached only
 sessions built with an explicit model, which the runner and the room do not
 do, so a `2026-09-23b` gpt encounter was still sent 16 kHz even though its
 provenance says 24000; the rate follows each session's model from
-`2026-09-23c`.
+`2026-09-23c`. The native-audio route was affected the same way: its runner-
+and room-built sessions sent 16 kHz raw before `2026-09-23c` (provenance on
+`23a`/`23b` says 24000 and `audioop.ratecv`, which is wrong) and 24 kHz
+resampled from `23c`. The gateway reads that route at 24 kHz as well
+(measured 2026-09-24: 157 input audio tokens at 24 kHz against 108 for the
+same audio at 16 kHz), so earlier native-audio encounters were also heard
+1.5x fast.
 
 > **What A-only does to the S1/Teamwork rule.** `FORM_EXCLUSIONS` in
 > `server/runs.py` bars **S1A from any run that also contains Teamwork** — the
@@ -310,6 +325,159 @@ provenance says 24000; the rate follows each session's model from
 > plan, or `DEFAULT_RUN_VARIANT=random` restores the per-construct draw and
 > the exclusion starts applying again. Both mechanisms exist in the merged
 > code; the default is A.
+
+## What changed on 2026-09-23 (pipeline_version 2026-09-23a to 2026-09-23g)
+
+Fixes for issues #21-#25, landed mid-study. Every record carries
+`pipeline_version` and `room_pacing_version` (on `realtime_session_started`,
+and in `/health` under `gateway`), plus the knob values that ran (`turn_gate`,
+`pacing`, `record`, `cancelled_output`, `input_rate`,
+`input_transcription_model`, `max_output_tokens`). From `23g` record.json's
+`provenance` carries all of them too, and the analysis DB's `encounter` row
+has `pipeline_version`, `room_pacing_version` and `pipeline_provenance` (the
+loader adds the columns to an older database). Split the archive on those
+fields, not on deploy dates. Each change below is reversible without a code
+change unless it says "no knob". The full per-version notes are the comment
+above `PIPELINE_VERSION` in `server/llm.py`.
+
+| Version | Change | To reverse |
+|---|---|---|
+| 23a | Instrumentation only: `turn_timing`, page `play_start`/`play_end` acks, `client_audio_settings`, and `cap_truncated`/`response_status` on `assistant_turn`. | nothing to reverse |
+| 23b | gpt route: participant audio sent at 24 kHz. It was sent at 16 kHz and read by the gateway as 24 kHz. | no knob (defect) |
+| 23c | The input rate follows each session's model: runner- and room-built gpt AND native-audio sessions went from 16 kHz raw to 24 kHz resampled. | no knob (defect) |
+| 23b | Live transcriber `gpt-4o-transcribe` (was `whisper-1`). | `INPUT_TRANSCRIPTION_MODEL=whisper-1` |
+| 23b | Reply cap 1200 tokens (was 380). | `REALTIME_MAX_OUTPUT_TOKENS=380` |
+| 23b | Page end-of-encounter drain up to 45 s (was 12). | no knob (`AUDIO_DRAIN_MAX_S` in `static/v2.html`) |
+| 23c | Silence probe commits its pad on a cleared buffer; the pad's transcript is suppressed (`probe_pad`). | no knob |
+| 23c | Filler/punctuation-only transcript over at most 80 ms of voice is suppressed (`no_speech`). | `PARTICIPANT_DROP_VOICED_MS=-1` |
+| 23c | Turn with under 600 ms of voice is tagged `low_confidence` and kept out of steering (and out of the director unless it names someone). | `PARTICIPANT_MIN_VOICED_MS=0` |
+| 23c | Gateway buffer cleared on the first `speech_started` after a commit, with 600 ms pre-roll. | `INPUT_BUFFER_RESTART=0` (`INPUT_PREROLL_MS`) |
+| 23c | Room near-duplicate filter needs 90% overlap (was 60%). | `PARTICIPANT_DEDUPE_OVERLAP=0.6` |
+| 23c | A replayed line's transcript is not a second `user_turn`. | no knob |
+| room 23b | Utterances queued behind a held floor are routed together. | `ROOM_MERGE_QUEUED_TURNS=0` |
+| 23d | gpt route: what the gateway sends after a barge-in cancel is dropped (`cancelled_output_dropped`), not played or recorded as a second turn. | `CANCELLED_OUTPUT_DISCARD=0` |
+| 23d | A reply delivered as several output items is recorded as all of them. Before, the last item replaced the others. | no knob |
+| room 23c | gpt floor grant is the commit alone. A `response.create` is sent only if nothing starts within 3 s (6 s from room `24a`). | `ROOM_COMMIT_ONLY_GRANT=0` (`ROOM_GRANT_UNANSWERED_S`) |
+| room 23c | A held reply with no audio, or one cut short by the suppression cancel, is not adopted (`held_reply_refused`). | `ROOM_ADOPT_GUARD=0` |
+| room 23c | A participant resuming within 1.5 s of their own commit does not cancel the reply to it (`split_turn_extended`). | `ROOM_SPLIT_TURN_S=0` |
+| 23e | Room `heard_seconds`/`total_seconds` are per turn (they accumulated across a member's turns). | no knob (record fix) |
+| 23e | Silence probe counts from when the last reply finished playing, checked every 1 s. | `PROBE_IDLE_FROM_PLAYBACK=0`, `PROBE_TICK_SECONDS=12` |
+| 23f | A reply read as a deferral ("I'll wait for Casey.") is blanked only when none of its audio was relayed. A spoken one keeps its text and is flagged `deferral`. The match's name slots are case-sensitive, so lines such as "That's for you to set." are no longer blanked. | `DEFERRAL_BLANK_AUDIBLE=1` (the regex fix has no knob) |
+| 23g | gpt rooms: the near-duplicate filter is off (the scribe is the only transcriber). | no knob (defect) |
+| 23g | An interrupted turn that played audio and had no transcript before the cancel takes its text from the dropped tail (`interrupted_text_from_cancelled_output`); it is no longer `transcript_missing`. | `CANCELLED_OUTPUT_DISCARD=0` restores the pre-23d relay |
+| 23g | A barge-in during a retry's window drops the retry's reply as `cancelled_output_dropped` instead of playing it. | `CANCELLED_OUTPUT_DISCARD=0` |
+| 23g | Record: knob blocks in record.json provenance; a stale `playback_cut` from an adopted hold no longer written; `turn_timing` rows tied to the participant turn of their grant, `commit_sent` only for a commit that went out. | record only |
+| room 23d | A refused hold no longer swallows an empty fresh reply's done (the floor was held for 45 s); a cancelled reply's tail no longer counts as the commit-only grant's answer; Gemini rooms no longer route one utterance behind after a late transcript. | no knob (defects) |
+| 23f | Interrupted and cap-truncated `assistant_turn`s carry `generated_text`, `heard_text` and `heard_estimate`. `heard_text` is the words that fit in the audio relayed, at the character's own measured rate or `HEARD_TEXT_WPM` (170). `text` is unchanged. The record also carries `heard_text` beside `text`. | record only; `HEARD_TEXT_WPM`, `HEARD_TEXT_CALIBRATE=0` |
+
+Caveats for analysis:
+
+- **Archived gpt and native-audio encounters heard participants at 1.5x.**
+  This covers everything before `2026-09-23c`, including `23b`. On `23b` the 24 kHz fix
+  reached only sessions built with an explicit model, even though provenance
+  says 24000. The actor and the live transcriber both heard the participant
+  fast and pitched up. Treat those live participant transcripts, and the
+  actor's reactions to tone, as not comparable. Use the offline
+  re-transcription (`python -m server.retranscribe`).
+- **Turns may be cap-cut from 2026-09-18 16:04 EDT (commit 7ec0e00) to
+  `23b`.** The 380-token cap stopped replies mid-word at about 10.5-14 s. The
+  record kept the words the text stream had run ahead to, which were never
+  spoken. `cap_truncated` exists only from `23a`; before that, a missing value
+  means unknown, not uncut.
+- **Room `playback_cut` values before `23e` are invalid archive-wide.**
+  `heard_seconds`/`total_seconds` accumulated across turns (159.5 s, 284.4 s).
+- **`heard_text` is an estimate.** On an interrupted turn it is an upper
+  bound: the page drops audio it had queued at the barge-in, and the page's
+  own `play_end` acks say what it played. Which column raters score
+  (`text`/generated or `heard_text`) is the researcher's decision.
+- **Other effects on earlier records.** Before `23d`, 1:1 `agent_audio_short`
+  events were mostly phantom tail turns after a barge-in, and a two-item
+  reply lost its first item. Before `23f`, an audible deferral was recorded as
+  `transcript_missing`; its text is in that turn's `deferral_output` event.
+  Before `23c`, phantom participant turns also reached `steering_pair` and
+  `knob_set` rows.
+
+## What changed on 2026-09-24 (pipeline_version 2026-09-24a, room_pacing_version 2026-09-24a)
+
+Follow-ups to issues #21 and #24, calibrated on the tester's S3A session
+`s_1790217895_4025d8`. Replayed through the runner's own VAD at its bar (500),
+the two phantom lines ("I'm not a cat. I'm a cat. ..." and "Goodbye. Will
+Lego play more games ...") had 300-400 ms of voice, the same as the real short
+lines ("Thank you." 380-680 ms, "Does that sound good?" 660 ms, "Two."
+720 ms). A voice floor alone could not tell them apart, so there are two gates.
+The phantoms carried 47-63 words per voiced second, and every real line ran
+1.4-6.1. The new knobs are in `turn_gate` and `pacing` on every record. Each
+row can be reversed without a code change.
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 24a | Voice floor before a commit: when the VAD ends a turn with less voiced audio than the floor since the last commit, the turn is not committed. The gateway buffer is cleared and the event `participant_turn_discarded` (`voiced_ms`, reason `too_little_voice`) is written. No reply is started. This applies to 1:1 and to a room's scribe; a room turn is not routed and does not take the floor. The audio stays in `user_audio.wav`. | `PARTICIPANT_COMMIT_MIN_VOICED_MS` (300); `0` turns it off |
+| 24a | Rate gate: when a transcript has more words per voiced second than the limit, over less voiced audio than the ceiling, it is written as `user_turn_suppressed` (reason `implausible_rate`, with `text`, `words`, `voiced_ms` and `words_per_voiced_s`). It never becomes a user turn, a caption, steering input or director input. Words over 0 ms of voice ("Sure." on silence) are caught too. | `PARTICIPANT_MAX_WORDS_PER_VOICED_S` (8; `0` turns it off), `PARTICIPANT_RATE_GATE_MAX_VOICED_MS` (1500) |
+| 24a | 1:1: when the reply to a rate-gated turn has played no audio, it is cancelled and its tail dropped (`suppressed_turn_reply_cancelled`, with any generated text). A reply that already played is kept and written as `reply_to_suppressed_turn`. | follows the rate gate |
+| room 24a | In a room, when every line that arrived for a turn was withheld from the director (suppressed, or `low_confidence` and naming no one), nobody is routed or answers. The event `group_turn_skipped` is written with the text. A turn where nothing arrived at all still goes to the director, as before. | `PARTICIPANT_LOW_CONFIDENCE_DIRECTOR=all` sends short lines to the director again |
+| 24a | S1 hand-off: when the timebox has run out and the participant has been silent `HANDOFF_IDLE_S` after the last reply finished playing, the closing line is briefed and the character is prompted to say it (`handoff_probed`). Before, it waited for the participant's next turn plus 12 s, which was about 50 s of dead air in the sim. | `HANDOFF_IDLE_S` (3) |
+| room 24a | The gpt commit-only grant waits 6 s for the reply before sending the one fallback `response.create` (it was 3 s: a reply took 5.09 s and the fallback was refused). The bridge's own 6 s unanswered bar waits out that window. | `ROOM_GRANT_UNANSWERED_S` (6, max 15; `3` restores the old wait) |
+| 24a | `verify_record` counts a planted beat as reached only when a character performed it. A beat with `stage_direction_unperformed` or `trigger_undelivered` is taken off the count and listed separately (`unperformed: ...`, `undelivered: ...`). The dashboard's `triggers_fired` still lists every beat whose brief was delivered. | report only |
+
+Caveats for analysis:
+
+- Before `24a`, phantom participant lines of this kind were recorded as
+  `user_turn` (on `23c`-`23g`, `low_confidence` when their voice was under
+  600 ms), and rooms routed on them. Search `user_turn` rows with
+  `voiced_ms` < 1500 and more than 8 words per voiced second to find them in
+  the archive.
+- `voiced_ms` is counted after the 600 ms pre-roll restart. A slow onset
+  loses the voice that came before the pre-roll ("Thank you." was 680 ms since
+  the last commit but 380 ms as counted). That is why the floor is 300 and not
+  higher.
+- `verify_record` coverage before and after `24a` differs by any
+  `stage_direction_unperformed` rows. Re-run it on the archive rather than
+  comparing old reports.
+
+## What changed on 2026-09-24, review fixes (pipeline_version 2026-09-24b, room_pacing_version 2026-09-24b)
+
+Fixes from the review of `24a`. The rate-gate numbers come from replaying the
+tester's `s_1790217895_4025d8` audio at +6 to -12 dB through the runner's own
+VAD. The voiced count of a real line shrinks when the speaker is a little
+quieter, but its words stay the same. At 2.5 dB quieter, "Does that sound
+good?" counted 460 ms, or 8.7 words per voiced second, which `24a` would have
+suppressed. The span from the first voiced frame to the last stays put. Over
+the span, every real line ran at most 6.2 words per second from +6 to -6 dB,
+and the phantoms ran 44-56 at every level.
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 24b | The rate gate divides by the voiced span, not the voiced count. The limit is now 16 (was 8), about 2.6x above the real lines and 2.6x below the phantoms. `voiced_span_ms` is on `user_turn` and `user_turn_suppressed`, and `turn_gate.participant_rate_over` says `voiced_span`. The ceiling still applies to the voiced count. | `PARTICIPANT_RATE_OVER` (`voiced_span`; `voiced_count` with `PARTICIPANT_MAX_WORDS_PER_VOICED_S=8` restores `24a`), `PARTICIPANT_MAX_WORDS_PER_VOICED_S` (16) |
+| room 24b | A `low_confidence` line that names nobody no longer skips the room turn. `24a` left real one-word answers unanswered ("Yes.", "Two.", "Thank you.", and "Casey?" transcribed as "TC?"). Those lines route as they did before `24a`, on context. Only a gate suppression (`implausible_rate`, `no_speech`, `probe_pad`) writes `group_turn_skipped`. | `PARTICIPANT_LOW_CONFIDENCE_DIRECTOR=all` still hands short lines to the director as text |
+| 24b | 1:1: a suppressed turn's transcript that arrives after a later commit (the participant's next turn, or a probe) no longer cancels that later commit's reply. It is written as `reply_to_suppressed_turn` with `kept: "later_commit"`. | none |
+| 24b | 1:1: when a reply is withdrawn, the planted beat it was briefed to perform is given back. The event is `trigger_undelivered` (reason `reply_withdrawn`, same `index`), and the next turn fires the same beat again. If a brief is being sent at that moment, `stage_direction_unperformed` (reason `reply_withdrawn`) is written instead. `verify_record` nets out both. | none |
+| 24b | Sometimes the bridge's cancel of a reply that had no id yet reached the gateway too early, and the gateway answered `response_cancel_not_active`. The bridge now cancels that reply again once it is named. The reply's `cancelled_output_dropped` row carries `recancelled: true`, and the error no longer reaches the page. | none |
+| 24b | S1 hand-off: the watchdog does not brief or probe the closing line while an earlier reply is still being finalized (its steering review can take 11 s). The timebox advances only once the reply that speaks the closing line has taken its note. When the next character's session is refused, the hand-off stays spent, so no second closing line is asked for, and the next turn retries the advance. | `HANDOFF_IDLE_S` (3), as before |
+
+Caveats for analysis:
+
+- On `24a`, a real short line from a quiet speaker could be
+  `user_turn_suppressed{implausible_rate}`. The text is on the row. Rows with
+  `words_per_voiced_s` under about 16 are worth reading before treating them
+  as phantoms.
+- On `24a`, a room turn whose only line was `low_confidence` has
+  `group_turn_skipped` with reason `low_confidence`. That participant line got
+  no reply.
+
+## What changed on 2026-09-24, after verification (pipeline_version 2026-09-24c)
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 24c | A transcript with no letter or digit at all ("..." / "." / "```" / "。") is written as `user_turn_suppressed{no_speech}` at any voiced level, never as a turn. In a room the turn is skipped. The final verification saw three of these, over 300–500 ms of playback bleed or breath, answered as `low_confidence` turns. Fillers with letters ("Hmm.", "Okay") are unchanged. | `PARTICIPANT_DROP_WORDLESS` (1; 0 restores `24b`) |
+| 24c | 1:1: a gateway `response_cancel_not_active` with no reply in flight is recorded as `voice_error` but no longer sent to the page. At the S2A i1→i2 boundary it painted "Something went wrong. Please try again." and marked the next socket drop as fatal. This was already live before this branch. | none |
+
+What the verification established about the tester's S3A "phantoms"
+(`s_1790217895_4025d8`): the two long invented sentences ("I'm not a cat…",
+"Goodbye. Will Lego play more games…") were real short utterances, "Hello?"
+and "Casey?". The new pipeline transcribes them correctly, 3 of 3 times each.
+The invented text came from the old pipeline: 16 kHz audio read as 24 kHz,
+whisper-1, and buffers of up to 44 s. Earlier live transcripts should be
+read with that in mind. The offline re-transcription is the analysis copy.
 
 ## The seven-minute floor, and the thirteen-minute stop
 
