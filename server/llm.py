@@ -31,6 +31,19 @@ def setting(name: str, default: str = "") -> str:
     return _cfg(name, default)
 
 
+def setting_if_set(name: str) -> Optional[str]:
+    """The value of `name` as configured, or None where it is set nowhere.
+
+    Same precedence as setting(), but a blank value comes back as "" instead
+    of being replaced by a default: for a knob where blank means "off" (e.g.
+    REALTIME_MAX_OUTPUT_TOKENS=, no reply cap at all), "unset" and "set to
+    nothing" are different instructions."""
+    if name in _FILE:
+        return (_FILE.get(name) or "").strip()
+    value = os.getenv(name)
+    return None if value is None else value.strip()
+
+
 def gateway_base_url() -> str:
     # LLM_BASE_URL is this project's own explicit var (fine to read from .env or
     # ambient env). ANTHROPIC_BASE_URL, however, is resolved from .env / the
@@ -315,8 +328,42 @@ def text_client() -> AsyncAnthropic:
 #   2026-09-23a  instrumentation only (turn_timing, play_start/play_end,
 #                client_audio_settings, cap_truncated); behaviour identical
 #                to d6f319d.
-PIPELINE_VERSION = "2026-09-23a"
-ROOM_PACING_VERSION = "2026-09-23a"
+#   2026-09-23b  gpt route: participant audio sent at 24 kHz (was 16 kHz,
+#                read by the gateway as 24 kHz, i.e. heard 1.5x fast);
+#                live transcriber gpt-4o-transcribe (was whisper-1); reply
+#                cap 1200 tokens (was 380, which cut replies at 10.5-14 s);
+#                page end-of-encounter drain up to 45 s (was 12). Each is
+#                also in its own provenance field; INPUT_TRANSCRIPTION_MODEL
+#                and REALTIME_MAX_OUTPUT_TOKENS can undo two of them, and the
+#                record says which values ran whatever this string says.
+#                Room pacing logic unchanged (rooms get the same audio fixes).
+#   2026-09-23c  participant-turn integrity (issues #21, #24): a silence
+#                probe's pad is committed on a cleared buffer and its
+#                transcript suppressed (user_turn_suppressed probe_pad); a
+#                transcript of fillers/punctuation over <= 80 ms of voice is
+#                suppressed (no_speech); a turn with < 600 ms of voice is
+#                recorded but low_confidence and kept out of steering (and of
+#                the director unless it names someone); the gateway buffer is
+#                cleared on the first speech_started after a commit, keeping
+#                a 600 ms pre-roll (input_buffer_cleared); the room's
+#                near-duplicate filter needs 90% of the shorter line (was
+#                60%); a replayed line's transcript is not a second turn.
+#                Every value is in `turn_gate` and every suppression in the
+#                events with its text. ALSO: 2026-09-23b's 24 kHz gpt input
+#                reached only sessions built with an explicit model; the
+#                runner and the room build theirs without one and went on
+#                sending 16 kHz (read as 24 kHz) while provenance said 24000.
+#                From 2026-09-23c the rate follows each session's model, so a
+#                23b record's input_rate is not what its gpt sessions sent.
+#
+# ROOM_PACING_VERSION:
+#   2026-09-23a  as d6f319d.
+#   2026-09-23b  participant turns queued behind a held floor are routed
+#                together as soon as the floor frees (was: a full
+#                ROUTE_TRANSCRIPT_WAIT and then routed on nothing);
+#                ROOM_MERGE_QUEUED_TURNS=0 routes on the latest alone.
+PIPELINE_VERSION = "2026-09-23c"
+ROOM_PACING_VERSION = "2026-09-23b"
 
 
 def provenance(model: Optional[str] = None) -> dict:
@@ -328,7 +375,7 @@ def provenance(model: Optional[str] = None) -> dict:
     configured REALTIME_MODEL, which is what /health reports.
     """
     # Imported here, not at the top: server.voice.realtime imports this module.
-    from .voice.realtime import audio_provenance
+    from .voice.realtime import audio_provenance, turn_gate_provenance
 
     realtime = _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio")
     return {
@@ -347,6 +394,9 @@ def provenance(model: Optional[str] = None) -> dict:
         # input_rate, input_transcription_model, max_output_tokens,
         # resampler, input_resampler; see audio_provenance.
         **audio_provenance(model or realtime),
+        # The participant-turn gate's knob values (pipeline 2026-09-23c); see
+        # server/voice/realtime.py turn_gate_provenance.
+        "turn_gate": turn_gate_provenance(),
         "pipeline_version": PIPELINE_VERSION,
         "room_pacing_version": ROOM_PACING_VERSION,
     }

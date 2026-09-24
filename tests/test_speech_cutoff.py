@@ -632,11 +632,16 @@ def test_the_end_of_an_encounter_does_not_cut_off_the_last_line(tmp_path):
 
 def test_the_drain_is_bounded_in_the_page_itself():
     """A page that waits forever for audio that is never coming is a tab that
-    never lets go of the camera. The bound is a constant, and it is small."""
+    never lets go of the camera. The bound is a constant, and it is small:
+    long enough for a 12-17 s last reply or a room's two-line backlog (issue
+    #23), no longer than the completion overlay's own upload wait."""
     src = V2.read_text(encoding="utf-8")
     assert "AUDIO_DRAIN_MAX_S" in src
     line = [l for l in src.splitlines() if "const AUDIO_DRAIN_MAX_S" in l]
     assert len(line) == 1
     seconds = int(line[0].split("=")[1].strip().rstrip(";"))
-    assert 2 <= seconds <= 30
+    assert 30 <= seconds <= 60
+    wait_ms = [l for l in src.splitlines() if "const VIDEO_UPLOAD_WAIT_MS" in l]
+    assert len(wait_ms) == 1
+    assert seconds * 1000 <= int(wait_ms[0].split("=")[1].strip().rstrip(";"))
 

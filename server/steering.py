@@ -221,6 +221,11 @@ _STEERING_TOOL = {
 
 
 def _format_transcript(shared_history: list, name_lookup: dict, max_turns: int = 14) -> str:
+    # A low_confidence participant turn (too little voice under it to trust
+    # the words; see Session.append_user) is never evidence about how the
+    # participant treats anyone. Issue #21: a transcriber's "Thank you very
+    # much." over silence was rated condescending and a gear moved on it.
+    shared_history = [e for e in shared_history if not e.get("low_confidence")]
     recent = shared_history[-max_turns:]
     lines = []
     for entry in recent:

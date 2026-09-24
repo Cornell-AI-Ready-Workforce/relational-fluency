@@ -102,7 +102,7 @@ import websockets
 
 # Config comes from server.llm so the .env file wins over ambient environment:
 # a stray exported variable must not be able to redirect study traffic.
-from ..llm import gateway_api_key, gateway_base_url, setting
+from ..llm import gateway_api_key, gateway_base_url, setting, setting_if_set
 from .turn_audio import shortfall as _audio_shortfall, word_count as _word_count
 
 try:  # audioop was removed in Python 3.13 (PEP 594); fall back to pure Python.
@@ -244,7 +244,9 @@ class RealtimeCapabilities:
     # when this differs. 24 kHz on native-audio is not a preference: at 16 kHz
     # that route accepts the session and then stays silent forever — no
     # transcription, no reply, no error (2026-09-08, after nine other config
-    # variants were tried first).
+    # variants were tried first). The gpt route is 24 kHz too, and its failure
+    # at 16 kHz was quieter still: accepted, answered, and heard 1.5x fast
+    # (issue #21, see that row).
     input_rate: int = CLIENT_RATE
     # Seconds to let the bridge start its own reply before asking for one.
     # ~1 s on plain flash, ~3.3 s on native-audio; asking early collides.
@@ -264,10 +266,10 @@ class RealtimeCapabilities:
     # Whether the session dict may carry a transcription language hint.
     transcription_language_hint: bool = True
     # Session-level cap on a reply's output tokens (audio tokens included), or
-    # None to leave the family's default. Measured 2026-09-18 on gpt-realtime:
-    # 90 tokens cut a reply at 12 words mid-sentence, about 7.5 tokens per
-    # spoken word, so 380 is a ceiling near 50 words that only trims a
-    # monologue and never a normal two-sentence turn.
+    # None to leave the family's default. Audio costs ~20 tokens per second of
+    # voice and the reply's text shares the same budget, so a cap is a length
+    # in SECONDS, and a short one cuts the voice mid-word (issue #23). Read it
+    # through max_output_tokens_for(), which applies the operator's override.
     max_output_tokens: Optional[int] = None
     # Voices from ANOTHER family that this family will play instead. The
     # scenario bank names Gemini voices; a bank entry is not a typo, and a
@@ -475,7 +477,24 @@ REALTIME_FAMILIES = {
         # `conversation.item.input_audio_transcription.completed` on every
         # turn. The study measures the participant; this key is the channel.
         needs_input_transcription=True,
-        input_transcription_model="whisper-1",
+        # gpt-4o-transcribe, not whisper-1 (issue #21), language from
+        # TRANSCRIPTION_LANG, no prompt, no noise_reduction. Replayed
+        # 2026-09-23 at the corrected 24 kHz, 3 repetitions, 32 clips: on the
+        # 16 hard windows from the 09-23 sessions whisper-1 wrote words that
+        # were not said in 24 of 48 transcripts ("Thank you." for "Casey" and
+        # "Priya?", "Silence. Silence. Silence.", "Bye-bye." for "Hi, Riley")
+        # and gpt-4o-transcribe in 8 (4 of them "Hi Barley" / "No, that's"
+        # misspellings of real words); neither returned nothing where a word
+        # was spoken. It is NOT better on pure silence: on digital zeros and
+        # room tone it invented in 7 of 12 ("Hello.", "Welcome", once French)
+        # against whisper-1's 3, and 3 of its 96 answers were not English
+        # despite the language hint. So a commit with no speech in it is still
+        # a phantom turn waiting to happen, on either model. 0 failures in 96;
+        # ~0.2 s slower to the transcript (median 0.70 s vs 0.51 s). A prompt
+        # made it invent MORE (diag track1), hence none; gpt-4o-mini-transcribe
+        # answered in Korean with language=en and is not an option.
+        # INPUT_TRANSCRIPTION_MODEL=whisper-1 restores the old transcriber.
+        input_transcription_model="gpt-4o-transcribe",
         # Server VAD does not merely fire early here, it CUTS THE TURN UP. The
         # same 4.7 s utterance arrived as two participant transcripts ("Hello."
         # / "I want to talk about the missed deadline last week."), an empty
@@ -490,15 +509,30 @@ REALTIME_FAMILIES = {
         # to match and the gpt path is left exactly as it was.
         end_of_turn=None,
         end_of_turn_silence_ms=0,
-        # 16 kHz in; the bridge accepts the browser's capture rate unchanged.
-        input_rate=CLIENT_RATE,
+        # 24 kHz in (issue #21). This row used to say 16 kHz "straight
+        # through", and the bridge did accept the frames, but it READ them as
+        # 24 kHz: the gateway's own VAD put a 2.0 s onset at 1332 ms and the
+        # input audio-token count came out 2/3 of the true duration (diag
+        # track2 ratecheck), so both the transcriber and the actor heard every
+        # participant 1.5x fast and about seven semitones high. send_audio
+        # resamples the browser's CLIENT_RATE up to this, as it already did
+        # for native-audio. Re-measured through send_audio on 2026-09-23: onset
+        # at 2004 ms, and 68 input audio tokens for 6.9 s appended (10/s).
+        input_rate=24000,
         # Server VAD is off on this family and the bridge only replies on
         # commit, so there is never an auto-fired reply to wait for: every
         # tenth of a second spent here is added straight to the participant's
         # wait (1.5 s per turn on 2026-09-18, on top of the model's own 2.3 s
         # to first audio).
-        max_output_tokens=380,
         autofire_wait=0.0,
+        # A runaway guard, not a length control (issue #23). 380 was set on
+        # 2026-09-18 as "a ceiling near 50 words", but the budget is shared by
+        # audio (~20 tokens per second of voice) and the reply's text, so it
+        # stopped the voice mid-word at 10.5-14 s and the reply ended
+        # status=incomplete with nothing else noticing. 1200 is about a minute
+        # of speech; reply length is the brief's job. REALTIME_MAX_OUTPUT_TOKENS
+        # overrides it (see max_output_tokens_for).
+        max_output_tokens=1200,
         accepts_text_items=True,
         # Server VAD is off on this family, so fanned-in colleague audio no
         # longer fires a reply -- but it does still land in the member's own
@@ -659,8 +693,9 @@ def input_rate_for_model(model: str) -> int:
 
     The native-audio Gemini route silently ignores 16 kHz input: the session
     stays open and never transcribes or replies (found 2026-09-08 after nine
-    config variants failed; 24 kHz input fixed it immediately). The other
-    Gemini route and the OpenAI route accept 16 kHz.
+    config variants failed; 24 kHz input fixed it immediately). The OpenAI
+    route also reads 24 kHz, and at 16 kHz it did not go silent but heard the
+    participant 1.5x fast (issue #21). The plain Gemini route takes 16 kHz.
     """
     caps = capabilities_for(model)
     if caps is not None:
@@ -704,10 +739,8 @@ def audio_provenance(model: str) -> dict:
     rate = input_rate_for_model(model)
     return {
         "input_rate": rate,
-        "input_transcription_model": (
-            (caps.input_transcription_model or None)
-            if caps is not None and caps.needs_input_transcription else None),
-        "max_output_tokens": caps.max_output_tokens if caps is not None else None,
+        "input_transcription_model": input_transcription_model_for(caps) or None,
+        "max_output_tokens": max_output_tokens_for(caps),
         "resampler": resampler_name(GATEWAY_OUTPUT_RATE, CLIENT_RATE),
         "input_resampler": resampler_name(CLIENT_RATE, rate),
     }
@@ -834,6 +867,145 @@ def transcription_language() -> str:
     mute either Gemini route.
     """
     return os.getenv("TRANSCRIPTION_LANG", "en")
+
+
+def input_transcription_model_for(caps: Optional[RealtimeCapabilities]) -> str:
+    """The transcriber this family's sessions ask for, or "" where none is.
+
+    INPUT_TRANSCRIPTION_MODEL overrides the row, and only on a family whose row
+    says the key is needed (the gpt route): the Gemini rows transcribe on their
+    own, and sending a key they were never measured with is a risk taken on the
+    family whose failure mode is a silent mute. Read per call, not at import,
+    so _session_payload and audio_provenance cannot disagree about it.
+    """
+    if caps is None or not caps.needs_input_transcription:
+        return ""
+    return setting("INPUT_TRANSCRIPTION_MODEL", "") or caps.input_transcription_model
+
+
+def max_output_tokens_for(caps: Optional[RealtimeCapabilities]) -> Optional[int]:
+    """The reply cap this family's sessions send, or None for no cap.
+
+    REALTIME_MAX_OUTPUT_TOKENS overrides the row's value: a positive integer
+    replaces it, and blank or 0 sends no cap at all (the gateway then reports
+    "inf"). Unset, negative or not a number, the row stands; a typo must not
+    quietly uncap a live study. Applied only where the row carries a cap,
+    because only the gpt route was measured to accept the key (the older
+    max_response_output_tokens is rejected there as unknown).
+    """
+    if caps is None or not caps.max_output_tokens:
+        return None
+    raw = setting_if_set("REALTIME_MAX_OUTPUT_TOKENS")
+    if raw is None:
+        return caps.max_output_tokens
+    if raw in ("", "0"):
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return caps.max_output_tokens
+    return value if value > 0 else caps.max_output_tokens
+
+
+# ── participant-turn integrity (issues #21, #24; pipeline 2026-09-23c) ──────
+#
+# The knobs below are researcher decisions, not measurements, so each one can
+# be put back without a code change and each one is written to provenance
+# (turn_gate_provenance) on every record. All read per call.
+
+def _int_setting(name: str, default: int) -> int:
+    try:
+        return int(setting(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _float_setting(name: str, default: float) -> float:
+    try:
+        return float(setting(name, str(default)))
+    except ValueError:
+        return default
+
+
+def min_voiced_ms() -> int:
+    """PARTICIPANT_MIN_VOICED_MS, default 600. A participant turn whose commit
+    held less voiced audio than this (see RealtimeVoiceSession.voiced_bar) is
+    still recorded and captioned, but tagged `low_confidence` and kept out of
+    the steering review and, unless it names a cast member, out of the
+    director's input. 0 tags nothing."""
+    return max(0, _int_setting("PARTICIPANT_MIN_VOICED_MS", 600))
+
+
+def drop_voiced_ms() -> int:
+    """PARTICIPANT_DROP_VOICED_MS, default 80. At or under this much voiced
+    audio AND with a transcript of nothing but punctuation or fillers ("." /
+    "Um..." / "Mhm."), the transcript is not a participant turn at all: it is
+    written as user_turn_suppressed with its text and never recorded as said.
+    -1 turns the drop off (0 still drops a commit with no voiced frame)."""
+    return _int_setting("PARTICIPANT_DROP_VOICED_MS", 80)
+
+
+def input_preroll_ms() -> int:
+    """INPUT_PREROLL_MS, default 600: how much of the participant's audio from
+    just before `speech_started` is re-sent after the gateway buffer is cleared
+    (see restart_input). The runner's VAD needs min_speech_ms of voice before
+    it says speech_started, so the onset is always behind the mark."""
+    return max(0, _int_setting("INPUT_PREROLL_MS", 600))
+
+
+def input_restart_enabled() -> bool:
+    """INPUT_BUFFER_RESTART, default on. Off ("0") puts back the old behaviour,
+    where everything the microphone sent since the last commit, 44 s of room
+    tone at worst, went into the next participant turn's transcript."""
+    return setting("INPUT_BUFFER_RESTART", "1").strip().lower() not in (
+        "0", "false", "no", "off", "")
+
+
+def dedupe_overlap() -> float:
+    """PARTICIPANT_DEDUPE_OVERLAP, default 0.9: the share of the shorter line's
+    words the longer one must contain for two transcripts inside 5 s to be one
+    utterance. Was 0.6, which dropped "I have a feeling that we're not on the
+    same page right now." as a copy of "Okay, I think we have..." (3 of 5
+    words, and "we're" split into "we re")."""
+    return _float_setting("PARTICIPANT_DEDUPE_OVERLAP", 0.9)
+
+
+def merge_queued_turns() -> bool:
+    """ROOM_MERGE_QUEUED_TURNS, default on: participant utterances that arrive
+    while a room's floor is held are routed together, as one text, when the
+    floor comes free. Every utterance is still its own user_turn. Off routes on
+    the latest one alone."""
+    return setting("ROOM_MERGE_QUEUED_TURNS", "1").strip().lower() not in (
+        "0", "false", "no", "off", "")
+
+
+def turn_gate_provenance() -> dict:
+    """The knob values above, as this process will apply them."""
+    return {
+        "participant_min_voiced_ms": min_voiced_ms(),
+        "participant_drop_voiced_ms": drop_voiced_ms(),
+        "input_preroll_ms": input_preroll_ms(),
+        "input_buffer_restart": input_restart_enabled(),
+        "participant_dedupe_overlap": dedupe_overlap(),
+        "room_merge_queued_turns": merge_queued_turns(),
+    }
+
+
+# Transcriber output that is not a word of anybody's: fillers and hesitation
+# sounds only. Deliberately NOT a list of stock phrases ("thank you", "bye"):
+# those are also things participants say, and the transcriber's inventions of
+# them are handled by the voiced-audio count, not by their wording.
+_FILLERS = frozenset((
+    "um", "umm", "uh", "uhh", "uhm", "er", "erm", "ah", "eh", "hm", "hmm",
+    "hmmm", "mm", "mmm", "mhm",
+))
+
+
+def is_filler_only(text: str) -> bool:
+    """True for a transcript with no word in it that is not a filler: "" /
+    "." / "..." / "Um..." / "Mhm." / "Hmm, uh."."""
+    words = re.findall(r"[^\W_]+", (text or "").lower())
+    return all(w in _FILLERS for w in words)
 
 
 def voice_for_model(voice: str, model: str) -> str:
@@ -1336,8 +1508,38 @@ class RealtimeVoiceSession:
         # that commits an empty buffer, so give_floor checks this first; it
         # is zeroed when a bridge auto-fired response consumes the buffer.
         self.pending_input = 0
-        self.input_rate = input_rate_for_model(model)
+        # None: follow self.model (see the input_rate property). Set only by a
+        # caller that means to pin a rate, as the legacy-rate probes do.
+        self._input_rate: Optional[int] = None
         self._in_resample_state = None
+        # Participant-turn integrity (issues #21, #24). `voiced_bar` is set by
+        # the runner to its VAD's effective_threshold, the bar a frame has to
+        # clear to count as someone speaking at that moment; None (a room
+        # member, a harness) counts nothing. `_voiced_ms` is the voiced audio
+        # appended since the last commit or clear, measured on the frames as
+        # the page sent them, before the resample.
+        #
+        # `_commit_tags` holds one dict per commit THIS bridge sent, waiting
+        # for the gateway's input_audio_buffer.committed to name its item;
+        # `_item_tags` then maps that item_id to the tag, so the transcript
+        # of a probe pad or a replayed line can be told from the
+        # participant's own turn when it arrives. Kept only where the buffer
+        # is ours alone (owns_input_buffer): on a family whose own turn
+        # detection commits, the gateway's commits interleave with ours and a
+        # first-in-first-out pairing would put one turn's tag on another.
+        #
+        # `commits` counts commits sent; `_restart_mark` is its value at the
+        # last restart_input, so a restart happens at most once per commit.
+        self.voiced_bar: Optional[Callable[[], int]] = None
+        self._voiced_ms = 0.0
+        self._commit_tags: list = []
+        self._item_tags: dict = {}
+        self._saw_committed = False
+        self.commits = 0
+        # -1: a socket that has never committed is as restartable as one
+        # that just did. What it holds before the participant's first
+        # speech_started is whatever the microphone sent while nobody spoke.
+        self._restart_mark = -1
         # A response the bridge started on its own (after speech + silence),
         # as opposed to one we asked for. Tracked separately from
         # _response_active so group-room suppression behaviour is unchanged.
@@ -1494,6 +1696,30 @@ class RealtimeVoiceSession:
         self.debug_log: list | None = [] if os.getenv("RT_DEBUG") else None
 
     @property
+    def input_rate(self) -> int:
+        """The rate participant audio goes on the wire at, for THIS session's
+        model, read when it is used.
+
+        It was computed once in __init__ from the `model` ARGUMENT, and the
+        runner and the room build every session without one (the model comes
+        from MODEL, or is settled on the object afterwards; see
+        GroupRoom._new_session). input_rate_for_model(None) is CLIENT_RATE, so
+        every production session sent 16 kHz whatever its row said, and the
+        gpt row's 24 kHz (pipeline 2026-09-23b, issue #21) reached only
+        sessions built with an explicit model, as the P1 probes were: the
+        gateway went on hearing participants 1.5x fast while provenance said
+        24000. Found 2026-09-23 when a probe pad of 3200 bytes was committed
+        unresampled and refused as 66.67 ms (input_audio_buffer_commit_empty)
+        in a local run of the real runner."""
+        if self._input_rate is not None:
+            return self._input_rate
+        return input_rate_for_model(self.model)
+
+    @input_rate.setter
+    def input_rate(self, rate: int) -> None:
+        self._input_rate = rate
+
+    @property
     def capabilities(self) -> RealtimeCapabilities:
         """This session's family row. Resolved on demand, not at construction:
         a caller is allowed to build a session for a model this process will
@@ -1515,6 +1741,13 @@ class RealtimeVoiceSession:
         self._response_created_id = None
         self._names_replies = False
         self._deferred = None
+        # Commit tags name items on the OLD socket; nothing on the new one
+        # will ever answer them.
+        self._commit_tags = []
+        self._item_tags = {}
+        self._saw_committed = False
+        self._voiced_ms = 0.0
+        self._restart_mark = self.commits - 1
         if not self.api_key:
             raise RuntimeError("No gateway API key (set LITELLM_API_KEY)")
         # Before the socket, deliberately. A voice the family does not know is
@@ -1569,7 +1802,7 @@ class RealtimeVoiceSession:
             session["tools"] = self.tools
         if caps.needs_input_transcription:
             session["input_audio_transcription"] = {
-                "model": caps.input_transcription_model,
+                "model": input_transcription_model_for(caps),
             }
         # The language hint, from origin/main cabc1dd, and the reason it is not
         # optional here: our own live runs had the transcriber return a Russian
@@ -1585,9 +1818,9 @@ class RealtimeVoiceSession:
         # the first frame of each.
         #
         # It rides on whatever input_audio_transcription the row already built,
-        # so the gpt route gets {"model": "whisper-1", "language": "en"} and the
-        # gemini routes get {"language": "en"} -- the shapes each was measured
-        # with.
+        # so the gpt route gets {"model": "gpt-4o-transcribe", "language":
+        # "en"} and the gemini routes get {"language": "en"} -- the shapes each
+        # was measured with.
         lang = transcription_language()
         if lang and caps.transcription_language_hint:
             hint = dict(session.get("input_audio_transcription") or {})
@@ -1601,10 +1834,11 @@ class RealtimeVoiceSession:
             # docstring gives: a later update without it would hand the
             # gateway's default window back and the pause split with it.
             session["turn_detection"] = self.turn_detection
-        if caps.max_output_tokens:
+        cap = max_output_tokens_for(caps)
+        if cap:
             # Accepted by the bridge on the gpt route as `max_output_tokens`
             # (the older `max_response_output_tokens` is rejected as unknown).
-            session["max_output_tokens"] = caps.max_output_tokens
+            session["max_output_tokens"] = cap
         return session
 
     async def _send(self, payload: dict) -> None:
@@ -1687,6 +1921,16 @@ class RealtimeVoiceSession:
         """Append participant audio (PCM16 at CLIENT_RATE)."""
         if not pcm16:
             return
+        if self.voiced_bar is not None:
+            # Voiced audio since the last commit, for the transcript gate. On
+            # the page's own frames (20 ms, CLIENT_RATE), the granularity the
+            # runner's VAD decides on. A bar that cannot be read counts
+            # nothing rather than failing the append.
+            try:
+                if _rms(pcm16) >= self.voiced_bar():
+                    self._voiced_ms += len(pcm16) / 2 / CLIENT_RATE * 1000.0
+            except Exception:  # noqa: BLE001 - never cost the participant audio
+                pass
         if self.input_rate != CLIENT_RATE:
             # Through _ratecv, not audioop directly: audioop was removed in
             # Python 3.13 (PEP 594) and the CI matrix runs three Pythons. The
@@ -1724,9 +1968,139 @@ class RealtimeVoiceSession:
                      "content": [{"type": "input_text", "text": text}]},
         })
 
-    async def commit_input(self) -> None:
+    @property
+    def owns_input_buffer(self) -> bool:
+        """True where the gateway buffer holds exactly what this bridge
+        appended and only this bridge's commit closes it: the families whose
+        row switches the gateway's own turn detection off. Only there can a
+        clear be sent without cutting into a turn the gateway is segmenting,
+        and only there can a transcript be matched to the commit that made
+        it."""
+        caps = capabilities_for(self.model)
+        return bool(caps and caps.needs_turn_detection_null)
+
+    def _tag_commit(self, *, probe: bool = False, replay: bool = False) -> None:
+        """Note a commit about to be sent, and start the next one's count."""
+        self.commits += 1
+        voiced, self._voiced_ms = self._voiced_ms, 0.0
+        if not self.owns_input_buffer:
+            return
+        self._commit_tags.append({
+            "voiced_ms": int(round(voiced)) if self.voiced_bar is not None else None,
+            "probe": probe, "replay": replay, "committed_at": time.time(),
+        })
+        # A gateway that never answers a commit must not grow this forever.
+        del self._commit_tags[:-16]
+
+    def _tag_for(self, item_id: Optional[str]) -> Optional[dict]:
+        """The tag of the commit this transcript came from, taken once."""
+        if item_id and item_id in self._item_tags:
+            return self._item_tags.pop(item_id)
+        if not self._saw_committed and self._commit_tags:
+            # A socket that never says input_audio_buffer.committed (a fake,
+            # or a gateway that drops it): transcripts come back in commit
+            # order, so the oldest unanswered commit is this one.
+            return self._commit_tags.pop(0)
+        return None
+
+    def awaiting_transcript(self, within_s: float) -> bool:
+        """Has a participant commit made in the last `within_s` seconds not had
+        its transcript yet? What lets a room wait for every utterance that is
+        already on its way before it routes (see _run_group_turn)."""
+        cutoff = time.time() - within_s
+        pending = list(self._commit_tags) + list(self._item_tags.values())
+        return any(t["committed_at"] >= cutoff and not t["probe"]
+                   for t in pending)
+
+    def input_restart_due(self) -> bool:
+        """True from a commit (or a fresh socket) until the next
+        restart_input: the participant's FIRST speech_started after a commit
+        may clear the buffer; any later one in the same span may not, because
+        what is uncommitted then is their own speech (a turn whose commit
+        returned early, a turn end withdrawn)."""
+        return self.owns_input_buffer and self.commits > self._restart_mark
+
+    def uncommitted(self) -> dict:
+        """What the gateway buffer holds right now, for the record."""
+        return {
+            "buffer_ms": int(round(self.pending_input / 2 / self.input_rate * 1000))
+            if self.input_rate else 0,
+            "buffer_voiced_ms": int(round(self._voiced_ms)),
+        }
+
+    async def clear_input(self) -> dict:
+        """input_audio_buffer.clear, and the books that describe the buffer.
+        Returns what was discarded (audio time on the wire, and how much of
+        it was voiced), so the caller can write it down."""
+        gone = self.uncommitted()
+        await self._send({"type": "input_audio_buffer.clear"})
+        self.pending_input = 0
+        self._voiced_ms = 0.0
+        # The next append is not contiguous with the last one.
+        self._in_resample_state = None
+        return gone
+
+    async def restart_input(self, preroll: bytes) -> dict:
+        """Start the participant's new turn on a clean buffer (issue #21).
+
+        Nothing used to clear the gateway's input buffer between commits, and
+        the page streams continuously, so a participant turn was committed
+        with everything the microphone sent since the last one: up to 44 s,
+        nearly all of it room tone, which the transcriber fills with stock
+        phrases. Cleared here on the participant's first speech_started after
+        a commit, and `preroll` (the audio from just before the mark) re-sent
+        so the onset the VAD needed min_speech_ms to confirm is kept. The
+        discarded audio is still in user_audio.wav; only the gateway's copy
+        goes."""
+        self._restart_mark = self.commits
+        gone = await self.clear_input()
+        step = CLIENT_RATE * 2 // 10
+        for i in range(0, len(preroll), step):
+            await self.send_audio(preroll[i:i + step])
+        # The pre-roll was in the buffer too, so what was really thrown away
+        # is the difference; said as such, not as the whole buffer.
+        now = self.uncommitted()
+        gone["resent_ms"] = now["buffer_ms"]
+        gone["resent_voiced_ms"] = now["buffer_voiced_ms"]
+        return gone
+
+    def _commit_blocked(self) -> bool:
+        """commit_turn's two early returns, as a question."""
+        if self._response_active and not self._response_stalled():
+            return True
+        return bool(self.autofire_active
+                    and time.time() - self._last_output_at < 15)
+
+    async def commit_probe(self, pad: bytes) -> Optional[dict]:
+        """A silence probe's pad-and-commit, which must not become a turn.
+
+        The watchdog's handoff and beat probes appended a pad and committed
+        the whole buffer: 12+ s of the participant saying nothing, which the
+        transcriber answered with "Thank you very much.", recorded as the
+        participant's turn and then rated by steering (S2A, 2026-09-23). The
+        buffer is cleared first and the commit tagged as a probe, so events()
+        can mark its transcript and the runner can keep it out of the record.
+
+        Not cleared when the buffer holds more voiced audio than
+        drop_voiced_ms: that is a participant turn whose commit returned early
+        (a reply was in flight), and its words would be lost. It is then
+        committed as the participant's turn, untagged, and gated like one.
+        None when commit_turn would not commit at all; otherwise what was done.
+        """
+        if self._commit_blocked():
+            return None
+        clear = self.owns_input_buffer and self._voiced_ms <= max(0, drop_voiced_ms())
+        info = {"cleared": clear, **self.uncommitted()}
+        if clear:
+            await self.clear_input()
+        await self.send_audio(pad)
+        await self.commit_turn(probe=clear)
+        return info
+
+    async def commit_input(self, *, probe: bool = False) -> None:
         """Close the participant's turn without asking for a reply. Group rooms
         need this separately: one commit, then a reply per speaker."""
+        self._tag_commit(probe=probe)
         self.pending_input = 0
         # A commit is a new participant turn: the retry budget starts over and
         # a barge-in on the previous reply no longer describes the next one.
@@ -2112,6 +2486,11 @@ class RealtimeVoiceSession:
         for i in range(0, len(pcm16), step):
             await self.send_audio(pcm16[i:i + step])
         self.pending_input = 0
+        # Tagged as a replay, so its transcript is not recorded as a second
+        # participant turn when the original commit's transcript turns up
+        # after all (seen twice in the archive; see the runner's
+        # _record_user_turn).
+        self._tag_commit(replay=True)
         await self._send({"type": "input_audio_buffer.commit"})
         self._response_active = True
         self._requested = True
@@ -2181,20 +2560,26 @@ class RealtimeVoiceSession:
         self._response_saw_output = False
         await self._send({"type": "response.create"})
 
-    async def commit_turn(self) -> None:
+    async def commit_turn(self, *, probe: bool = False) -> None:
         """Close the participant's turn and ask for a reply. Required, the
-        gateway will not do this on its own."""
+        gateway will not do this on its own. `probe` tags the commit as a
+        silence probe's pad (see commit_probe), never the participant's."""
         if self._response_active and not self._response_stalled():
             return
         if self.autofire_active and time.time() - self._last_output_at < 15:
             # The bridge is already answering this turn; a commit + create
             # here produces a second, paraphrased reply on top of it.
             return
-        if self.pending_input < 3200:
+        # 100 ms at the rate the gateway reads. pending_input counts bytes as
+        # they went on the wire, i.e. AFTER send_audio's resample, so the bar
+        # is derived from input_rate: the old fixed 3200 was 100 ms only at
+        # 16 kHz and would read as 67 ms of a 24 kHz buffer.
+        if self.pending_input < self.input_rate * 2 // 10:
             # Committing an empty buffer kills the session on this bridge;
             # pad with 300 ms of silence if an auto-fire consumed the audio.
-            await self.send_audio(b"\x00" * 9600)
-        await self.commit_input()
+            # The pad is CLIENT_RATE PCM, like everything send_audio takes.
+            await self.send_audio(b"\x00" * (CLIENT_RATE * 2 * 3 // 10))
+        await self.commit_input(probe=probe)
         if is_openai_realtime(self.model):
             # Through the bridge, the commit itself starts the reply on the
             # OpenAI route; an explicit response.create on top is rejected
@@ -2461,6 +2846,23 @@ class RealtimeVoiceSession:
                     self._update_ack.set()
                     continue
 
+                if etype == "input_audio_buffer.committed":
+                    # Names the item a commit of ours became, so the transcript
+                    # that follows (same item_id, measured 2026-09-23 on
+                    # gpt-realtime-2.1) can be matched to the commit's tag:
+                    # probe pad, replayed line, or the participant's turn and
+                    # how much voice was in it. Not yielded.
+                    self._saw_committed = True
+                    if self._commit_tags:
+                        tag = self._commit_tags.pop(0)
+                        item = ev.get("item_id")
+                        if item:
+                            self._item_tags[item] = tag
+                            # Bounded like the queue it came from.
+                            while len(self._item_tags) > 16:
+                                self._item_tags.pop(next(iter(self._item_tags)))
+                    continue
+
                 # The bridge auto-fires responses without going through
                 # request_response(). Detect that first — an auto-fired reply
                 # is one whose deltas arrive while _response_active is still
@@ -2673,14 +3075,29 @@ class RealtimeVoiceSession:
                     text = _PLACEHOLDER.sub(" ", raw)
                     text = re.sub(r"\s{2,}", " ", text).strip()
                     garbled = text != raw
+                    # Which commit this transcript belongs to (see
+                    # input_audio_buffer.committed above). `probe` and `replay`
+                    # say it is not a new participant turn; `voiced_ms` is how
+                    # much voice the commit held, None where it is not known.
+                    item_id = ev.get("item_id")
+                    tag = self._tag_for(item_id) or {}
+                    meta = {"item_id": item_id,
+                            "probe": bool(tag.get("probe")),
+                            "replay": bool(tag.get("replay")),
+                            "voiced_ms": tag.get("voiced_ms")}
                     if text:
                         yield {"type": "user_transcript", "text": text,
-                               "garbled": garbled}
+                               "garbled": garbled, **meta}
                     elif raw:
                         # Nothing but placeholders: the participant spoke and
                         # none of it was transcribed. Said as such.
                         yield {"type": "user_transcript", "text": "",
-                               "garbled": True}
+                               "garbled": True, **meta}
+
+                elif etype == "conversation.item.input_audio_transcription.failed":
+                    # No transcript is coming for this commit; its tag must not
+                    # be left to be paired with the next one's.
+                    self._tag_for(ev.get("item_id"))
 
                 elif etype in ("response.output_audio.done",
                                "response.audio.done"):
@@ -2787,6 +3204,12 @@ class RealtimeVoiceSession:
                     err = err if isinstance(err, dict) else {}
                     code = str(err.get("code") or "")
                     param = str(err.get("param") or "")
+                    if code == "input_audio_buffer_commit_empty" and self._commit_tags:
+                        # A commit the gateway refused never becomes an item,
+                        # and the gateway answers commits in order, so the
+                        # refused one is the oldest still waiting. Its tag must
+                        # not be handed to the next commit's item.
+                        self._commit_tags.pop(0)
 
                     if code == "conversation_already_has_active_response":
                         # Not a fault, and above all not the end of a reply.

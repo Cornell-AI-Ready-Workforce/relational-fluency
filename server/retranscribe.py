@@ -1,15 +1,20 @@
 """High-quality re-transcription of the participant channel.
 
-The live transcript comes from the realtime bridge's own transcriber, which
-cannot be configured, passing a transcription model to session.update is
-accepted and ignored (verified 2026-08-20). It is good enough to steer on, but
-it drops words, and the study's transcript is what raters read and what the
-scorer trains on.
+The live transcript comes from the transcriber the realtime session asks for
+(input_audio_transcription.model; INPUT_TRANSCRIPTION_MODEL on the gpt route,
+recorded per encounter as input_transcription_model). An earlier version of
+this docstring said that setting is accepted and ignored (2026-08-20); it is
+not: on 2026-09-23 whisper-1 and gpt-4o-transcribe returned different text
+for the same audio on the same route (issue #21). Either way it is good
+enough to steer on, but it drops and invents words, and the study's
+transcript is what raters read and what the scorer trains on.
 
 So the recorded participant audio is re-transcribed offline against a stronger
 multimodal model, and the result is stored alongside the live transcript rather
-than replacing it, the live text is the record of what the agent actually
-heard and reacted to, which is not the same thing as what was said.
+than replacing it. The live text is what the director, steering and captions
+were given; it is NOT a record of what the actor heard, which is the audio
+itself (at S2A 218.7 the live text says "40%" and the actor answers "Twenty
+percent"), and neither is the same thing as what was said.
 
     python -m server.retranscribe <session_id>
     python -m server.retranscribe --all [--force]

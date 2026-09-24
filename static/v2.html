@@ -1026,7 +1026,11 @@
   // already been handed to finish playing before it tears the audio graph down.
   // See endSession: this is what stops the last line of every encounter being
   // cut off mid-sentence. A ceiling, not a delay — a drain of 0 costs nothing.
-  const AUDIO_DRAIN_MAX_S = 12;
+  // 45 s, not 12 (issue #23): with the reply cap raised to a runaway guard a
+  // single reply runs 12-17 s again, and a room can have two characters'
+  // lines scheduled back to back, so 12 s cut the last line of an encounter
+  // on exactly the encounters that ended on a long one.
+  const AUDIO_DRAIN_MAX_S = 45;
   let cast = [];
   let activeSpeaker = null;
   let assistantSpeaking = false;
@@ -3734,9 +3738,12 @@
     // moment longer than the encounter), and let the audio they have already
     // been sent finish playing before the graph that is playing it is torn
     // down. Bounded, because a wedged clock must not hold a browser tab open:
-    // AUDIO_DRAIN_MAX_S is longer than any single reply measured (the longest
-    // seen live was 6.5 s) and short enough to be over before the completion
-    // overlay's own wait.
+    // AUDIO_DRAIN_MAX_S is longer than any backlog this page is handed (a
+    // 12-17 s reply, or two back to back in a room; the gateway delivers
+    // ~2.5x faster than real time, so the backlog at the end can be most of
+    // the last line), and no longer than the completion overlay's own upload
+    // wait (VIDEO_UPLOAD_WAIT_MS). The 12 s it used to be was sized on a
+    // 6.5 s reply and cut longer last lines mid-sentence.
     const drainS = (doomedCtx && doomedCtx.state !== 'closed')
       ? Math.max(0, Math.min(playbackTime - doomedCtx.currentTime + 0.1, AUDIO_DRAIN_MAX_S))
       : 0;
