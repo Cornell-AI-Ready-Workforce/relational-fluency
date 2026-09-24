@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any, Callable, List, Optional
 
 from anthropic import APITimeoutError, AsyncAnthropic
@@ -53,12 +54,45 @@ from .scenarios import Agent, Scenario
 log = logging.getLogger(__name__)
 
 
-# Routing is high-frequency and benefits from speed > deliberation. Haiku is
-# fine; can be overridden via env if you want to A/B against Sonnet. Resolved
+# Routing is high-frequency and benefits from speed > deliberation. Resolved
 # via the shared .env-first accessor so an override in .env actually takes
 # effect (os.getenv would ignore the .env file).
-DIRECTOR_MODEL = setting("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite")
+#
+# nto.gemini-3.5-flash-lite since 2026-09-23 (was nto.gemini-3.1-flash-lite),
+# the researcher's decision on a replay of every archived group-room turn
+# through this module and the runner's own pick (docs/model-benchmark-
+# 2026-09-23.md). Faster (p50 1.00 s vs 1.11 s), no timeouts in 87 calls, the
+# same list on repeat 4 of 6 turns against 1 of 6, and - the reason - it never
+# told Priya to raise or re-argue last year's rollout, the fact her brief
+# withholds, where 3.1 did on 11 of 77 calls and production shows one such
+# direction followed at once by her unasked reveal. Its own slip, naming a
+# character only to tell them to stay silent (3 of 77), is caught below by
+# _is_silence_intent. Recorded per encounter as provenance.director_model and
+# per stage_direction. DIRECTOR_MODEL=nto.gemini-3.1-flash-lite restores it.
+DIRECTOR_MODEL = setting("DIRECTOR_MODEL", "nto.gemini-3.5-flash-lite")
 DIRECTOR_MAX_SPEAKERS = 3
+
+# A routed entry whose intent asks the speaker to say nothing. The hard rules
+# below already forbid it ("Everyone you name WILL speak out loud"), and the
+# prompt cannot be relied on to hold: nto.gemini-3.5-flash-lite wrote "Stay
+# silent and let them talk" for Jordan on 3 of 77 replayed calls, and a person
+# told to be silent is still handed the floor and still fills it. So the entry
+# is dropped here, exactly as leaving them off the list would have done, and
+# the drop is recorded with the text. Anchored on the imperative so a line
+# that merely mentions quiet ("you have been quiet since Priya left - say so")
+# is not caught.
+_SILENCE_INTENT = re.compile(
+    r"^\W*(?:please\s+)?(?:(?:just|simply)\s+)?"
+    r"(?:stay|keep|remain|be|go)\s+(?:quiet|silent|out of it)\b"
+    r"|^\W*(?:say|do)\s+nothing\b"
+    r"|^\W*(?:hold back|hold off|listen only|just listen)\b"
+    r"|^\W*(?:don'?t|do not)\s+(?:speak|say anything|respond|answer|talk)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_silence_intent(intent: Optional[str]) -> bool:
+    return bool(intent) and bool(_SILENCE_INTENT.search(str(intent).strip()))
 
 # Output budget for one routing decision. 160 was enough for three bare
 # agent_ids and not much else, and running out is not a soft failure here: a
@@ -439,6 +473,16 @@ class Director:
             "detail": detail,
         }]
 
+    def _record_silence_drop(self, agent_id: str, intent: str) -> None:
+        """Write down a routed entry dropped for telling its speaker to be silent."""
+        if self._on_event is None:
+            return
+        try:
+            self._on_event("director_silence_intent_dropped", model=self.model,
+                           agent_id=agent_id, intent=intent)
+        except Exception:  # noqa: BLE001 - recording must never break the room
+            log.exception("director silence drop could not be recorded")
+
     def _record_decision(self, speakers: List[dict], rationale: str) -> None:
         """Put the director's own decision in the encounter record.
 
@@ -685,6 +729,9 @@ Who speaks, and what are they going for?"""
                 for s in raw[:DIRECTOR_MAX_SPEAKERS]:
                     aid = s.get("agent_id")
                     if aid in self._valid_ids and aid != seen_last:
+                        if _is_silence_intent(s.get("intent")):
+                            self._record_silence_drop(aid, str(s.get("intent"))[:300])
+                            continue
                         entry = {"agent_id": aid}
                         if s.get("intent"):
                             entry["intent"] = str(s["intent"])[:300]

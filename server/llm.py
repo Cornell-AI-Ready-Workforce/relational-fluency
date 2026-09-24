@@ -482,7 +482,7 @@ def provenance(model: Optional[str] = None) -> dict:
         # server/steering.py and server/director.py (pinned by
         # tests/test_final_preflight.py via _MODEL_ROLES).
         "steering_model": _cfg("STEERING_MODEL", "nto.gemini-3.5-flash-lite"),
-        "director_model": _cfg("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite"),
+        "director_model": _cfg("DIRECTOR_MODEL", "nto.gemini-3.5-flash-lite"),
         # input_rate, input_transcription_model, max_output_tokens,
         # resampler, input_resampler; see audio_provenance.
         **audio_provenance(model or realtime),
@@ -536,7 +536,7 @@ def provenance(model: Optional[str] = None) -> dict:
 # and server.steering both import this module.
 _MODEL_ROLES = (
     ("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite", "the actor's text engine", True),
-    ("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite", "the director", True),
+    ("DIRECTOR_MODEL", "nto.gemini-3.5-flash-lite", "the director", True),
     ("STEERING_MODEL", "nto.gemini-3.5-flash-lite", "the steering reviewer", True),
     ("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio", "the voice socket", True),
     ("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash", "the re-transcriber, offline", False),

@@ -48,7 +48,7 @@ variable "actor_model" {
 variable "director_model" {
   description = "Text model that reads each turn and writes one stage direction (LiteLLM alias). Recorded per stage_direction event as director_model; it is NOT the deployment's text engine — see text_model."
   type        = string
-  default     = "nto.gemini-2.5-flash"
+  default     = "nto.gemini-3.5-flash-lite"
 }
 
 # The director and the text engine are two different jobs and there is no reason
