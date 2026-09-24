@@ -346,6 +346,10 @@ def build(session_dir: Path) -> Dict[str, Any]:
             "gateway": realtime.get("gateway"),
             "realtime_model": realtime.get("model") or realtime.get("realtime_model"),
             "text_model": realtime.get("text_model"),
+            # From provenance() on realtime_session_started; None on encounters
+            # recorded before 2026-09-23, when these were not written.
+            "steering_model": realtime.get("steering_model"),
+            "director_model": realtime.get("director_model"),
         },
         "cast": start.get("cast", []),
         "transcript": turns,

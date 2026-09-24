@@ -184,6 +184,7 @@ CREATE TABLE encounter (
     realtime_model      text NOT NULL,
     text_model          text,
     director_model      text,
+    steering_model      text,                       -- provenance.steering_model (since 2026-09-23)
     deploy_revision     int,                        -- ECS task-definition revision, if known
     spec_sha256         text,                       -- spec_fingerprint.sha256 at the time
     spec_trigger_ids    text[],                     -- spec_fingerprint.trigger_ids

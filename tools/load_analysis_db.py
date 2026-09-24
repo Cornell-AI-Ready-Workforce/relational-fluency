@@ -254,20 +254,21 @@ def load_encounter(cur, d: Path, s3_prefix: str) -> Optional[str]:
     cur.execute(
         """INSERT INTO encounter (encounter_id, run_id, slot, participant_id, scenario_id, cohort,
                started_at, ended_at, duration_s, status, gateway, realtime_model, text_model,
-               director_model, spec_sha256, spec_trigger_ids,
+               director_model, steering_model, spec_sha256, spec_trigger_ids,
                participant_turns, agent_turns, stage_directions, script_mismatch_turns,
                unheard_turns, participant_channel_state, participant_channel_losses,
                untranscribed_s, video_upload_state, video_upload_attempts, video_upload_error,
                archive_uri)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
         (sid, run_id, slot, pid, scenario, cohort, ts(started) or ts(0), ts(ended),
          (round(ended - started, 1) if started and ended else None),
          m.get("status") or "closed",
          prov.get("gateway") or rt_started.get("gateway") or "unknown",
          prov.get("realtime_model") or m.get("model") or rt_started.get("realtime_model") or "unknown",
          prov.get("text_model") or rt_started.get("text_model"),
-         next((r.get("director_model") for r in record.get("steering_log") or []
-               if r.get("director_model")), None),
+         prov.get("director_model") or next((r.get("director_model") for r in record.get("steering_log") or []
+                                             if r.get("director_model")), None),
+         prov.get("steering_model"),
          fp.get("sha256"), fp.get("trigger_ids"),
          counts.get("participant_turns", 0), counts.get("agent_turns", 0),
          counts.get("stage_directions", 0), counts.get("script_mismatch_turns", 0),

@@ -78,7 +78,16 @@ from .scenarios import Scenario
 # Same speed-over-deliberation tradeoff as the Director. Override via env to
 # A/B a smarter controller. Resolved via the shared .env-first accessor so an
 # override in .env actually takes effect (os.getenv would ignore the .env file).
-STEERING_MODEL = setting("STEERING_MODEL", "nto.gemini-3.1-flash-lite")
+#
+# nto.gemini-3.5-flash-lite since 2026-09-23 (was nto.gemini-3.1-flash-lite),
+# the researcher's decision on docs/model-benchmark-2026-09-23.md: 0.8 s
+# against 1.1 s, no timeouts, the same answer on repeat 7 of 8 windows against
+# 4 of 8, and it leaves the gears alone on neutral turns (shifted on 2 of 16
+# reviews against 13 of 16). Steering is the study's manipulated variable, so
+# this is a change to the stimulus: every encounter records the model that
+# steered it as provenance.steering_model, and STEERING_MODEL=
+# nto.gemini-3.1-flash-lite restores the old controller exactly.
+STEERING_MODEL = setting("STEERING_MODEL", "nto.gemini-3.5-flash-lite")
 MAX_ADJUSTMENTS_PER_TURN = 2
 STEERABLE_KNOBS = TONE_KNOBS + INCIVILITY_KNOBS  # cognition is not auto-steered
 

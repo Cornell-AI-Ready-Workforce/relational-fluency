@@ -307,6 +307,15 @@ def provenance() -> dict:
         "gateway": gateway_base_url(),
         "text_model": _cfg("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite"),
         "realtime_model": _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio"),
+        # The two live text models, so a change to either is visible on every
+        # encounter it touched. Steering is the manipulated variable; its model
+        # moved from nto.gemini-3.1-flash-lite to nto.gemini-3.5-flash-lite on
+        # 2026-09-23, and without this field the record could not say which
+        # controller a given encounter ran under. Defaults duplicated from
+        # server/steering.py and server/director.py (pinned by
+        # tests/test_final_preflight.py via _MODEL_ROLES).
+        "steering_model": _cfg("STEERING_MODEL", "nto.gemini-3.5-flash-lite"),
+        "director_model": _cfg("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite"),
     }
 
 
@@ -343,7 +352,7 @@ def provenance() -> dict:
 _MODEL_ROLES = (
     ("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite", "the actor's text engine", True),
     ("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite", "the director", True),
-    ("STEERING_MODEL", "nto.gemini-3.1-flash-lite", "the steering reviewer", True),
+    ("STEERING_MODEL", "nto.gemini-3.5-flash-lite", "the steering reviewer", True),
     ("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio", "the voice socket", True),
     ("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash", "the re-transcriber, offline", False),
 )
