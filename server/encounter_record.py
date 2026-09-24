@@ -40,6 +40,11 @@ def build(session_dir: Path) -> Dict[str, Any]:
 
     start = next((e for e in events if e.get("type") == "session_start"), {})
     realtime = next((e for e in events if e.get("type") == "realtime_session_started"), {})
+    client_audio = next(
+        ({k: v for k, v in e.items() if k not in ("type", "wall")}
+         for e in reversed(events) if e.get("type") == "client_audio_settings"),
+        None,
+    )
 
     turns: List[dict] = []
     directions: List[dict] = []
@@ -124,6 +129,11 @@ def build(session_dir: Path) -> Dict[str, Any]:
                 # is meaningfully different from "ok".
                 "participant_channel": e.get("participant_channel"),
                 "latency_s": actor.get("latency_total_s"),
+                # The gateway said this reply stopped because the session's
+                # max_output_tokens ran out (response.done status_details;
+                # issue #23), so the line may end mid-word. None on turns
+                # recorded before the flag existed, which is NOT "not cut".
+                "cap_truncated": actor.get("cap_truncated"),
             })
 
     turns.sort(key=lambda t: t.get("t") or 0)
@@ -350,7 +360,27 @@ def build(session_dir: Path) -> Dict[str, Any]:
             # recorded before 2026-09-23, when these were not written.
             "steering_model": realtime.get("steering_model"),
             "director_model": realtime.get("director_model"),
+            # What the pipeline did to the audio and to room pacing, from the
+            # same event (llm.provenance / voice.realtime.audio_provenance).
+            # None on encounters recorded before these were written; on the
+            # gpt row those ran 16000 in, whisper-1, audioop.ratecv out, and
+            # a 380-token cap from 2026-09-18 16:04 EDT.
+            # pipeline_version / room_pacing_version are how an analyst
+            # splits the archive at each of the #21-#25 fixes.
+            "input_rate": realtime.get("input_rate"),
+            "input_transcription_model": realtime.get("input_transcription_model"),
+            "max_output_tokens": realtime.get("max_output_tokens"),
+            "resampler": realtime.get("resampler"),
+            "input_resampler": realtime.get("input_resampler"),
+            "pipeline_version": realtime.get("pipeline_version"),
+            "room_pacing_version": realtime.get("room_pacing_version"),
         },
+        # The participant's microphone as the browser reported it
+        # (track.getSettings() and the user agent; see the
+        # client_audio_settings event). The LAST report wins: a reconnect
+        # re-reports, and the later device is the one the rest of the
+        # encounter was captured on. Null when the page sent none.
+        "client_audio": client_audio,
         "cast": start.get("cast", []),
         "transcript": turns,
         "steering_log": directions,

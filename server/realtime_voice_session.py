@@ -21,6 +21,7 @@ import inspect
 import re
 import hashlib
 import json
+import math
 import os
 import time
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -147,6 +148,26 @@ class _MemberState:
     def drop(self, why: str = "") -> None:
         self.held = []
         self.mode = "idle"
+
+
+def _reply_end(ev: Optional[dict]) -> dict:
+    """How the gateway itself says a reply ended, for assistant_turn.
+
+    From the bridge's response_done (RealtimeVoiceSession._done_info). Record
+    only: `cap_truncated` is the session's max_output_tokens running out
+    mid-line (issue #23), and it is deliberately NOT a retry reason — the
+    line was delivered as generated, and re-asking would speak it twice.
+    None/False where no response_done closed the turn (a barge-in closes it
+    first; a held reply adopted after its done has lost it).
+    """
+    ev = ev or {}
+    return {
+        "cap_truncated": bool(ev.get("cap_truncated")),
+        "response_status": ev.get("response_status"),
+        "status_reason": ev.get("status_reason"),
+        "output_items": ev.get("output_items"),
+        "output_tokens": ev.get("output_tokens"),
+    }
 
 
 def _clean_agent_text(text: str) -> str:
@@ -511,6 +532,8 @@ from .voice import realtime as _realtime
 # The one check that can tell a line the participant HEARD from a line the
 # record merely says was spoken. See server/voice/turn_audio.py.
 from .voice import turn_audio
+# Per-turn latency stages and the page's playback acks (issue #25). Record only.
+from .turn_timing import TurnTimer
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -704,6 +727,15 @@ class RealtimeVoiceSessionRunner:
         # turn or a gate to set. _take_turn_buffer carries it across.
         self._agent_line_settled = False
         self._turn_started_at: Optional[float] = None
+        # Where each agent turn's latency went, stage by stage, and when the
+        # page actually played it (turn_timing / play_start / play_end; see
+        # server/turn_timing.py). Driven from _send/_send_bytes for the
+        # character's side, so every path that opens a turn on the page is
+        # covered by the same frame the page itself counts turns by.
+        self._timing = TurnTimer(session.store)
+        # client_audio_settings frames accepted from this socket; see
+        # _handle_client_command. Bounded so a page cannot fill the trail.
+        self._client_audio_reports = 0
         self._speaking = False
         # One participant-visible notice per reply for faults the session
         # survived (a discarded corrupt audio chunk). Every one of them is still
@@ -2607,6 +2639,7 @@ class RealtimeVoiceSessionRunner:
                             audio_unterminated=bool(
                                 ev.get("audio_unterminated")),
                             retried=bool(ev.get("retried")),
+                            reply_end=_reply_end(ev),
                         )
                     )
 
@@ -2676,7 +2709,8 @@ class RealtimeVoiceSessionRunner:
                                      *, interrupted: bool = False,
                                      settled=None, audio_bytes: int = 0,
                                      audio_unterminated: bool = False,
-                                     retried: bool = False) -> None:
+                                     retried: bool = False,
+                                     reply_end: Optional[dict] = None) -> None:
         """Grace-wait for a member's transcript, then close the turn.
 
         Runs as its own task so the pump's async-for keeps advancing and can
@@ -2746,7 +2780,7 @@ class RealtimeVoiceSessionRunner:
         await self._finalize_member(agent, text, interrupted=interrupted,
                                     audio_bytes=audio_bytes,
                                     audio_unterminated=audio_unterminated,
-                                    retried=retried)
+                                    retried=retried, reply_end=reply_end)
 
     async def _advance_from_tool(self) -> None:
         """Advance the encounter from a room member's end_conversation call."""
@@ -3055,7 +3089,8 @@ class RealtimeVoiceSessionRunner:
                                *, interrupted: bool = False,
                                audio_bytes: int = 0,
                                audio_unterminated: bool = False,
-                               retried: bool = False) -> None:
+                               retried: bool = False,
+                               reply_end: Optional[dict] = None) -> None:
         """Close one character's turn in a group room."""
         text = _clean_agent_text(text)
         # origin/main df1ab83, and taken unconditionally: both are cheap, both
@@ -3085,13 +3120,14 @@ class RealtimeVoiceSessionRunner:
         await self._finalize_member_inner(agent, text, interrupted=interrupted,
                                           audio_bytes=audio_bytes,
                                           audio_unterminated=audio_unterminated,
-                                          retried=retried)
+                                          retried=retried, reply_end=reply_end)
 
     async def _finalize_member_inner(self, agent, text: str,
                                      *, interrupted: bool = False,
                                      audio_bytes: int = 0,
                                      audio_unterminated: bool = False,
-                                     retried: bool = False) -> None:
+                                     retried: bool = False,
+                                     reply_end: Optional[dict] = None) -> None:
         """Close one character's turn in a group room.
 
         This was lost in a refactor once, and the symptom was total: every pump
@@ -3196,7 +3232,9 @@ class RealtimeVoiceSessionRunner:
                    # a fragment of what the actor was briefed to say, and a
                    # rater comparing the direction to the line has to be able
                    # to tell a truncated delivery from a bad one.
-                   "interrupted": interrupted},
+                   "interrupted": interrupted,
+                   # See _reply_end: the cap ended this line, not the actor.
+                   "cap_truncated": _reply_end(reply_end)["cap_truncated"]},
             participant=None if self._scribe_lost else self._last_user_text,
             participant_channel="lost" if self._scribe_lost else "ok",
         )
@@ -3216,6 +3254,7 @@ class RealtimeVoiceSessionRunner:
             interrupted=interrupted, retry_head=retry_head,
             # See _finalize_turn, and server/voice/turn_audio.py.
             audio_ms=delivered_ms,
+            **_reply_end(reply_end),
         )
         if not interrupted:
             self._note_audio_shortfall(agent.id, text, delivered_ms,
@@ -3278,6 +3317,9 @@ class RealtimeVoiceSessionRunner:
         spoke and none of it was transcribed, which the record says as
         `user_turn_untranscribed` rather than saying nothing at all.
         """
+        # Arrival, not acceptance: a transcript this method goes on to drop
+        # as a duplicate or an echo still arrived when it arrived.
+        self._timing.transcript_arrived()
         if not text:
             if garbled:
                 self.session.store.event(
@@ -3738,7 +3780,10 @@ class RealtimeVoiceSessionRunner:
             self.session.store.event(
                 "realtime_session_started", model=self.rt.model,
                 voices_offered=realtime_voices(),
-                **provenance()
+                # For the model this session opened, not only the configured
+                # one: input rate, transcriber, reply cap and resamplers are
+                # per family (see voice.realtime.audio_provenance).
+                **provenance(self.rt.model)
             )
             # FIRST_COMPLETED + cancel, not gather: the watchdog loops on
             # _closed and _client_to_model's return paths do not set it, so a
@@ -3789,6 +3834,10 @@ class RealtimeVoiceSessionRunner:
                     )
                 except asyncio.CancelledError:
                     cancelled_while_waiting = True
+            # Every turn the page never confirmed the end of, written now with
+            # what is known; after the finalizes above, so their
+            # assistant_done is on it.
+            self._timing.flush()
             await self._close_room()
             if self.rt:
                 await self.rt.close()
@@ -3868,7 +3917,8 @@ class RealtimeVoiceSessionRunner:
             # participant's buffer itself, so the room commits
             # nothing, pays for nothing, and the path that works
             # today is not touched.
-            await self.room.close_participant_turn()
+            if await self.room.close_participant_turn():
+                self._timing.commit_sent()
             # Tracked (see _spawn_group_turn) so an interaction
             # switch can cancel whichever turn holds self._floor.
             #
@@ -3935,6 +3985,7 @@ class RealtimeVoiceSessionRunner:
                 )
             else:
                 await self.rt.commit_turn()
+                self._timing.commit_sent()
 
     # ── participant -> model ───────────────────────────────────────────────
     async def _client_to_model(self) -> None:
@@ -4177,6 +4228,11 @@ class RealtimeVoiceSessionRunner:
                     self._keep_for_replay(pcm)
 
                 if mark == "turn_ended":
+                    # The first latency stage (turn_timing). Marked on the
+                    # VAD's own mark, before any confirm window: a withdrawn
+                    # end is superseded by the next one, which is the end the
+                    # reply then answers.
+                    self._timing.speech_end()
                     confirm = self._end_of_turn_confirm_ms()
                     if confirm > 0 and not (self.is_group() and self.room is not None):
                         # THE PAUSE SPLIT, 1:1. The runner's bar (900 ms) fired
@@ -4492,6 +4548,7 @@ class RealtimeVoiceSessionRunner:
                     # Whether this reply was the turn's one retry, so the record
                     # can say whether the second attempt was heard whole.
                     retried=bool(ev.get("retried")),
+                    reply_end=_reply_end(ev),
                 ))
 
             elif etype == "tool_call":
@@ -4630,6 +4687,16 @@ class RealtimeVoiceSessionRunner:
             msg = json.loads(raw)
         except ValueError:
             return
+        if not isinstance(msg, dict):
+            return
+        if msg.get("type") == "playback":
+            # The page saying a turn's first chunk started playing, or its
+            # scheduled audio ended (static/v2.html; server/turn_timing.py).
+            self._timing.ack(msg)
+            return
+        if msg.get("type") == "client_audio_settings":
+            self._record_client_audio(msg)
+            return
         if msg.get("type") != "advance_interaction":
             return
         # Moving on cannot complete the encounter before the study's floor;
@@ -4652,6 +4719,41 @@ class RealtimeVoiceSessionRunner:
         self._turns_this_interaction = 0
         if not await self._advance_segment():
             await self._send({"type": "encounter_complete"})
+
+    # Whitelisted, so nothing the page sends beyond the capture facts reaches
+    # the trail: no deviceId, no groupId, no device label (a label can carry
+    # the owner's name, "Jane's AirPods"). Values are typed and bounded.
+    _CLIENT_AUDIO_KEYS = (
+        "sampleRate", "channelCount", "echoCancellation", "noiseSuppression",
+        "autoGainControl", "latency", "sampleSize",
+        "contextSampleRate", "baseLatency", "outputLatency",
+    )
+
+    def _record_client_audio(self, msg: dict) -> None:
+        """The participant's microphone as the browser reports it: the track's
+        getSettings(), the AudioContext's rate, and the user agent. Issue #21:
+        the tester's chain was near-digitally silent for most of 09-23 and
+        nothing said which device or browser it was. Record only; nothing
+        here changes how the audio is handled."""
+        if self._client_audio_reports >= 4:
+            return
+        self._client_audio_reports += 1
+        raw = msg.get("settings")
+        raw = raw if isinstance(raw, dict) else {}
+        settings = {}
+        for key in self._CLIENT_AUDIO_KEYS:
+            v = raw.get(key)
+            if isinstance(v, bool) or v is None:
+                settings[key] = v
+            elif isinstance(v, (int, float)) and math.isfinite(v):
+                settings[key] = round(float(v), 6) if isinstance(v, float) else v
+            elif isinstance(v, str):
+                settings[key] = v[:40]
+        ua = msg.get("user_agent")
+        self.session.store.event(
+            "client_audio_settings", settings=settings,
+            user_agent=ua[:400] if isinstance(ua, str) else None,
+        )
 
     # ── the encounter clock ──────────────────────────────────────────────
     def _encounter_elapsed(self) -> float:
@@ -4822,7 +4924,8 @@ class RealtimeVoiceSessionRunner:
                              *, interrupted: bool = False, stop=None,
                              settled=None, audio_bytes: int = 0,
                              audio_unterminated: bool = False,
-                             retried: bool = False) -> None:
+                             retried: bool = False,
+                             reply_end: Optional[dict] = None) -> None:
         """Close out an agent turn once its transcript has settled.
 
         response.done can arrive before the transcript events that belong to the
@@ -4977,6 +5080,9 @@ class RealtimeVoiceSessionRunner:
                     # rater comparing the direction to the line has to be able
                     # to tell a truncated delivery from a bad one.
                     "interrupted": interrupted,
+                    # The same question from the other side: the reply cap
+                    # ended this line, not the actor (see _reply_end).
+                    "cap_truncated": _reply_end(reply_end)["cap_truncated"],
                 },
                 participant=self._last_user_text,
             )
@@ -4995,6 +5101,9 @@ class RealtimeVoiceSessionRunner:
                 # half a sentence is indistinguishable in every channel this
                 # study records from one delivered whole.
                 audio_ms=delivered_ms,
+                # cap_truncated, response_status, status_reason, output_items,
+                # output_tokens; see _reply_end.
+                **_reply_end(reply_end),
             )
             if not interrupted:
                 self._note_audio_shortfall(agent_id, text, delivered_ms,
@@ -5710,6 +5819,7 @@ class RealtimeVoiceSessionRunner:
         """
         if self.room is None:
             return None
+        self._timing.grant_sent(agent_id)
         self.room.speaking = agent_id
         if await self.adopt_member(agent_id):
             return self.room.session_for(agent_id)
@@ -6197,6 +6307,7 @@ class RealtimeVoiceSessionRunner:
             # joining director_error on timestamp — a join nothing in this repo
             # performs. Director._fallback already tags its entry for exactly
             # this; carry the tag rather than dropping it.
+            self._timing.director_decided()
             self.session.store.event(
                 "director_route", speakers=[first] + followups, addressed=named,
                 fallback=route_fallback is not None,
@@ -7084,13 +7195,46 @@ class RealtimeVoiceSessionRunner:
 
     # ── transport helpers ──────────────────────────────────────────────────
     async def _send(self, payload: dict) -> None:
+        # The turn clock watches the three frames the page opens and closes
+        # its own `currentTurn` on, so its idea of which turn a chunk belongs
+        # to is the page's. assistant_started carries the turn number the
+        # page's playback acks name. A copy, so a caller's dict is not edited.
+        kind = payload.get("type") if isinstance(payload, dict) else None
+        timing = getattr(self, "_timing", None)
+        if timing is not None and kind in ("assistant_started", "assistant_done",
+                                           "assistant_interrupted"):
+            if kind == "assistant_started":
+                seq = timing.started(payload.get("agent_id"))
+                if seq is not None:
+                    payload = {**payload, "turn": seq}
+            elif kind == "assistant_done":
+                timing.done(payload.get("agent_id"))
+            else:
+                timing.interrupted()
         try:
             await self.ws.send_json(payload)
         except Exception:  # noqa: BLE001, client vanished
             self._closed = True
+
+    def _first_gateway_audio_at(self, agent_id: Optional[str]) -> Optional[float]:
+        """When the bridge serving `agent_id` saw its latest reply's first
+        audio (RealtimeVoiceSession.first_audio_at), for turn_timing."""
+        rt = None
+        if self.room is not None and agent_id is not None:
+            rt = self.room.session_for(agent_id)
+        if rt is None:
+            rt = self.rt
+        return getattr(rt, "first_audio_at", None)
 
     async def _send_bytes(self, payload: bytes) -> None:
         try:
             await self.ws.send_bytes(payload)
         except Exception:  # noqa: BLE001
             self._closed = True
+            return
+        timing = getattr(self, "_timing", None)
+        if timing is not None:
+            cur = timing._current
+            if cur is not None and cur.get("first_audio_to_client") is None:
+                timing.audio_to_client(
+                    self._first_gateway_audio_at(cur.get("agent_id")))

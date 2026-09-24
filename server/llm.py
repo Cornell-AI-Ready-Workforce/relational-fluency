@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Optional
 
 from anthropic import AsyncAnthropic
 from dotenv import dotenv_values
@@ -301,12 +302,39 @@ def text_client() -> AsyncAnthropic:
     return AsyncAnthropic(base_url=gateway_base_url(), api_key=gateway_api_key())
 
 
-def provenance() -> dict:
-    """Recorded with each session so the record shows what served it."""
+# Stamps for what the live pipeline does to a participant's audio and to the
+# turn-taking in a room, on every realtime_session_started and so on every
+# record. Bump the matching string in the SAME commit as any change that
+# alters what a participant hears or what the record contains (input rate,
+# transcriber, reply cap, resampler, transcript gate, cancel handling...) —
+# PIPELINE_VERSION for the 1:1 and shared path, ROOM_PACING_VERSION for how a
+# group room chooses when the next character speaks. They exist because the
+# fixes for issues #21-#25 land mid-study, and an analyst has to be able to
+# split the archive at each one without reconstructing deploy dates.
+#
+#   2026-09-23a  instrumentation only (turn_timing, play_start/play_end,
+#                client_audio_settings, cap_truncated); behaviour identical
+#                to d6f319d.
+PIPELINE_VERSION = "2026-09-23a"
+ROOM_PACING_VERSION = "2026-09-23a"
+
+
+def provenance(model: Optional[str] = None) -> dict:
+    """Recorded with each session so the record shows what served it.
+
+    `model` is the realtime model the session actually opened; the audio
+    fields (input rate, transcriber, reply cap, resamplers) are read for it
+    from the bridge's own capability table. Omitted, they are read for the
+    configured REALTIME_MODEL, which is what /health reports.
+    """
+    # Imported here, not at the top: server.voice.realtime imports this module.
+    from .voice.realtime import audio_provenance
+
+    realtime = _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio")
     return {
         "gateway": gateway_base_url(),
         "text_model": _cfg("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite"),
-        "realtime_model": _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio"),
+        "realtime_model": realtime,
         # The two live text models, so a change to either is visible on every
         # encounter it touched. Steering is the manipulated variable; its model
         # moved from nto.gemini-3.1-flash-lite to nto.gemini-3.5-flash-lite on
@@ -316,6 +344,11 @@ def provenance() -> dict:
         # tests/test_final_preflight.py via _MODEL_ROLES).
         "steering_model": _cfg("STEERING_MODEL", "nto.gemini-3.5-flash-lite"),
         "director_model": _cfg("DIRECTOR_MODEL", "nto.gemini-3.1-flash-lite"),
+        # input_rate, input_transcription_model, max_output_tokens,
+        # resampler, input_resampler; see audio_provenance.
+        **audio_provenance(model or realtime),
+        "pipeline_version": PIPELINE_VERSION,
+        "room_pacing_version": ROOM_PACING_VERSION,
     }
 
 
