@@ -2177,6 +2177,78 @@
     return playEl && typeof playEl.currentTime === 'number' ? playEl.currentTime : NaN;
   }
 
+  // The microphone as the browser actually opened it, once per connection
+  // (issue #21: the tester's capture chain was near-digitally silent for most
+  // of an evening and nothing on record said which device or browser it was).
+  // getSettings() reports what was GRANTED, which is not always what the
+  // constraints asked for. deviceId, groupId and the device label are
+  // deliberately not sent: a label can carry the owner's name.
+  function reportClientAudio() {
+    try {
+      if (!ws || ws.readyState !== 1) return;
+      const track = mediaStream && mediaStream.getAudioTracks ? mediaStream.getAudioTracks()[0] : null;
+      const got = track && track.getSettings ? (track.getSettings() || {}) : {};
+      const settings = {};
+      for (const k of ['sampleRate', 'channelCount', 'echoCancellation', 'noiseSuppression',
+                       'autoGainControl', 'latency', 'sampleSize']) {
+        if (got[k] !== undefined) settings[k] = got[k];
+      }
+      if (audioCtx) {
+        settings.contextSampleRate = audioCtx.sampleRate;
+        settings.baseLatency = audioCtx.baseLatency;
+        settings.outputLatency = audioCtx.outputLatency;
+      }
+      ws.send(JSON.stringify({ type: 'client_audio_settings', settings: settings,
+                               user_agent: (navigator && navigator.userAgent) || '' }));
+    } catch (e) {}
+  }
+
+  // ---------- playback acks (issue #25) ----------
+  // The server can only MODEL when a character is heard: it relays a reply
+  // about 2.5x faster than it plays, so "sent" and "heard" differ by most of a
+  // turn. The page is the one place that knows, so it says: `start` when the
+  // first chunk of a turn actually begins playing, `end` when that turn's
+  // scheduled audio has finished or been stopped. `lag_s` is how far the audio
+  // clock had already moved past the moment when the ack left, so a timer that
+  // fired late (a background tab) does not move the measurement. The turn
+  // number is the one the server put on assistant_started. Record only:
+  // nothing the participant sees or hears depends on these.
+  function sendPlayback(turn, phase, lagS, interrupted) {
+    if (!turn || turn.seq == null || !ws || ws.readyState !== 1) return;
+    try {
+      const msg = { type: 'playback', phase: phase, turn: turn.seq,
+                    lag_s: Math.max(0, lagS || 0) };
+      if (phase === 'end') msg.interrupted = !!interrupted;
+      else if (audioCtx) msg.output_latency_s = audioCtx.outputLatency || audioCtx.baseLatency || 0;
+      ws.send(JSON.stringify(msg));
+    } catch (e) {}
+  }
+  function schedulePlayStartAck(turn) {
+    if (!turn || turn.seq == null || turn.playStartArmed || turn.startCtx == null || !audioCtx) return;
+    turn.playStartArmed = true;
+    const wait = Math.max(0, turn.startCtx - audioCtx.currentTime);
+    setTimeout(() => {
+      if (turn.neverPlayed || turn.playStartSent) return;
+      // Restarted (assistant_retry) before it was heard: the retry's first
+      // chunk re-arms this.
+      if (turn.startCtx == null || !audioCtx) { turn.playStartArmed = false; return; }
+      turn.playStartSent = true;
+      sendPlayback(turn, 'start', audioCtx.currentTime - turn.startCtx);
+    }, wait * 1000);
+  }
+  function ackPlayEnd(turn, interrupted) {
+    if (!turn || turn.playEndSent || turn.startCtx == null || !audioCtx) return;
+    if (!interrupted) {
+      // Finished means: no more chunks are coming (assistant_done), none is
+      // still scheduled, and the clock is past the last one.
+      if (!turn.done) return;
+      if (turn.sources && turn.sources.length) return;
+      if (audioCtx.currentTime < turn.endCtx - 0.01) return;
+    }
+    turn.playEndSent = true;
+    sendPlayback(turn, 'end', interrupted ? 0 : audioCtx.currentTime - turn.endCtx, interrupted);
+  }
+
   function playPcmChunk(bytes) {
     if (!audioCtx) return;
     const int16 = new Int16Array(bytes);
@@ -2239,6 +2311,7 @@
     if (turnForChunk) {
       if (turnForChunk.startCtx == null) turnForChunk.startCtx = chunkStart;
       turnForChunk.endCtx = playbackTime;
+      schedulePlayStartAck(turnForChunk);
       // Keep a live reference so barge-in (assistant_interrupted) can stop it.
       (turnForChunk.sources || (turnForChunk.sources = [])).push(src);
     }
@@ -2248,6 +2321,7 @@
         const i = turnForChunk.sources.indexOf(src);
         if (i >= 0) turnForChunk.sources.splice(i, 1);
       }
+      ackPlayEnd(turnForChunk, false);
       // Debounce: a brief streaming stall between chunks can fire onended in the
       // gap before the next chunk is scheduled. Re-check after a short delay so
       // the turn is only marked finished once it truly is.
@@ -2340,6 +2414,15 @@
         turn.sources = [];
       }
       if (turn.startCtx == null) return false;   // never started: drop it
+      // The playback ack, read BEFORE the clocks are frozen below: a turn that
+      // had already played out ends as finished, one still playing ends
+      // interrupted, and one scheduled but not yet reached was never heard.
+      if (!turn.playEndSent && audioCtx) {
+        const finished = audioCtx.currentTime >= turn.endCtx - 0.01;
+        if (!finished && audioCtx.currentTime < turn.startCtx) turn.neverPlayed = true;
+        if (finished) turn.done = true;   // its sources were stopped just above
+        ackPlayEnd(turn, !finished);
+      }
       // Freeze the caption at what was actually shown and mark the turn done so
       // tickSpeech stops revealing text for audio that will never play.
       turn.fullText = turn.shown || '';
@@ -3097,6 +3180,8 @@
           agent_id: m.agent_id, el: null,
           fullText: '', shown: '', startCtx: null, endCtx: null,
           done: false, latency: null, metaAdded: false, sources: [],
+          // The server's number for this turn, echoed on the playback acks.
+          seq: typeof m.turn === 'number' ? m.turn : null,
         };
         speechQueue.push(currentTurn);
       } else if (m.type === 'assistant_text_delta') {
@@ -3121,6 +3206,8 @@
       } else if (m.type === 'assistant_done') {
         if (currentTurn) {
           currentTurn.done = true;
+          // A short line can finish playing before the server closes it.
+          ackPlayEnd(currentTurn, false);
           if (m.latency_total_s != null) currentTurn.latency = m.latency_total_s;
           // No audio arrived for this turn (e.g. TTS failed): show the text
           // now, and because playPcmChunk.onended will never fire, clear the
@@ -3317,6 +3404,7 @@
     ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
     ws.addEventListener('open', () => setMicMuted(false));
+    ws.addEventListener('open', reportClientAudio);
     // Every frame is handled inside one try/catch. Unguarded, a single throw —
     // a createBuffer an engine refuses, a JSON.parse on a truncated frame, a
     // detached ArrayBuffer — did not cost one frame, it cost the encounter:

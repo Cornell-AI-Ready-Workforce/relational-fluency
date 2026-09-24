@@ -668,6 +668,51 @@ def input_rate_for_model(model: str) -> int:
     return 24000 if "native-audio" in (model or "").lower() else CLIENT_RATE
 
 
+def resampler_name(inrate: int, outrate: int) -> Optional[str]:
+    """Which converter `_ratecv` uses between these two rates, or None when
+    the rates match and nothing converts at all.
+
+    Named for the record, because the name is the finding: audioop.ratecv is
+    a linear interpolator with no low-pass in front of it, so a 24 -> 16 kHz
+    conversion folds 8-12 kHz back into the band the participant hears
+    (issue #22). A later change of converter has to be visible on every
+    encounter it touches, and a rate pair alone cannot say which one ran.
+    """
+    if int(inrate) == int(outrate):
+        return None
+    return "audioop.ratecv" if audioop is not None else "linear-py"
+
+
+def audio_provenance(model: str) -> dict:
+    """What the bridge does to the audio for `model`, for the record.
+
+    Every value here is read from the same place the bridge reads it when it
+    builds a session, so the record states what was sent rather than what a
+    comment says was sent. `input_rate` is the rate of the PCM put on the wire
+    (send_audio resamples the browser's CLIENT_RATE to it when they differ);
+    it is also the rate the gateway was expected to read, and issue #21 is the
+    finding that on the gpt row those two were not the same thing, which is
+    why it has to be on the record at all.
+
+    `input_transcription_model` is None where the family transcribes the
+    participant on its own and nothing is asked for (the gemini rows).
+    `max_output_tokens` is None where no cap is sent. `resampler` is the
+    gateway -> page downsampler; `input_resampler` the page -> gateway one,
+    None when the browser's rate goes straight through.
+    """
+    caps = capabilities_for(model)
+    rate = input_rate_for_model(model)
+    return {
+        "input_rate": rate,
+        "input_transcription_model": (
+            (caps.input_transcription_model or None)
+            if caps is not None and caps.needs_input_transcription else None),
+        "max_output_tokens": caps.max_output_tokens if caps is not None else None,
+        "resampler": resampler_name(GATEWAY_OUTPUT_RATE, CLIENT_RATE),
+        "input_resampler": resampler_name(CLIENT_RATE, rate),
+    }
+
+
 def autofire_wait_for_model(model: str) -> float:
     """How long to give the bridge to start its own reply before asking.
 
@@ -1336,6 +1381,21 @@ class RealtimeVoiceSession:
         # seconds, so "Okay." at 0.4 s is complete and 13 words at 0.92 s is not.
         self._response_text = ""
         self._response_audio_bytes = 0
+        # Instrumentation only (issue #25 / #23); nothing below reads these to
+        # decide anything. `first_audio_at` is the wall-clock moment the first
+        # audio delta of the latest reply reached this bridge, read by the
+        # runner's turn_timing as `first_audio_from_gateway`. It is NOT cleared
+        # when a reply ends: a room member's held reply is relayed to the page
+        # after its response.done, and its first audio is still this one.
+        # `_first_audio_key` names the reply it belongs to, so a reply the
+        # gateway starts without closing the last one still gets its own.
+        # `_response_output_items` counts response.output_item.added for the
+        # reply in flight, the fallback when response.done carries no
+        # `output` list (gpt-realtime-2.1 answers in TWO items on about half
+        # its replies, which is issue #23's lost-first-part bug).
+        self.first_audio_at: Optional[float] = None
+        self._first_audio_key = None
+        self._response_output_items = 0
         # The recovery's books. `_retries_this_turn` is reset by every commit
         # (a new participant turn) and by a reply the gateway starts on its own,
         # and incremented only by retry_response, so a turn can be re-asked
@@ -1710,6 +1770,7 @@ class RealtimeVoiceSession:
         self._response_audio_closed = False
         self._response_text = ""
         self._response_audio_bytes = 0
+        self._response_output_items = 0
         self._retry_in_flight = False
         self._replay_in_flight = False
         self._audio_absent_hold = 0.0
@@ -1765,12 +1826,46 @@ class RealtimeVoiceSession:
                 return None
         self._deferred = None
         ev = {"type": "response_done", "audio_unterminated": d["unterminated"],
-              "retried": d["retried"], **d["verdict"],
+              "retried": d["retried"], **d["verdict"], **d.get("info", {}),
               "held_s": round(now - d["since"], 2)}
         if why is not None:
             ev["retryable"] = False
             ev["not_retryable_why"] = why
         return ev
+
+    def _done_info(self, ev: dict) -> dict:
+        """What the gateway's own response.done says about how a reply ended.
+
+        Record-only: nothing in this bridge or the runner decides anything on
+        these fields. `cap_truncated` is the one issue #23 is about: the
+        session's max_output_tokens (audio tokens included, ~20 per second of
+        voice) ran out mid-sentence, and the gateway said so in
+        status_details while every other signal read as a clean reply end —
+        the audio stream is closed properly, so _truncated() does not see it,
+        and it must not: re-speaking a capped line would say it twice.
+        `output_items` is the number of output items the reply came in,
+        from response.output where the frame carries one, else from the
+        output_item.added frames counted while it streamed.
+        """
+        resp = ev.get("response")
+        resp = resp if isinstance(resp, dict) else {}
+        details = resp.get("status_details")
+        details = details if isinstance(details, dict) else {}
+        status = resp.get("status")
+        reason = details.get("reason")
+        output = resp.get("output")
+        items = (len(output) if isinstance(output, list) and output
+                 else self._response_output_items)
+        usage = resp.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+        return {
+            "cap_truncated": (status == "incomplete"
+                              and reason == "max_output_tokens"),
+            "response_status": status,
+            "status_reason": reason,
+            "output_items": items,
+            "output_tokens": usage.get("output_tokens"),
+        }
 
     def _participant_speaking(self) -> bool:
         hook = self.participant_speaking
@@ -2417,6 +2512,7 @@ class RealtimeVoiceSession:
                             self._response_text = ""
                             self._agent_buffer = ""
                             self._response_audio_bytes = 0
+                            self._response_output_items = 0
                             self._restreaming = False
                         self._response_created_id = rid
 
@@ -2450,7 +2546,16 @@ class RealtimeVoiceSession:
                     # mid-turn; one that produced nothing has no turn to write.
                     self._response_saw_output = True
 
+                if etype == "response.output_item.added":
+                    # Counted for the record only (output_items on
+                    # response_done); the item itself is not otherwise read.
+                    self._response_output_items += 1
+
                 if etype in ("response.output_audio.delta", "response.audio.delta"):
+                    akey = ev.get("response_id") or self._response_created_id
+                    if not self._response_audio_seen or akey != self._first_audio_key:
+                        self.first_audio_at = time.time()
+                        self._first_audio_key = akey
                     self._response_audio_seen = True
                     try:
                         pcm = base64.b64decode(ev.get("delta") or "")
@@ -2629,6 +2734,11 @@ class RealtimeVoiceSession:
                     # Read BEFORE _end_response puts the flags down.
                     unterminated = (self._response_audio_seen
                                     and not self._response_audio_closed)
+                    # Record-only (see _done_info). Deliberately kept out of
+                    # _retry_verdict below: a reply the cap cut short is a
+                    # complete delivery of a shortened line, and re-asking
+                    # for it would speak the line a second time.
+                    info = self._done_info(ev)
                     if cancelled:
                         # The reply we cancelled, ending at last - after the
                         # participant's next commit, as often as not. Its name
@@ -2650,11 +2760,12 @@ class RealtimeVoiceSession:
                             "verdict": verdict, "retried": retried,
                             "unterminated": unterminated, "since": now,
                             "quiet_until": now + AUDIO_RETRY_QUIET_S,
+                            "info": info,
                         }
                         continue
                     yield {"type": "response_done",
                            "audio_unterminated": unterminated,
-                           "retried": retried, **verdict}
+                           "retried": retried, **verdict, **info}
 
                 elif etype == "response.function_call_arguments.done":
                     yield {
