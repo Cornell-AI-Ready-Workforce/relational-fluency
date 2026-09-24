@@ -369,6 +369,20 @@ def text_client() -> AsyncAnthropic:
 #                CANCELLED_OUTPUT_DISCARD=0 restores the relay. Rooms: the
 #                floor holder's tail after a barge-in is dropped the same way;
 #                a suppressed (held) reply keeps its tail, as before.
+#   2026-09-23e  reply lifecycle and clocks (issues #23, #24). Record: a
+#                room's heard_seconds / playback_cut total_seconds are per
+#                turn (they accumulated across a member's turns: 159.5,
+#                284.4 s), and a barge-in on a floor holder whose reply has
+#                not reached the page is written as the cut of the line that
+#                was playing (it wrote the holder's previous turn); a room
+#                assistant_turn carries play_clock_start / play_clock_end;
+#                an adopted completed hold records the audio
+#                it relayed (was audio_ms 0) and its text once (a whole-line
+#                transcript no longer follows the deltas it replaces). 1:1
+#                and rooms: the silence probe counts from when the last reply
+#                finished PLAYING, looked at every 1 s (was: from generation
+#                end, every 12 s, so 12-24 s late on its own clock and ~4 s of
+#                real silence). Knobs and values in `pacing`.
 #
 # ROOM_PACING_VERSION:
 #   2026-09-23a  as d6f319d.
@@ -376,8 +390,18 @@ def text_client() -> AsyncAnthropic:
 #                together as soon as the floor frees (was: a full
 #                ROUTE_TRANSCRIPT_WAIT and then routed on nothing);
 #                ROOM_MERGE_QUEUED_TURNS=0 routes on the latest alone.
-PIPELINE_VERSION = "2026-09-23d"
-ROOM_PACING_VERSION = "2026-09-23b"
+#   2026-09-23c  on the gpt route a floor grant is the commit alone, with a
+#                response.create only when nothing started within
+#                ROOM_GRANT_UNANSWERED_S (grant_fallback_create); it was
+#                commit + create, which drew "the extra response.create was
+#                refused" on nearly every grant and sometimes a second reply.
+#                A held reply with no audio, or one the suppression's cancel
+#                cut short (gpt), is not adopted (held_reply_refused, text
+#                kept). A participant resuming within ROOM_SPLIT_TURN_S of
+#                their own commit no longer cancels the reply to it
+#                (split_turn_extended). Plus the probe clock under 23e.
+PIPELINE_VERSION = "2026-09-23e"
+ROOM_PACING_VERSION = "2026-09-23c"
 
 
 def provenance(model: Optional[str] = None) -> dict:
@@ -390,7 +414,7 @@ def provenance(model: Optional[str] = None) -> dict:
     """
     # Imported here, not at the top: server.voice.realtime imports this module.
     from .voice.realtime import (audio_provenance, bridge_provenance,
-                                 turn_gate_provenance)
+                                 pacing_provenance, turn_gate_provenance)
 
     realtime = _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio")
     return {
@@ -415,6 +439,10 @@ def provenance(model: Optional[str] = None) -> dict:
         # cancelled_output ("discard"/"relay") and agent_transcript_items
         # (pipeline 2026-09-23d); see bridge_provenance.
         **bridge_provenance(model or realtime),
+        # Room grant, hold adoption, split turn and silence-probe clock knobs
+        # (pipeline 2026-09-23e, room pacing 2026-09-23c); see
+        # pacing_provenance.
+        "pacing": pacing_provenance(),
         "pipeline_version": PIPELINE_VERSION,
         "room_pacing_version": ROOM_PACING_VERSION,
     }

@@ -571,6 +571,11 @@ class _Turn:
     async def _send(self, msg):
         self.sent.append(msg)
 
+    # The real guard (ROOM_ADOPT_GUARD, 2026-09-23e): adopt_member calls it
+    # on self, so it is under test with adopt_member rather than stubbed.
+    def _refuse_hold(self, agent_id, st):
+        return rvs.RealtimeVoiceSessionRunner._refuse_hold(self, agent_id, st)
+
     # -- the methods under test, unbound
     def adopt(self, agent_id):
         return asyncio.run(

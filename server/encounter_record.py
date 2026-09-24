@@ -380,6 +380,10 @@ def build(session_dir: Path) -> Dict[str, Any]:
             "input_resampler": realtime.get("input_resampler"),
             "pipeline_version": realtime.get("pipeline_version"),
             "room_pacing_version": realtime.get("room_pacing_version"),
+            # The room-grant, hold-adoption, split-turn and probe-clock knob
+            # values (pipeline 2026-09-23e / room pacing 2026-09-23c); None
+            # before they were written.
+            "pacing": realtime.get("pacing"),
         },
         # The participant's microphone as the browser reported it
         # (track.getSettings() and the user agent; see the

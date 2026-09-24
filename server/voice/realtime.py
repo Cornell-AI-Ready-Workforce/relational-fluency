@@ -543,7 +543,11 @@ REALTIME_FAMILIES = {
         relay_colleagues_as_text=True,
         # The COMMIT starts the reply on this route; a response.create on top
         # is rejected as an active-response conflict. give_floor commits and
-        # then clears the response state rather than asking again.
+        # books the reply as requested (expect_commit_reply), and asks with a
+        # response.create only when nothing has started after
+        # ROOM_GRANT_UNANSWERED_S. Until 2026-09-23e this said it did not ask
+        # again, and it did, on every grant: the autofire_wait of 0 below
+        # ended the wait for a reply before response.created could arrive.
         grant_via_text_prompt=False,
         member_tools=True,
         # The first audio delta can trail response.created by several seconds
@@ -1026,6 +1030,105 @@ def bridge_provenance(model: str) -> dict:
         "cancelled_output": ("discard" if discards_cancelled_output(model)
                              else "relay"),
         "agent_transcript_items": "joined",
+    }
+
+
+# ── room reply lifecycle and clocks (issues #23, #24; pipeline 2026-09-23e,
+# room pacing 2026-09-23c) ───────────────────────────────────────────────────
+#
+# Same rules as the two sections above: each knob can be put back without a
+# code change, each is read per call, and pacing_provenance writes the values
+# this process applies onto every record.
+
+def _on_setting(name: str, default: str = "1") -> bool:
+    return setting(name, default).strip().lower() not in (
+        "0", "false", "no", "off", "")
+
+
+def room_commit_only_grant() -> bool:
+    """ROOM_COMMIT_ONLY_GRANT, default on. On a family where the commit
+    itself starts the reply (the gpt route, as 1:1 commit_turn already relies
+    on), GroupRoom.give_floor commits and marks the reply requested instead of
+    committing and sending response.create behind it. The pair started the
+    reply twice over: the create was refused ("the gateway had already started
+    this reply; the extra response.create was refused", on almost every gpt
+    grant on 2026-09-23) or granted, which is the duplicate reply. Off puts
+    the commit + response.create back."""
+    return _on_setting("ROOM_COMMIT_ONLY_GRANT")
+
+
+def room_grant_unanswered_s() -> float:
+    """ROOM_GRANT_UNANSWERED_S, default 3.0, kept under the bridge's own 6 s
+    REQUEST_UNANSWERED_S. How long a commit-only grant waits for the reply the
+    commit should have started (response.created came 0.41-0.88 s after the
+    commit in five of five probes, diag track3/review3) before asking with an
+    explicit response.create, which is then the only create for that turn."""
+    return min(max(_float_setting("ROOM_GRANT_UNANSWERED_S", 3.0), 0.0), 5.9)
+
+
+def room_adopt_guard() -> bool:
+    """ROOM_ADOPT_GUARD, default on. A held (suppressed) reply is not adopted
+    as a turn when it holds no audio at all, or when the suppression's cancel
+    was honoured (the gpt route), which leaves a fragment: S4A 2026-09-23
+    recorded Priya saying "That works for", audio_ms 0, from exactly such a
+    hold. The refusal is written as held_reply_refused with the held text.
+    Off adopts them as before."""
+    return _on_setting("ROOM_ADOPT_GUARD")
+
+
+def room_split_turn_s() -> float:
+    """ROOM_SPLIT_TURN_S, default 1.5. A participant who starts speaking again
+    within this many seconds of their own last commit is continuing that turn,
+    not interrupting the character now answering it: the barge-in no longer
+    cancels that reply (split_turn_extended is written instead) and the new
+    speech is committed and answered as the next turn. 0 turns it off and
+    every barge-in cancels, as before. Rooms only; the 1:1 end-of-turn window
+    is a separate, deferred decision (fix plan #23 (b) 8)."""
+    return max(0.0, _float_setting("ROOM_SPLIT_TURN_S", 1.5))
+
+
+def probe_after_seconds() -> float:
+    """PROBE_AFTER_SECONDS, default 12, read the way the watchdog always has
+    (the process environment), so this is the value the probe fires on."""
+    try:
+        return float(os.getenv("PROBE_AFTER_SECONDS", "12"))
+    except ValueError:
+        return 12.0
+
+
+def probe_tick_s() -> float:
+    """PROBE_TICK_SECONDS, default 1. How often the silence watchdog looks.
+    It used to sleep PROBE_AFTER_SECONDS between looks, so a probe fired 12-24
+    s after its clock started rather than 12 (diag track4)."""
+    return min(max(_float_setting("PROBE_TICK_SECONDS", 1.0), 0.05),
+               max(probe_after_seconds(), 0.05))
+
+
+def probe_idle_from_playback() -> bool:
+    """PROBE_IDLE_FROM_PLAYBACK, default on. The participant's silence is
+    counted from the later of their last activity and the moment the last
+    reply finished PLAYING (the runner's playback cursor), not from when it
+    finished generating: the gateway delivers about 2.5x faster than real
+    time, so the old clock left a participant about 4 s of actual silence
+    before a 12 s probe. Off counts from activity alone, as before."""
+    return _on_setting("PROBE_IDLE_FROM_PLAYBACK")
+
+
+def pacing_provenance() -> dict:
+    """The knob values above, as this process will apply them.
+    `room_play_clock` is not a knob: "per_turn" since 2026-09-23e, when the
+    room's heard_seconds / playback_cut stopped accumulating across turns."""
+    return {
+        "room_grant": ("commit_only" if room_commit_only_grant()
+                       else "commit_and_create"),
+        "room_grant_unanswered_s": room_grant_unanswered_s(),
+        "room_adopt_guard": room_adopt_guard(),
+        "room_split_turn_s": room_split_turn_s(),
+        "room_play_clock": "per_turn",
+        "probe_after_s": probe_after_seconds(),
+        "probe_tick_s": probe_tick_s(),
+        "probe_idle_from": ("playback" if probe_idle_from_playback()
+                            else "activity"),
     }
 
 
@@ -2732,17 +2835,25 @@ class RealtimeVoiceSession:
             # Through the bridge, the commit itself starts the reply on the
             # OpenAI route; an explicit response.create on top is rejected
             # (active-response conflict) and can yield a second reply.
-            self._response_active = True
-            # ...but the reply still needs a stall clock, or _response_stalled
-            # has nothing to measure from and a reply this route loses latches
-            # _response_active for the rest of the encounter. request_response
-            # sets these three on every other route; this branch returns before
-            # reaching it, so it sets them itself.
-            self._requested = True
-            self._response_started_at = time.time()
-            self._response_saw_output = False
+            self.expect_commit_reply()
             return
         await self.request_response()
+
+    def expect_commit_reply(self) -> None:
+        """Book the reply a commit has just started as one we asked for.
+
+        For the families where the commit itself starts the reply (the gpt
+        route): commit_turn, and GroupRoom.give_floor since 2026-09-23e, which
+        used to send a response.create behind the commit instead. The reply
+        still needs a stall clock, or _response_stalled has nothing to measure
+        from and a reply this route loses latches _response_active for the
+        rest of the encounter; request_response sets these on every other
+        route. `_requested` also makes REQUEST_UNANSWERED_S watch it, and
+        keeps response.created from reading it as an auto-fire."""
+        self._response_active = True
+        self._requested = True
+        self._response_started_at = time.time()
+        self._response_saw_output = False
 
     async def cancel_response(self, *, discard_tail: bool = True) -> None:
         """Barge-in: stop the agent mid-utterance. Sent unconditionally, because
