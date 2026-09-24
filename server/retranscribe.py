@@ -29,7 +29,14 @@ import httpx
 from .llm import gateway_api_key, gateway_base_url, setting
 from .storage import SESSIONS_DIR
 
-MODEL = setting("TRANSCRIBE_MODEL", "nto.gemini-2.5-pro")
+# nto.gemini-3.8-flash since 2026-09-23 (was nto.gemini-2.5-pro). Benchmarked
+# on the 09-23 sessions: same fidelity as 2.5-pro on every issue #21 check (no
+# phantom "Thank you" lines; Morgan and "raise" right), ~25% faster, and it
+# spells the cast right once the names are in the prompt (it wrote "Diane" for
+# Dan without them). gpt-6-astra cannot do this job: the gateway rejects audio
+# input for it with a 400. TRANSCRIBE_MODEL=nto.gemini-2.5-pro restores the old
+# default exactly.
+MODEL = setting("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash")
 
 PROMPT = (
     "Transcribe this audio verbatim. It is one side of a workplace conversation "
@@ -47,7 +54,49 @@ def _duration(path: Path) -> float:
         return 0.0
 
 
-def transcribe_file(path: Path, *, model: str = MODEL, timeout: float = 300) -> str:
+def _cast_names(session_dir: Path) -> List[str]:
+    """The characters' names for this encounter, from its record or manifest.
+
+    Given to the model so a name the participant says ("Dan", "Morgan") comes
+    back spelled as the cast is spelled. Nothing here is audible on this
+    channel, so the names are a vocabulary hint, not a speaker list."""
+    for name, pick in (("record.json", lambda d: [c.get("name") for c in d.get("cast") or []]),
+                       ("manifest.json", lambda d: [str(a).title() for a in d.get("agent_ids") or []])):
+        try:
+            data = json.loads((session_dir / name).read_text(encoding="utf-8"))
+            names = [n for n in pick(data) if isinstance(n, str) and n.strip()]
+        except (OSError, ValueError, AttributeError, TypeError):
+            continue
+        if names:
+            return names
+    return []
+
+
+def _prompt(names: List[str]) -> str:
+    if not names:
+        return PROMPT
+    return (PROMPT + " The other people in the conversation, who are not audible "
+            "here, are " + ", ".join(names) + "; if the participant says one of "
+            "those names, spell it that way.")
+
+
+def _completion_text(data: object) -> Optional[str]:
+    """The reply text, or None when the gateway answered 200 with nothing in it.
+
+    Measured 2026-09-23 on nto.gemini-3.8-flash: one call in six came back with
+    an empty `choices` list, and indexing it raised IndexError out of the
+    --all loop. An empty answer is retried once, then reported as a failure
+    rather than written as a transcript."""
+    try:
+        choice = (data.get("choices") or [None])[0]  # type: ignore[union-attr]
+        content = (choice or {}).get("message", {}).get("content")
+    except (AttributeError, TypeError, IndexError):
+        return None
+    return content.strip() if isinstance(content, str) and content.strip() else None
+
+
+def transcribe_file(path: Path, *, model: str = MODEL, timeout: float = 300,
+                    names: Optional[List[str]] = None) -> str:
     audio = base64.b64encode(path.read_bytes()).decode()
     # max_tokens has to be generous: a 10-minute turn-dense encounter runs to
     # thousands of tokens, and a low cap silently truncates the transcript.
@@ -57,20 +106,23 @@ def transcribe_file(path: Path, *, model: str = MODEL, timeout: float = 300) -> 
         "messages": [{
             "role": "user",
             "content": [
-                {"type": "text", "text": PROMPT},
+                {"type": "text", "text": _prompt(names or [])},
                 {"type": "input_audio", "input_audio": {"data": audio, "format": "wav"}},
             ],
         }],
     }
-    r = httpx.post(
-        f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {gateway_api_key()}",
-                 "Content-Type": "application/json"},
-        json=payload, timeout=timeout,
-    )
-    r.raise_for_status()
-    data = r.json()
-    return (data["choices"][0]["message"]["content"] or "").strip()
+    for attempt in (1, 2):
+        r = httpx.post(
+            f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {gateway_api_key()}",
+                     "Content-Type": "application/json"},
+            json=payload, timeout=timeout,
+        )
+        r.raise_for_status()
+        text = _completion_text(r.json())
+        if text is not None:
+            return text
+    raise RuntimeError(f"{model} returned an empty completion twice for {path.name}")
 
 
 def retranscribe(session_dir: Path, *, force: bool = False) -> Optional[dict]:
@@ -87,7 +139,7 @@ def retranscribe(session_dir: Path, *, force: bool = False) -> Optional[dict]:
     if not wav.exists() or _duration(wav) < 1.0:
         return None
 
-    text = transcribe_file(wav)
+    text = transcribe_file(wav, names=_cast_names(session_dir))
     result = {
         "source": "user_audio.wav",
         "model": MODEL,

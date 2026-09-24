@@ -21,8 +21,10 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from server.llm import gateway_api_key, gateway_base_url, setting  # noqa: E402
+from server.retranscribe import _completion_text  # noqa: E402
 
-MODEL = setting("TRANSCRIBE_MODEL", "nto.gemini-2.5-pro")
+# Same default as server/retranscribe.py (nto.gemini-3.8-flash since 2026-09-23).
+MODEL = setting("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash")
 
 CAST = {
     "S1A": "Riley, Sam", "S1B": "Mel, Drew", "S2A": "Morgan", "S2B": "Sasha",
@@ -59,7 +61,12 @@ def transcribe(mp3: Path, scenario: str | None, timeout: float = 600) -> str:
                             "Content-Type": "application/json"},
                    json=payload, timeout=timeout)
     r.raise_for_status()
-    return (r.json()["choices"][0]["message"]["content"] or "").strip()
+    # An empty `choices` list is a real 200 from this gateway (seen on
+    # nto.gemini-3.8-flash); say so instead of raising IndexError.
+    text = _completion_text(r.json())
+    if text is None:
+        raise RuntimeError(f"{MODEL} returned an empty completion")
+    return text
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
