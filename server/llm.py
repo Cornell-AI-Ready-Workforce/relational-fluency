@@ -426,6 +426,26 @@ def text_client() -> AsyncAnthropic:
 #                commit_sent is marked only for a commit that went out.
 #                PARTICIPANT_LOW_CONFIDENCE_DIRECTOR (default "named", as
 #                before) can give the director every short turn.
+#   2026-09-24a  voice and rate gates (issues #21, #24), calibrated on the
+#                tester's S3A session s_1790217895_4025d8. A participant turn
+#                the VAD ends with < PARTICIPANT_COMMIT_MIN_VOICED_MS (300)
+#                of voice since the last commit is not committed: buffer
+#                cleared, participant_turn_discarded, no reply (1:1 and the
+#                room's scribe). A transcript with more than
+#                PARTICIPANT_MAX_WORDS_PER_VOICED_S (8) words per voiced
+#                second over < PARTICIPANT_RATE_GATE_MAX_VOICED_MS (1500) of
+#                voice is user_turn_suppressed{implausible_rate} (the
+#                phantoms ran 47-63, real lines 1.4-6.1); in 1:1 its reply
+#                is cancelled if none of it has played
+#                (suppressed_turn_reply_cancelled), else kept and written as
+#                reply_to_suppressed_turn. S1 hand-off: once the timebox has
+#                run out, HANDOFF_IDLE_S (3) of silence after playback
+#                briefs the closing line and probes for it (was: briefed at
+#                the participant's next turn, probed 12 s after that).
+#                Record: verify_record counts a planted beat as reached only
+#                when performed; stage_direction_unperformed and
+#                trigger_undelivered are netted out and named. Knobs in
+#                `turn_gate` and `pacing`.
 #
 # ROOM_PACING_VERSION:
 #   2026-09-23a  as d6f319d.
@@ -452,8 +472,17 @@ def text_client() -> AsyncAnthropic:
 #                began no longer routes the turn on its own (the room ran one
 #                utterance behind): the turn waits for its own transcript and
 #                routes on both.
-PIPELINE_VERSION = "2026-09-23g"
-ROOM_PACING_VERSION = "2026-09-23d"
+#   2026-09-24a  a room turn whose only arrivals were withheld from the
+#                director (suppressed, or low_confidence naming nobody) is
+#                not routed or answered: group_turn_skipped with the text
+#                (a turn for which nothing arrived routes as before); a turn
+#                under the voice floor is never a group turn at all; the
+#                commit-only grant waits ROOM_GRANT_UNANSWERED_S 6 s (was
+#                3; a gpt reply took 5.09 s to first audio and the fallback
+#                create at 3.03 s was refused) and holds the bridge's own
+#                REQUEST_UNANSWERED_S off for that window.
+PIPELINE_VERSION = "2026-09-24a"
+ROOM_PACING_VERSION = "2026-09-24a"
 
 
 def provenance(model: Optional[str] = None) -> dict:

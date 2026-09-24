@@ -169,10 +169,15 @@ async def test_the_old_grant_is_one_knob_away(monkeypatch):
     assert llm.provenance(GPT)["pacing"]["room_grant"] == "commit_and_create"
 
 
-def test_the_room_grant_wait_stays_under_the_bridges_own(monkeypatch):
-    assert R.room_grant_unanswered_s() == 3.0
+def test_the_room_grant_wait_is_bounded(monkeypatch):
+    """6 s by default since room pacing 2026-09-24a (was 3, kept under the
+    bridge's own 6 s; the grant now holds that bar off instead, see
+    tests/test_voice_and_rate_gates.py), and never more than 15."""
+    assert R.room_grant_unanswered_s() == 6.0
     monkeypatch.setenv("ROOM_GRANT_UNANSWERED_S", "30")
-    assert R.room_grant_unanswered_s() < R.REQUEST_UNANSWERED_S
+    assert R.room_grant_unanswered_s() == 15.0
+    monkeypatch.setenv("ROOM_GRANT_UNANSWERED_S", "-1")
+    assert R.room_grant_unanswered_s() == 0.0
 
 
 @in_a_loop
@@ -569,12 +574,13 @@ def test_the_pacing_knobs_are_on_the_record():
     assert prov["room_pacing_version"] >= "2026-09-23c"
     assert prov["pacing"] == {
         "room_grant": "commit_only",
-        "room_grant_unanswered_s": 3.0,
+        "room_grant_unanswered_s": 6.0,
         "room_adopt_guard": True,
         "room_split_turn_s": 1.5,
         "room_play_clock": "per_turn",
         "probe_after_s": 12.0,
         "probe_tick_s": 1.0,
         "probe_idle_from": "playback",
+        "handoff_idle_s": 3.0,
     }
     assert llm.provenance(NATIVE)["pacing"]["room_grant"] == "commit_only"

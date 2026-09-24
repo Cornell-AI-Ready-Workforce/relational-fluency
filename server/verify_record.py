@@ -178,7 +178,11 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
 
     # --- steering trail ---
     events = _events(session_dir)
-    fired = _net_fired(events)
+    # Coverage counts the beats a character actually PERFORMED: delivered
+    # (net of trigger_undelivered) and not then answered with nothing
+    # (stage_direction_unperformed). See _trigger_ledger.
+    ledger = _trigger_ledger(events)
+    fired = ledger["performed"]
     directions = record.get("steering_log", [])
     paired = [t for t in record.get("transcript", [])
               if t.get("role") == "agent" and t.get("stage_direction")]
@@ -223,12 +227,21 @@ def verify(session_dir: Path) -> Tuple[bool, List[Check]]:
         volunteered = {e.get("trigger_id") for e in fired if not e.get("probing")}
         volunteered.discard(None)
         n_vol = len(volunteered & expected_set)
+        # Briefed and never performed, and briefed and never delivered, are
+        # named on their own: both used to read as reached. A beat that was
+        # unperformed once and performed later is simply reached.
+        unperformed = sorted({e.get("trigger_id") for e in ledger["unperformed"]
+                              if e.get("trigger_id") not in reached} - {None})
+        undelivered = sorted({e.get("trigger_id") for e in ledger["undelivered"]
+                              if e.get("trigger_id") not in reached} - {None})
         checks.append((
             not missed,
             "planted triggers fired",
             f"{len(reached)}/{len(expected)} "
             f"({n_vol} volunteered, {len(reached & expected_set) - n_vol} probed)"
-            + (f", missed: {', '.join(missed)}" if missed else ""),
+            + (f", missed: {', '.join(missed)}" if missed else "")
+            + (f", unperformed: {', '.join(unperformed)}" if unperformed else "")
+            + (f", undelivered: {', '.join(undelivered)}" if undelivered else ""),
         ))
         esci_seen = {i for e in fired for i in (e.get("esci") or [])}
         checks.append((bool(esci_seen), "ESCI items exercised", f"{len(esci_seen)} distinct"))
@@ -304,6 +317,53 @@ def _net_fired(events: List[dict]) -> List[dict]:
                     del out[i]
                     break
     return out
+
+
+def _trigger_ledger(events: List[dict]) -> dict:
+    """Planted beats split three ways: performed, unperformed, undelivered.
+
+    ``_net_fired`` answers "was the beat's brief delivered?", which is the
+    dashboard's question and stays as it is. Coverage asks a narrower one,
+    "did a character perform it?", and a delivered brief is not that: when
+    the character it was written for answers the grant with nothing (a
+    near-silent reply, no transcript; S4A 2026-09-24, Dan on
+    t1_priya_interrupted), the runner writes ``stage_direction_unperformed``
+    and the participant never faced the beat, yet it was counted as reached.
+
+    ``performed`` is ``_net_fired`` less those: each unperformed row cancels
+    the most recent surviving firing of the same trigger before it (in the
+    same interaction where both say which), positionally, like a
+    retraction, so a beat re-fired and performed later still counts.
+    ``unperformed`` and ``undelivered`` are the rows that took a firing
+    away, for the report to name separately.
+    """
+    out: List[dict] = []
+    unperformed: List[dict] = []
+    undelivered: List[dict] = []
+    for e in events:
+        etype = e.get("type")
+        if etype == "trigger_fired":
+            out.append(e)
+        elif etype == "trigger_undelivered":
+            key = (e.get("trigger_id"), e.get("index"))
+            for i in range(len(out) - 1, -1, -1):
+                if (out[i].get("trigger_id"), out[i].get("index")) == key:
+                    del out[i]
+                    undelivered.append(e)
+                    break
+        elif etype == "stage_direction_unperformed" and e.get("trigger_id"):
+            for i in range(len(out) - 1, -1, -1):
+                f = out[i]
+                if f.get("trigger_id") != e.get("trigger_id"):
+                    continue
+                if (e.get("interaction") and f.get("interaction")
+                        and e["interaction"] != f["interaction"]):
+                    continue
+                del out[i]
+                unperformed.append(e)
+                break
+    return {"performed": out, "unperformed": unperformed,
+            "undelivered": undelivered}
 
 
 def _hq_cache_state(session_dir: Path) -> str:

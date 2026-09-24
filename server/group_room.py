@@ -844,6 +844,35 @@ class GroupRoom:
             for i in range(0, len(preroll), frame))
         return gone
 
+    def participant_voiced_ms(self) -> Optional[int]:
+        """Voiced audio the scribe has been fanned since its last commit, in
+        ms, where the room closes the scribe's turns itself (`floor_is_real`);
+        None anywhere else, including a scribe that cannot count (see
+        RealtimeVoiceSession.voiced_since_commit). What the runner's
+        pre-commit voice floor reads before close_participant_turn."""
+        rt = self.scribe
+        count = getattr(rt, "voiced_since_commit", None)
+        if rt is None or not self.floor_is_real or count is None:
+            return None
+        return count()
+
+    async def discard_participant_turn(self) -> Optional[dict]:
+        """The other way to end a participant turn on the scribe: not commit
+        it (the pre-commit voice floor, pipeline 2026-09-24a). The scribe's
+        buffer is cleared and its restart re-armed (see
+        RealtimeVoiceSession.discard_input), and the fan-out books that
+        close_participant_turn reads are zeroed with it, so a later close
+        does not count this turn's bytes or its "heard speech". None when
+        there was nothing of ours to discard."""
+        rt = self.scribe
+        discard = getattr(rt, "discard_input", None)
+        if rt is None or not self.floor_is_real or discard is None:
+            return None
+        gone = await discard()
+        self._fanned_to_scribe = 0
+        self._scribe_heard_speech = False
+        return gone
+
     async def close_participant_turn(self) -> bool:
         """Close the participant's turn on the transcription channel.
 
@@ -1129,13 +1158,21 @@ class GroupRoom:
                     # granted, a second reply. So the reply is booked as the
                     # one we asked for, and a create goes out only if nothing
                     # has started after ROOM_GRANT_UNANSWERED_S.
+                    wait = _realtime.room_grant_unanswered_s()
                     mark = getattr(rt, "expect_commit_reply", None)
                     if mark is not None:
-                        mark()
+                        # The bridge's own REQUEST_UNANSWERED_S (6 s) waits
+                        # out this grant's window first, now that the window
+                        # is 6 s too (room pacing 2026-09-24a): otherwise its
+                        # reply_missing retry and the fallback create below
+                        # could both ask for this one commit's reply.
+                        try:
+                            mark(hold_s=wait)
+                        except TypeError:   # a double without the keyword
+                            mark()
                     committed_at = time.time()
                     outcome = await self._commit_answered(
-                        rt, agent_id, committed_at,
-                        _realtime.room_grant_unanswered_s())
+                        rt, agent_id, committed_at, wait)
                     waited = round(time.time() - committed_at, 3)
                     if outcome == "started":
                         self.autofire_grants += 1

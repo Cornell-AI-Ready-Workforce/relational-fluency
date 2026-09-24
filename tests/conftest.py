@@ -530,7 +530,11 @@ def realtime_row_defaults(monkeypatch):
                  "PROBE_IDLE_FROM_PLAYBACK", "PROBE_AFTER_SECONDS",
                  # Record accuracy (2026-09-23f).
                  "DEFERRAL_BLANK_AUDIBLE", "HEARD_TEXT_WPM",
-                 "HEARD_TEXT_CALIBRATE"):
+                 "HEARD_TEXT_CALIBRATE",
+                 # Voice and rate gates, the hand-off clock (2026-09-24a).
+                 "PARTICIPANT_COMMIT_MIN_VOICED_MS",
+                 "PARTICIPANT_MAX_WORDS_PER_VOICED_S",
+                 "PARTICIPANT_RATE_GATE_MAX_VOICED_MS", "HANDOFF_IDLE_S"):
         monkeypatch.delenv(knob, raising=False)
 
 

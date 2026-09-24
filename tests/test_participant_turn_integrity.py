@@ -411,11 +411,14 @@ def test_punctuation_or_filler_over_near_silence_is_suppressed_with_its_text(tex
 def test_words_over_near_silence_are_kept_but_low_confidence():
     """No stock-phrase list: "Thank you very much." is also something a
     participant says. It is kept, captioned and recorded, and held back from
-    steering and the director."""
+    steering and the director. (Over 550 ms of voice: 7.3 words per voiced
+    second, under the rate gate's 8. Over 20 ms, as this test used to say,
+    it is the rate gate's since pipeline 2026-09-24a; see
+    tests/test_voice_and_rate_gates.py.)"""
     runner, session, ws = runner_for("S2A")
-    asyncio.run(runner._record_user_turn("Thank you very much.", voiced_ms=20))
+    asyncio.run(runner._record_user_turn("Thank you very much.", voiced_ms=550))
     (turn,) = session.store.of("user_turn")
-    assert turn["low_confidence"] is True and turn["voiced_ms"] == 20
+    assert turn["low_confidence"] is True and turn["voiced_ms"] == 550
     assert ws.frames("user_transcript"), "the caption still shows"
     (entry,) = session.shared_history
     assert entry["low_confidence"] is True and entry["names_cast"] is False
@@ -493,6 +496,10 @@ def test_the_gate_is_in_provenance_with_its_defaults():
         # all (not on gpt, whose scribe is the only transcriber).
         "participant_low_confidence_director": "named",
         "room_dedupe_second_source": False,
+        # Voice and rate gates (pipeline 2026-09-24a).
+        "participant_commit_min_voiced_ms": 300,
+        "participant_max_words_per_voiced_s": 8.0,
+        "participant_rate_gate_max_voiced_ms": 1500,
     }
 
 

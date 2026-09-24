@@ -995,6 +995,88 @@ def low_confidence_director() -> str:
     return "all" if v == "all" else "named"
 
 
+# ── voice and rate gates (issues #21, #24; pipeline 2026-09-24a) ─────────────
+#
+# Calibrated on the tester's S3A session s_1790217895_4025d8 (production,
+# 2026-09-23), replaying user_audio.wav through this module's SilenceDetector
+# at its effective bar (500 throughout) and counting voiced frames the way
+# send_audio does. Voiced ms per transcribed line, measured since the last
+# commit (and, in brackets, as the branch counts it after restart_input's
+# 600 ms pre-roll):
+#
+#   phantom  "I'm not a cat. I'm a cat. I'm a cat. ..."      340 [340] ms
+#   phantom  "Goodbye. Will Lego play more games in the..."  400 [300] ms
+#   real     "Does that sound good?"                          660 [660] ms
+#   real     "Thank you."                                     680 [380] ms
+#   real     "Two."                                           720 [720] ms
+#   real     "Great, how about TC?"                          1080 [980] ms
+#   real     every other line                              1.3-14 s
+#
+# So no voice floor separates the phantoms from the real short lines (they
+# overlap at 300-400 ms), and the two gates do different jobs: the commit
+# floor throws away what is too little voice to be a turn at all (a cough, a
+# click, a chair), and the rate gate catches a transcript with far more words
+# than its voice could carry. Real lines ran 1.4-6.1 words per voiced second
+# (fastest: "Does that sound good?", 4 words over 660 ms); the phantoms 47
+# and 63 (16 words over 340 ms, 19 over 300).
+
+def commit_min_voiced_ms() -> int:
+    """PARTICIPANT_COMMIT_MIN_VOICED_MS, default 300. A participant turn the
+    runner's VAD ends with less voiced audio than this since the last commit
+    is not committed at all: the gateway's buffer is cleared, the turn is
+    written as participant_turn_discarded (reason "too_little_voice") and no
+    reply is started. Strictly below: at the default every line of the
+    calibration session is committed, the 300 ms phantom included (the rate
+    gate is what stops that one). The VAD itself opens a turn only on
+    min_speech_ms (250) of net voice, so this floor catches the ones that
+    barely made it. 0 commits every turn, as before."""
+    return max(0, _int_setting("PARTICIPANT_COMMIT_MIN_VOICED_MS", 300))
+
+
+def max_words_per_voiced_s() -> float:
+    """PARTICIPANT_MAX_WORDS_PER_VOICED_S, default 8. A transcript with more
+    words per second of voiced audio than this, over a commit with less than
+    PARTICIPANT_RATE_GATE_MAX_VOICED_MS of voice, is the transcriber inventing
+    (see the calibration above): written as user_turn_suppressed with reason
+    "implausible_rate" and its text, never a user_turn. 0 turns it off."""
+    return max(0.0, _float_setting("PARTICIPANT_MAX_WORDS_PER_VOICED_S", 8.0))
+
+
+def rate_gate_max_voiced_ms() -> int:
+    """PARTICIPANT_RATE_GATE_MAX_VOICED_MS, default 1500. The rate gate looks
+    only at commits with less voice than this. Over a long turn the voiced
+    count is dominated by real speech and a high ratio means a fast talker
+    (or unvoiced consonants under the bar), not an invention."""
+    return max(0, _int_setting("PARTICIPANT_RATE_GATE_MAX_VOICED_MS", 1500))
+
+
+_RATE_WORDS = re.compile(r"[a-z0-9']+")
+
+
+def transcript_words(text: str) -> int:
+    """Words as the rate gate counts them: runs of letters, digits and
+    apostrophes, so "I'm" is one word and punctuation is none."""
+    return len(_RATE_WORDS.findall((text or "").lower().replace("’", "'")))
+
+
+def implausible_rate(text: str, voiced_ms: Optional[int]) -> Optional[dict]:
+    """The rate gate's verdict on one transcript: None to keep it, else the
+    numbers that condemned it ({words, voiced_ms, words_per_voiced_s}; the
+    rate is None for words over no voice at all). Never applies where the
+    voice could not be counted (voiced_ms None)."""
+    bar = max_words_per_voiced_s()
+    if voiced_ms is None or bar <= 0 or voiced_ms >= rate_gate_max_voiced_ms():
+        return None
+    words = transcript_words(text)
+    if not words:
+        return None
+    rate = words / (voiced_ms / 1000.0) if voiced_ms > 0 else None
+    if rate is not None and rate <= bar:
+        return None
+    return {"words": words, "voiced_ms": voiced_ms,
+            "words_per_voiced_s": round(rate, 1) if rate is not None else None}
+
+
 def room_has_second_transcriber(model: str) -> bool:
     """True when a room on `model` hears the participant through more than
     the scribe: its members are told colleagues' lines in text, so each
@@ -1019,6 +1101,10 @@ def turn_gate_provenance(model: Optional[str] = None) -> dict:
         "participant_dedupe_overlap": dedupe_overlap(),
         "room_merge_queued_turns": merge_queued_turns(),
         "participant_low_confidence_director": low_confidence_director(),
+        # Pipeline 2026-09-24a: the pre-commit voice floor and the rate gate.
+        "participant_commit_min_voiced_ms": commit_min_voiced_ms(),
+        "participant_max_words_per_voiced_s": max_words_per_voiced_s(),
+        "participant_rate_gate_max_voiced_ms": rate_gate_max_voiced_ms(),
     }
     if model:
         out["room_dedupe_second_source"] = room_has_second_transcriber(model)
@@ -1088,12 +1174,18 @@ def room_commit_only_grant() -> bool:
 
 
 def room_grant_unanswered_s() -> float:
-    """ROOM_GRANT_UNANSWERED_S, default 3.0, kept under the bridge's own 6 s
-    REQUEST_UNANSWERED_S. How long a commit-only grant waits for the reply the
-    commit should have started (response.created came 0.41-0.88 s after the
-    commit in five of five probes, diag track3/review3) before asking with an
-    explicit response.create, which is then the only create for that turn."""
-    return min(max(_float_setting("ROOM_GRANT_UNANSWERED_S", 3.0), 0.0), 5.9)
+    """ROOM_GRANT_UNANSWERED_S, default 6.0 (3.0 until room pacing
+    2026-09-24a), at most 15. How long a commit-only grant waits for the
+    reply the commit should have started (response.created came 0.41-0.88 s
+    after the commit in five of five probes, diag track3/review3) before
+    asking with an explicit response.create, which is then the only create
+    for that turn. 3 s was too short: in the P5 S4A sim a gpt reply took
+    5.09 s from grant to first audio, the fallback create went out at 3.03 s
+    and was refused because the commit's own reply had started by then. The
+    grant holds the bridge's REQUEST_UNANSWERED_S off for its own window
+    (expect_commit_reply's hold_s), so the two watchdogs cannot both ask
+    again for one commit."""
+    return min(max(_float_setting("ROOM_GRANT_UNANSWERED_S", 6.0), 0.0), 15.0)
 
 
 def room_adopt_guard() -> bool:
@@ -1144,6 +1236,18 @@ def probe_idle_from_playback() -> bool:
     return _on_setting("PROBE_IDLE_FROM_PLAYBACK")
 
 
+def handoff_idle_s() -> float:
+    """HANDOFF_IDLE_S, default 3. Once a timeboxed interaction's clock has
+    run out (S1's two minutes), how long the participant has to be silent,
+    on the same playback-aware clock as the probe, before the character is
+    briefed with the closing line and made to say it (pipeline 2026-09-24a).
+    Before, the hand-off was
+    briefed only at the end of the participant's next turn and then probed
+    after PROBE_AFTER_SECONDS: a silent participant waited about 50 s (P5
+    S1A sim, 95-145 s). 0 hands off on the first quiet tick."""
+    return max(0.0, _float_setting("HANDOFF_IDLE_S", 3.0))
+
+
 def pacing_provenance() -> dict:
     """The knob values above, as this process will apply them.
     `room_play_clock` is not a knob: "per_turn" since 2026-09-23e, when the
@@ -1159,6 +1263,7 @@ def pacing_provenance() -> dict:
         "probe_tick_s": probe_tick_s(),
         "probe_idle_from": ("playback" if probe_idle_from_playback()
                             else "activity"),
+        "handoff_idle_s": handoff_idle_s(),
     }
 
 
@@ -1865,6 +1970,10 @@ class RealtimeVoiceSession:
         # a gateway that omits response.created) keeps the old rule: every
         # done ends whatever is in flight.
         self._response_created_id: Optional[str] = None
+        # Extra seconds REQUEST_UNANSWERED_S waits for the reply in flight,
+        # set by a commit-only room grant for its own ROOM_GRANT_UNANSWERED_S
+        # window (see expect_commit_reply) and put down with the reply.
+        self._request_hold_s = 0.0
         self._names_replies = False
         self._created_ids: set = set()
         self._cancelled_ids: set = set()
@@ -2389,6 +2498,53 @@ class RealtimeVoiceSession:
         gone["resent_voiced_ms"] = now["buffer_voiced_ms"]
         return gone
 
+    def voiced_since_commit(self) -> Optional[int]:
+        """Voiced audio appended since the last commit or clear, in ms, or
+        None where this session cannot say: no voiced_bar (a room member, a
+        harness), or a buffer the gateway's own turn detection commits, where
+        the count is not tied to any commit of ours."""
+        if self.voiced_bar is None or not self.owns_input_buffer:
+            return None
+        return int(round(self._voiced_ms))
+
+    async def discard_input(self) -> dict:
+        """Throw the participant's uncommitted turn away instead of committing
+        it (the pre-commit voice floor, PARTICIPANT_COMMIT_MIN_VOICED_MS).
+
+        The buffer is cleared exactly as restart_input clears it, and the
+        restart is re-armed: nothing was committed, so without that the next
+        speech_started would find input_restart_due False and the next turn
+        would be committed with everything the microphone sent since this
+        one. Returns what was discarded (see clear_input); the audio itself
+        is still in user_audio.wav."""
+        gone = await self.clear_input()
+        self._restart_mark = self.commits - 1
+        return gone
+
+    async def cancel_unheard_reply(self) -> Optional[str]:
+        """Cancel the reply in flight before any of it has been played, and
+        drop whatever the gateway still sends for it (pipeline 2026-09-24a).
+
+        For a participant turn withdrawn after its commit went out: on this
+        route the commit itself started the reply, and the transcript that
+        showed the turn was invented arrives 0.6-1.6 s later, usually before
+        the reply's first audio (1.9-24.8 s after the commit in the P5 sims).
+        The reply may not have a name yet (its response.created can trail the
+        commit by up to 0.9 s); the gateway handles frames in order, so the
+        next reply it names is this one, and it is marked for discard as a
+        retry's is (see cancel_response). Only where the tail is discarded at
+        all (discards_cancelled_output, the gpt route): elsewhere a cancel is
+        inert and the reply would play anyway. Returns the reply's id where
+        it was known, "" where it was not yet named, None where nothing was
+        done."""
+        if not self.discards_cancelled_output:
+            return None
+        rid = self._response_created_id
+        await self.cancel_response()
+        if not rid:
+            self._discard_next_created = True
+        return rid or ""
+
     def _commit_blocked(self) -> bool:
         """commit_turn's two early returns, as a question."""
         if self._response_active and not self._response_stalled():
@@ -2477,6 +2633,7 @@ class RealtimeVoiceSession:
         self._audio_absent_hold = 0.0
         self._response_created_id = None
         self._requested = False
+        self._request_hold_s = 0.0
 
     def _request_unanswered(self) -> bool:
         """True when a reply this bridge asked for has drawn nothing at all —
@@ -2496,7 +2653,8 @@ class RealtimeVoiceSession:
             self._audio_absent_hold = time.time()
             return False
         since = max(self._response_started_at, self._audio_absent_hold)
-        return since > 0.0 and (time.time() - since) > REQUEST_UNANSWERED_S
+        return since > 0.0 and (time.time() - since) > (
+            REQUEST_UNANSWERED_S + self._request_hold_s)
 
     # -- audio recovery --------------------------------------------------------
     def _drop_deferred(self, why: str) -> None:
@@ -2858,6 +3016,7 @@ class RealtimeVoiceSession:
         self._requested = True
         self._response_started_at = time.time()
         self._response_saw_output = False
+        self._request_hold_s = 0.0           # see expect_commit_reply
         self._discard_next_created = False   # see cancel_response
         await self._send({"type": "response.create"})
 
@@ -2896,6 +3055,7 @@ class RealtimeVoiceSession:
         self._requested = True
         self._response_started_at = time.time()
         self._response_saw_output = False
+        self._request_hold_s = 0.0           # see expect_commit_reply
         self._discard_next_created = False   # see cancel_response
         await self._send({"type": "response.create"})
 
@@ -2931,7 +3091,7 @@ class RealtimeVoiceSession:
         await self.request_response()
         return True
 
-    def expect_commit_reply(self) -> None:
+    def expect_commit_reply(self, hold_s: float = 0.0) -> None:
         """Book the reply a commit has just started as one we asked for.
 
         For the families where the commit itself starts the reply (the gpt
@@ -2941,11 +3101,18 @@ class RealtimeVoiceSession:
         from and a reply this route loses latches _response_active for the
         rest of the encounter; request_response sets these on every other
         route. `_requested` also makes REQUEST_UNANSWERED_S watch it, and
-        keeps response.created from reading it as an auto-fire."""
+        keeps response.created from reading it as an auto-fire.
+
+        `hold_s` is how long a caller will itself wait for this reply before
+        asking again (GroupRoom.give_floor's ROOM_GRANT_UNANSWERED_S): the
+        bridge's REQUEST_UNANSWERED_S then starts counting only after it, so
+        a grant waiting 6 s and the bridge's own 6 s bar cannot both ask for
+        the same commit's reply (room pacing 2026-09-24a)."""
         self._response_active = True
         self._requested = True
         self._response_started_at = time.time()
         self._response_saw_output = False
+        self._request_hold_s = max(0.0, float(hold_s or 0.0))
 
     async def cancel_response(self, *, discard_tail: bool = True) -> None:
         """Barge-in: stop the agent mid-utterance. Sent unconditionally, because
@@ -3064,8 +3231,9 @@ class RealtimeVoiceSession:
                     and not self._response_saw_output):
                 # The same for a request that has drawn nothing yet: measured
                 # live, a 6 s bar checked every 5 s fired at 8-11 s.
-                left = REQUEST_UNANSWERED_S - (time.time() - max(
-                    self._response_started_at, self._audio_absent_hold))
+                left = (REQUEST_UNANSWERED_S + self._request_hold_s) - (
+                    time.time() - max(self._response_started_at,
+                                      self._audio_absent_hold))
                 timeout = min(timeout, 1.0, max(0.25, left + 0.01))
             try:
                 yield await asyncio.wait_for(ws.recv(), timeout)
@@ -3557,7 +3725,11 @@ class RealtimeVoiceSession:
                     meta = {"item_id": item_id,
                             "probe": bool(tag.get("probe")),
                             "replay": bool(tag.get("replay")),
-                            "voiced_ms": tag.get("voiced_ms")}
+                            "voiced_ms": tag.get("voiced_ms"),
+                            # When the commit went out, so the runner can
+                            # tell a reply to THIS turn from an older one
+                            # (pipeline 2026-09-24a; see _withdraw_reply).
+                            "committed_at": tag.get("committed_at")}
                     if text:
                         yield {"type": "user_transcript", "text": text,
                                "garbled": garbled, **meta}

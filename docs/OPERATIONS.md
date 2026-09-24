@@ -357,7 +357,7 @@ above `PIPELINE_VERSION` in `server/llm.py`.
 | room 23b | Utterances queued behind a held floor are routed together. | `ROOM_MERGE_QUEUED_TURNS=0` |
 | 23d | gpt route: what the gateway sends after a barge-in cancel is dropped (`cancelled_output_dropped`), not played or recorded as a second turn. | `CANCELLED_OUTPUT_DISCARD=0` |
 | 23d | A reply delivered as several output items is recorded as all of them. Before, the last item replaced the others. | no knob |
-| room 23c | gpt floor grant is the commit alone. A `response.create` is sent only if nothing starts within 3 s. | `ROOM_COMMIT_ONLY_GRANT=0` (`ROOM_GRANT_UNANSWERED_S`) |
+| room 23c | gpt floor grant is the commit alone. A `response.create` is sent only if nothing starts within 3 s (6 s from room `24a`). | `ROOM_COMMIT_ONLY_GRANT=0` (`ROOM_GRANT_UNANSWERED_S`) |
 | room 23c | A held reply with no audio, or one cut short by the suppression cancel, is not adopted (`held_reply_refused`). | `ROOM_ADOPT_GUARD=0` |
 | room 23c | A participant resuming within 1.5 s of their own commit does not cancel the reply to it (`split_turn_extended`). | `ROOM_SPLIT_TURN_S=0` |
 | 23e | Room `heard_seconds`/`total_seconds` are per turn (they accumulated across a member's turns). | no knob (record fix) |
@@ -396,6 +396,43 @@ Caveats for analysis:
   `transcript_missing`; its text is in that turn's `deferral_output` event.
   Before `23c`, phantom participant turns also reached `steering_pair` and
   `knob_set` rows.
+
+## What changed on 2026-09-24 (pipeline_version 2026-09-24a, room_pacing_version 2026-09-24a)
+
+Follow-ups to issues #21 and #24, calibrated on the tester's S3A session
+`s_1790217895_4025d8`. Replayed through the runner's own VAD at its bar (500),
+the two phantom lines ("I'm not a cat. I'm a cat. ..." and "Goodbye. Will
+Lego play more games ...") had 300-400 ms of voice, the same as the real short
+lines ("Thank you." 380-680 ms, "Does that sound good?" 660 ms, "Two."
+720 ms). A voice floor alone could not tell them apart, so there are two gates.
+The phantoms carried 47-63 words per voiced second, and every real line ran
+1.4-6.1. The new knobs are in `turn_gate` and `pacing` on every record. Each
+row can be reversed without a code change.
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 24a | Voice floor before a commit: when the VAD ends a turn with less voiced audio than the floor since the last commit, the turn is not committed. The gateway buffer is cleared and the event `participant_turn_discarded` (`voiced_ms`, reason `too_little_voice`) is written. No reply is started. This applies to 1:1 and to a room's scribe; a room turn is not routed and does not take the floor. The audio stays in `user_audio.wav`. | `PARTICIPANT_COMMIT_MIN_VOICED_MS` (300); `0` turns it off |
+| 24a | Rate gate: when a transcript has more words per voiced second than the limit, over less voiced audio than the ceiling, it is written as `user_turn_suppressed` (reason `implausible_rate`, with `text`, `words`, `voiced_ms` and `words_per_voiced_s`). It never becomes a user turn, a caption, steering input or director input. Words over 0 ms of voice ("Sure." on silence) are caught too. | `PARTICIPANT_MAX_WORDS_PER_VOICED_S` (8; `0` turns it off), `PARTICIPANT_RATE_GATE_MAX_VOICED_MS` (1500) |
+| 24a | 1:1: when the reply to a rate-gated turn has played no audio, it is cancelled and its tail dropped (`suppressed_turn_reply_cancelled`, with any generated text). A reply that already played is kept and written as `reply_to_suppressed_turn`. | follows the rate gate |
+| room 24a | In a room, when every line that arrived for a turn was withheld from the director (suppressed, or `low_confidence` and naming no one), nobody is routed or answers. The event `group_turn_skipped` is written with the text. A turn where nothing arrived at all still goes to the director, as before. | `PARTICIPANT_LOW_CONFIDENCE_DIRECTOR=all` sends short lines to the director again |
+| 24a | S1 hand-off: when the timebox has run out and the participant has been silent `HANDOFF_IDLE_S` after the last reply finished playing, the closing line is briefed and the character is prompted to say it (`handoff_probed`). Before, it waited for the participant's next turn plus 12 s, which was about 50 s of dead air in the sim. | `HANDOFF_IDLE_S` (3) |
+| room 24a | The gpt commit-only grant waits 6 s for the reply before sending the one fallback `response.create` (it was 3 s: a reply took 5.09 s and the fallback was refused). The bridge's own 6 s unanswered bar waits out that window. | `ROOM_GRANT_UNANSWERED_S` (6, max 15; `3` restores the old wait) |
+| 24a | `verify_record` counts a planted beat as reached only when a character performed it. A beat with `stage_direction_unperformed` or `trigger_undelivered` is taken off the count and listed separately (`unperformed: ...`, `undelivered: ...`). The dashboard's `triggers_fired` still lists every beat whose brief was delivered. | report only |
+
+Caveats for analysis:
+
+- Before `24a`, phantom participant lines of this kind were recorded as
+  `user_turn` (on `23c`-`23g`, `low_confidence` when their voice was under
+  600 ms), and rooms routed on them. Search `user_turn` rows with
+  `voiced_ms` < 1500 and more than 8 words per voiced second to find them in
+  the archive.
+- `voiced_ms` is counted after the 600 ms pre-roll restart. A slow onset
+  loses the voice that came before the pre-roll ("Thank you." was 680 ms since
+  the last commit but 380 ms as counted). That is why the floor is 300 and not
+  higher.
+- `verify_record` coverage before and after `24a` differs by any
+  `stage_direction_unperformed` rows. Re-run it on the archive rather than
+  comparing old reports.
 
 ## The seven-minute floor, and the thirteen-minute stop
 
