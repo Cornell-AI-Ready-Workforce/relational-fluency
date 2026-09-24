@@ -653,7 +653,7 @@
         Promise.race([pending.catch(() => null), wait(CLOSING_UPLOAD_WAIT_MS)]).then(leave);
       };
     } else {
-      $('nextBody').innerHTML += '<p>You can close this window now.</p>';
+      $('nextBody').innerHTML += '<p>You must return to the Qualtrics survey now and enter the code <b class="code">${RF-COMPLETE}</b> . You can close this window now.</p>';
     }
     // Last, and on every closing card without exception: this is the surface a
     // participant reaches when the study is over for them, and it is where the

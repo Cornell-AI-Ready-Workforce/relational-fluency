@@ -78,3 +78,4 @@ actor_model = "gpt-realtime-2.1"
 # see docs/model-benchmark-2026-09-23.md. Recorded per encounter as
 # provenance.director_model.
 director_model = "nto.gemini-3.5-flash-lite"
+analysis_db_allowed_cidrs = ["128.84.125.179/32"]
