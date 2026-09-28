@@ -922,6 +922,12 @@ class RealtimeVoiceSessionRunner:
         # so an interaction switch must cancel ALL of them, not just the most
         # recent, or the floor-holder is orphaned and dead-airs the next segment.
         self._group_turn_tasks = set()
+        # The room's post-turn steering reviews, off the floor (issue #25; see
+        # _spawn_room_steer). Tracked so _close_room cancels them the way it
+        # cancels the group turns they used to run inside; the lock keeps two
+        # reviews from overlapping, so they run one at a time in turn order.
+        self._room_steer_tasks: set = set()
+        self._room_steer_lock = asyncio.Lock()
         # Planted triggers fire in order within the current interaction. They
         # are the measurement: each maps to ESCI items, and the participant's
         # response to it is what a rater scores.
@@ -2095,6 +2101,59 @@ class RealtimeVoiceSessionRunner:
                 gt.cancel()
         if hasattr(self, "_group_turn_tasks"):
             self._group_turn_tasks.clear()
+        # And the steering reviews those turns left running (issue #25): they
+        # used to be inside the turn, and were cancelled with it.
+        for st in list(getattr(self, "_room_steer_tasks", ()) or ()):
+            if not st.done():
+                st.cancel()
+        if hasattr(self, "_room_steer_tasks"):
+            self._room_steer_tasks.clear()
+
+    def _spawn_room_steer(self) -> None:
+        """The room's post-turn steering review, run after the floor is
+        released (issue #25; room pacing 2026-09-28a).
+
+        _run_group_turn used to await _steer() while it still held
+        self._floor, so a participant turn spoken meanwhile waited for the
+        review (director_route to knob_set 0.8-1.2 s on 2026-09-24c) before
+        its own routing could start. Nothing in the review needs the floor: a
+        room's shifts re-brief nobody at that moment (knob_set is written
+        delivered=False, by _steer, exactly as before), and the next
+        _brief_member or the interaction re-brief is what carries them. What
+        does change is which of those briefs that is: a review still running
+        when the next turn briefs a member lands in the brief after it.
+
+        One review at a time and in turn order (_room_steer_lock), so two
+        reviews never read and shift the same knobs at once. Tracked, and
+        cancelled with the group turns by _cancel_group_turns (an interaction
+        change, and teardown through _close_room). Session.auto_steer still
+        writes its own auto_steer_error; anything else a review raises is
+        written as voice_error where="room_steer", as a group turn's is."""
+        if self._closed:
+            return
+
+        async def review() -> None:
+            async with self._room_steer_lock:
+                if self._closed:
+                    return
+                await self._steer()
+
+        task = asyncio.ensure_future(review())
+        self._room_steer_tasks.add(task)
+        task.add_done_callback(self._on_room_steer_done)
+
+    def _on_room_steer_done(self, task: asyncio.Task) -> None:
+        self._room_steer_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self.session.store.event(
+                "voice_error", where="room_steer", message=redact_key(str(exc))
+            )
+            self._encounter_event_soon(
+                "voice_error", detail=f"room_steer: {exc}", severity="error"
+            )
 
     async def _close_room(self) -> None:
         # In-flight group turns go first, for the reason _cancel_group_turns
@@ -7506,7 +7565,9 @@ class RealtimeVoiceSessionRunner:
                 if self._closed or self.room is not room:
                     return
             room.speaking = None
-            await self._steer()
+        # The steering review, off the floor (issue #25): the next routed turn
+        # no longer waits for it. See _spawn_room_steer.
+        self._spawn_room_steer()
         # A group interaction otherwise has no automatic exit: the 1:1 path
         # reaches _maybe_advance from _finalize_turn, but the group path never
         # did, so S3/S4 stalled in interaction 1 unless an actor happened to
