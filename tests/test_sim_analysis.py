@@ -467,3 +467,38 @@ def test_a_pending_scenario_fails_and_says_why():
     base["pending"] = {"S3A": "not recorded yet: the gateway was down. Record it with --write-baseline"}
     r = check.build_report("abc1234", "", "", HEALTH, {"S3A": {"metrics": m}}, base)
     assert not r["passed"] and "the gateway was down" in r["failures"][0]
+
+
+def test_a_download_cut_short_while_the_session_closes_is_retried(monkeypatch):
+    """The runner is still appending the last events when the check asks for
+    events.jsonl, and the download route is a FileResponse: the file grows
+    past the Content-Length it announced, the server aborts the body, and the
+    client sees http.client.IncompleteRead, which is not an OSError. On the
+    integrated 2026-09-28a tree that turned a finished S3A run into "did not
+    run". A short body is one more reason to ask again, like a refused
+    connection."""
+    import http.client
+    import io
+
+    body = "\n".join(json.dumps(e) for e in (
+        {"type": "user_turn", "t": 1.0}, {"type": "session_end", "t": 2.0})).encode()
+    calls = {"n": 0}
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise http.client.IncompleteRead(b"", 51830)
+        return _Resp(body)
+
+    monkeypatch.setattr(check.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(check.time, "sleep", lambda s: None)
+    events = check.fetch_events("http://127.0.0.1:1", "s_1_abcdef", "", limit=30)
+    assert calls["n"] == 2
+    assert [e["type"] for e in events] == ["user_turn", "session_end"]

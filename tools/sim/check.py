@@ -30,6 +30,7 @@ import argparse
 import asyncio
 import datetime as dt
 import hashlib
+import http.client
 import json
 import os
 import socket
@@ -139,7 +140,13 @@ def fetch_events(server: str, session_id: str, key: str, limit: float = 60.0) ->
             events = [json.loads(ln) for ln in text.splitlines() if ln.strip()]
             if any(e.get("type") == "session_end" for e in events):
                 return events
-        except (urllib.error.URLError, OSError, ValueError):
+        # http.client.HTTPException too: the route is a FileResponse, and a
+        # file the runner is still appending to outgrows the Content-Length
+        # it was served with, so the server aborts the body and the read ends
+        # in IncompleteRead. That is not an OSError, and on 2026-09-28 it
+        # reported a finished S3A as "did not run"; it is the same "not yet"
+        # as a missing session_end, so ask again.
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
             pass
         time.sleep(2.0)
     if events:
