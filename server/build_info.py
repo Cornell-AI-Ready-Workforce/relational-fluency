@@ -23,10 +23,11 @@ reader, and the answer is published three ways:
   served it rather than inferring it from dates and pipeline_version.
 
 None means "not known", never a guess. A local checkout has no BUILD_SHA and
-reports None; so does every image built before this module existed (4798e64,
-live when this was written, is one). Nothing here falls back to `git rev-parse`:
-a checkout with local edits is not the commit its HEAD names, and the one thing
-this value may not do is claim a build that is not running.
+reports None; so does every image built before this module existed (4798e64
+and 0066b10, the two production ran while it was being written, are two).
+Nothing here falls back to `git rev-parse`: a checkout with local edits is not
+the commit its HEAD names, and the one thing this value may not do is claim a
+build that is not running.
 
 Read from the process environment, never through llm.setting(). That accessor
 lets the repository's .env win over the environment, which is right for the

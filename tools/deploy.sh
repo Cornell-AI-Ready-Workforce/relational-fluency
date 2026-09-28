@@ -36,9 +36,9 @@
 # After the plan, the image change is checked once more against the plan itself
 # (tools/deploy_guard.py plan-summary): the plan must deploy the pinned image
 # and must not move production to an older commit than it runs. That second
-# look matters today, because the image live when this was written (4798e64)
-# predates BUILD_SHA and its /health names no build; the plan's "before" image
-# is then the only record of what runs.
+# look matters today, because the images production ran while this was
+# written (4798e64, then 0066b10) predate BUILD_SHA and their /health names no
+# build; the plan's "before" image is then the only record of what runs.
 #
 # Untracked files under tools/sim/reports/ do not count as a dirty tree: the
 # runbook runs the sim check on the pinned commit, which writes its report

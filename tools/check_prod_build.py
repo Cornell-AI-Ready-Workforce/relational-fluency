@@ -25,8 +25,9 @@ What a failure means, in the order to suspect it:
     apply has not happened yet (a deploy is pending), or the apply happened
     from something other than main (the 2026-09-24 rollback);
   * production reports no build at all: the image predates BUILD_SHA, or was
-    built without `--build-arg BUILD_SHA`. 4798e64, live when this was
-    written, predates it, so this check fails until the next deploy;
+    built without `--build-arg BUILD_SHA`. Every image from 0066b10 back
+    predates it (production ran 4798e64 when this was written, then 0066b10
+    from 2026-09-28), so this check fails until the next deploy;
   * /health unreachable: production is down, or the network is.
 
 Exit codes: 0 same build; 1 different or unknown build; 2 could not check.
@@ -50,11 +51,13 @@ from tools import pinned_image  # noqa: E402
 
 PROD_URL = "https://rf.ai-ready-workforce.ai.cornell.edu"
 
-# The image serving production when BUILD_SHA was introduced. Named in the
-# null-build message because "reports no build" is the EXPECTED answer until
+# The newest commit on main whose image cannot know its build: BUILD_SHA was
+# introduced on top of it. Production ran 4798e64 while this was written and
+# moved to 0066b10 on 2026-09-28 (task revision 50); both predate it. Named in
+# the no-build message because "reports no build" is the EXPECTED answer until
 # the first deploy of an image built with the argument, and a red check that
 # nobody can tell is expected is a red check people learn to ignore.
-LAST_IMAGE_WITHOUT_BUILD_SHA = "4798e64"
+LAST_IMAGE_WITHOUT_BUILD_SHA = "0066b10"
 
 OK, DRIFT, UNCHECKED = 0, 1, 2
 
@@ -86,10 +89,11 @@ def compare(health: dict, pin: pinned_image.Pin) -> Tuple[int, str]:
         return DRIFT, (
             f"production /health {where}, so nothing says which image is serving "
             f"participants. main pins {pin.tag}.\n"
-            f"The image live when BUILD_SHA was introduced "
-            f"({LAST_IMAGE_WITHOUT_BUILD_SHA}) predates it and reports no build "
-            f"until the next deploy of an image built with --build-arg BUILD_SHA; this "
-            f"failure is expected until then. If that deploy has happened, the "
+            f"Images built from {LAST_IMAGE_WITHOUT_BUILD_SHA} or earlier (4798e64, "
+            f"and 0066b10, which production runs since 2026-09-28) predate "
+            f"BUILD_SHA and report no build, so this failure is expected until "
+            f"the next deploy of an image built with --build-arg BUILD_SHA. If "
+            f"that deploy has happened, the "
             f"image was built without the argument (see the Dockerfile header) "
             f"and has to be rebuilt from a new commit, because ECR tags are "
             f"immutable.\n"

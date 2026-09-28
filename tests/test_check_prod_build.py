@@ -105,7 +105,7 @@ def test_no_build_fails_and_says_the_live_image_predates_build_sha(tmp_path, cap
     assert _run(tmp_path, health) == C.DRIFT
     err = capsys.readouterr().err
     assert C.LAST_IMAGE_WITHOUT_BUILD_SHA in err
-    assert "predates" in err and "next deploy" in err
+    assert "predate" in err and "next deploy" in err
 
 
 def test_unreachable_production_is_its_own_exit_code(tmp_path, capsys):

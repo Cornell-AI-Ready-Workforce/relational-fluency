@@ -12,9 +12,10 @@
 # infra/terraform/terraform.tfvars; tools/check_prod_build.py is the logic and
 # tests/test_check_prod_build.py holds it.
 #
-# EXPECTED RED until the first deploy after BUILD_SHA landed: the image live
-# when it was introduced (4798e64) predates it and reports build null, and the
-# failure message says so rather than leaving a reader to guess.
+# EXPECTED RED until the first deploy after BUILD_SHA landed: every image
+# built from 0066b10 or earlier predates it and reports no build (production
+# ran 4798e64 when this was written, and 0066b10 from 2026-09-28 18:35 ET), and
+# the failure message says so rather than leaving a reader to guess.
 #
 # No secrets and read-only permissions on purpose: /health is public, so there
 # is nothing to authenticate, and a workflow that holds no credential cannot
