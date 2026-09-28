@@ -568,6 +568,7 @@
           <h4>${esc(s.title)}</h4>
           <div class="meta">
             <span class="chip">${esc(s.skill)}</span>
+            ${s.variant ? `<span class="chip">var. ${esc(s.variant)}</span>` : ''}
             ${s.mode === 'group' ? `<span>· ${s.cast_size} characters</span>` : ''}
           </div>
           <p class="desc">${SCENARIO_DESC[s.id] || ''}</p>

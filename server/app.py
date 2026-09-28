@@ -1684,10 +1684,29 @@ async def v2_page(scenario: Optional[str] = None, key: Optional[str] = None):
 
 # --- REST helpers ---
 
+# What only the researcher's pages are told about a scenario (issue #38).
+#
+# Both scenario routes are participant-open (check_participant), because the
+# participant page fetches its own brief, and they used to answer everybody the
+# same: the skill being measured, the parallel form, and every character's
+# persona dials — the manipulation itself — one network-tab away from the
+# participant it is being applied to, on a study that keeps its RATERS blind to
+# the same facts. The researcher pages (the launch card, the landing picker)
+# send the researcher key and still get all of it; a participant gets what their
+# own page reads, which is none of these.
+_RESEARCH_ONLY_SCENARIO_FIELDS = ("skill", "variant", "parallel_form", "personas")
+
+
+def _participant_scenario_view(row: dict, key: Optional[str]) -> dict:
+    if _operator_key(key):
+        return row
+    return {k: v for k, v in row.items() if k not in _RESEARCH_ONLY_SCENARIO_FIELDS}
+
+
 @app.get("/api/scenarios")
 async def api_scenarios(key: Optional[str] = None):
     check_participant(key)
-    return list_scenarios()
+    return [_participant_scenario_view(r, key) for r in list_scenarios()]
 
 
 @app.get("/api/scenarios/{scenario_id}")
@@ -1698,12 +1717,13 @@ async def api_scenario_detail(scenario_id: str, key: Optional[str] = Query(None)
         sc = load_scenario(scenario_id, participant_id or "")
     except FileNotFoundError:
         raise HTTPException(404, "scenario not found")
-    return {
+    return _participant_scenario_view({
         "id": sc.id,
         "title": sc.title,
         "intro": sc.intro,
         "briefing": getattr(sc, "briefing", None),
         "skill": sc.skill,
+        "variant": getattr(sc, "variant", None),
         "mode": sc.mode,
         "model": sc.model or DEFAULT_MODEL,  # effective default for the pre-start picker
         "intro_image": sc.intro_image,
@@ -1714,7 +1734,7 @@ async def api_scenario_detail(scenario_id: str, key: Optional[str] = Query(None)
         # Default persona values per agent, so the launch card can preselect
         # the current bands and stage only the gears the researcher changes.
         "personas": {aid: p.snapshot() for aid, p in sc.initial_personas().items()},
-    }
+    }, key)
 
 
 # --- Researcher-initiated launch: configure gears first, then start ---
@@ -3557,6 +3577,10 @@ async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None,
             "id": s.id,
             "scenario": s.scenario.id,
             "title": s.scenario.title,
+            # The title is the participant's and names neither (issue #38);
+            # this console tells encounters apart by these two.
+            "skill": getattr(s.scenario, "skill", None),
+            "variant": getattr(s.scenario, "variant", None),
             "mode": s.scenario.mode,
             "model": s.model,
             "cast_size": len(s.scenario.cast),
@@ -3606,7 +3630,7 @@ async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None,
                     # A pre-migration index cannot answer a cohort question, and
                     # no row in it matches one. Same answer as before, reached
                     # without pretending to page.
-                    return [], {s["id"]: s["title"] for s in list_scenarios()}
+                    return [], {s["id"]: s for s in list_scenarios()}
                 where.append("cohort = ?")
                 params.append(cohort)
             if active_ids:
@@ -3630,23 +3654,27 @@ async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None,
         # Plain dicts, so nothing sqlite-owned outlives the worker thread.
         # Missing columns read back as None rather than raising, which is what
         # the pre-migration database needs.
-        # Map scenario id → title without re-reading every YAML each call.
-        titles = {s["id"]: s["title"] for s in list_scenarios()}
-        return [dict(r) for r in rows], titles
+        # Map scenario id → its listing row (title, skill, variant) without
+        # re-reading every YAML each call.
+        scenarios = {s["id"]: s for s in list_scenarios()}
+        return [dict(r) for r in rows], scenarios
 
     try:
-        rows, titles = await run_in_threadpool(_read_closed)
+        rows, scenarios = await run_in_threadpool(_read_closed)
     except Exception:  # noqa: BLE001, a missing index must not empty the listing
-        rows, titles = [], {}
+        rows, scenarios = [], {}
     # No filtering here: the query above already excluded the live ids and the
     # other cohorts, so every row it returned is a row this page returns and the
     # page length means what a pager thinks it means.
     for r in rows:
         row_cohort = r.get("cohort")
+        listed = scenarios.get(r["scenario"]) or {}
         out.append({
             "id": r["id"],
             "scenario": r["scenario"],
-            "title": titles.get(r["scenario"], r["scenario"]),
+            "title": listed.get("title", r["scenario"]),
+            "skill": listed.get("skill"),
+            "variant": listed.get("variant"),
             "model": r["model"],
             "turn_count": r["n_turns"] or 0,
             "status": r["status"] or "closed",
