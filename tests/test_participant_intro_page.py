@@ -337,6 +337,26 @@ MIC_EXIT = r"""
     assert(/could not reach the server/.test(closing), 'an unrecorded exit was reported as recorded: ' + closing);
     assert(/close this window/.test(closing), closing);
   }
+
+  // --- a direct researcher link: there is no run to write the note on -------
+  {
+    const b = boot('?scenario=S4A&participant_id=p_rec', (b) => [
+      { match: '/api/run/config', fn: () => b.net.res(200, { return_url: '' }) },
+      { match: '/api/scenarios/', fn: () => b.net.res(200, BRIEF) },
+    ], { cfg: { micError: 'NotFoundError' } });
+    await b.clock.advance(50);
+    b.dom.$('startBtn').click();
+    await b.clock.advance(50);
+    button(notes(b)[0]).click();
+    await b.clock.advance(50);
+    assert(!/we note/.test(b.dom.$('micHelpBody').innerHTML),
+      'a direct link promises a note it has nowhere to write: ' + b.dom.$('micHelpBody').innerHTML);
+    b.dom.$('micHelpLeave').onclick();
+    await b.clock.advance(100);
+    assert.strictEqual(b.sent.filter(c => c.url.includes('/exit')).length, 0);
+    assert(!/noted that/.test(b.dom.$('nextBody').innerHTML), b.dom.$('nextBody').innerHTML);
+    assert.strictEqual(b.dom.$('nextTitle').textContent, 'Finishing here');
+  }
 """
 
 

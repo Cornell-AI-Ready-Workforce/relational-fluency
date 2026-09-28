@@ -1883,8 +1883,14 @@
           'working microphone. This is not something you did wrong.</p>') +
       '<p>You can run the audio and camera check again: it tests the microphone, the ' +
       'speakers and the camera one at a time and says what to try for each. If it still ' +
-      'will not work, you can finish here. Finishing this way is not the same as stopping ' +
-      `the study: we note that your ${what} did not work, not that you chose to stop.</p>`;
+      'will not work, you can finish here.' +
+      // Only where it is true: the note is written on the run, and a direct
+      // link has none (leaveOnCaptureFailure records nothing there).
+      (runId
+        ? ' Finishing this way is not the same as stopping the study: we note that your ' +
+          `${what} did not work, not that you chose to stop.`
+        : '') +
+      '</p>';
     $('micHelpContact').textContent = '';
     $('micHelpLeave').disabled = false;
     $('micHelpBack').onclick = () => { $('micHelpOverlay').style.display = 'none'; };
