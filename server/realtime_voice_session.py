@@ -3732,10 +3732,25 @@ class RealtimeVoiceSessionRunner:
         # Arrival, not acceptance: a transcript this method goes on to drop
         # as a duplicate or an echo still arrived when it arrived.
         _timer(self).transcript_arrived()
+        # Every no_speech suppression below also withdraws the 1:1 reply its
+        # commit already started, as the rate gate does (pipeline 2026-09-28a).
+        # S2A s_1790278762_09bcbb: a commit at 245.84 s came back "。", was
+        # suppressed, and Morgan's reply to it still played 248.1-258.3 s, so
+        # the character spoke twice in a row to nobody and the beat that
+        # commit fired was spent. Rooms skip the turn in _run_group_turn.
         if _realtime.drop_wordless() and _realtime.is_wordless(text):
             # No letter or digit at all: the transcriber describing a sound,
             # whatever the voiced count (see voice/realtime.drop_wordless).
             suppressed("no_speech")
+            await self._withdraw_reply(text, "no_speech", committed_at, voiced_ms)
+            return
+        if _realtime.drop_annotations() and _realtime.is_annotation_only(text):
+            # "(laughter)" / "[background noise]": the transcriber's tags,
+            # with letters in them, and nothing outside them. The same rule
+            # as the word-less line above, told apart on the record by
+            # `annotation_only` (see voice/realtime.drop_annotations).
+            suppressed("no_speech", annotation_only=True)
+            await self._withdraw_reply(text, "no_speech", committed_at, voiced_ms)
             return
         if (voiced_ms is not None and voiced_ms <= _realtime.drop_voiced_ms()
                 and _realtime.is_filler_only(text)):
@@ -3747,6 +3762,8 @@ class RealtimeVoiceSessionRunner:
             # suppress participants who really said "thank you".
             if text or garbled:
                 suppressed("no_speech")
+                await self._withdraw_reply(text, "no_speech", committed_at,
+                                           voiced_ms)
             else:
                 unreliable("no_speech")
             return

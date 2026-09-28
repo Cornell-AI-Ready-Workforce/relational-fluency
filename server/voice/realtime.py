@@ -1148,6 +1148,8 @@ def turn_gate_provenance(model: Optional[str] = None) -> dict:
         "participant_rate_gate_max_voiced_ms": rate_gate_max_voiced_ms(),
         # 2026-09-24b: what the rate is taken over (was the voiced count).
         "participant_rate_over": rate_over(),
+        # 2026-09-28a: a transcript of sound tags alone is no_speech.
+        "participant_drop_annotations": drop_annotations(),
     }
     if model:
         out["room_dedupe_second_source"] = room_has_second_transcriber(model)
@@ -1385,6 +1387,40 @@ def is_filler_only(text: str) -> bool:
     "." / "..." / "Um..." / "Mhm." / "Hmm, uh."."""
     words = re.findall(r"[^\W_]+", (text or "").lower())
     return all(w in _FILLERS for w in words)
+
+
+def drop_annotations() -> bool:
+    """PARTICIPANT_DROP_ANNOTATIONS, default on (pipeline 2026-09-28a). A
+    transcript made only of the transcriber's own sound tags ("(laughter)",
+    "[background noise]", "[Music]", "(inaudible)", several of them, with any
+    punctuation around them) is suppressed as no_speech, the word-less rule's
+    path, at any voiced level. gpt-4o-transcribe writes these over bleed,
+    breath and room noise; on 2026-09-24c "(laughter)" over 1000 ms of voice
+    was a steering pair's participant line and "[background noise]" over
+    2600 ms was routed to a character (S4A s_1790278989_77ee7e). Letters
+    inside the brackets are the tag's, not the participant's, so the
+    word-less rule could not see them. A word outside the tags keeps the
+    whole line ("Yeah (laughs)"). 0 turns this off."""
+    return _int_setting("PARTICIPANT_DROP_ANNOTATIONS", 1) != 0
+
+
+# One tag, innermost first so "((coughs))" comes apart in two passes. Square
+# and round brackets only: they are what gpt-4o-transcribe and whisper write.
+_ANNOTATION_TAG = re.compile(r"\[[^\[\]]*\]|\([^()]*\)")
+
+
+def is_annotation_only(text: str) -> bool:
+    """True for a transcript that holds at least one [..] or (..) tag and no
+    letter or digit outside them."""
+    rest = text or ""
+    if not _ANNOTATION_TAG.search(rest):
+        return False
+    while True:
+        stripped = _ANNOTATION_TAG.sub(" ", rest)
+        if stripped == rest:
+            break
+        rest = stripped
+    return re.search(r"[^\W_]", rest) is None
 
 
 def voice_for_model(voice: str, model: str) -> str:
