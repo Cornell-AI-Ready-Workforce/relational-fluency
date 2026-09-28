@@ -342,3 +342,89 @@ MIC_EXIT = r"""
 
 def test_a_microphone_that_will_not_work_has_a_way_out_that_is_not_a_withdrawal(tmp_path):
     _run(tmp_path, MIC_EXIT, "MIC EXIT OK")
+
+
+# =========================================================================== #
+# #44. The header read "Loading…" through the whole intro.
+#
+# The scenario was not fetched until the fiction notice and the audio check were
+# both done, so for the first minute or two the header looked stuck. The brief
+# is asked for as soon as the run has said which scenario it is, and the answer
+# is shared with loadBrief rather than fetched twice.
+# =========================================================================== #
+
+RUN_VIEW = r"""
+const RUN_VIEW = { run_id: 'r_1', participant_id: 'RF_TEST_1', completion_code: '', position: 1,
+                   total: 4, current: { id: 'S4A' }, next: { id: 'S1B' }, done: false,
+                   completed: [], withdrawn: null, cohort: 'study',
+                   timing: { min_seconds: 420, wrap_seconds: 720, max_seconds: 780 } };
+function studyRoutes(b) {
+  return [
+    { match: '/api/run/config', fn: () => b.net.res(200, { return_url: '' }) },
+    { match: '/api/run/r_1', fn: () => b.net.res(200, RUN_VIEW) },
+    { match: '/api/scenarios/S4A', fn: () => b.net.res(200, BRIEF) },
+    { match: '/api/participant', fn: () => b.net.res(200, { participant_id: 'p_minted_1' }) },
+  ];
+}
+"""
+
+TITLE_EARLY = RUN_VIEW + r"""
+  // --- a study arrival: /start handed the page its record --------------------
+  {
+    const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+    await b.clock.advance(50);
+    assert(shown(b, 'fictionOverlay'), 'the intro did not open on the fiction notice');
+    assert.strictEqual(b.dom.$('title').textContent, 'Planning an internal rollout',
+      'the header is not showing the scenario during the fiction notice: '
+      + JSON.stringify(b.dom.$('title').textContent));
+    b.dom.$('fictionAck').click();
+    await b.clock.advance(50);
+    assert(shown(b, 'audioCheckOverlay'));
+    assert.strictEqual(b.dom.$('title').textContent, 'Planning an internal rollout');
+    b.dom.$('audioCheckSkip').click();
+    await b.clock.advance(50);
+    assert(shown(b, 'situationOverlay'), 'the brief never loaded');
+    assert.strictEqual(gets(b, '/api/scenarios/').length, 1,
+      'the brief was fetched twice: ' + JSON.stringify(gets(b, '/api/scenarios/').map(c => c.url)));
+    assert(/participant_id=p_rec/.test(gets(b, '/api/scenarios/')[0].url),
+      'the brief was fetched without the participant, so the assigned name can differ');
+  }
+
+  // --- a direct researcher link: the title does not wait for a record -------
+  {
+    const b = boot('?scenario=S4A', studyRoutes);
+    await b.clock.advance(50);
+    assert(shown(b, 'fictionOverlay'));
+    assert.strictEqual(b.dom.$('title').textContent, 'Planning an internal rollout');
+  }
+
+  // --- a brief that fails first time is asked for again on Retry ------------
+  {
+    let n = 0;
+    const b = boot('?run=r_1&participant_id=p_rec', (b) => [
+      { match: '/api/run/config', fn: () => b.net.res(200, { return_url: '' }) },
+      { match: '/api/run/r_1', fn: () => b.net.res(200, RUN_VIEW) },
+      { match: '/api/scenarios/S4A', fn: () => (++n === 1 ? b.net.res(503, {}) : b.net.res(200, BRIEF)) },
+    ]);
+    await b.clock.advance(50);
+    b.dom.$('fictionAck').click();
+    await b.clock.advance(50);
+    b.dom.$('audioCheckSkip').click();
+    await b.clock.advance(50);
+    assert.strictEqual(n, 2, 'loadBrief reused a failed prefetch instead of asking again');
+    assert(shown(b, 'situationOverlay'));
+    assert.strictEqual(b.dom.$('title').textContent, 'Planning an internal rollout');
+  }
+"""
+
+
+def test_the_header_shows_the_scenario_during_the_intro(tmp_path):
+    _run(tmp_path, TITLE_EARLY, "TITLE EARLY OK")
+
+
+def test_the_header_placeholder_is_neutral():
+    """What shows for the moment before the title lands, and whenever the
+    brief cannot be fetched: never a word that reads as stuck."""
+    src = V2.read_text(encoding="utf-8")
+    placeholder = re.search(r'<span id="title">([^<]*)</span>', src).group(1)
+    assert placeholder and "Loading" not in placeholder and "…" not in placeholder, placeholder

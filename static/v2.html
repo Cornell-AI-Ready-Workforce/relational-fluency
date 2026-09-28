@@ -466,7 +466,10 @@
 
 <header>
   <div>
-    <div class="title"><span id="title">Loading…</span><span id="runChip" class="run-chip" style="display:none"></span></div>
+    <!-- A neutral name until the scenario's own title lands, which the boot
+         sequence asks for before the intro overlays (issue #44): the header
+         used to read "Loading…" for the whole of them and looked stuck. -->
+    <div class="title"><span id="title">Conversation</span><span id="runChip" class="run-chip" style="display:none"></span></div>
   </div>
   <div class="controls" id="controls">
     <span class="turn-state" id="turnState"></span>
@@ -4059,14 +4062,36 @@
       run?.completion_code || '');
   });
 
+  // The scenario's brief, one request per participant id and shared (issue
+  // #44). The boot sequence asks for it as soon as the run has said which
+  // scenario this is, so the header can carry the title through the intro
+  // overlays instead of "Loading…"; loadBrief then reads the same answer
+  // rather than asking twice. Keyed on the participant id because the brief
+  // names the participant's assigned character from it: a brief fetched
+  // before a record existed is good for its title and nothing else, and
+  // loadBrief asks again once there is one. A failed fetch is not kept, so a
+  // Retry asks again.
+  let briefFetch = null;   // { pid, promise }
+  function fetchBrief() {
+    const pid = participantId || '';
+    if (briefFetch && briefFetch.pid === pid) return briefFetch.promise;
+    const pidQ = pid
+      ? `${keyParamFirst ? '&' : '?'}participant_id=${encodeURIComponent(pid)}` : '';
+    const promise = fetch('/api/scenarios/' + encodeURIComponent(scenario) + keyParamFirst + pidQ)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); });
+    const entry = { pid, promise };
+    briefFetch = entry;
+    promise.catch(() => { if (briefFetch === entry) briefFetch = null; });
+    return promise;
+  }
+  function showTitle(d) {
+    if (d && d.title) $('title').textContent = d.title;
+  }
+
   async function loadBrief() {
     try {
-      const pidQ = participantId
-        ? `${keyParamFirst ? '&' : '?'}participant_id=${encodeURIComponent(participantId)}` : '';
-      const r = await fetch('/api/scenarios/' + encodeURIComponent(scenario) + keyParamFirst + pidQ);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const d = await r.json();
-      $('title').textContent = d.title;
+      const d = await fetchBrief();
+      showTitle(d);
       const refHtml = briefingHtml(d, true);
       if (refHtml) {
         $('briefBody').classList.add('rich');
@@ -4379,6 +4404,10 @@
     // If it could not be resolved (or the run is already finished), stop here
     // rather than falling through to the default scenario.
     if (!(await loadRun())) return;
+    // The title as soon as the run has said which scenario this is, in
+    // parallel with the overlays below (issue #44). Nothing waits on it; a
+    // failure here is loadBrief's to report.
+    fetchBrief().then(showTitle, () => {});
     // Create the participant before the brief loads. The assigned name is
     // derived from the participant key, so fetching the brief first would show
     // one name on screen while the agents used another.
