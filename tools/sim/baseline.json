@@ -1,0 +1,80 @@
+{
+ "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
+ "pending": {
+  "S3A": "not recorded yet: from about 22:44 UTC on 2026-09-28 the gateway refused every realtime connection (HTTP 403, all three gpt-realtime models) while /v1/models still answered, so no S3A or S4A run could open. Record it with: python -m tools.sim.check --scenarios S3A,S4A --write-baseline",
+  "S4A": "not recorded yet: from about 22:44 UTC on 2026-09-28 the gateway refused every realtime connection (HTTP 403, all three gpt-realtime models) while /v1/models still answered, so no S3A or S4A run could open. Record it with: python -m tools.sim.check --scenarios S3A,S4A --write-baseline"
+ },
+ "realtime_model": "gpt-realtime-2.1",
+ "recorded": {
+  "build": "a736d51",
+  "date": "2026-09-28",
+  "pipeline_version": "2026-09-24c",
+  "room_pacing_version": "2026-09-24b"
+ },
+ "scenarios": {
+  "S1A": {
+   "error_frames": 0,
+   "lines_answered": 9,
+   "lines_heard": 9,
+   "lines_said": 9,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "a736d51",
+    "date": "2026-09-28",
+    "pipeline_version": "2026-09-24c",
+    "room_pacing_version": "2026-09-24b",
+    "session_id": "s_1790635266_99bdc2",
+    "timeline": "driver timeline"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "a4b2d90dd4da7ac2",
+   "speech_end_to_first_played_s": {
+    "n": 11,
+    "p50": 1.771,
+    "p90": 2.722
+   },
+   "triggers_fired": 4,
+   "voice_error": 0
+  },
+  "S2A": {
+   "error_frames": 0,
+   "lines_answered": 20,
+   "lines_heard": 20,
+   "lines_said": 20,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "a736d51",
+    "date": "2026-09-28",
+    "pipeline_version": "2026-09-24c",
+    "room_pacing_version": "2026-09-24b",
+    "session_id": "s_1790634754_6e4503",
+    "timeline": "timeline rebuilt from the driver's log (run before timelines were saved)"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "4ae8133b9c6e2fef",
+   "speech_end_to_first_played_s": {
+    "n": 20,
+    "p50": 1.875,
+    "p90": 2.456
+   },
+   "triggers_fired": 6,
+   "voice_error": 0
+  }
+ },
+ "tolerances": {
+  "answered_rate_drop": 0.2,
+  "error_frames_extra": 0,
+  "heard_rate_drop": 0.15,
+  "latency_p50_ratio": 1.5,
+  "latency_p50_slack_s": 0.5,
+  "latency_p90_ratio": 1.5,
+  "latency_p90_slack_s": 1.0,
+  "phantom_turns_extra": 1,
+  "refused_creates_extra": 3,
+  "reply_missing_extra": 1,
+  "triggers_fired_drop": 1,
+  "voice_error_extra": 0
+ }
+}

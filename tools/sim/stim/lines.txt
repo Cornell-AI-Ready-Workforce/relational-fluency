@@ -1,0 +1,49 @@
+# name|voice|text[|say input]
+# Synthetic speech (macOS `say`), 16 kHz mono, stored as G.711 u-law in <name>.ulaw.
+# `text` is what was said and what tools/sim/analyze.py matches transcripts
+# against; the optional fourth field is the exact `say` input when it adds pauses.
+# Regenerate a line with: python -m tools.sim.make_stim <name>  (macOS only)
+#
+# S1A (a peer, Riley, then the manager, Sam)
+s6|Samantha|Hi Riley, how are you?
+s2|Samantha|Riley, thanks for taking my side, but I wasn't there, so could you explain?
+s1a_long|Samantha|Well, Riley, thanks for, um, like, taking my side. Um, but I wasn't there, so could you explain the situation a bit more in detail?|[[rate 150]] Well, Riley, [[slnc 700]] thanks for, um, [[slnc 600]] like, taking my side. [[slnc 800]] Um, [[slnc 500]] but I wasn't there, so [[slnc 600]] could you explain the situation a bit more [[slnc 400]] in detail?
+s5|Samantha|I didn't say anything, yeah.
+s3|Samantha|Hi Sam, can we talk about the leadership meeting this morning?
+#
+# S2A (the participant asks their manager, Morgan, for a raise)
+a1|Samantha|Hi Morgan, thanks for making time. I wanted to talk about my compensation.
+a2|Samantha|Last year you told me that if I led the migration, we would revisit my salary.
+a3|Samantha|I understand budgets are tight, but I delivered the migration two months early.
+a4|Samantha|I'm asking for a ten percent raise, in line with the market data I sent you.
+a5|Samantha|What would you need from me to take this to leadership?
+a6|Samantha|I think it's fair, because my role has grown to include managing two people.
+a7|Samantha|Can we agree on a date to follow up on this?
+a8|Samantha|Okay. Thank you, Morgan. I appreciate you hearing me out.
+s1|Samantha|Morgan, I think I deserve a raise after everything I delivered this year.
+s2a_race|Samantha|Right, so, as we promised, I need a raise.
+#
+# S3A (the participant leads a team meeting after a reorganization)
+c1|Samantha|Thanks for coming, everyone. I know the last few weeks have been hard on all of us.
+c2|Samantha|Alex, I hear you. I can't promise that nobody else leaves, but I want to know what would make you stay.
+c3|Samantha|Jordan, you said things are fine. How are you really doing with the extra load?
+c4|Samantha|Casey, you picked up the client work. What do you need from me this week?
+c5|Samantha|I'll be honest, compensation is off the table this cycle, but I can protect your time.
+c6|Samantha|Let's agree on two things we can actually change by Friday.
+c7|Samantha|Sorry to cut in, Alex. Let me answer that directly.
+c8|Samantha|Okay, thank you all. I'll send a summary this afternoon.
+c9|Samantha|Alex, can you tell me everything that has gone wrong since the reorganization, from the very beginning, in as much detail as you can?
+#
+# S4A (a planning meeting with Dan, Priya and Chris)
+s4|Daniel|Priya, I'm not sure the rollout plan works for Dan's team or for Chris.
+b2|Daniel|Dan, can you walk me through the whole rollout plan, step by step, from the first week all the way to launch?
+b3|Daniel|Sorry Dan, hold on a second. Let's hear from Priya.
+b4|Daniel|Priya, what do you think about
+b5|Daniel|the timeline for Chris's team?
+b6|Daniel|Chris, quick question.
+b7|Daniel|Actually, Dan, you go first.
+b8|Daniel|Priya, I think that was your idea originally, wasn't it?
+b9|Daniel|Before we decide, Priya, do you agree with this plan?
+b10|Daniel|Dan, who is going to write up the summary of this meeting?
+b11|Daniel|I think Priya should be credited in the write-up.
+b12|Daniel|Okay, let's wrap up. Thanks, everyone.
