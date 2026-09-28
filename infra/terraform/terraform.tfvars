@@ -17,12 +17,14 @@
 # checked against, and tests/test_terraform_persistence.py requires it to be
 # present — change the tag and you have to say what you verified.
 #
-# To release a new build:
+# To release a new build (docs/OPERATIONS.md, "Releasing a build"):
 #   1. docker build --platform linux/amd64 --build-arg BUILD_SHA=$SHA -t $REPO:$SHA . && docker push
-#   2. update container_image below to $SHA
-#   3. re-verify and update the `deployed:` line (see the handover commands:
-#      describe-services gives the running task definition revision)
-#   4. commit, then apply
+#      (or the build-platform-image workflow, which passes BUILD_SHA itself)
+#   2. by PR: update container_image below to $SHA, and re-verify and update
+#      the `deployed:` line (describe-services gives the running revision)
+#   3. after it merges: python -m tools.sim.check, then tools/deploy.sh from an
+#      up-to-date main; it refuses to plan from anywhere else
+#   4. tofu -chdir=infra/terraform apply tfplan.bin, then check /health "build"
 #
 # deployed: relational-fluency-agent:41 carries 3d3cbfc; this tag (5093dcd) is built and pushed, awaiting the apply that registers 42.
 #   Revision 0 does not exist. It is here so this line cannot be misread as a
