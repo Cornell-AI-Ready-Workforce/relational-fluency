@@ -146,3 +146,41 @@ def test_the_researcher_console_prints_skill_and_form_from_their_own_fields():
         encoding="utf-8")
     assert "function researchTag(s)" in src
     assert src.count("researchTag(s)") >= 4, "a picker still prints the bare title"
+
+
+# --- issue #46: which model the participant talks to -------------------------
+#
+# The scenario data said `"model": "nto.gemini-3.1-flash-lite"`. That is the
+# text model (director, steering, and what a launch's ?model= overrides); the
+# characters the participant speaks with are played by the realtime model. The
+# two are named separately now, and `model` keeps the value it always had so
+# the launch card that preselects from it is not broken.
+
+def test_the_scenario_data_names_the_voice_model_and_the_text_model(keyed, monkeypatch):
+    from server.voice import realtime as bridge
+
+    monkeypatch.setattr(bridge, "MODEL", "gpt-realtime-2.1")
+    for params in ({}, {"key": KEY}):          # a participant, and the researcher
+        d = keyed.get("/api/scenarios/S2A", params=params).json()
+        assert d["realtime_model"] == "gpt-realtime-2.1", d
+        assert d["text_model"] == appmod.DEFAULT_MODEL, d
+        assert d["text_model"] != d["realtime_model"]
+        # The old field, for its old readers: the same value it always had.
+        assert d["model"] == d["text_model"]
+
+
+def test_the_voice_model_is_the_one_a_session_would_record(keyed):
+    """The same source the manifest's realtime_model is read from, so the
+    scenario data and the record cannot disagree about one deployment."""
+    from server.session import _realtime_model_name
+
+    d = keyed.get("/api/scenarios/S1A").json()
+    assert d["realtime_model"] == (_realtime_model_name() or None)
+
+
+def test_the_launch_card_preselects_the_text_model_by_its_own_name():
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "static" / "researcher.html").read_text(
+        encoding="utf-8")
+    assert "launchDetail.text_model || launchDetail.model" in src

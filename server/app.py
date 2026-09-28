@@ -1717,6 +1717,16 @@ async def api_scenario_detail(scenario_id: str, key: Optional[str] = Query(None)
         sc = load_scenario(scenario_id, participant_id or "")
     except FileNotFoundError:
         raise HTTPException(404, "scenario not found")
+    # Which model plays the characters, and which one works behind them, named
+    # as two fields (issue #46). This route used to say only `model`, and that
+    # was the TEXT model (director, steering, and what a launch's ?model=
+    # overrides) — so anybody reading the scenario data to find out what the
+    # participant talked to, including for a write-up, was told
+    # nto.gemini-3.1-flash-lite about an encounter voiced by the realtime
+    # model. `model` stays, with the value it always had, because the
+    # researcher's launch card preselects its ?model= picker from it.
+    from .realtime_voice_session import realtime_model
+    text_model = sc.model or DEFAULT_MODEL
     return _participant_scenario_view({
         "id": sc.id,
         "title": sc.title,
@@ -1725,7 +1735,16 @@ async def api_scenario_detail(scenario_id: str, key: Optional[str] = Query(None)
         "skill": sc.skill,
         "variant": getattr(sc, "variant", None),
         "mode": sc.mode,
-        "model": sc.model or DEFAULT_MODEL,  # effective default for the pre-start picker
+        # The model the participant speaks with: every voice encounter's
+        # characters are played on it (session.realtime_model reads the same
+        # bridge setting). Null only where no bridge is configured.
+        "realtime_model": realtime_model() or None,
+        # The text model behind the voices: the director, steering, and the
+        # engines a text encounter runs on.
+        "text_model": text_model,
+        # DEPRECATED alias of text_model, kept for the readers that predate
+        # the split. It never named the voice model.
+        "model": text_model,
         "intro_image": sc.intro_image,
         "cast": [
             {"id": a.id, "name": a.name, "role": a.role, "photo": a.photo}

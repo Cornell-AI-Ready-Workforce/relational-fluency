@@ -790,9 +790,14 @@
     launchAgentSel = launchDetail.cast[0]?.id || null;
     const lm = $('launchModel');
     const opts = LAUNCH_MODEL_OPTIONS.slice();
-    if (launchDetail.model && !opts.find(o => o[0] === launchDetail.model)) opts.unshift([launchDetail.model, launchDetail.model]);
+    // The picker sets ?model=, which overrides the TEXT model (director and
+    // steering); the characters' voices are the realtime model and do not
+    // move with it. `text_model` names that directly (issue #46); `model` is
+    // the older name for the same value, read when a server predates the split.
+    const textModel = launchDetail.text_model || launchDetail.model;
+    if (textModel && !opts.find(o => o[0] === textModel)) opts.unshift([textModel, textModel]);
     lm.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
-    if (launchDetail.model) lm.value = launchDetail.model;
+    if (textModel) lm.value = textModel;
     const isGroup = launchDetail.cast.length > 1;
     $('launchAgentRow').style.display = isGroup ? 'flex' : 'none';
     if (isGroup) {
