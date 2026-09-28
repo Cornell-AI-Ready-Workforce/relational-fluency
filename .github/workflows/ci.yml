@@ -191,6 +191,11 @@ jobs:
               # moment their commit lands, which is why this job sees them on a
               # committed tree and not in the working copy that wrote them.
               "there is no before left to fail",
+              # tests/test_deploy_guard.py drives tools/deploy.sh, which is
+              # bash for macOS and Linux; on windows-latest `bash` may be the
+              # WSL launcher rather than Git Bash, so those cases skip there
+              # and run on the other six cells. Nowhere else may say this.
+              "tools/deploy.sh is bash for macos and linux",
           )
 
           report = Path("platform-tests.xml")
