@@ -1711,6 +1711,44 @@
     return el;
   }
 
+  // ---------- the notice for a capture that would not start ----------
+  // ONE notice, replaced on every failed press and taken away when capture
+  // works (issue #42). startSession used to appendNotice on every failure, so
+  // a participant pressing Start with the microphone blocked piled up one
+  // identical copy per press — four presses, four paragraphs — on the screen
+  // they were already stuck on, and the transcript is an aria-live region, so
+  // a screen reader read the whole pile back. Replaced rather than edited in
+  // place: moving it to the bottom keeps it next to the Start button's result
+  // and lets a screen reader announce this attempt once. Removed through the
+  // transcript, which is the one parent it can have.
+  let captureNote = null;   // { el, kind } while a capture failure is on screen
+  function dropCaptureNote() {
+    if (!captureNote) return;
+    try { $('transcript').removeChild(captureNote.el); } catch (e) { /* already gone */ }
+  }
+  function showCaptureFailure(kind) {
+    dropCaptureNote();
+    if (!captureNote) {
+      const el = document.createElement('div');
+      el.className = 'system-note capture-note';
+      captureNote = { el, kind };
+    }
+    captureNote.kind = kind;
+    // The message is the element's own text, so the note reads as one
+    // sentence wherever the transcript is read back from.
+    captureNote.el.textContent = CAPTURE_MESSAGES[kind] || CAPTURE_MESSAGES.denied;
+    $('transcript').appendChild(captureNote.el);
+    $('transcript').scrollTop = $('transcript').scrollHeight;
+    return captureNote.el;
+  }
+  // Capture works now, so the failure the notice describes is over. Never
+  // throws: it runs inside startSession's try, where a throw would be
+  // reported as the capture failing.
+  function clearCaptureFailure() {
+    try { dropCaptureNote(); } catch (e) {}
+    captureNote = null;
+  }
+
   // ---- user caption: one consolidated, live-updating bubble per utterance ----
   function renderUserCaption(partial) {
     const text = [...userFinals, partial].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
@@ -3381,7 +3419,7 @@
     // startCapture, which opens the microphone and the webcam. Honour the flag:
     // ensureParticipant returns only once a consent record actually exists.
     if (!participantId) await ensureParticipant();
-    try { await startCapture(); }
+    try { await startCapture(); clearCaptureFailure(); }
     catch (e) {
       // Release everything startCapture may have created before it failed, so
       // repeated mic denials don't leak AudioContexts (browsers cap concurrent
@@ -3401,7 +3439,7 @@
       // another app all threw here and all told the participant to allow a
       // permission they had already allowed, offering a Start button that would
       // fail identically forever. Say which of them it was.
-      appendNotice(CAPTURE_MESSAGES[captureKindFor(e)] || CAPTURE_MESSAGES.denied);
+      showCaptureFailure(captureKindFor(e));
       $('startBtn').disabled = false; return;
     }
     $('startBtn').style.display = 'none';

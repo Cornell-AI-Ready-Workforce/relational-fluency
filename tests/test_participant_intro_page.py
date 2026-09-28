@@ -164,3 +164,50 @@ WORDING = r"""
 
 def test_wording_the_room_list_and_the_blocked_microphone(tmp_path):
     _run(tmp_path, WORDING, "WORDING OK")
+
+
+# =========================================================================== #
+# #42. The microphone error piled up, one copy per press of Start.
+#
+# MEASURED on production: four presses with the microphone blocked left four
+# identical "We couldn't turn on your microphone" paragraphs, in an aria-live
+# transcript that a screen reader read back each time. One notice, replaced on
+# every failed press, and gone once capture starts.
+# =========================================================================== #
+
+ONE_NOTICE = r"""
+  const cfg = { micError: 'NotAllowedError' };
+  const b = boot('?run=r_1&participant_id=p_test',
+                 (b) => [{ match: '/api/run/', fn: () => b.net.res(503, {}) }], { cfg });
+  await b.clock.flush();
+  const press = async () => { b.dom.$('startBtn').click(); await b.clock.advance(50); };
+
+  await press(); await press(); await press();
+  let n = notes(b);
+  assert.strictEqual(n.length, 1,
+    'three presses left ' + n.length + ' notices: ' + JSON.stringify(n.map(x => x.textContent)));
+  assert(/allow microphone access/i.test(n[0].textContent), n[0].textContent);
+  assert.strictEqual(b.dom.$('startBtn').disabled, false, 'Start was not offered again');
+
+  // A different failure on the next press replaces the text, not the count.
+  cfg.micError = 'NotFoundError';
+  await press();
+  n = notes(b);
+  assert.strictEqual(n.length, 1, 'a second kind of failure added a second notice');
+  assert(/find a working microphone/i.test(n[0].textContent), n[0].textContent);
+  assert(!/allow microphone access/i.test(n[0].textContent), 'the old reason stayed on screen');
+
+  // Other notices are not the capture notice's to remove.
+  b.ctx.appendNotice('The other person’s line broke up for a moment.');
+  cfg.micError = null;
+  await press();
+  n = notes(b);
+  assert.strictEqual(n.length, 1, 'capture works now, and the failure is still on screen: '
+    + JSON.stringify(n.map(x => x.textContent)));
+  assert(/line broke up/.test(n[0].textContent), 'the wrong notice was removed');
+  assert.strictEqual(b.set('started'), true, 'the encounter did not start once capture worked');
+"""
+
+
+def test_pressing_start_with_the_microphone_blocked_leaves_one_notice(tmp_path):
+    _run(tmp_path, ONE_NOTICE, "ONE NOTICE OK")
