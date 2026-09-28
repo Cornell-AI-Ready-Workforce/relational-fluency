@@ -485,3 +485,42 @@ ONE_RECORD = RUN_VIEW + r"""
 
 def test_a_refresh_reuses_the_participant_record_it_already_made(tmp_path):
     _run(tmp_path, ONE_RECORD, "ONE RECORD OK")
+
+
+# =========================================================================== #
+# #37. Other people's voices are picked up, transcribed as the participant, and
+# answered. Browser noise suppression removes steady noise, not speech, so the
+# researchers' decision (2026-09-28) is a requirement on the room: a quiet room,
+# or noise-cancelling headphones, said prominently on the first intro screen and
+# again at the audio check. Read from the markup, because it IS markup: both
+# overlays ship it, and no script has to run for it to be there.
+# =========================================================================== #
+
+def _overlay(src: str, overlay_id: str) -> str:
+    start = src.index(f'id="{overlay_id}"')
+    end = src.find('<div class="consent-overlay"', start)
+    return src[start:end if end > 0 else len(src)]
+
+
+def _quiet_notice(block: str) -> str:
+    m = re.search(r'<div class="quiet-notice"[^>]*>(.*?)</div>', block, re.S)
+    assert m, "no quiet-room notice in this overlay"
+    return " ".join(re.sub(r"<[^>]+>", " ", m.group(1)).split())
+
+
+def test_the_quiet_room_requirement_is_first_on_the_first_screen_and_again_at_the_check():
+    src = V2.read_text(encoding="utf-8")
+    first = _overlay(src, "fictionOverlay")
+    check = _overlay(src, "audioCheckOverlay")
+    said_first, said_again = _quiet_notice(first), _quiet_notice(check)
+    assert re.search(r"quiet room", said_first, re.I), said_first
+    assert re.search(r"noise-cancelling headphones also work", said_first, re.I), said_first
+    assert re.search(r"other people's voices", said_first, re.I), (
+        "the notice does not say why: " + said_first)
+    assert said_first == said_again, "the audio check says something different:\n" \
+        f"  first screen: {said_first}\n  audio check:  {said_again}"
+    # Prominent: before the fiction notice's own heading, not under it.
+    assert first.index('class="quiet-notice"') < first.index("<h2>"), \
+        "the requirement sits below the fiction notice on the first screen"
+    # And styled as a requirement, not as the muted small print around it.
+    assert re.search(r"\.quiet-notice\s*\{[^}]*border", src), "the notice has no box"

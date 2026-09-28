@@ -308,6 +308,12 @@
   .consent-card .code-row input:focus { outline: none; border-color: var(--accent); }
   .consent-card .actions { display:flex; gap:8px; justify-content:flex-end; margin-top: 14px; }
   .consent-card .err { color: var(--accent); font-size: 13px; min-height: 18px; margin-top: 4px; }
+  /* The quiet-room requirement (issue #37): a requirement, not a tip, so it is
+     boxed and bold at the top of the first intro screen and of the audio check. */
+  .quiet-notice { border: 2px solid var(--accent); background: var(--accent-soft); color: var(--fg);
+    border-radius: 10px; padding: 12px 14px; margin: 0 0 16px; font-size: 14.5px; line-height: 1.5;
+    flex-shrink: 0; }
+  .quiet-notice b { display: block; font-size: 15.5px; margin-bottom: 3px; }
 
   /* ---------- Mobile / small screens ---------- */
   @media (max-width: 640px) {
@@ -355,6 +361,16 @@
 
 <div class="consent-overlay" id="fictionOverlay" style="display:none">
   <div class="consent-card situation-card">
+    <!-- The quiet-room requirement (issue #37, the researchers' decision of
+         2026-09-28), first on the first screen and the same words again at the
+         audio check. Other people talking near the participant are picked up,
+         transcribed as the participant and answered; browser noise
+         suppression removes steady noise, not voices, so the room is the fix. -->
+    <div class="quiet-notice" role="note"><b>You need a quiet room to take part.</b>
+      You will be talking out loud, and the microphone picks up other people's voices as
+      well as yours: the characters hear them as if you had said them. Please move to a
+      quiet room, away from anyone talking, before you go on. If you cannot, noise-cancelling
+      headphones also work.</div>
     <h2>Before you begin: please keep this fictional</h2>
     <div class="body rich">
       <p>These are made-up work situations with AI characters. You are playing a
@@ -397,7 +413,12 @@
   <div class="consent-card situation-card">
     <h2>Check your audio and camera</h2>
     <div class="body rich">
-      <p>You will be talking out loud with AI characters for about 10 minutes at a time. Please use <b>headphones</b> if you have them, and find a quiet spot.</p>
+      <div class="quiet-notice" role="note"><b>You need a quiet room to take part.</b>
+      You will be talking out loud, and the microphone picks up other people's voices as
+      well as yours: the characters hear them as if you had said them. Please move to a
+      quiet room, away from anyone talking, before you go on. If you cannot, noise-cancelling
+      headphones also work.</div>
+      <p>You will be talking out loud with AI characters for about 10 minutes at a time. Please use <b>headphones</b> if you have them.</p>
       <div class="check-row">
         <div class="what"><b>1. Your microphone</b><span>Press the button, then say "testing, one two three".</span>
           <div class="meter"><i id="micMeter"></i></div>
