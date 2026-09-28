@@ -897,6 +897,11 @@ async def api_runs_export(key: Optional[str] = None, cohort: Optional[str] = Non
                 # difference between a participant who left and one whose
                 # browser died, and an IRB report needs the first number.
                 "withdrawn": run.get("withdrawn"),
+                # Every time the participant left because their microphone or
+                # camera would not start (status mic_failed / camera_failed),
+                # which is NOT a withdrawal: the run stays open to them. Empty
+                # for everybody whose capture worked. See runs.note_exit.
+                "exits": run.get("exits", []),
                 # Which forms were steered by the cross-construct exclusion
                 # rather than drawn, so an analyst who sees one variant
                 # over-represented can tell design from chance.
@@ -3072,6 +3077,55 @@ async def api_run_withdraw(run_id: str, payload: Optional[dict] = None,
     # withdrawal is recorded and the teardown used to hang off this one alone.
     await _enforce_withdrawal(run, where=f"the stop control on run {run_id}")
     return runs.view(run)
+
+
+@app.post("/api/run/{run_id}/exit")
+async def api_run_exit(run_id: str, payload: Optional[dict] = None,
+                       key: Optional[str] = None,
+                       participant_id: Optional[str] = None):
+    """The participant left because their microphone or camera would not start.
+
+    The other door out of a capture failure (issue #41). Until this existed the
+    only control on that screen that led anywhere was "Stop and leave the
+    study", so somebody whose headset would not work had to withdraw to get out,
+    and the export then said they had refused to continue. This records a
+    different fact — `mic_failed` or `camera_failed`, with the browser's own
+    name for the failure — and changes nothing else: the run is not withdrawn,
+    no record is stamped, and the link still works on a machine that can take
+    part.
+
+    Owned the way a stop is (_may_stop_run): the record id the page was handed,
+    or the researcher key. It cannot end anything, but it writes onto a run
+    whose id travels in an address bar, and a line in somebody else's run saying
+    their microphone failed is a false statement about them.
+    """
+    check_participant(key)
+    from . import runs
+
+    body = payload or {}
+    status = str(body.get("status") or "").strip()
+    if status not in runs.EXIT_STATUSES:
+        raise HTTPException(400, f"status must be one of {', '.join(runs.EXIT_STATUSES)}")
+    existing = runs.get(run_id)
+    if existing is None:
+        raise HTTPException(404, "no such run")
+    pid = (participant_id or body.get("participant_id") or "").strip()
+    if not _may_stop_run(existing, pid, key):
+        raise HTTPException(403, "not your run")
+    # The browser's DOMException-derived kind ("denied", "missing", ...), kept
+    # only when it is the short token the page sends: this field is written
+    # verbatim into a document an analyst reads.
+    kind = str(body.get("capture_kind") or "").strip()
+    kind = kind if re.fullmatch(r"[a-z_]{1,32}", kind) else None
+    # The encounter they were reconnecting to, when a Reconnect is what met the
+    # failure; only in the shape storage mints, for the same reason.
+    sid = str(body.get("session_id") or "").strip()
+    sid = sid if valid_session_id(sid) else None
+    run = await anyio.to_thread.run_sync(functools.partial(
+        runs.note_exit, run_id, status, capture_kind=kind, session_id=sid))
+    if run is None:
+        raise HTTPException(404, "no such run")
+    return {"recorded": True, "status": status, "withdrawn": run.get("withdrawn")}
 
 
 @app.post("/api/run/{run_id}/advance")

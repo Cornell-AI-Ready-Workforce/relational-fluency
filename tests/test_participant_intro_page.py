@@ -72,6 +72,13 @@ function boot(search, routes, opts) {
   b.loc = loc;
   b.history = history;
   b.set = (code) => vm.runInContext(code, b.ctx);
+  // The routed fetch records url and method; the bodies are what a POST says.
+  const inner = b.sandbox.fetch;
+  b.sent = [];
+  b.sandbox.fetch = (url, o) => {
+    b.sent.push({ url: String(url), method: (o && o.method) || 'GET', body: o && o.body });
+    return inner(url, o);
+  };
   b.net.route(routes(b));
   vm.runInContext(SRC, b.ctx, { filename: 'v2.html' });
   return b;
@@ -211,3 +218,127 @@ ONE_NOTICE = r"""
 
 def test_pressing_start_with_the_microphone_blocked_leaves_one_notice(tmp_path):
     _run(tmp_path, ONE_NOTICE, "ONE NOTICE OK")
+
+
+# =========================================================================== #
+# #41. A microphone that will not work had no way out that was not a withdrawal.
+#
+# MEASURED on production with the microphone blocked: the page showed the
+# error and left Start, which fails the same way again, and on a study link
+# "Stop and leave the study" — a withdrawal, recorded as one. The notice now
+# carries its own door: a card with the audio check again, the study contact,
+# and a way to finish that the run records as mic_failed / camera_failed and
+# the survey link carries as the same status, with no /withdraw sent at all.
+# =========================================================================== #
+
+MIC_EXIT = r"""
+  const RUN = { run_id: 'r_1', participant_id: 'RF_TEST_1', completion_code: 'RF-PARTIAL-1',
+                position: 2, total: 4, current: { id: 'S2B' }, done: false, completed: ['S1A'],
+                withdrawn: null, cohort: 'study' };
+  const CFG = { return_url: 'https://survey.example/back', return_label: 'Return to the survey',
+                contact_name: 'Dr Rivera', contact_email: 'rf@example.edu' };
+  const button = (el) => (el.children || []).find(c => c.tagName === 'BUTTON');
+
+  async function stuck(cfg, routes) {
+    const b = boot('?run=r_1&participant_id=p_rec',
+                   (b) => [{ match: '/api/run/', fn: () => b.net.res(503, {}) }], { cfg });
+    await b.clock.flush();
+    b.sandbox.__run = RUN;
+    b.set('run = __run;');
+    b.net.route(routes(b));
+    b.dom.$('startBtn').click();
+    await b.clock.advance(50);
+    return b;
+  }
+
+  // --- the microphone -------------------------------------------------------
+  {
+    const cfg = { micError: 'NotAllowedError' };
+    const b = await stuck(cfg, (b) => [
+      { match: '/api/run/r_1/exit', fn: () => b.net.res(200, { recorded: true, status: 'mic_failed' }) },
+      { match: '/api/run/r_1/withdraw', fn: () => b.net.res(200, RUN) },
+      { match: '/api/run/config', fn: () => b.net.res(200, CFG) },
+    ]);
+    const [note] = notes(b);
+    const door = button(note);
+    assert(door, 'the capture notice offers no way out');
+    assert.strictEqual(door.textContent, 'I can’t get my microphone working');
+
+    door.click();
+    await b.clock.advance(50);
+    assert(shown(b, 'micHelpOverlay'), 'the door opened nothing');
+    assert(/microphone/.test(b.dom.$('micHelpTitle').textContent));
+    assert(/not the same as stopping/.test(b.dom.$('micHelpBody').innerHTML), b.dom.$('micHelpBody').innerHTML);
+    assert(/rf@example\.edu/.test(b.dom.$('micHelpContact').innerHTML),
+      'the card names no contact: ' + b.dom.$('micHelpContact').innerHTML);
+
+    // The audio check again, and it starts clean rather than on the old verdict.
+    b.dom.$('micStatus').textContent = 'We can hear you';
+    b.dom.$('audioCheckContinue').disabled = false;
+    b.dom.$('micHelpCheck').onclick();
+    await b.clock.advance(10);
+    assert(!shown(b, 'micHelpOverlay'));
+    assert(shown(b, 'audioCheckOverlay'), 'the audio check did not open');
+    assert.strictEqual(b.dom.$('micStatus').textContent, 'Not tested');
+    assert.strictEqual(b.dom.$('audioCheckContinue').disabled, true,
+      'the second check opened with Continue already armed');
+    b.dom.$('audioCheckSkip').click();
+    await b.clock.advance(10);
+    assert(!shown(b, 'audioCheckOverlay'));
+    assert.strictEqual(b.dom.$('startBtn').disabled, false, 'Start is not offered after the check');
+
+    // Still blocked; this time they finish.
+    b.dom.$('startBtn').click();
+    await b.clock.advance(50);
+    assert.strictEqual(notes(b).length, 1);
+    button(notes(b)[0]).click();
+    await b.clock.advance(50);
+    b.dom.$('micHelpLeave').onclick();
+    await b.clock.advance(100);
+
+    const sent = b.sent.filter(c => c.method === 'POST' && c.url.includes('/api/run/r_1/exit'));
+    assert.strictEqual(sent.length, 1, 'the exit was not recorded');
+    const body = JSON.parse(sent[0].body);
+    assert.strictEqual(body.status, 'mic_failed');
+    assert.strictEqual(body.capture_kind, 'denied');
+    assert.strictEqual(body.participant_id, 'p_rec', 'the run cannot tell whose exit this is');
+    assert.strictEqual(posts(b, '/withdraw').length, 0, 'a broken microphone was sent as a withdrawal');
+
+    assert(shown(b, 'nextOverlay'), 'no closing card');
+    assert.strictEqual(b.dom.$('nextTitle').textContent, 'Finishing here');
+    const closing = b.dom.$('nextBody').innerHTML;
+    assert(/noted that your microphone did not work/.test(closing), closing);
+    assert(/not recorded as you stopping the study/.test(closing), closing);
+    assert(!/RF-PARTIAL-1/.test(closing), 'a completion code was handed out on the way out');
+    assert(/rf@example\.edu/.test(closing), 'the closing card lost the contact');
+    b.dom.$('nextBtn').onclick();
+    assert(/^https:\/\/survey\.example\/back\?/.test(b.loc.href), b.loc.href);
+    assert(/[?&]status=mic_failed(&|$)/.test(b.loc.href), 'the survey cannot tell this exit apart: ' + b.loc.href);
+    assert(!/[?&]code=[^&]/.test(b.loc.href), 'a code went back to the survey: ' + b.loc.href);
+  }
+
+  // --- the camera, a server that cannot be reached, and no survey link -----
+  {
+    const cfg = { cameraError: 'NotReadableError' };
+    const b = await stuck(cfg, (b) => [
+      { match: '/api/run/r_1/exit', fn: () => b.net.res(503, {}) },
+      { match: '/api/run/config', fn: () => b.net.res(200, { return_url: '' }) },
+    ]);
+    const door = button(notes(b)[0]);
+    assert.strictEqual(door.textContent, 'I can’t get my camera working');
+    door.click();
+    await b.clock.advance(50);
+    assert(/camera/.test(b.dom.$('micHelpTitle').textContent));
+    b.dom.$('micHelpLeave').onclick();
+    await b.clock.advance(100);
+    const body = JSON.parse(b.sent.find(c => c.url.includes('/exit')).body);
+    assert.strictEqual(body.status, 'camera_failed');
+    const closing = b.dom.$('nextBody').innerHTML;
+    assert(/could not reach the server/.test(closing), 'an unrecorded exit was reported as recorded: ' + closing);
+    assert(/close this window/.test(closing), closing);
+  }
+"""
+
+
+def test_a_microphone_that_will_not_work_has_a_way_out_that_is_not_a_withdrawal(tmp_path):
+    _run(tmp_path, MIC_EXIT, "MIC EXIT OK")

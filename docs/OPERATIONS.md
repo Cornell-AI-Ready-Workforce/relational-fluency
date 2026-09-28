@@ -956,6 +956,7 @@ because nothing is mounted at `/data`. Pull first.
 | Symptom | First check |
 |---|---|
 | Page loads, mic "does not work" | `curl -s $RF/health` — if `gateway.ok` is false, no encounter can run |
+| A run in `/api/runs` has `exits` (`status: "mic_failed"` or `"camera_failed"`) and `withdrawn: null` | The participant's microphone or camera would not start and they left through "I can't get my microphone working". Not a withdrawal: the run is still open to them, nothing was stamped on their record, and the survey link they were offered carried `status=mic_failed` (or `camera_failed`). `capture_kind` is the browser's reason (`denied`, `missing`, `unanswered`, ...) |
 | WebSocket opens then closes instantly | Application logs — a server-side exception during session creation looks exactly like a dead mic (4403 specifically means the participant record is missing or withdrawn) |
 | 503 from the domain | Target health, then service events: usually no healthy task |
 | `No scenario: SxX` | Deployed image predates the scenario bank — check the running image tag |

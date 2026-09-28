@@ -192,6 +192,10 @@
   .transcript .system-note { margin: 10px 0; padding: 6px 10px; border-radius: 6px;
     background: var(--surface-2); color: var(--muted);
     font-size: 12px; font-style: italic; }
+  /* The capture-failure notice carries its own way out (see showCaptureFailure),
+     so its button is a control, not part of the italic aside. */
+  .transcript .capture-note button { display: inline-block; margin: 6px 0 0 8px; padding: 5px 12px;
+    font-size: 12.5px; font-style: normal; }
   .tile.absent { opacity: .3; filter: grayscale(1); }
   /* The next character's tile offers a way in, so the participant can move on
      when the current conversation is done rather than waiting it out. */
@@ -425,6 +429,22 @@
   </div>
 </div>
 
+<!-- The way out of a microphone or camera that will not start, which is not a
+     withdrawal (issue #41). Opened from the capture-failure notice; see
+     openCaptureHelp. -->
+<div class="consent-overlay" id="micHelpOverlay" style="display:none">
+  <div class="consent-card">
+    <h2 id="micHelpTitle">If your microphone will not work</h2>
+    <div class="body rich" id="micHelpBody"></div>
+    <div class="body rich"><p id="micHelpContact"></p></div>
+    <div class="actions">
+      <button class="secondary" id="micHelpBack">Back</button>
+      <button class="secondary" id="micHelpLeave">Finish here</button>
+      <button id="micHelpCheck">Check my audio again</button>
+    </div>
+  </div>
+</div>
+
 <div class="consent-overlay" id="nextOverlay" style="display:none">
   <div class="consent-card">
     <h2 id="nextTitle">Encounter complete</h2>
@@ -614,7 +634,10 @@
   // whatever proof of participation exists (the run's partial completion code)
   // and the way back to the survey. It reuses the completion overlay so there
   // is exactly one "you are done" surface in the page.
-  async function showClosing(title, bodyHtml, code) {
+  // `opts.status` goes onto the survey link, for a closing the survey should be
+  // able to tell apart without reading this page (mic_failed, see
+  // leaveOnCaptureFailure).
+  async function showClosing(title, bodyHtml, code, opts = {}) {
     // Paint immediately and fetch the return link afterwards: the participant
     // has just asked to stop, so nothing they are looking at should wait on a
     // network call that may not answer.
@@ -631,9 +654,9 @@
     try { cfg = await (await fetch('/api/run/config' + keyParamFirst)).json(); } catch {}
     if (cfg.return_url) {
       const sep = cfg.return_url.includes('?') ? '&' : '?';
-      const back = `${cfg.return_url}${sep}` + new URLSearchParams({
+      const back = `${cfg.return_url}${sep}` + new URLSearchParams(Object.assign({
         run: run?.run_id || '', code: code || '', pid: run?.participant_id || '',
-      });
+      }, opts.status ? { status: opts.status } : {}));
       $('nextBtn').textContent = cfg.return_label || 'Return to the survey';
       $('nextBtn').style.display = 'inline-block';
       $('nextBtn').onclick = () => {
@@ -1737,6 +1760,19 @@
     // The message is the element's own text, so the note reads as one
     // sentence wherever the transcript is read back from.
     captureNote.el.textContent = CAPTURE_MESSAGES[kind] || CAPTURE_MESSAGES.denied;
+    // And the way out, which is not a withdrawal (issue #41): the only other
+    // control on this screen was Start, and on a run link "Stop and leave the
+    // study" — so somebody whose headset would not work had to withdraw to get
+    // out of the page. Rebuilt with the text, because setting textContent is
+    // what cleared the previous one.
+    const help = document.createElement('button');
+    help.type = 'button';
+    help.className = 'secondary';
+    help.textContent = kind === 'camera' ? 'I can’t get my camera working'
+                                         : 'I can’t get my microphone working';
+    help.addEventListener('click', () => openCaptureHelp(kind));
+    captureNote.el.appendChild(help);
+    captureNote.help = help;
     $('transcript').appendChild(captureNote.el);
     $('transcript').scrollTop = $('transcript').scrollHeight;
     return captureNote.el;
@@ -1747,6 +1783,88 @@
   function clearCaptureFailure() {
     try { dropCaptureNote(); } catch (e) {}
     captureNote = null;
+    try { $('micHelpOverlay').style.display = 'none'; } catch (e) {}
+  }
+
+  // ---------- the way out of a capture failure (issue #41) ----------
+  // A microphone that will not start is the most common thing to go wrong on a
+  // participant's own machine, and the page had nothing for it but Start (which
+  // fails the same way again) and, on a study link, "Stop and leave the study"
+  // — a withdrawal, recorded as one, for somebody who never chose to stop. This
+  // card offers what actually helps: the audio check again, the study contact,
+  // and a way to finish that is recorded as what it is (mic_failed /
+  // camera_failed on the run, and the same status on the survey link) and
+  // leaves the run open, so the same person can come back on a machine that
+  // works. It hands out no completion code: that is reached by finishing the
+  // run and nowhere else (2026-09-23).
+  const CAPTURE_EXIT_TIMEOUT_MS = 8000;
+  const captureExitStatus = (kind) => (kind === 'camera' ? 'camera_failed' : 'mic_failed');
+
+  async function openCaptureHelp(kind) {
+    const camera = kind === 'camera';
+    const what = camera ? 'camera' : 'microphone';
+    $('micHelpTitle').textContent = `If your ${what} will not work`;
+    $('micHelpBody').innerHTML =
+      (camera
+        ? '<p>Every conversation is recorded on video, so they cannot go ahead without a ' +
+          'working camera. This is not something you did wrong.</p>'
+        : '<p>The conversations are spoken out loud, so they cannot go ahead without a ' +
+          'working microphone. This is not something you did wrong.</p>') +
+      '<p>You can run the audio and camera check again: it tests the microphone, the ' +
+      'speakers and the camera one at a time and says what to try for each. If it still ' +
+      'will not work, you can finish here. Finishing this way is not the same as stopping ' +
+      `the study: we note that your ${what} did not work, not that you chose to stop.</p>`;
+    $('micHelpContact').textContent = '';
+    $('micHelpLeave').disabled = false;
+    $('micHelpBack').onclick = () => { $('micHelpOverlay').style.display = 'none'; };
+    $('micHelpCheck').onclick = async () => {
+      $('micHelpOverlay').style.display = 'none';
+      // Back on the room page afterwards, with Start offered: a fresh press
+      // is the gesture a browser wants before it asks for the microphone.
+      await runAudioCheck();
+    };
+    $('micHelpLeave').onclick = () => leaveOnCaptureFailure(kind);
+    $('micHelpOverlay').style.display = 'flex';
+    // After the card paints: the contact is a network call, and somebody stuck
+    // on a broken microphone should not wait on it to see their options.
+    $('micHelpContact').innerHTML = 'If you would like help, contact ' + (await contactWho()) + '.';
+  }
+
+  async function leaveOnCaptureFailure(kind) {
+    const status = captureExitStatus(kind);
+    $('micHelpLeave').disabled = true;
+    // Recorded before the card changes, and bounded: a server that does not
+    // answer must not hold somebody on a page they are trying to leave. A run
+    // is what the line is written on, so a direct link records nothing.
+    let recorded = false;
+    if (runId) {
+      try {
+        const r = await fetchWithDeadline(`/api/run/${encodeURIComponent(runId)}/exit` + keyParamFirst, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status, capture_kind: kind,
+            participant_id: participantId || '',
+            session_id: sessionId || '',
+          }),
+        }, CAPTURE_EXIT_TIMEOUT_MS);
+        recorded = r.ok;
+      } catch (e) { recorded = false; }
+    }
+    $('micHelpOverlay').style.display = 'none';
+    const what = kind === 'camera' ? 'camera' : 'microphone';
+    showClosing(
+      'Finishing here',
+      `<p>Thank you for trying. The conversations cannot go ahead on this computer without a ` +
+      `working ${what}.</p>` +
+      (recorded
+        ? `<p>We have noted that your ${what} did not work. This is not recorded as you ` +
+          'stopping the study, and if you can get to a computer where it works, the same ' +
+          'study link will still take you in.</p>'
+        : runId
+          ? `<p>We could not reach the server to note that your ${what} did not work, so ` +
+            'please mention it using the contact below.</p>'
+          : ''),
+      '', { status });
   }
 
   // ---- user caption: one consolidated, live-updating bubble per utterance ----
@@ -4015,9 +4133,28 @@
     const scope = runId || scenario;
     try { sessionStorage.setItem(CHECK_KEY, scope); } catch {}
   }
+  // Every row back to "Not tested". The check can run a second time — "Check my
+  // audio again" on the capture-failure card (issue #41) — and a second run that
+  // opened on the first run's "We can hear you" and an armed Continue would
+  // let somebody walk back into the room past the very test they came to redo.
+  function resetAudioCheck() {
+    [['micStatus', 'micTestBtn', 'Test my microphone'],
+     ['spkStatus', 'spkTestBtn', 'Play a test sound'],
+     ['camStatus', 'camTestBtn', 'Turn on my camera']].forEach(([status, btn, label]) => {
+      $(status).textContent = 'Not tested';
+      $(status).className = 'status';
+      $(btn).textContent = label;
+    });
+    ['micHelp', 'spkHelp', 'camHelp'].forEach(id => $(id).classList.remove('show'));
+    $('micHelp').textContent = MIC_CHECK_HELP.quiet;
+    $('micMeter').style.width = '0%';
+    $('camPreview').style.display = 'none';
+    $('audioCheckContinue').disabled = true;
+  }
   function runAudioCheck() {
     return new Promise(resolve => {
       const ov = $('audioCheckOverlay');
+      resetAudioCheck();
       const micOk = { v: false }, spkOk = { v: false }, camOk = { v: false };
       let testStream = null, testCtx = null, meterInt = null, micTimer = null, camStream = null;
       const update = () => { $('audioCheckContinue').disabled = !(micOk.v && spkOk.v && camOk.v); };
@@ -4216,6 +4353,11 @@
         $('micTestBtn').removeEventListener('click', onMicTest);
         $('spkTestBtn').removeEventListener('click', onSpkTest);
         $('camTestBtn').removeEventListener('click', onCamTest);
+        // Both doors, whichever was used: the other one's `once` listener is
+        // still attached, and a second run would otherwise fire this run's
+        // finish as well as its own.
+        $('audioCheckContinue').removeEventListener('click', finish);
+        $('audioCheckSkip').removeEventListener('click', finish);
         markAudioCheck();
         ov.style.display = 'none';
         resolve();
