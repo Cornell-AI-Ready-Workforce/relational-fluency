@@ -563,8 +563,8 @@
     // finished, that is what their payment depends on.
     $('nextBody').innerHTML =
       `<p>You have finished all ${run ? run.total : 4} conversations. Thank you.</p>` +
-      (code ? `<p>Your completion code is <b class="code">${esc(code)}</b>` +
-              `, you will be asked for it in the survey.</p>` : '') +
+      (code ? `<p>Your completion code is <b class="code">${esc(code)}</b>. ` +
+              `Go back to the Qualtrics survey now and enter this code there.</p>` : '') +
       // If the last encounter's recording was lost, say so here too. The
       // completion code comes first and is unaffected: a failed upload is our
       // problem, not a reason to withhold their payment.
@@ -594,7 +594,9 @@
       };
     } else {
       $('nextBtn').style.display = 'none';
-      $('nextBody').innerHTML += '<p>You can close this window and return to the survey.</p>';
+      $('nextBody').innerHTML += code
+        ? '<p>Once you have entered your code in the survey, you can close this window.</p>'
+        : '<p>You can close this window and return to the Qualtrics survey.</p>';
     }
     $('nextOverlay').style.display = 'flex';
     // Finishing does not end the participant's rights: deletion is exercised
@@ -653,7 +655,10 @@
         Promise.race([pending.catch(() => null), wait(CLOSING_UPLOAD_WAIT_MS)]).then(leave);
       };
     } else {
-      $('nextBody').innerHTML += '<p>You must return to the Qualtrics survey now and enter the code <b class="code">${RF-COMPLETE}</b> . You can close this window now.</p>';
+      // No code is promised here: this card is also the between-encounter exit,
+      // which hands out none (2026-09-23). A code that exists is already shown
+      // above, from the run itself.
+      $('nextBody').innerHTML += '<p>You can close this window and return to the Qualtrics survey.</p>';
     }
     // Last, and on every closing card without exception: this is the surface a
     // participant reaches when the study is over for them, and it is where the

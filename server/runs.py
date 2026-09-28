@@ -1240,6 +1240,23 @@ def completion_code(run: dict) -> str:
     return f"RF-{digest}" if finished else f"RF-PARTIAL-{digest}"
 
 
+def survey_code(run: dict) -> str:
+    """The code the participant is shown and takes back to the survey.
+
+    With SURVEY_COMPLETION_CODE set, a finished run shows that one study-wide
+    code, which is what the Qualtrics survey checks. It is kept in Secrets
+    Manager, not in the repo (which is public): a code anyone could read would
+    let them skip the conversations. A run that is not finished never shows it,
+    so a withdrawal still gets its own RF-PARTIAL- code and nothing that passes
+    the survey's check. Unset, every run shows its own completion_code, as
+    before. Exports keep completion_code, which stays verifiable per run.
+    """
+    fixed = (os.environ.get("SURVEY_COMPLETION_CODE") or "").strip()
+    if fixed and run["index"] >= len(run["scenarios"]):
+        return fixed
+    return completion_code(run)
+
+
 def get(run_id: str) -> Optional[dict]:
     # Run ids are uuid4().hex[:12]. Reject anything else before it reaches the
     # filesystem so a crafted id (backslashes, drive letters, ../) cannot escape
@@ -1419,7 +1436,9 @@ def view(run: dict) -> dict:
         # into Qualtrics is the arm the participant actually got, without
         # opening the run file on the server.
         "arm": (run.get("construct_pool") or {}).get("arm", "full"),
-        "completion_code": completion_code(run),
+        # What the page shows: the study's survey code on a finished run when
+        # one is configured, else the run's own code (survey_code).
+        "completion_code": survey_code(run),
         "position": min(i + 1, total),
         "total": total,
         "current": current,

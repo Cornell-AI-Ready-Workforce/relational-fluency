@@ -90,6 +90,12 @@ variable "desired_count" {
   default     = 1
 }
 
+variable "survey_completion_code_enabled" {
+  description = "Show the study-wide Qualtrics completion code (Secrets Manager relational-fluency/survey-completion-code) on a finished run. Set the secret's value BEFORE turning this on; ECS will not start a task whose secret is empty."
+  type        = bool
+  default     = false
+}
+
 variable "survey_return_url" {
   description = "Qualtrics continuation link. Participants are sent here after all four encounters, with run id, completion code, and pid appended."
   type        = string

@@ -77,5 +77,11 @@ actor_model = "gpt-realtime-2.1"
 # nto.gemini-3.5-flash-lite since 2026-09-23 (was nto.gemini-3.1-flash-lite);
 # see docs/model-benchmark-2026-09-23.md. Recorded per encounter as
 # provenance.director_model.
-director_model = "nto.gemini-3.5-flash-lite"
+director_model            = "nto.gemini-3.5-flash-lite"
 analysis_db_allowed_cidrs = ["128.84.125.179/32"]
+
+# The study-wide code a participant enters in Qualtrics after finishing all four
+# encounters. Its VALUE lives in Secrets Manager (relational-fluency/survey-
+# completion-code), never here: this repo is public. Put the value first, then
+# set this to true (docs/OPERATIONS.md, "The survey completion code").
+survey_completion_code_enabled = false

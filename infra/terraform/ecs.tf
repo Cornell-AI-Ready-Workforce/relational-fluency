@@ -39,6 +39,7 @@ data "aws_iam_policy_document" "read_secrets" {
     resources = [
       aws_secretsmanager_secret.anthropic_key.arn,
       aws_secretsmanager_secret.agent_api_key.arn,
+      aws_secretsmanager_secret.survey_completion_code.arn,
     ]
   }
 }
@@ -353,11 +354,15 @@ resource "aws_ecs_task_definition" "agent" {
     # drop that session at the 120s mark. Deploy only between collection sessions,
     # or add a drain step that waits for active sessions to end first.
     stopTimeout = 120
-    secrets = [
+    secrets = concat([
       # Cornell LiteLLM virtual key — serves both the realtime actor and the director.
       { name = "ANTHROPIC_API_KEY", valueFrom = aws_secretsmanager_secret.anthropic_key.arn },
       { name = "SESSION_KEY", valueFrom = aws_secretsmanager_secret.agent_api_key.arn },
-    ]
+      ], var.survey_completion_code_enabled ? [
+      # Conditional because ECS refuses to start a task whose secret has no value:
+      # put the value first, then enable (docs/OPERATIONS.md).
+      { name = "SURVEY_COMPLETION_CODE", valueFrom = aws_secretsmanager_secret.survey_completion_code.arn },
+    ] : [])
     logConfiguration = {
       logDriver = "awslogs"
       options = {

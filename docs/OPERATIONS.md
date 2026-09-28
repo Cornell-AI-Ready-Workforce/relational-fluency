@@ -1337,6 +1337,32 @@ one-click return is missing.
 > the run id, the completion code and the participant key**, so it must be a URL
 > it is acceptable to send those three things to.
 
+### The survey completion code
+
+When the survey checks one study-wide code, the app shows that code on a
+finished run instead of the run's own `RF-XXXXXXXX`. It is also what `code=`
+carries on the return link. A run that is not finished never shows it: a
+withdrawal keeps its `RF-PARTIAL-…` code, which does not pass the survey's
+check. Exports (`/api/runs`, the Qualtrics join) keep the per-run code.
+
+The value is a secret because this repository is public; a code in git is a
+code anyone can type without doing the study. Order matters, because ECS will
+not start a task whose secret has no value:
+
+```bash
+# 1. Create the (empty) secret: the normal plan/apply, with
+#    survey_completion_code_enabled = false in terraform.tfvars
+tofu plan -out tfplan.bin && tofu apply tfplan.bin
+# 2. Put the code (never in git)
+aws secretsmanager put-secret-value --region us-east-1 \
+  --secret-id relational-fluency/survey-completion-code --secret-string 'THE-CODE'
+# 3. terraform.tfvars: survey_completion_code_enabled = true, then plan/apply again
+```
+
+The task reads the secret when it starts, so a later change to the value needs
+a new deployment (`aws ecs update-service ... --force-new-deployment`).
+Locally, set `SURVEY_COMPLETION_CODE` in `.env`.
+
 ## Analysis database
 
 The schema in [`db-schema.sql`](db-schema.sql) runs as **RDS Postgres 16**,
