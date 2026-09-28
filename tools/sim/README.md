@@ -16,8 +16,8 @@ the gateway key (`ANTHROPIC_API_KEY`) and, if the server should require one,
 `SESSION_KEY`:
 
 ```bash
-python -m tools.sim.check                     # all four, about 25 minutes
-python -m tools.sim.check --scenarios S2A     # one, about 8 minutes
+python -m tools.sim.check                     # all four, about 35 minutes
+python -m tools.sim.check --scenarios S2A     # one, about 13 minutes
 ```
 
 It starts its own server from this checkout (`tools/sim/serve.py`) on a free

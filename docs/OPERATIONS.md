@@ -933,7 +933,7 @@ only one that changes production is step 6:
 3. **Pin it by PR**: set `container_image` in
    `infra/terraform/terraform.tfvars` to the new tag and update its
    `deployed:` line, in a PR of its own. Merge it.
-4. **Sim check** on the updated `main`: `python -m tools.sim.check` (about 25
+4. **Sim check** on the updated `main`: `python -m tools.sim.check` (about 35
    minutes, needs the gateway; [`tools/sim/README.md`](../tools/sim/README.md)).
    Commit the report it writes to `tools/sim/reports/<tag>.json`.
 5. **Plan through the guard**, from an up-to-date `main`:

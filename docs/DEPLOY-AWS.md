@@ -342,7 +342,7 @@ could see named the build.
    a `-var` deploy leaves `main` pinning the old build, which is how the
    committed pin and production drifted apart twice before 24 September.
 4. **Sim check**, on the updated `main`: `python -m tools.sim.check` (about
-   25 minutes, needs the gateway; see
+   35 minutes, needs the gateway; see
    [`tools/sim/README.md`](../tools/sim/README.md)). It drives the four
    default encounters against a local server built from this commit and
    writes `tools/sim/reports/<tag>.json`; commit that file afterwards.

@@ -42,6 +42,12 @@ DEFAULT_SEQUENCES: Dict[str, str] = {
             "say:s3,say:s5,tone:14,say:s3,until:215"),
     # The raise conversation, cycled to the encounter's own end (the floor and
     # the ceiling are the server's; 720 s is only the sim's give-up point).
+    # Since pipeline 2026-09-28a (#34) nothing ends the encounter before the
+    # 12:00 ceiling unless the participant moves on, which this sequence never
+    # does, so the run lasts the full twelve minutes and the server's ceiling
+    # (encounter_complete, reason ceiling) lands at the give-up mark: a line
+    # started just before 720 s may be cut off by it. The S2A baseline was
+    # recorded on 24c, when the floor ended it at about 451 s.
     "S2A": ("tone:3,say:a1,tone:20,say:a2,say:a3,"
             "cycle:s1|a4|a5|a6|s2a_race|a7|a3|a2|a8:720,tone:3"),
     # A team meeting: talk over Alex's long answer, then pause mid-sentence.
