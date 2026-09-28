@@ -70,18 +70,26 @@ updated in place. **Applied the same evening:** EFS `fs-09e2d30bae3ce9239`,
 revision **41** with `study-data` mounted at `/data`, rollout completed 23:45,
 `/health` green. The Terraform path is the release procedure from here.
 
-This page documents **two** paths; their status at the 12 September inspection was:
+**24 to 28 September 2026: a correct apply from the wrong checkout.** A
+`tofu apply` run from a branch behind `main`, whose `terraform.tfvars` still
+pinned `ca77c2f`, replaced `4798e64` in production, reported success, and went
+unnoticed for four days, because nothing a tester could see named the build.
+What changed because of it: images built from here on report their build
+(`BUILD_SHA`, on `/health`, the participant page and every record; `0066b10`
+and older cannot), plans go through `tools/deploy.sh`, which refuses anything
+but a clean, up-to-date `main`, and a daily workflow compares production's
+build with `main`'s pin. [4. Release](#4-release) is the runbook.
+
+This page documents **two** paths:
 
 | Path | Status | Use it for |
 |---|---|---|
-| **CLI: register a task definition, update the service** | Was in use for revisions 35–40 | Nothing new; the Terraform path covers it |
-| **OpenTofu / Terraform** | In use since 17 September 2026 (revision 41) | Everything: image pin, environment, EFS, IAM, ALB |
+| **OpenTofu / Terraform, through `tools/deploy.sh`** | The release procedure since 17 September 2026 (revision 41); guarded since 28 September | Everything: image pin, environment, EFS, IAM, ALB |
+| **CLI: register a task definition, update the service** | Was in use for revisions 35–40 | Break glass only, when Terraform cannot run; the next plan reverts it to `main`'s pin |
 
-Neither is the long-term answer on its own. The CLI path cannot create a
-persistent volume, an IAM policy or a bucket rule, and a task definition edited
-by hand drifts from `ecs.tf` a little more with every release. Getting back to
-Terraform is real work with a real decision in it, and it is written up in
-[Open questions](#open-questions) rather than pretended away here.
+The CLI path cannot create a persistent volume, an IAM policy or a bucket rule,
+and a task definition edited by hand drifts from `ecs.tf`, which is why it is
+kept only for the day Terraform itself is what is broken.
 
 ## What gets created
 
@@ -91,10 +99,9 @@ bucket · Secrets Manager · CloudWatch logs.
 
 ## Prerequisites
 
-A release on the path in use needs the **AWS CLI v2**, **Docker** and
-**Python** — and not `tofu`. Install OpenTofu when you are building a new
-environment (section 1) or when the Terraform state has been recovered and that
-path reopens; a release today never invokes it.
+A release needs **OpenTofu**, the **AWS CLI v2**, **Docker** (for a hand
+build), **Python**, **git** and **bash** (`tools/deploy.sh`; on Windows, Git
+Bash or WSL).
 
 We use **OpenTofu** (`tofu`), the MPL-licensed fork. HashiCorp Terraform left
 Homebrew core when it moved to the BUSL licence; `tofu` is a drop-in
@@ -229,6 +236,19 @@ with `$(`, or is 24 characters long, the substitution did not run: re-do steps
 
 ## 3. Build and push the platform image
 
+Prefer the `build-platform-image` workflow (Actions tab, Run workflow, on
+`main`): it builds from a known commit on a clean runner and passes
+`BUILD_SHA` itself. Build by hand only when Actions is unavailable, from a
+clean checkout of the commit you mean to release.
+
+**`--build-arg BUILD_SHA=$SHA` is not optional**, and `$SHA` is the same value
+as the tag. It is how the running image knows which commit it is: `/health`
+and `/api/run/config` report it as `"build"`, the participant page shows it,
+and every encounter's provenance records it (`server/build_info.py`). Built
+without it the image works, and reports `"build": null` everywhere, which
+makes the daily drift check fail and a tester's bug report unplaceable, and
+the tag cannot be rebuilt correctly because ECR tags are immutable.
+
 bash / zsh (macOS, Linux, Git Bash):
 
 ```bash
@@ -243,7 +263,7 @@ SHA=$(git rev-parse --short HEAD)
 aws ecr get-login-password --region $REGION \
   | docker login --username AWS --password-stdin "$REGISTRY"
 
-docker build --platform linux/amd64 -t $REPO:$SHA .
+docker build --platform linux/amd64 --build-arg BUILD_SHA=$SHA -t $REPO:$SHA .
 docker push $REPO:$SHA
 ```
 
@@ -259,7 +279,7 @@ $SHA = git rev-parse --short HEAD
 
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
 
-docker build --platform linux/amd64 -t "${REPO}:${SHA}" .
+docker build --platform linux/amd64 --build-arg "BUILD_SHA=${SHA}" -t "${REPO}:${SHA}" .
 docker push "${REPO}:${SHA}"
 ```
 
@@ -293,14 +313,102 @@ format error that is easy to misread as a crash loop.
 ## 4. Release
 
 Image tags are immutable and deploys are explicit, so the running version
-cannot change silently during a study wave.
+cannot change silently during a study wave. The Terraform path has been the
+release procedure since 17 September 2026 (revision 41), and since
+28 September it goes through **`tools/deploy.sh`**, which refuses to plan from
+anything but a clean, up-to-date `main`.
 
-**This is the step where the two paths differ, so pick one deliberately.**
+**Why the guard exists.** On 24 September 2026 a `tofu apply` from a branch
+behind `main`, whose `terraform.tfvars` still pinned `ca77c2f`, replaced
+`4798e64` in production. It printed "Apply complete!", the deployment went
+healthy, and production ran the old build for four days while testers filed
+issues against a build nobody believed was running. The pin on `main` was
+right; the checkout the apply ran from was not `main`, and nothing a tester
+could see named the build.
 
-### 4a. The path in use: register a task definition, point the service at it
+### The release, end to end
 
-This is how revisions 35, 36, 37 and 38 came to exist, and it is what to do
-today. Nothing here needs Terraform or its state.
+1. **Merge** the change to `main` by PR, with CI green.
+2. **Build** the image from that commit, tagged with its short SHA and built
+   with `--build-arg BUILD_SHA=<the same SHA>`: run the `build-platform-image`
+   workflow on `main` (Actions tab, Run workflow), or build by hand as in
+   [3. Build and push](#3-build-and-push-the-platform-image). The argument is
+   what makes `/health`, the participant page and every encounter record say
+   which build they are.
+3. **Pin it by PR.** One PR that sets `container_image` in
+   `infra/terraform/terraform.tfvars` to the new tag and updates the
+   `deployed:` line beside it, and nothing else. Merge it. The pin is edited
+   by hand in that PR, never passed as `-var container_image=` at apply time:
+   a `-var` deploy leaves `main` pinning the old build, which is how the
+   committed pin and production drifted apart twice before 24 September.
+4. **Sim check**, on the updated `main`: `python -m tools.sim.check` (about
+   25 minutes, needs the gateway; see
+   [`tools/sim/README.md`](../tools/sim/README.md)). It drives the four
+   default encounters against a local server built from this commit and
+   writes `tools/sim/reports/<tag>.json`; commit that file afterwards.
+5. **Plan through the guard**, from `main`:
+
+   ```bash
+   git switch main
+   git pull --ff-only
+   tools/deploy.sh
+   ```
+
+6. **Apply exactly that plan**, between collection sessions:
+
+   ```bash
+   tofu -chdir=infra/terraform apply tfplan.bin
+   ```
+
+7. **Verify** as in [5. Verify](#5-verify): the rollout reads `COMPLETED` and
+   `/health` reports `"build"` equal to the tag you pinned.
+
+After that, the `prod-build-drift` workflow compares production's `/health`
+build with the tag pinned on `main` every morning and goes red, naming both,
+when they differ.
+
+### 4a. What `tools/deploy.sh` checks, and its two overrides
+
+It never applies. When every check passes it runs
+`tofu plan -out tfplan.bin`, prints the plan with the image change set apart
+(before, after, and whether that is forward or a rollback in git history), and
+prints the one command that applies exactly that plan. A saved plan also
+refuses to apply if the state moved after it was made.
+
+| Check | Refuses when | Override |
+|---|---|---|
+| Working tree | any uncommitted or untracked file (a new sim report under `tools/sim/reports/` excepted), a `*.auto.tfvars`, or `TF_CLI_ARGS`/`TF_CLI_ARGS_plan` set | none |
+| `HEAD` against `origin/main`, after `git fetch` | behind (the 24 September case), ahead (unreviewed) or diverged | none |
+| The pinned tag | not a commit reachable from `origin/main`, or not in ECR (read-only `aws ecr describe-images`) | none |
+| Production `/health` | `active_sessions` above 0, or `/health` unreachable | `--allow-active-sessions` |
+| Production's build | the pin is older than the `"build"` production reports | `--allow-rollback` |
+| The sim report | missing or failed: a **warning**, not a refusal | none needed |
+| The plan itself | it deploys any image but the pin, or moves the image to an older commit than the one running (the plan file is deleted) | `--allow-rollback`, for the second only |
+
+The plan's before-image is checked as well as `/health` because images built
+before `BUILD_SHA` (every one up to `0066b10`, which production runs since
+28 September) report no build; until the next deploy the plan is the only
+record of what runs.
+
+**An emergency rollback** is still a pin on `main`: a PR setting
+`container_image` to the older tag, merged, then
+`tools/deploy.sh --allow-rollback`. That keeps the drift check and the pin
+telling the truth about production.
+
+bash 3.2 or later, so macOS's own `/bin/bash`, and Linux. On Windows, run it
+from Git Bash or WSL. It needs `git`, `curl`, `python`, `tofu` and the AWS CLI
+(read-only calls, plus whatever the plan reads). On a machine that has never
+planned: `tofu -chdir=infra/terraform init`, which reads the shared state
+(`platform/terraform.tfstate` in `relational-fluency-tfstate-540586745717`).
+
+### 4b. Break glass: register a task definition by hand
+
+Only when Terraform cannot run at all (a lock left by a crashed apply, a
+provider outage) and a release cannot wait. This is how revisions 35 to 40 came
+to exist; nothing here needs Terraform or its state. The next
+`tools/deploy.sh` plan will see a hand-registered revision as drift and
+replace it with whatever `main` pins, so pin the same tag by PR first, and
+apply through the guard as soon as Terraform works again.
 
 First, check that nobody is mid-encounter — a rollout retires the old task about
 two minutes later and Fargate caps the stop timeout at 120 s, so a conversation
@@ -424,39 +532,6 @@ Step 6 — write down what you did. There is no state file recording this and no
 plan output to read back, so the deploy history is whatever people wrote in the
 wave notes. The revision number, the image tag and the date are the minimum.
 
-### 4b. The Terraform path, and why you cannot take it yet
-
-```bash
-tofu -chdir=infra/terraform apply -var container_image=$REPO:$SHA
-```
-
-PowerShell: `tofu -chdir=infra/terraform apply -var "container_image=${REPO}:${SHA}"`.
-
-That command requires the state this stack was built from. `versions.tf` now
-has an active shared backend, but the repository cannot establish that the
-existing state has been migrated there. Run against empty state it proposes to
-create the bucket, the ECR repositories, the IAM roles and the certificate that
-already exist, fails partway on `AlreadyExists`, and leaves a state file that
-describes neither the old world nor the new one. Find or rebuild the state
-first; [Open questions](#open-questions) is where that work is written down.
-
-Two notes that hold for whenever the path reopens:
-
-- **`-var` rather than editing `infra/terraform/terraform.tfvars` in place.**
-  This form needs no text editing and works identically in bash, zsh,
-  PowerShell and cmd. Do **not** script the edit with `sed -i ''`, a
-  macOS/BSD-only spelling that fails with exit 2 on GNU sed and leaves the file
-  untouched — the release then re-applies the tag already pinned and the
-  operator watches a successful deploy serve the previous build.
-- **Check the committed pin against the service before every apply.**
-  `terraform.tfvars` now pins `3d3cbfc`; the merge did not verify the running
-  image. The pin and service matched at `cabc1dd` on 12 September, after the
-  pin had lagged at `3cf8496`, two releases behind. An
-  apply without `-var container_image=` against a stale pin would **roll
-  production back** mid-study and report success. Whoever reopens the
-  Terraform path re-verifies that pin and its `deployed:` line against
-  `describe-services` in the same change, as a visible commit.
-
 ## Who can run which step
 
 Find out which of these you hold **before** a wave, not at the deploy. Every
@@ -466,6 +541,8 @@ built and pushed, and two of them name something other than what is wrong.
 | What you are doing | IAM actions it needs | Resource |
 |---|---|---|
 | See what is deployed | `ecs:DescribeServices`, `ecs:DescribeTaskDefinition`, `ecs:ListTasks`, `ecs:DescribeTasks` | cluster / service / family |
+| Check the pin is built (`tools/deploy.sh`) | `ecr:DescribeImages` | the `relational-fluency/platform` repository |
+| Plan and apply | read on every resource in the stack, the state bucket and the lock table for the plan; the deployer policy from `infra/scripts/add-deployer.sh` for the apply | see [Adding a second deployer](OPERATIONS.md#adding-a-second-deployer) |
 | Read the researcher key | `secretsmanager:GetSecretValue` (+ `kms:Decrypt` if that secret uses a customer key) | `relational-fluency/agent-api-key` |
 | Log in to the registry | `ecr:GetAuthorizationToken` | `*` — this one is account-scoped and cannot be narrowed |
 | Push the image | `ecr:BatchCheckLayerAvailability`, `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`, `ecr:PutImage` | the `relational-fluency/platform` repository |
@@ -491,10 +568,26 @@ The task role itself is separately verified and needs no change for a release:
 
 ## 5. Verify
 
+Wait for the rollout, then ask production which build answered:
+
 ```bash
-curl -sS https://rf.ai-ready-workforce.ai.cornell.edu/health
+aws ecs describe-services --cluster relational-fluency --services platform \
+  --query "services[0].deployments[0].rolloutState" --output text      # COMPLETED
+curl -sS https://rf.ai-ready-workforce.ai.cornell.edu/health | python -c "import json,sys; d=json.load(sys.stdin); print('build', d.get('build'), '| ready', d.get('ready'), '| active', d.get('active_sessions'))"
 dig +short rf.ai-ready-workforce.ai.cornell.edu                  # ALB addresses
 ```
+
+```powershell
+aws ecs describe-services --cluster relational-fluency --services platform --query "services[0].deployments[0].rolloutState" --output text
+(Invoke-RestMethod https://rf.ai-ready-workforce.ai.cornell.edu/health).build
+```
+
+**`build` must equal the tag you pinned.** Anything else means the task
+serving participants is not the one you meant: an older tag is the 24 September
+rollback, and `null` is an image built without `--build-arg BUILD_SHA` (or one
+from before it existed, `0066b10` and earlier). Then run the `prod-build-drift`
+workflow by hand (Actions tab, Run workflow) and confirm it goes green; it runs
+by itself every morning after that.
 
 **Read the word, not the status code.** `/health` answers HTTP 200 for as long
 as the process can serve — deliberately, because the ALB target group matches
@@ -810,7 +903,10 @@ The rule is **written**, in `infra/terraform/storage_secrets.tf`
 | Symptom | Cause |
 |---|---|
 | `tofu plan` proposes to CREATE the bucket, roles or certificate | The state for this stack is missing. **Stop**; do not apply. See [Read this first](#read-this-first-the-runbook-and-the-practice-have-diverged) |
-| `Unknown parameter in input: "taskDefinitionArn"` from `register-task-definition` | The read-only fields were not stripped from `td.json` — [step 4a](#4a-the-path-in-use-register-a-task-definition-point-the-service-at-it) |
+| `tools/deploy.sh` says REFUSED | It says why and what to do. Behind/ahead of `origin/main`: switch to an up-to-date `main`. Not in ECR: build it first. Sessions active: wait. See [4a](#4a-what-toolsdeploysh-checks-and-its-two-overrides) |
+| `/health` `build` is not the tag you pinned, or the `prod-build-drift` workflow is red | Production is not running `main`'s pin: a pending apply, or an apply from somewhere else. [5. Verify](#5-verify) |
+| `Saved plan is stale` from `tofu apply tfplan.bin` | The state changed after the plan; run `tools/deploy.sh` again |
+| `Unknown parameter in input: "taskDefinitionArn"` from `register-task-definition` | The read-only fields were not stripped from `td.json` — [step 4b](#4b-break-glass-register-a-task-definition-by-hand) |
 | `not authorized to perform: iam:PassRole` | Your identity, not the role it names. See [Who can run which step](#who-can-run-which-step) |
 | `server not found` | Records not created yet — apply has not completed |
 | 503 from the ALB | No healthy targets: image missing, or task crashed. `aws logs tail /ecs/relational-fluency/agent --follow` |
@@ -825,9 +921,11 @@ here as a question with somebody to ask rather than filled in with a plausible
 procedure. Answering them is what closes the gap between this page and the
 Terraform that is supposed to be the source of truth.
 
-1. **Where is the Terraform state for this stack?** At the 12 September
-   inspection, the account's state bucket held `bootstrap/` and `staging/`
-   only. Ask whoever ran the original
+1. **Where is the Terraform state for this stack?** *Answered 17 September
+   2026: in the shared state bucket, `platform/terraform.tfstate`, and the
+   Terraform path has been the release procedure since. Kept for the record.*
+   At the 12 September inspection, the account's state bucket held
+   `bootstrap/` and `staging/` only. Ask whoever ran the original
    build-out whether a `terraform.tfstate` survives on their machine or in a
    backup. If it does: provision the shared backend described in
    [Adding a second deployer](OPERATIONS.md#adding-a-second-deployer), then run

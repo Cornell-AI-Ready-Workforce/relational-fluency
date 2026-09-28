@@ -565,8 +565,9 @@ timeout at 120 s, so no drain setting can save it). Twice now a team member's
 test conversation "stopped after a few turns" because it began during a
 rollout. Two rules:
 
-1. Do not apply while anyone is in an encounter. Check first, and wait until
-   it reports zero:
+1. Do not apply while anyone is in an encounter. `tools/deploy.sh` checks
+   this itself and refuses to plan while it is non-zero; by hand, check first
+   and wait until it reports zero:
 
 ```bash
 curl -s https://rf.ai-ready-workforce.ai.cornell.edu/health | python -c "import json,sys; print('active sessions:', json.load(sys.stdin).get('active_sessions'))"
@@ -610,6 +611,18 @@ curl -s $RF/health | python -m json.tool
 `status: ok` means the process is serving. `gateway.ok: true` means it can reach
 the model gateway — if that is `false`, pages load but **no encounter will
 work**, and `gateway.detail` says why.
+
+`build` is the commit the serving image was built from (`BUILD_SHA`, baked in
+at `docker build`), and after a deploy it must equal the tag pinned on `main`.
+`null` means the image was built without `--build-arg BUILD_SHA`, or before it
+existed (every image up to `0066b10`). The same value is on the participant
+page as a small build tag, in `/api/run/config`, and in every encounter's
+`provenance.build`; the `prod-build-drift` workflow compares it with `main`'s
+pin every morning.
+
+```powershell
+(Invoke-RestMethod "$RF/health").build
+```
 
 ```bash
 # What is actually deployed, and did the rollout finish?
@@ -865,26 +878,50 @@ Shows each encounter labelled by construct and variant, scene headings from the
 research note, every stage direction above the reply it produced, and coverage
 (triggers reached out of planned, ESCI items exercised).
 
-## Deploying
+## Releasing a build
 
-**The runbook and the practice diverged, so read this before you copy
-anything.** This page used to end with `tofu apply`. At the 12 September
-inspection, revisions 35, 36, 37 and 38 of `relational-fluency-agent` had been
-registered by hand with the AWS CLI, and the stack's Terraform state was not
-in the account's state bucket. `infra/terraform/versions.tf` now configures a
-shared S3 backend with locking; [Adding a second deployer](#adding-a-second-deployer)
-describes the setup and state migration. That configuration does not prove the
-existing state has been migrated: verify it before applying. Run from empty
-state, `tofu apply` does not update the service: it proposes to *create* the
-bucket, the ECR repositories, the IAM roles and the certificate that already
-exist. Compare `container_image` in `infra/terraform/terraform.tfvars` with the
-running task definition before applying; the repository pin has been **behind**
-before, and using a stale pin rolls production back. A pin change in Git does
-not itself deploy that image. The earlier inspection and the work needed to
-reopen the Terraform path are recorded in
+**The runbook, in order.** Every step is a separate, visible action, and the
+only one that changes production is step 6:
+
+1. **Merge** the change to `main` by PR, CI green.
+2. **Build** the image from that commit with `BUILD_SHA`: the
+   `build-platform-image` workflow (Actions tab, Run workflow, on `main`), or
+   the commands below. The tag and `BUILD_SHA` are the same short SHA.
+3. **Pin it by PR**: set `container_image` in
+   `infra/terraform/terraform.tfvars` to the new tag and update its
+   `deployed:` line, in a PR of its own. Merge it.
+4. **Sim check** on the updated `main`: `python -m tools.sim.check` (about 25
+   minutes, needs the gateway; [`tools/sim/README.md`](../tools/sim/README.md)).
+   Commit the report it writes to `tools/sim/reports/<tag>.json`.
+5. **Plan through the guard**, from an up-to-date `main`:
+   `git switch main`, `git pull --ff-only`, `tools/deploy.sh`.
+6. **Apply** the saved plan, between collection sessions:
+   `tofu -chdir=infra/terraform apply tfplan.bin`.
+7. **Verify**: the rollout reads `COMPLETED` and `/health` reports `"build"`
+   equal to the tag (see [Is the server up?](#is-the-server-up)).
+
+`tools/deploy.sh` (bash; on Windows, Git Bash or WSL) refuses to plan unless
+the working tree is clean, `HEAD` is exactly `origin/main` after a fetch, the
+pinned tag is a commit on `main`'s history and exists in ECR, and production
+reports `active_sessions` 0 and no build newer than the pin; it warns when the
+tag has no passing sim report, checks the plan's own before and after images,
+and prints the apply command rather than running it. What each refusal means,
+and the two overrides (`--allow-active-sessions`, `--allow-rollback`), are in
+[`DEPLOY-AWS.md`](DEPLOY-AWS.md#4a-what-toolsdeploysh-checks-and-its-two-overrides).
+
+**Why there is a guard.** On 24 September 2026 a `tofu apply` ran from a
+branch behind `main` whose `terraform.tfvars` still pinned `ca77c2f`, and
+replaced `4798e64` in production. It said "Apply complete!", went healthy, and
+stayed that way for four days, while testers reported bugs against a build
+nobody believed was running. The Terraform state has been in the shared state
+bucket since 17 September, so `tofu apply` does what the checkout it runs from
+says; the only question is whether that checkout is `main`. The history before
+that, when the state was not in the account's state bucket and every revision
+was registered by hand, is in
 [`DEPLOY-AWS.md`](DEPLOY-AWS.md#read-this-first-the-runbook-and-the-practice-have-diverged).
 
-Build and push is unchanged and is the same on either path:
+Build and push by hand, when the workflow is unavailable (from a clean
+checkout of the commit being released):
 
 ```bash
 set -euo pipefail
@@ -894,7 +931,7 @@ ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 REGISTRY=$ACCOUNT.dkr.ecr.$REGION.amazonaws.com
 REPO=$REGISTRY/relational-fluency/platform
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin "$REGISTRY"
-docker build --platform linux/amd64 -t $REPO:$SHA .        # amd64 matters on Apple Silicon
+docker build --platform linux/amd64 --build-arg BUILD_SHA=$SHA -t $REPO:$SHA .        # amd64 matters on Apple Silicon
 docker push $REPO:$SHA
 ```
 
@@ -909,7 +946,7 @@ $ACCOUNT = aws sts get-caller-identity --query Account --output text
 $REGISTRY = "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 $REPO = "$REGISTRY/relational-fluency/platform"
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
-docker build --platform linux/amd64 -t "${REPO}:${SHA}" .
+docker build --platform linux/amd64 --build-arg "BUILD_SHA=${SHA}" -t "${REPO}:${SHA}" .
 docker push "${REPO}:${SHA}"
 ```
 
@@ -923,14 +960,16 @@ nothing for, and expands to the empty string with no error at all, so
 `docker login --password-stdin ""` fails with a message about a missing registry
 that sends the operator after AWS credentials which are fine.
 
-**Then release.** The sequence that actually ships a build —
-`describe-task-definition` into a file, strip the read-only keys, change the
-image, `register-task-definition`, `update-service` — is written out step by
-step in
-[`DEPLOY-AWS.md`](DEPLOY-AWS.md#4a-the-path-in-use-register-a-task-definition-point-the-service-at-it),
-along with which IAM permission each step needs. It is not duplicated here,
-because two copies of a release procedure diverge and this is a page about
-checking things rather than about changing them.
+`--build-arg BUILD_SHA=$SHA`, with the same `$SHA` as the tag, is what lets
+the running image say which build it is. Without it `/health` reports
+`"build": null`, the page shows no build tag, the drift check fails, and the
+tag cannot be fixed afterwards, because ECR tags are immutable.
+
+If Terraform itself cannot run, the break-glass CLI release
+(`register-task-definition`, `update-service`) is written out step by step in
+[`DEPLOY-AWS.md`](DEPLOY-AWS.md#4b-break-glass-register-a-task-definition-by-hand),
+with the IAM permission each step needs. It is not duplicated here, because two
+copies of a release procedure diverge.
 
 *No `sed -i ''`, on either path.* That is the macOS/BSD spelling. On GNU sed —
 every Linux box, and Git Bash on Windows — `-i` takes its suffix attached, so
@@ -941,15 +980,15 @@ ran anyway and re-applied the tag that was already pinned: the operator builds a
 new image, pushes it, watches a deploy succeed — and participants keep hitting
 the previous build. Because tags are immutable and deploys are manual and
 scheduled between collection sessions, that is discovered, if at all, during the
-next wave. If the committed pin in `infra/terraform/terraform.tfvars` has to
-move — it is committed on purpose, per that file's own header — edit it by hand
-and commit it as a separate, visible step; if a scripted edit is genuinely
-wanted, use `python -c`, which is a prerequisite on all three platforms.
+next wave. The committed pin in `infra/terraform/terraform.tfvars` moves by
+hand, in its own PR (step 3 above); if a scripted edit is genuinely wanted, use
+`python -c`, which is a prerequisite on all three platforms.
 
 Rollout waits for the new task to pass health checks before draining the old
-one, so an encounter in progress is not cut off at the switch — but the old task
-is stopped 120 s later regardless, and **anything recorded on it is gone**,
-because nothing is mounted at `/data`. Pull first.
+one, so an encounter in progress is not cut off at the switch, but the old task
+is stopped 120 s later regardless and the conversation on it ends there. What
+it had already recorded is on the EFS volume at `/data` and survives; the rest
+of that encounter does not. That is what `active_sessions` 0 is for.
 
 ## When something is wrong
 
@@ -959,6 +998,7 @@ because nothing is mounted at `/data`. Pull first.
 | WebSocket opens then closes instantly | Application logs — a server-side exception during session creation looks exactly like a dead mic (4403 specifically means the participant record is missing or withdrawn) |
 | 503 from the domain | Target health, then service events: usually no healthy task |
 | `No scenario: SxX` | Deployed image predates the scenario bank — check the running image tag |
+| A tester reports something a merged fix should have changed | `/health` `build` against the tag pinned on `main`; the `prod-build-drift` workflow says the same every morning. On 2026-09-24 production silently ran a rolled-back image for four days |
 | Agent replies but no transcript | `verify_record` — look for `transcript_missing` |
 | Encounter ends after ~3 turns | `INTERACTION_MIN_TURNS` / `INTERACTION_MIN_SECONDS` on the task |
 | Every run is `cohort=unattributed` | The Qualtrics embedded field name. It is `participantId`; an unknown field pipes as the empty string and reports nothing — see [The participant URL](#the-participant-url-qualtrics--app--qualtrics) |

@@ -53,7 +53,7 @@ REPO=$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/relational-fluency/platform
 SHA=$(git rev-parse --short HEAD)   # commit the tag on a clean tree, or the tag lies
 
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REPO
-docker build -t $REPO:$SHA .        # repo root: the platform Dockerfile
+docker build --build-arg BUILD_SHA=$SHA -t $REPO:$SHA .   # repo root: the platform Dockerfile
 docker push $REPO:$SHA
 
 # 4) Point the service at the image

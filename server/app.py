@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from .build_info import build_sha
 from .engine import DEFAULT_MODEL
 from .scenarios import list_scenarios, load_scenario
 from .session import registry
@@ -696,7 +697,15 @@ async def health(key: Optional[str] = Query(None)) -> dict:
             # False here says nothing an unauthenticated GET of any researcher
             # route would not already prove.
             "session_key_configured": bool(SESSION_KEY),
-            "active_sessions": len(registry.list_ids())}
+            "active_sessions": len(registry.list_ids()),
+            # The commit this image was built from (server/build_info.py), or
+            # null for a local checkout and for images built before BUILD_SHA
+            # existed. Top level, beside active_sessions, because both are
+            # what an operator reads around a deploy: tools/deploy.sh refuses
+            # to plan while active_sessions is non-zero, and
+            # tools/check_prod_build.py fails when this disagrees with the tag
+            # pinned in main's terraform.tfvars.
+            "build": build_sha()}
 
 
 def check_key(key: Optional[str]) -> None:
@@ -2934,6 +2943,10 @@ async def api_run_config(key: Optional[str] = None):
         # team" when they are blank.
         "contact_name": os.getenv("STUDY_CONTACT_NAME", "").strip(),
         "contact_email": os.getenv("STUDY_CONTACT_EMAIL", "").strip(),
+        # The build the page shows as a small tag, so a tester's bug report
+        # (.github/ISSUE_TEMPLATE/bug_report.yml asks for it) names the build
+        # it was filed against. Null when unknown; the page then shows none.
+        "build": build_sha(),
     }
 
 

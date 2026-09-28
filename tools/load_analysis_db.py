@@ -216,7 +216,10 @@ def stub_run(cur, run_id: Optional[str], pid: Optional[str], cohort: str,
 PIPELINE_KEYS = ("pipeline_version", "room_pacing_version", "input_rate",
                  "input_transcription_model", "max_output_tokens", "resampler",
                  "input_resampler", "turn_gate", "pacing", "record",
-                 "cancelled_output", "agent_transcript_items")
+                 "cancelled_output", "agent_transcript_items",
+                 # The serving image's commit (server/build_info.py); absent
+                 # on encounters from images built before BUILD_SHA.
+                 "build")
 
 
 def pipeline_provenance(prov: dict, rt_started: dict) -> Dict[str, Any]:

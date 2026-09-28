@@ -392,6 +392,10 @@ def build(session_dir: Path) -> Dict[str, Any]:
             "input_resampler": realtime.get("input_resampler"),
             "pipeline_version": realtime.get("pipeline_version"),
             "room_pacing_version": realtime.get("room_pacing_version"),
+            # The commit the serving image was built from (BUILD_SHA, see
+            # server/build_info.py). None for a local checkout, for images
+            # built before it existed, and for encounters recorded before it.
+            "build": realtime.get("build"),
             # A listening-test accent/tone file, when one was in force
             # (server/voice_style.py); None for every study session.
             "voice_style": realtime.get("voice_style"),
