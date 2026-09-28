@@ -894,7 +894,7 @@ ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 REGISTRY=$ACCOUNT.dkr.ecr.$REGION.amazonaws.com
 REPO=$REGISTRY/relational-fluency/platform
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin "$REGISTRY"
-docker build --platform linux/amd64 -t $REPO:$SHA .        # amd64 matters on Apple Silicon
+docker build --platform linux/amd64 --build-arg BUILD_SHA=$SHA -t $REPO:$SHA .        # amd64 matters on Apple Silicon
 docker push $REPO:$SHA
 ```
 
@@ -909,7 +909,7 @@ $ACCOUNT = aws sts get-caller-identity --query Account --output text
 $REGISTRY = "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 $REPO = "$REGISTRY/relational-fluency/platform"
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
-docker build --platform linux/amd64 -t "${REPO}:${SHA}" .
+docker build --platform linux/amd64 --build-arg "BUILD_SHA=${SHA}" -t "${REPO}:${SHA}" .
 docker push "${REPO}:${SHA}"
 ```
 

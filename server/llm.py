@@ -17,6 +17,8 @@ from typing import Optional
 from anthropic import AsyncAnthropic
 from dotenv import dotenv_values
 
+from .build_info import build_sha
+
 # .env wins over ambient environment for these, deliberately.
 _FILE = dotenv_values()
 
@@ -569,6 +571,14 @@ def provenance(model: Optional[str] = None) -> dict:
         "record": record_provenance(),
         "pipeline_version": PIPELINE_VERSION,
         "room_pacing_version": ROOM_PACING_VERSION,
+        # The commit the running image was built from (server/build_info.py),
+        # None for a local checkout or an image built before BUILD_SHA. The
+        # two versions above name what the pipeline was MEANT to do; this
+        # names the code that did it, which is what an analyst needs when a
+        # deploy went somewhere nobody intended: the four days on a
+        # rolled-back image from 2026-09-24 are recognisable afterwards only
+        # because that image happened to predate pipeline_version.
+        "build": build_sha(),
         # None unless VOICE_STYLE_FILE is set (a listening test): an accent is
         # part of the stimulus, so a styled session must say so.
         "voice_style": _voice_style_provenance(),

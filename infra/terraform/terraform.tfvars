@@ -18,7 +18,7 @@
 # present — change the tag and you have to say what you verified.
 #
 # To release a new build:
-#   1. docker build --platform linux/amd64 -t $REPO:$SHA . && docker push
+#   1. docker build --platform linux/amd64 --build-arg BUILD_SHA=$SHA -t $REPO:$SHA . && docker push
 #   2. update container_image below to $SHA
 #   3. re-verify and update the `deployed:` line (see the handover commands:
 #      describe-services gives the running task definition revision)

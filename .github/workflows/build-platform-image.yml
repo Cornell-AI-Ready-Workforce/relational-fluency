@@ -94,7 +94,10 @@ jobs:
           esac
 
           # Built from the repo root: the root Dockerfile is the platform.
-          docker build -t "$REPO:$SHA" .
+          # BUILD_SHA is the same value as the tag, so the running image can
+          # say which commit it is (server/build_info.py): /health "build" is
+          # what tools/check_prod_build.py compares with the pinned tag.
+          docker build --build-arg BUILD_SHA="$SHA" -t "$REPO:$SHA" .
           docker push "$REPO:$SHA"
 
           echo "Pushed $REPO:$SHA"

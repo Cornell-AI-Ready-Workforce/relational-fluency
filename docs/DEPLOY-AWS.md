@@ -243,7 +243,7 @@ SHA=$(git rev-parse --short HEAD)
 aws ecr get-login-password --region $REGION \
   | docker login --username AWS --password-stdin "$REGISTRY"
 
-docker build --platform linux/amd64 -t $REPO:$SHA .
+docker build --platform linux/amd64 --build-arg BUILD_SHA=$SHA -t $REPO:$SHA .
 docker push $REPO:$SHA
 ```
 
@@ -259,7 +259,7 @@ $SHA = git rev-parse --short HEAD
 
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
 
-docker build --platform linux/amd64 -t "${REPO}:${SHA}" .
+docker build --platform linux/amd64 --build-arg "BUILD_SHA=${SHA}" -t "${REPO}:${SHA}" .
 docker push "${REPO}:${SHA}"
 ```
 
