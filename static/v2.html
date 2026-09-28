@@ -1186,6 +1186,20 @@
   const esc = v => String(v ?? '').replace(/[&<>"]/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+  // A list of people as a sentence says it: 'A', 'A and B', 'A, B, and C'.
+  // One helper for every such list on the page (issue #45): the cast line
+  // under the brief built this by hand and got it right, while the situation
+  // card's "How it runs" joined everybody with ' and ' and told S4A's
+  // participants they would meet "Dan and Priya and Chris". Items are joined
+  // as given, so a caller that wants markup around each name (the cast line's
+  // <strong>) escapes and wraps them first.
+  function listPhrase(items) {
+    const xs = (items || []).filter(x => x != null && x !== '');
+    if (xs.length <= 1) return xs.join('');
+    if (xs.length === 2) return `${xs[0]} and ${xs[1]}`;
+    return `${xs.slice(0, -1).join(', ')}, and ${xs[xs.length - 1]}`;
+  }
+
   // Blocking full-screen error card. Prevents the participant from falling
   // through to a wrong/default/unbriefed encounter when a load fails, and
   // offers a Retry that re-runs the failed step.
@@ -1217,7 +1231,7 @@
     const people = (b.people || []).map(p =>
       `<li><b>${esc(p.name)}</b>${p.role ? `, ${esc(p.role)}` : ''}</li>`).join('');
     const parts = (b.parts || []).map((p, i) =>
-      `<li>${esc(p.label)}${p.with?.length ? `, with ${esc(p.with.join(' and '))}` : ''}</li>`).join('');
+      `<li>${esc(p.label)}${p.with?.length ? `, with ${listPhrase(p.with.map(esc))}` : ''}</li>`).join('');
     const how = (b.howto || []).map(h => `<li>${esc(h)}</li>`).join('');
     const dur = b.duration ? `${b.duration[0]}–${b.duration[1]} minutes` : '';
     return `
@@ -1815,8 +1829,8 @@
     quiet: "We can't hear anything yet. Check that your browser allowed the microphone (look for a "
          + 'mic icon in the address bar), that the right input device is selected, and that nothing '
          + 'is muted. Then try again.',
-    denied: 'Your browser is refusing this page the microphone. Click the mic or camera icon at the '
-          + 'end of the address bar, choose Allow, then reload this page and try again.',
+    denied: 'Your browser has blocked the microphone for this page. Click the mic or camera icon at '
+          + 'the end of the address bar, choose Allow, then reload this page and try again.',
     unanswered: 'Your browser has asked whether this page may use your microphone and is still '
               + 'waiting for an answer. Look for the permission bar at the top of the window, or the '
               + 'icon at the end of the address bar, choose Allow, then press Test my microphone again.',
@@ -3908,12 +3922,8 @@
       // now (see showSituation), so keep the brief itself text-only.
       $('introPhoto').style.display = 'none';
       if (d.cast && d.cast.length) {
-        const names = d.cast.map(a => esc(a.name));
-        let label;
-        if (names.length === 1) label = `You will be talking with <strong>${names[0]}</strong>.`;
-        else if (names.length === 2) label = `You will be talking with <strong>${names[0]}</strong> and <strong>${names[1]}</strong>.`;
-        else label = `You will be talking with <strong>${names.slice(0, -1).join('</strong>, <strong>')}</strong>, and <strong>${names[names.length - 1]}</strong>.`;
-        $('castLine').innerHTML = label;
+        const names = d.cast.map(a => `<strong>${esc(a.name)}</strong>`);
+        $('castLine').innerHTML = `You will be talking with ${listPhrase(names)}.`;
       }
       $('brief').style.display = 'block';
       // Render preview tiles so the user sees who they'll meet before pressing Start.
