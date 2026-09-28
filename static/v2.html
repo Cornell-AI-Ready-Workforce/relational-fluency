@@ -1569,16 +1569,23 @@
 
   // ---------- the encounter clock ----------
   // Three numbers, served on the run (`run.timing`, from
-  // storage.encounter_timing) so the page and the server agree to the second:
-  //   MIN_S   the floor: End does not finish a study conversation before it,
-  //           and /advance answers 409 if asked. The ring fills toward it.
-  //   WRAP_S  the label says "wrapping up"; the server has told the actor.
-  //   MAX_S   the hard stop: the page ends the conversation itself, and so
-  //           does the server on the next turn, whichever comes first.
+  // storage.encounter_timing) and again by the runner itself on every link
+  // type (`encounter_clock`), so the page and the server agree to the second:
+  //   MIN_S   the floor: End / move-on unlocks here, with a notice that the
+  //           participant may move on whenever they are ready; /advance
+  //           answers 409 before it. The ring fills toward it.
+  //   WRAP_S  the warning that the conversation is about to end.
+  //   MAX_S   the stop, 12:00: the page ends the conversation itself, and so
+  //           does the server, whichever comes first. Nothing ends it sooner
+  //           by itself (the researchers' end policy of 2026-09-28, #34).
   // Stopping the STUDY ("Stop and leave the study") is never gated: that is
   // the consent promise, and it is a different control from End.
-  let MIN_S = 7 * 60, WRAP_S = 12 * 60, MAX_S = 13 * 60;
+  let MIN_S = 7 * 60, WRAP_S = 11 * 60, MAX_S = 12 * 60;
   let ceilingFired = false;
+  // Said once per conversation each: the move-on notice at the floor and the
+  // warning before the stop (from the page's clock or the server's frame,
+  // whichever comes first). Reset by startSession.
+  let moveOnNoted = false, wrapNoted = false;
   function applyTiming(t) {
     if (!t) return;
     if (t.min_seconds > 0) MIN_S = t.min_seconds;
@@ -1586,19 +1593,53 @@
     if (t.max_seconds > 0) MAX_S = t.max_seconds;
   }
   const RING = 56.5;   // circumference of the r=9 ring in the header
+  // The within-encounter advance floor only (advanceFloorMet): internal and
+  // direct links skip THAT, so the team can walk the beats fast. The 7:00
+  // gate on End is not this: since 2026-09-28 it holds on every link type,
+  // study, internal /test and direct researcher links alike (#34: a direct
+  // link had no ring, no lock and no sign at 7:00 at all).
   function gateActive() { return !!(runId && run && run.cohort !== 'internal'); }
+  // Seconds into this conversation on the clock the ring is drawn from.
+  function encounterElapsedS() {
+    return started && timerStartMs ? Math.max(0, (Date.now() - timerStartMs) / 1000) : 0;
+  }
+  function moveOnText() {
+    return (runId && run && !run.done && run.position < run.total)
+      ? 'You can move on to the next conversation whenever you are ready, or keep talking.'
+      : 'You can end this conversation whenever you are ready, or keep talking.';
+  }
+  // The floor has passed: neutral, visible once, and repeated in the
+  // transcript so it is still there after the note fades.
+  function noteMoveOn() {
+    if (moveOnNoted || !started) return;
+    moveOnNoted = true;
+    showGateNote(moveOnText());
+    appendNotice(moveOnText());
+  }
+  // Shortly before the stop: the one automatic end the conversation has.
+  function noteWrap(secondsLeft) {
+    if (wrapNoted || !started) return;
+    wrapNoted = true;
+    const left = Math.max(1, Math.round((secondsLeft != null ? secondsLeft : MAX_S - encounterElapsedS()) / 60));
+    const text = `This conversation ends automatically in about ${left} minute${left === 1 ? '' : 's'}.`;
+    $('gateLabel').textContent = 'Wrapping up';
+    showGateNote(text);
+    appendNotice(text);
+  }
   function renderGate(s) {
     const g = $('gate');
-    if (!g || !gateActive() || !started) return;
+    if (!g || !started) return;
     g.classList.add('show');
     const pct = Math.min(1, s / MIN_S);
     $('gateFill').style.strokeDashoffset = String(RING * (1 - pct));
     if (pct >= 1) {
       g.classList.add('open');
-      $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up' : 'You can end when you are ready';
+      $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up' : 'You can move on when you are ready';
       $('stopBtn').classList.remove('locked');
       $('stopBtn').setAttribute('aria-disabled', 'false');
       $('stopBtn').title = '';
+      noteMoveOn();
+      if (s >= WRAP_S) noteWrap(MAX_S - s);
     } else {
       const left = Math.ceil((MIN_S - s) / 60);
       $('gateLabel').textContent = `about ${left} more minute${left === 1 ? '' : 's'}`;
@@ -1606,11 +1647,11 @@
       // itself (see the handler); aria-disabled says what the styling shows.
       $('stopBtn').classList.add('locked');
       $('stopBtn').setAttribute('aria-disabled', 'true');
-      $('stopBtn').title = `End unlocks at ${pad2(Math.floor(MIN_S / 60))}:${pad2(MIN_S % 60)}. To stop taking part, use “Stop and leave the study”.`;
+      $('stopBtn').title = `End unlocks at ${pad2(Math.floor(MIN_S / 60))}:${pad2(MIN_S % 60)}.` +
+        (runId ? ' To stop taking part, use “Stop and leave the study”.' : '');
     }
     // The hard stop, from the page's side. The server completes the encounter
-    // on the next turn past MAX_S; a participant who has gone quiet has no next
-    // turn, so the page ends it too. Once.
+    // on its own clock too (the watchdog's tick); whichever comes first. Once.
     if (s >= MAX_S && started && !ceilingFired) {
       ceilingFired = true;
       showGateNote('Time is up for this conversation — thank you. Moving on.');
@@ -3263,12 +3304,32 @@
         applyPresence();
       } else if (m.type === 'floor_held') {
         // The server declined to finish the encounter before the floor (the
-        // actor's end tool, or an auto-advance that came due early). Nothing
-        // to do but say so; the conversation carries on.
+        // participant's move-on, or the character saying goodbye early).
+        // Nothing to do but say so; the conversation carries on.
         const left = Math.max(1, Math.ceil((m.seconds_left || 0) / 60));
         showGateNote(`Keep going — about ${left} more minute${left === 1 ? '' : 's'} in this conversation.`);
+      } else if (m.type === 'encounter_clock') {
+        // The runner's own floor, wrap and stop, on every link type (a direct
+        // link has no run to read them from), and where its clock stands: the
+        // timer is lined up with it, so End unlocks when the server's floor
+        // opens and not the connect earlier that the Start press was.
+        applyTiming(m);
+        if (typeof m.elapsed_s === 'number' && started) {
+          timerStartMs = Date.now() - Math.max(0, m.elapsed_s) * 1000;
+          renderTimer();
+        }
+      } else if (m.type === 'move_on_open') {
+        // The server's floor has passed: the same notice as the page's own
+        // clock gives, once. The server's clock is the one that counts, so a
+        // page clock still short of the floor is moved up to it, and the ring
+        // and End open with the notice.
+        if (started && encounterElapsedS() < MIN_S) {
+          timerStartMs = Date.now() - MIN_S * 1000;
+          renderTimer();
+        }
+        noteMoveOn();
       } else if (m.type === 'wrap_up') {
-        $('gateLabel').textContent = 'Wrapping up';
+        noteWrap(m.seconds_left);
       } else if (m.type === 'encounter_complete') {
         const el = document.createElement('div');
         el.className = 'scene';
@@ -3405,6 +3466,10 @@
     // previous attempt's verdict, and one that fails again must earn its own.
     serverStatedFailure = false;
     sessionStartedAt = Date.now();
+    // The encounter clock's once-only marks are per conversation: a direct
+    // link's "Start conversation" again is a new one.
+    ceilingFired = false; moveOnNoted = false; wrapNoted = false;
+    $('gate').classList.remove('open');
     userTurns = 0;
     agentTurns = 0;
     lastUserFinal = { text: '', at: 0 };
@@ -3823,18 +3888,23 @@
     if (b.disabled) b.dataset.moving = '1';
   });
   $('stopBtn').addEventListener('click', () => {
+    // Every conversation runs at least MIN_S; the encounter is the
+    // measurement, and a 3-minute conversation has not exercised it. End is
+    // held until then on EVERY link type (#34: study, internal /test and
+    // direct researcher links; a direct link used to end at once, with no
+    // ring and no sign at 7:00) — the server would refuse a study advance
+    // anyway (409) — and the note says so, naming the control that is never
+    // held where there is one: "Stop and leave the study", which withdraws.
+    // The clock is the ring's, which the runner's encounter_clock lines up
+    // with its own floor.
+    const elapsed = encounterElapsedS();
+    if (started && elapsed < MIN_S) {
+      const left = Math.ceil((MIN_S - elapsed) / 60);
+      showGateNote(`This conversation runs about ${left} more minute${left === 1 ? '' : 's'} — the ring next to the timer fills when you can end it.` +
+        (runId ? ' If you want to stop taking part in the study, use “Stop and leave the study”.' : ''));
+      return;
+    }
     if (runId) {
-      // Study encounters run at least MIN_S; the encounter is the measurement,
-      // and a 3-minute conversation has not exercised it. End is held until
-      // then — the server would refuse the advance anyway (409) — and the note
-      // says so and names the control that is never held: "Stop and leave the
-      // study", which withdraws. Internal test runs skip the gate.
-      const elapsed = sessionStartedAt ? (Date.now() - sessionStartedAt) / 1000 : 0;
-      if (gateActive() && elapsed < MIN_S) {
-        const left = Math.ceil((MIN_S - elapsed) / 60);
-        showGateNote(`This conversation runs about ${left} more minute${left === 1 ? '' : 's'} — the ring next to the timer fills when you can end it. If you want to stop taking part in the study, use “Stop and leave the study”.`);
-        return;
-      }
       if (!confirm('Finish this conversation and move on?')) return;
       endSession();
       onEncounterComplete();

@@ -262,6 +262,14 @@ class RealtimeCapabilities:
     grant_via_text_prompt: bool = False
     # Whether a ROOM MEMBER on this route may be given tools at all.
     member_tools: bool = True
+    # How a held end_conversation call is answered (pipeline 2026-09-28a): the
+    # last interaction runs to the ceiling, so a call there is given a
+    # function_call_output (TOOL_CALL_CONTINUES) saying the conversation goes
+    # on. "request": the output, then a response.create once the reply that
+    # made the call is over, because this route answers an output only when
+    # asked. None: the call is left unanswered, as before, on a route where
+    # sending the output has not been measured.
+    tool_output: Optional[str] = None
     # Whether `response.created` on its own is proof the bridge started a reply.
     autofire_at_created: bool = False
     # Whether the session dict may carry a transcription language hint.
@@ -551,6 +559,12 @@ REALTIME_FAMILIES = {
         # ended the wait for a reply before response.created could arrive.
         grant_via_text_prompt=False,
         member_tools=True,
+        # A held end_conversation is answered with its function_call_output
+        # and then a response.create: the model says nothing after a call
+        # until it is asked (s_1790278762_09bcbb, S2A on 2026-09-24c: a call
+        # held 1.5 s before the floor, then 140 s with no event at all). See
+        # the runner's _answer_held_call.
+        tool_output="request",
         # The first audio delta can trail response.created by several seconds
         # here, and a commit + create sent in that gap is rejected. On this
         # route `created` is the signal.
@@ -836,6 +850,14 @@ def member_tools_allowed(model: str) -> bool:
     if caps is not None:
         return caps.member_tools
     return "native-audio" not in (model or "").lower()
+
+
+def tool_output_for(model: str) -> Optional[str]:
+    """How a held end_conversation call is answered on this route: "request"
+    or None (see RealtimeCapabilities.tool_output). An unknown model is
+    answered the way it always was, not at all."""
+    caps = capabilities_for(model)
+    return caps.tool_output if caps is not None else None
 
 
 def autofire_visible_at_created(model: str) -> bool:
@@ -1606,6 +1628,21 @@ SCENE_OPEN_PROMPT = setting(
     "REALTIME_SCENE_OPEN_PROMPT",
     "(The meeting is under way and everyone is looking at you. You have the "
     "floor - speak first, in character.)",
+)
+# The function_call_output a held end_conversation call is answered with
+# (pipeline 2026-09-28a): in the last interaction nothing ends the encounter
+# before the ceiling, so the character is told the conversation goes on and
+# not to call the tool again yet. Worded from the native-audio measurement
+# on fix/gemini-native 69e6fbb (an output alone made that model speak and
+# answer the next turns, 5/5), for a route that is then asked for the reply:
+# on gpt it follows the character's own last line, so it says to carry on
+# rather than to answer again. Never spoken; on the record in
+# tool_call_answered.
+TOOL_CALL_CONTINUES = setting(
+    "REALTIME_TOOL_CALL_CONTINUES",
+    "(Not ended: they are still here and the conversation goes on. Keep "
+    "talking with them, out loud and in character, picking up where you left "
+    "off. Do not call end_conversation again yet.)",
 )
 # How many times one encounter may rebuild a 1:1 gateway session that the
 # GATEWAY closed under it. A close we did not ask for used to end the encounter
@@ -3149,6 +3186,23 @@ class RealtimeVoiceSession:
         self._response_started_at = time.time()
         self._response_saw_output = False
         await self._send({"type": "response.create"})
+        return True
+
+    async def answer_tool_call(self, call_id: Optional[str], output: str) -> bool:
+        """Give the model the result of a function call it made: a
+        function_call_output item for `call_id`, and nothing else (as on
+        fix/gemini-native 69e6fbb). Whether a reply is then asked for is the
+        runner's decision (see tool_output_for), and on the gpt route it asks
+        only once the reply that made the call is over, since a
+        response.create during it is refused. False when there is no call id
+        or no socket to send it on."""
+        if not call_id or self.ws is None:
+            return False
+        await self._send({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": output},
+        })
         return True
 
     async def prompt_response(self, text: str) -> None:

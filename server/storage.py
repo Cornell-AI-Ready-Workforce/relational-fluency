@@ -581,21 +581,29 @@ class SessionStore:
 
 # ---------- The encounter clock ----------
 #
-# Study 1 asks for at least seven minutes per encounter and wraps it at twelve
-# (docs/study1-plan.md, E4). Three numbers, read here so the runner, the advance
-# route and the participant page (through runs.view) agree on them:
+# Study 1 asks for at least seven minutes per encounter (docs/study1-plan.md,
+# E4). The researchers' end policy of 2026-09-28 (issue #34): from 7:00 the
+# participant may move on whenever they are ready, and may keep talking until
+# 12:00; nothing ends an encounter automatically before 12:00. Three numbers,
+# read here so the runner, the advance route and the participant page
+# (through runs.view, and the runner's encounter_clock frame on every link
+# type) agree on them:
 #
-#   ENCOUNTER_MIN_SECONDS   the floor — nothing completes an encounter earlier,
-#                           except a withdrawal, which is never gated
-#   ENCOUNTER_WRAP_SECONDS  the actor is told to close the scene
-#   ENCOUNTER_MAX_SECONDS   the hard stop — the encounter completes regardless
+#   ENCOUNTER_MIN_SECONDS   the floor — the participant's End / move-on opens
+#                           here and nothing of theirs completes an encounter
+#                           earlier, except a withdrawal, which is never gated
+#   ENCOUNTER_WRAP_SECONDS  the warning — the page says the conversation is
+#                           about to end (a minute before the stop)
+#   ENCOUNTER_MAX_SECONDS   the stop — the encounter completes regardless, and
+#                           the only automatic end of the last interaction
 #
-# Measured from the moment the voice socket opens, which is when the page's
-# timer starts, so the number the participant watches is the number the server
-# enforces. Internal-cohort runs are exempt from the floor.
+# Measured from the moment the voice socket opens; the page aligns its timer
+# to it, so the number the participant watches is the number the server
+# enforces. Internal-cohort runs are exempt from the floor at /advance only.
+# The wrap was 12:00 and the stop 13:00 until 2026-09-28.
 ENCOUNTER_MIN_SECONDS_DEFAULT = 420.0
-ENCOUNTER_WRAP_SECONDS_DEFAULT = 720.0
-ENCOUNTER_MAX_SECONDS_DEFAULT = 780.0
+ENCOUNTER_WRAP_SECONDS_DEFAULT = 660.0
+ENCOUNTER_MAX_SECONDS_DEFAULT = 720.0
 
 
 def encounter_timing() -> Dict[str, float]:

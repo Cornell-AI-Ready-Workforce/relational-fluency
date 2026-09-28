@@ -479,28 +479,46 @@ The invented text came from the old pipeline: 16 kHz audio read as 24 kHz,
 whisper-1, and buffers of up to 44 s. Earlier live transcripts should be
 read with that in mind. The offline re-transcription is the analysis copy.
 
-## The seven-minute floor, and the thirteen-minute stop
+## The seven-minute floor, and the twelve-minute stop
 
-Every study encounter runs **at least 7:00** and **at most 13:00**, measured
-from the moment the voice socket opens (the page's timer). Three environment
-variables carry it — `ENCOUNTER_MIN_SECONDS` (420), `ENCOUNTER_WRAP_SECONDS`
-(720) and `ENCOUNTER_MAX_SECONDS` (780) — read by `storage.encounter_timing()`
-and served to the page on the run (`timing`), so the ring that fills next to
-the timer and the server's refusals agree to the second.
+Every encounter runs **at least 7:00** and **at most 12:00**, measured from the
+moment the voice socket opens. Three environment variables carry it —
+`ENCOUNTER_MIN_SECONDS` (420), `ENCOUNTER_WRAP_SECONDS` (660) and
+`ENCOUNTER_MAX_SECONDS` (720) — read by `storage.encounter_timing()`, served to
+the page on the run (`timing`) and again by the runner itself on every link
+type (the `encounter_clock` frame, which also lines the page's timer up with
+the server's clock), so the ring that fills next to the timer and the server's
+refusals agree to the second. The end policy is the researchers' of
+2026-09-28 (issue #34); before it the wrap was 12:00, the stop 13:00, and the
+last interaction ended by itself at the first turn past 7:00 once its beats
+were spent or the character had called `end_conversation`.
 
-- **Floor.** The runner will not complete an encounter before it: the actor's
-  `end_conversation`, the auto-advance after the last planted beat and the
-  participant's *move on* are all held (event `floor_held`, with the reason),
-  and `POST /api/run/{id}/advance` answers **409** if a page asks anyway. The
-  page's **End conversation** is locked until then and says why. Moving from
-  one interaction to the next inside an encounter is never held.
+- **Floor.** From 7:00 the participant may move on whenever they are ready:
+  **End conversation** unlocks, the ring is full, and a neutral notice says so
+  (the runner sends `move_on_open` and records it). Before it End is locked and
+  says why, the participant's *move on* is held (event `floor_held`), and
+  `POST /api/run/{id}/advance` answers **409** if a page asks anyway. The gate
+  holds on **every link type**: study runs, internal `/test` runs and direct
+  researcher links.
+- **Nothing ends it by itself before 12:00.** In the last interaction the
+  auto-advance after the last planted beat and the actor's `end_conversation`
+  are held until the stop (event `auto_end_held`, once per reason). A held
+  call is answered with a `function_call_output` saying the conversation goes
+  on and not to call the tool again yet (`REALTIME_TOOL_CALL_CONTINUES`); on
+  the gpt route the character is then asked to carry on
+  (`tool_call_answered`, `held_call_reply`), so a goodbye is not followed by
+  silence. Moving from one interaction to the next inside an encounter (S1's
+  hand-off, S2's i1 to i2, room interactions) is unchanged.
 - **Withdrawal is never gated.** *Stop and leave the study* works at any second;
   that is the consent promise, and it is a different control from End.
-- **Wrap and stop.** At 12:00 the runner records `ceiling_wrap` and tells the
-  page; at 13:00 it completes the encounter on the next turn (`ceiling_reached`),
-  and the page ends it on its own clock if the participant has gone quiet.
+- **Warning and stop.** At 11:00 the runner records `ceiling_wrap` and the page
+  shows that the conversation ends automatically in about a minute; at 12:00
+  the encounter completes (`ceiling_reached`), from the runner's own clock
+  (its watchdog tick, not only at a finished turn) and from the page's,
+  whichever comes first.
 - **Internal runs** (`cohort=internal`, the `/test` door) are exempt from the
-  floor so the team can walk the study quickly. The ceiling still applies.
+  409 at `/advance`, but the page holds End until 7:00 for them too. Lower
+  `ENCOUNTER_MIN_SECONDS` on a test deployment to walk the study quickly.
 
 ## The base URL also forwards participants (second route in)
 
