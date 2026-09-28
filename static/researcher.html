@@ -495,6 +495,22 @@
     return c ? `[${c.toUpperCase()}] ` : '[NO COHORT] ';
   }
 
+  /* The skill and the parallel form, after the title.
+
+     The server's title used to carry them ("Planning an internal rollout
+     (teamwork, var. A)"), and that same string was the participant's page
+     header, so every participant was told what was being measured and which
+     form they had drawn (issue #38). The title is the participant's now; this
+     console reads `skill` and `variant`, which the routes serve it as fields of
+     their own, and prints them where the title used to. Empty for a row that
+     carries neither (a legacy scenario, or a session whose scenario is gone). */
+  function researchTag(s) {
+    const skill = String((s && s.skill) || '').replace(/_/g, ' ');
+    const variant = String((s && s.variant) || '');
+    if (!skill && !variant) return '';
+    return ` (${[skill, variant ? `var. ${variant}` : ''].filter(Boolean).join(', ')})`;
+  }
+
   let sessionsSig = null;
   // Auto-open the single active session only once, on first load. Without this,
   // the 3s poll would re-open it every few seconds and yank the researcher off
@@ -528,7 +544,7 @@
       active.forEach(s => {
         const opt = document.createElement('option');
         opt.value = s.id;
-        opt.textContent = `${cohortTag(s)}${s.title} · ${s.turn_count} turns · ${s.id}`;
+        opt.textContent = `${cohortTag(s)}${s.title}${researchTag(s)} · ${s.turn_count} turns · ${s.id}`;
         grp.appendChild(opt);
       });
       picker.appendChild(grp);
@@ -541,7 +557,7 @@
         opt.className = 'closed';
         const dur = s.duration_s ? ` · ${s.duration_s}s` : '';
         // In the text, not only in CSS: see .picker option.closed.
-        opt.textContent = `${cohortTag(s)}${s.title} · closed · ${s.turn_count} turns${dur} · ${s.id}`;
+        opt.textContent = `${cohortTag(s)}${s.title}${researchTag(s)} · closed · ${s.turn_count} turns${dur} · ${s.id}`;
         grp.appendChild(opt);
       });
       picker.appendChild(grp);
@@ -745,7 +761,7 @@
       const list = await r.json();
       if (!Array.isArray(list)) throw new Error('malformed scenario list');
       $('launchScenario').innerHTML = list.map(s =>
-        `<option value="${esc(s.id)}">${esc(s.title)} · ${s.mode === 'group' ? 'group' : '1:1'}</option>`).join('');
+        `<option value="${esc(s.id)}">${esc(s.title + researchTag(s))} · ${s.mode === 'group' ? 'group' : '1:1'}</option>`).join('');
       if (list.length) await loadLaunchScenario(list[0].id);
     } catch (e) {
       $('launchStatus').textContent = 'Could not load scenarios. Reload the page or check the session key.';
@@ -774,9 +790,14 @@
     launchAgentSel = launchDetail.cast[0]?.id || null;
     const lm = $('launchModel');
     const opts = LAUNCH_MODEL_OPTIONS.slice();
-    if (launchDetail.model && !opts.find(o => o[0] === launchDetail.model)) opts.unshift([launchDetail.model, launchDetail.model]);
+    // The picker sets ?model=, which overrides the TEXT model (director and
+    // steering); the characters' voices are the realtime model and do not
+    // move with it. `text_model` names that directly (issue #46); `model` is
+    // the older name for the same value, read when a server predates the split.
+    const textModel = launchDetail.text_model || launchDetail.model;
+    if (textModel && !opts.find(o => o[0] === textModel)) opts.unshift([textModel, textModel]);
     lm.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
-    if (launchDetail.model) lm.value = launchDetail.model;
+    if (textModel) lm.value = textModel;
     const isGroup = launchDetail.cast.length > 1;
     $('launchAgentRow').style.display = isGroup ? 'flex' : 'none';
     if (isGroup) {

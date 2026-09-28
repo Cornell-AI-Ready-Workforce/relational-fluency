@@ -754,7 +754,14 @@ def compile_scenario(scenario_id: str, participant_key: str = "") -> Scenario:
 
     scenario = Scenario(
         id=spec["id"],
-        title=f"{spec['title']} ({spec['construct'].replace('_', ' ')}, var. {spec['variant']})",
+        # The spec's own title and nothing else (issue #38). This string is
+        # what the participant reads: the page header, the situation card and
+        # the voice socket's `session` frame all show it. It used to carry
+        # "(teamwork, var. A)", which told every participant the skill being
+        # measured and which parallel form they had drawn, on a study that
+        # keeps its raters blind to both. The researcher pages that need them
+        # read `skill` and `variant`, which are fields of their own.
+        title=spec["title"],
         # intro is the participant's own brief, so it keeps the spec's
         # second-person setup. scene is what AgentEngine prepends to every
         # actor's system prompt, so it gets the third-person, asset-free
