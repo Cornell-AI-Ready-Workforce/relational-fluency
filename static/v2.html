@@ -126,8 +126,6 @@
   .turn-state.you { color: var(--fg); font-weight: 600; }
   .turn-state.agent::before { background: #4a7bd0; animation: pulse 1.2s infinite; }
   .turn-state.listen::before { background: #3a9a5c; }
-  .turn-state.cue { color: var(--fg); font-weight: 600; border-color: var(--accent); }
-  .turn-state.cue::before { background: var(--accent); }
   /* Minimum-duration progress: the timer's dot becomes a ring that fills at 7:00. */
   .gate { display: none; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
   .gate.show { display: inline-flex; }
@@ -1038,6 +1036,10 @@
   const AUDIO_DRAIN_MAX_S = 45;
   let cast = [];
   let activeSpeaker = null;
+  // The turn cue's state (see renderTurnCue): the server said the floor is
+  // open; the participant has started speaking; who each speaker is.
+  let cueOpen = false, cueListening = false;
+  const cueNames = {};   // agent_id -> name, from assistant_started
   let assistantSpeaking = false;
   let currentTurn = null;  // the agent turn currently receiving text/audio (or null)
   let userFinals = [];     // committed final STT segments for the current utterance
@@ -1487,6 +1489,11 @@
       const next = $(`tile-${speakerId === 'user' ? 'self' : speakerId}`);
       if (next) next.classList.add('speaking');
     }
+    // The turn cue follows the audio: a line now playing is the character's
+    // turn, whatever came before it; one that has stopped hands back to
+    // whatever the page last knew (see renderTurnCue).
+    if (speakerId && speakerId !== 'user') { cueListening = false; cueOpen = false; }
+    renderTurnCue();
   }
 
   // ---------- speech sync: reveal captions + speaking-ring in time with audio ----------
@@ -1671,18 +1678,42 @@
   // ---------- turn state ----------
   // First-time voice users mostly stall on one question: is it my turn? The
   // pill in the header answers it continuously.
-  let turnStateTimer = null;
   function setTurnState(text, cls) {
     const el = $('turnState');
     if (!el) return;
-    if (turnStateTimer) { clearTimeout(turnStateTimer); turnStateTimer = null; }
     if (!text) { el.className = 'turn-state'; el.textContent = ''; return; }
     el.className = 'turn-state show ' + (cls || '');
     el.textContent = text;
   }
-  function setTurnStateThen(text, cls, nextText, nextCls, ms) {
-    setTurnState(text, cls);
-    turnStateTimer = setTimeout(() => setTurnState(nextText, nextCls), ms);
+
+  // THE TURN CUE (issue #49; the researchers' decision of 2026-09-28). One
+  // neutral cue, the same wording and behaviour in 1:1 and in the S3/S4
+  // rooms:
+  //   "<Name> is speaking"  while that character's audio is PLAYING (the
+  //                         audio clock, setActiveSpeaker), not from when
+  //                         their reply started generating;
+  //   "Listening…"          once the participant starts speaking
+  //                         (speech_started), until a line plays or the
+  //                         floor opens again;
+  //   "You can speak now"   when the server says so (turn_open): the last
+  //                         queued line has finished playing on this page
+  //                         and nothing else is queued or being generated.
+  // Between those the pill keeps what it said. It used to say "Your turn" at
+  // generation end, which was 7-17 s before the character stopped talking
+  // in e80fca, and switch to "Listening…" 4 s later on a timer; and a room
+  // said "You speak first" although its lead opens every scene.
+  function speakerName(id) {
+    return cueNames[id] || (cast.find(a => a.id === id) || {}).name || 'Your partner';
+  }
+  function renderTurnCue() {
+    if (!started) return;
+    if (activeSpeaker && activeSpeaker !== 'user') {
+      setTurnState(`${speakerName(activeSpeaker)} is speaking`, 'agent');
+    } else if (cueListening) {
+      setTurnState('Listening…', 'listen');
+    } else if (cueOpen) {
+      setTurnState('You can speak now', 'you');
+    }
   }
   function startTimer() {
     timerStartMs = Date.now();
@@ -3157,17 +3188,22 @@
           if (participantId) qs.set('participant_id', participantId);
           history.replaceState({}, '', '?' + qs);
         } catch {}
-        // The participant opens every scene: nobody speaks until they do.
-        // Say so, in the header and in the transcript, or they wait in
-        // silence for a character to start.
-        setTurnState("You're in the room. Say hello to get started.", 'cue');
-        const cue = document.createElement('div');
-        cue.className = 'scene';
-        cue.id = 'openingCue';
-        cue.textContent = 'You speak first. Say hello to get started, then talk as you would at work.';
-        $('transcript').appendChild(cue);
+        // In a 1:1 scene the participant opens: nobody speaks until they do,
+        // so the transcript says so, or they wait in silence for a character
+        // to start. The header pill says "You can speak now" when the server
+        // sends turn_open (the turn cue, #49). Not in a room: its lead opens
+        // every group scene (_open_group_scene), and "You speak first" there
+        // had a participant's hello cancel the opener (e80fca).
+        if (sessionMode !== 'group') {
+          const cue = document.createElement('div');
+          cue.className = 'scene';
+          cue.id = 'openingCue';
+          cue.textContent = 'You speak first. Say hello to get started, then talk as you would at work.';
+          $('transcript').appendChild(cue);
+        }
       } else if (m.type === 'speech_started') {
-        setTurnState("You're speaking", 'you');
+        cueListening = true; cueOpen = false;
+        renderTurnCue();
         const cue = $('openingCue');
         if (cue) cue.remove();
       } else if (m.type === 'user_transcript') {
@@ -3198,7 +3234,6 @@
           // commits each of these as its own turn; the page now shows them as
           // the server heard them.
           finalizeUserCaption();
-          setTurnState('Listening…', 'listen');
           userTurns++;
         }
         else { renderUserCaption(m.text); }
@@ -3206,7 +3241,10 @@
         finalizeUserCaption();
         agentTurns++;
         assistantSpeaking = true;
-        setTurnState(`${m.agent_name || 'Your partner'} is speaking`, 'agent');
+        // A line is on its way, so the floor is not open; the pill names the
+        // speaker when their audio starts (setActiveSpeaker), not now.
+        cueOpen = false;
+        if (m.agent_id && m.agent_name) cueNames[m.agent_id] = m.agent_name;
         // The mic stays open in EVERY mode, group and 1:1 alike, so the
         // participant can interject exactly as they could in a real room; the
         // server stops the current speaker when it hears them.
@@ -3281,8 +3319,8 @@
         }
         currentTurn = null;
         // The speaking state clears when the last audio chunk finishes
-        // (playPcmChunk.onended); capture itself never stopped.
-        setTurnStateThen('Your turn', 'you', 'Listening…', 'listen', 4000);
+        // (playPcmChunk.onended); capture itself never stopped. The pill is
+        // not told anything here: generation ending is not the line ending.
       } else if (m.type === 'segment_start') {
         // A new interaction: say plainly who the participant is now with, and
         // grey out anyone not in the room for this beat.
@@ -3355,13 +3393,18 @@
         // we already buffered so the character does not keep talking over the
         // participant, clear the speaking ring, and say whose turn it is.
         stopScheduledAudio();
-        setTurnState("You're speaking", 'you');
+        cueListening = true; cueOpen = false;
+        renderTurnCue();
       } else if (m.type === 'silence') {
         finalizeUserCaption();
         assistantSpeaking = false;
         setMicMuted(false);
         setActiveSpeaker(null);
-        setTurnState('Your turn', 'you');
+      } else if (m.type === 'turn_open') {
+        // The server's half of the turn cue: nothing is queued or being
+        // generated, and the last line has finished playing here.
+        cueOpen = true; cueListening = false;
+        renderTurnCue();
       } else if (m.type === 'voice_notice') {
         // A fault the encounter survived, from the runner: a gateway stall it
         // is retrying, a reply cut off, or — kind 'reconnected' — a session
@@ -3397,7 +3440,7 @@
           finalizeUserCaption();
           assistantSpeaking = false;
           setActiveSpeaker(null);
-          setTurnState('Your turn', 'you');
+          // The rebuilt session is quiet; the server's turn_open says so.
         }
       } else if (m.type === 'error') {
         // Not a turn: this is the runner reporting a segment boundary it
@@ -3474,6 +3517,7 @@
     agentTurns = 0;
     lastUserFinal = { text: '', at: 0 };
     setTurnState('Connecting…', '');
+    cueOpen = false; cueListening = false;
     $('dropNote').classList.remove('show');
     speechQueue = [];
     if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }

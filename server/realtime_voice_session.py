@@ -955,6 +955,17 @@ class RealtimeVoiceSessionRunner:
         self._move_on_noted = False
         self._held_call_reply_at = 0.0
         self._held_call_tasks: set = set()
+        # THE TURN CUE (issue #49; see _maybe_turn_open). Whether turn_open has
+        # gone to the page since the last line started or the participant last
+        # began to speak; every character turn the page was told of and has
+        # not yet said it finished playing ({seq: {agent_id, audio, done,
+        # at}}), keyed by the turn number its playback acks name; the turn
+        # the page is filling now; and whether a participant turn is being
+        # closed (_on_turn_ended: briefed and committed, not yet answered).
+        self._cue_open = False
+        self._cue_turns: dict = {}
+        self._cue_seq: Optional[int] = None
+        self._participant_turn_closing = False
         self._switching = False
         # True for the whole of _enter, i.e. while the sessions behind self.rt
         # are being torn down and rebuilt. _model_to_client must not pump
@@ -4495,6 +4506,9 @@ class RealtimeVoiceSessionRunner:
                 # room before one of them starts talking. Spawned so the relay
                 # tasks below start immediately.
                 self._spawn_group_turn(self._open_group_scene())
+            # A 1:1 participant opens the scene, so the cue says they can
+            # speak now; a room's opener, just spawned, holds it back.
+            await self._maybe_turn_open()
             # Record what served this encounter, the audit trail has to say
             # which gateway and which models produced the data.
             # The roster this encounter's voices were chosen from, on the
@@ -4591,6 +4605,16 @@ class RealtimeVoiceSessionRunner:
                 raise asyncio.CancelledError
 
     async def _on_turn_ended(self) -> None:
+        """_end_participant_turn, marked for the turn cue: while a 1:1 turn
+        is being briefed and committed nothing is generating yet, and the
+        participant must not be told they can speak in that gap (issue #49)."""
+        self._participant_turn_closing = True
+        try:
+            await self._end_participant_turn()
+        finally:
+            self._participant_turn_closing = False
+
+    async def _end_participant_turn(self) -> None:
         """The participant's turn is over: route a room, or brief and commit a
         1:1 reply. This is the block that used to sit under `turn_ended` in
         _client_to_model, unchanged; what changed is WHEN it runs on the family
@@ -5677,6 +5701,13 @@ class RealtimeVoiceSessionRunner:
             # The page saying a turn's first chunk started playing, or its
             # scheduled audio ended (static/v2.html; server/turn_timing.py).
             _timer(self).ack(msg)
+            if msg.get("phase") == "end":
+                # The real end of that line's audio, which is what the turn
+                # cue waits for (issue #49).
+                turn = msg.get("turn")
+                if isinstance(turn, int) and not isinstance(turn, bool):
+                    self._cue_turns.pop(turn, None)
+                await self._maybe_turn_open()
             return
         if msg.get("type") == "client_audio_settings":
             self._record_client_audio(msg)
@@ -6814,6 +6845,10 @@ class RealtimeVoiceSessionRunner:
             # encounter completes.
             if await self._encounter_clock_tick():
                 return
+            # The turn cue's backstop (issue #49): an opening no frame marked,
+            # such as a room turn that released the floor after its last line
+            # had already played, or a page that never acked a play_end.
+            await self._maybe_turn_open()
             if self._closed or self._speaking or self.vad.speaking:
                 continue
             if await self._proactive_handoff():
@@ -8743,6 +8778,116 @@ class RealtimeVoiceSessionRunner:
         tee._rf_encounter_tee = True
         store.event = tee
 
+    # ── the turn cue (issue #49) ───────────────────────────────────────────
+    # The researchers' decision of 2026-09-28: one neutral cue, the same in
+    # 1:1 and in the S3/S4 rooms. "<Name> is speaking" while a character's
+    # audio plays, "You can speak now" once the last queued line has FINISHED
+    # PLAYING and nothing else is queued or being generated, "Listening..."
+    # while the participant speaks. The page draws the first and last from
+    # its own audio clock and speech_started; this is the middle one, the
+    # only one it cannot know alone. Before it the page said "Your turn" at
+    # generation end, 7-17 s before the character stopped in e80fca and more
+    # than 1 s early on 24 of 28 turns in 77ee7e. Room pacing is untouched:
+    # this says when the floor is open, it does not open it.
+
+    # How long past the server's own model of the end of playback
+    # (_play_cursor) the page's play_end ack is waited for before the line is
+    # taken as played: the ack is the real end (outputLatency, the page's
+    # scheduling), and a page that never sends one must not hold the cue
+    # shut for ever.
+    CUE_ACK_GRACE_S = 2.0
+    # A line the page was told of and never told the end of (no
+    # assistant_done) stops counting as "being generated" after this long.
+    CUE_STALE_S = 60.0
+
+    def _cue_track(self, kind: str, payload: dict, seq: Optional[int]) -> None:
+        """Keep the cue's picture of the page's lines, from the frames that
+        open and close them (called by _send)."""
+        turns = getattr(self, "_cue_turns", None)
+        if turns is None:
+            return
+        now = time.time()
+        if kind == "speech_started":
+            self._cue_open = False
+            return
+        if kind == "assistant_started":
+            self._cue_open = False
+            # An older line that never sent audio and was never closed is not
+            # coming back (the page's currentTurn has moved on too).
+            for old in [s for s, t in turns.items() if not t["audio"]]:
+                turns.pop(old, None)
+            if seq is not None:
+                turns[seq] = {"agent_id": payload.get("agent_id"), "audio": False,
+                              "done": False, "at": now}
+            self._cue_seq = seq
+            return
+        cur = getattr(self, "_cue_seq", None)
+        agent_id = payload.get("agent_id")
+        for s, t in list(turns.items()):
+            if s == cur or (kind == "assistant_done" and agent_id
+                            and t["agent_id"] == agent_id):
+                t["done"] = True
+                if not t["audio"]:
+                    turns.pop(s, None)      # nothing to play out
+        self._cue_seq = None
+
+    def _turn_cue_blocker(self) -> Optional[str]:
+        """Why the participant is not (yet) told they can speak, or None."""
+        if getattr(self, "_closed", True):
+            return "closed"
+        vad = getattr(self, "vad", None)
+        if (getattr(vad, "speaking", False)
+                or getattr(self, "_turn_end_pending_ms", None) is not None
+                or getattr(self, "_participant_turn_closing", False)):
+            return "participant"
+        if getattr(self, "_advancing", False) or getattr(self, "_transitioning", False):
+            return "transition"
+        now = time.time()
+        cursor = getattr(self, "_play_cursor", 0.0) or 0.0
+        if now < cursor:
+            return "playing"
+        for t in (getattr(self, "_cue_turns", None) or {}).values():
+            if not t["done"] and now - t["at"] < self.CUE_STALE_S:
+                return "generating"
+            if t["done"] and t["audio"] and now < cursor + self.CUE_ACK_GRACE_S:
+                return "playing"
+        if getattr(self, "_held_call_tasks", None):
+            return "generating"
+        if self.is_group() or getattr(self, "room", None) is not None:
+            room = getattr(self, "room", None)
+            if (self._floor.locked() or getattr(self, "_group_turn_tasks", None)
+                    or getattr(self, "_group_turn_waiting", False)):
+                return "generating"
+            if room is not None:
+                if room.speaking is not None:
+                    return "generating"
+                if any(getattr(m, "responding", False)
+                       for m in list(room.sessions.values())):
+                    return "generating"
+            return None
+        rt = getattr(self, "rt", None)
+        if (getattr(self, "_speaking", False) or getattr(rt, "responding", False)
+                or getattr(rt, "autofire_active", False)):
+            return "generating"
+        return None
+
+    async def _maybe_turn_open(self) -> None:
+        """Tell the page the participant can speak now, once per opening:
+        after the last line's play_end, at a line that played nothing, on
+        the watchdog's tick, and as the encounter opens. Written as
+        turn_open, so the cue can be read against turn_timing."""
+        try:
+            if getattr(self, "_cue_open", True) or self._turn_cue_blocker() is not None:
+                return
+        except Exception:  # noqa: BLE001 - a cue must never break a turn
+            return
+        self._cue_open = True
+        self.session.store.event(
+            "turn_open", segment=getattr(self, "segment", None),
+            interaction=self._interaction_id(),
+        )
+        await self._send({"type": "turn_open"})
+
     # ── transport helpers ──────────────────────────────────────────────────
     async def _send(self, payload: dict) -> None:
         # The turn clock watches the three frames the page opens and closes
@@ -8751,6 +8896,7 @@ class RealtimeVoiceSessionRunner:
         # page's playback acks name. A copy, so a caller's dict is not edited.
         kind = payload.get("type") if isinstance(payload, dict) else None
         timing = getattr(self, "_timing", None)
+        seq = None
         if timing is not None and kind in ("assistant_started", "assistant_done",
                                            "assistant_interrupted"):
             if kind == "assistant_started":
@@ -8761,10 +8907,17 @@ class RealtimeVoiceSessionRunner:
                 timing.done(payload.get("agent_id"))
             else:
                 timing.interrupted()
+        if kind in ("assistant_started", "assistant_done", "assistant_interrupted",
+                    "speech_started"):
+            self._cue_track(kind, payload, seq)
         try:
             await self.ws.send_json(payload)
         except Exception:  # noqa: BLE001, client vanished
             self._closed = True
+            return
+        if kind in ("assistant_done", "assistant_interrupted"):
+            # A line that sent the page no audio has nothing to wait for.
+            await self._maybe_turn_open()
 
     def _first_gateway_audio_at(self, agent_id: Optional[str]) -> Optional[float]:
         """When the bridge serving `agent_id` saw its latest reply's first
@@ -8783,6 +8936,12 @@ class RealtimeVoiceSessionRunner:
         except Exception:  # noqa: BLE001
             self._closed = True
             return
+        # The page's current turn now has audio to play out (the turn cue
+        # waits for its play_end; see _turn_cue_blocker).
+        cue = getattr(self, "_cue_turns", None)
+        seq = getattr(self, "_cue_seq", None)
+        if cue is not None and seq in cue:
+            cue[seq]["audio"] = True
         # The first chunk of the page's current turn: turn_timing's
         # first_audio_to_client, and the bridge's own first-delta time beside
         # it. Guarded whole, because this runs on the participant's audio path.
