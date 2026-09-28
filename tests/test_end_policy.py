@@ -437,3 +437,12 @@ def test_the_page_defaults_are_the_new_numbers():
     assert "let MIN_S = 7 * 60, WRAP_S = 11 * 60, MAX_S = 12 * 60;" in src
     gate = src[src.index("function renderGate(s)"):src.index("let gateNoteTimer")]
     assert "gateActive()" not in gate, "the 7:00 gate is back to study links only"
+
+
+def test_the_versions_move():
+    from server import llm
+    assert llm.PIPELINE_VERSION >= "2026-09-28a"
+    assert llm.ROOM_PACING_VERSION >= "2026-09-28a"
+    prov = llm.provenance("gpt-realtime-2.1")
+    assert prov["pipeline_version"] == llm.PIPELINE_VERSION
+    assert prov["room_pacing_version"] == llm.ROOM_PACING_VERSION

@@ -479,6 +479,31 @@ The invented text came from the old pipeline: 16 kHz audio read as 24 kHz,
 whisper-1, and buffers of up to 44 s. Earlier live transcripts should be
 read with that in mind. The offline re-transcription is the analysis copy.
 
+## What changed on 2026-09-28 (pipeline_version 2026-09-28a, room_pacing_version 2026-09-28a)
+
+The researchers' decisions of 2026-09-28 on the end of an encounter (#34) and
+the turn cue (#49), with two issue #21 follow-ups and one room latency fix
+(#25). The end policy is described in full in the next section.
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 28a | End policy: from 7:00 the participant may move on (End unlocks on every link type, with a notice; `move_on_open`); nothing ends the encounter by itself before 12:00. In the last interaction the auto-advance and the actor's `end_conversation` are held (`auto_end_held`); a held call is answered with a `function_call_output` (`tool_call_answered`), and on gpt the 1:1 character is asked to carry on (`held_call_reply`). The warning is at 11:00 and the stop at 12:00, on the runner's own clock as well as at a finished turn. | `ENCOUNTER_MIN_SECONDS` (420), `ENCOUNTER_WRAP_SECONDS` (660), `ENCOUNTER_MAX_SECONDS` (720); `REALTIME_TOOL_CALL_CONTINUES` (the output's wording) |
+| 28a | Turn cue: the header pill says "<Name> is speaking" while that character's audio plays, "Listening…" once the participant starts speaking, and "You can speak now" when the runner sends `turn_open` (the page has acked the end of the last line's audio and nothing is queued or being generated), in 1:1 and in rooms alike. "Your turn" at generation end, its 4-second switch and "You speak first" in rooms are gone. Each `turn_open` is an event, to read against `turn_timing`. | none |
+| 28a | A participant transcript made only of sound tags ("(laughter)", "[background noise]", "[Music]", "(inaudible)") is `user_turn_suppressed{no_speech}` with `annotation_only: true`, at any voiced level; in a room the turn is skipped. A word outside the tags keeps the line ("Yeah (laughs)"). | `PARTICIPANT_DROP_ANNOTATIONS` (1; 0 restores `24c`) |
+| 28a | 1:1: a `no_speech` suppression withdraws the reply its commit started, as the rate gate does (`suppressed_turn_reply_cancelled` / `reply_to_suppressed_turn` with reason `no_speech`), and gives back the beat that commit fired. | follows the no_speech rules |
+| room 28a | The post-turn steering review runs after the room's floor is released, as a tracked task, one review at a time; the next routed turn no longer waits for it (0.8-1.2 s on `24c`). `knob_set` rows are unchanged (`delivered: false`); a shift may reach a member one brief later than before. A review that raises is `voice_error` with `where: room_steer`. | none |
+
+Caveats for analysis:
+
+- Before `28a` the last interaction could end at the first finished turn past
+  7:00 (`interaction_complete` just after 420 s, with no participant
+  move-on); from `28a` a last interaction ends by the participant's move-on
+  or `ceiling_reached` at 12:00. Encounter durations from the two sides of
+  `28a` are not comparable.
+- A held gpt call's reply (`held_call_reply` requested) is a character line
+  that follows the character's own previous line with no participant turn
+  between them.
+
 ## The seven-minute floor, and the twelve-minute stop
 
 Every encounter runs **at least 7:00** and **at most 12:00**, measured from the
