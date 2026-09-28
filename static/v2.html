@@ -1172,9 +1172,19 @@
     // /start hands this page its participant record id, and a study arrival
     // never comes through here without one. A page opened WITHOUT one — the
     // researcher's single-scenario links, a keyless development box — mints a
-    // record now, because the voice socket refuses to open with no record at
-    // all (server/app.py, _participant_may_capture). Consent itself is taken
+    // record, because the voice socket refuses to open with no record at all
+    // (server/app.py, _participant_may_capture). Consent itself is taken
     // outside this platform (2026-09-17): there is no form and no tick here.
+    //
+    // Once, not once per load (issue #39). The id this minted was never kept,
+    // and the boot sequence minted before the participant had read anything,
+    // so every load and every refresh of /v2?scenario=... made a new record —
+    // one person who reloaded became two participants with no consent and no
+    // conversation behind either, and could be given a different assigned
+    // name, which is hashed from this id. The boot sequence now calls this
+    // after the fictional-scenario acknowledgement, and the minted id goes
+    // into the address bar (rememberParticipant), where a refresh reads it
+    // back as `participantId` and skips this entirely.
     if (participantId) return true;
     if (participantGate) return participantGate;
     participantGate = (async () => {
@@ -1185,6 +1195,7 @@
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         participantId = (await r.json()).participant_id || null;
         if (!participantId) throw new Error('no participant id in the reply');
+        rememberParticipant();
         return true;
       } catch (e) {
         showBlockingError(
@@ -1195,6 +1206,19 @@
       }
     })();
     return participantGate;
+  }
+
+  // Put the minted record in the address bar, beside whatever else is there
+  // (the scenario, a researcher key, a launch), so a refresh reuses it. The
+  // same parameter /start hands a study arrival, and the one the `session`
+  // frame writes back; a browser that refuses replaceState only costs a
+  // second record on refresh, which is what every refresh cost before.
+  function rememberParticipant() {
+    try {
+      const qs = new URLSearchParams(location.search);
+      qs.set('participant_id', participantId);
+      history.replaceState(history.state, '', '?' + qs);
+    } catch (e) { /* see above */ }
   }
 
   // Reflow a hard-wrapped block-scalar string: join single line breaks within a
@@ -4408,10 +4432,6 @@
     // parallel with the overlays below (issue #44). Nothing waits on it; a
     // failure here is loadBrief's to report.
     fetchBrief().then(showTitle, () => {});
-    // Create the participant before the brief loads. The assigned name is
-    // derived from the participant key, so fetching the brief first would show
-    // one name on screen while the agents used another.
-    await ensureParticipant();
     if (needsFictionAck()) {
       $('fictionOverlay').style.display = 'flex';
       await new Promise(resolve => {
@@ -4422,6 +4442,14 @@
         }, { once: true });
       });
     }
+    // Create the participant once they have acknowledged the notice (issue
+    // #39) — opening the link, or refreshing it on that first screen, records
+    // nobody — and before the brief loads: the assigned name is derived from
+    // the participant key, so fetching the brief first would show one name on
+    // screen while the agents used another. A record that cannot be made has
+    // already put up its own card with a reload, and nothing below can run
+    // without one.
+    if (!(await ensureParticipant())) return;
     if (needsAudioCheck()) await runAudioCheck();
     await loadBrief();
   })();

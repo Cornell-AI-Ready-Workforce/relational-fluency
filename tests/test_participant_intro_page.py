@@ -428,3 +428,60 @@ def test_the_header_placeholder_is_neutral():
     src = V2.read_text(encoding="utf-8")
     placeholder = re.search(r'<span id="title">([^<]*)</span>', src).group(1)
     assert placeholder and "Loading" not in placeholder and "…" not in placeholder, placeholder
+
+
+# =========================================================================== #
+# #39. Opening a direct link made a participant record; refreshing made another.
+#
+# MEASURED on production: p_1790365076_2bb22c and p_1790365355_5567bf, one
+# person, no run, no session, no acknowledgement of anything. The boot sequence
+# minted before the fiction notice and never kept the id. Now nothing is minted
+# until the notice is acknowledged, and the minted id goes into the address bar,
+# so the refresh that used to make a second person reuses the first.
+# =========================================================================== #
+
+ONE_RECORD = RUN_VIEW + r"""
+  const store = memoryStorage();   // one tab: a refresh keeps its sessionStorage
+
+  // Open the link, and refresh it while the notice is still up.
+  const first = boot('?scenario=S4A&key=k7', studyRoutes, { sessionStorage: store });
+  await first.clock.advance(50);
+  assert(shown(first, 'fictionOverlay'));
+  assert.strictEqual(posts(first, '/api/participant').length, 0,
+    'a participant record was made before the notice was acknowledged');
+  const second = boot(first.loc.search, studyRoutes, { sessionStorage: store });
+  await second.clock.advance(50);
+  assert.strictEqual(posts(second, '/api/participant').length, 0, 'the refresh made a record');
+
+  // Acknowledge: now, and only now, one record — kept in the address bar.
+  second.dom.$('fictionAck').click();
+  await second.clock.advance(50);
+  assert.strictEqual(posts(second, '/api/participant').length, 1);
+  const url = new URLSearchParams(second.loc.search);
+  assert.strictEqual(url.get('participant_id'), 'p_minted_1',
+    'the minted id is not in the address bar: ' + second.loc.search);
+  assert.strictEqual(url.get('scenario'), 'S4A', 'the scenario fell out of the address bar');
+  assert.strictEqual(url.get('key'), 'k7', 'the key fell out of the address bar');
+  assert(shown(second, 'audioCheckOverlay'));
+
+  // Refresh on the audio check. The same person comes back as the same person.
+  const third = boot(second.loc.search, studyRoutes, { sessionStorage: store });
+  await third.clock.advance(50);
+  assert.strictEqual(posts(third, '/api/participant').length, 0,
+    'a refresh POSTed /api/participant again, so one person is now two records');
+  assert(!shown(third, 'fictionOverlay'), 'the acknowledged notice came back');
+  assert(shown(third, 'audioCheckOverlay'));
+  third.dom.$('audioCheckSkip').click();
+  await third.clock.advance(50);
+  const brief = gets(third, '/api/scenarios/S4A').pop();
+  assert(/participant_id=p_minted_1/.test(brief.url),
+    'the brief after a refresh is for a different participant: ' + brief.url);
+  assert(shown(third, 'situationOverlay'));
+
+  // And the room itself opens on that record.
+  assert.strictEqual(third.set('participantId'), 'p_minted_1');
+"""
+
+
+def test_a_refresh_reuses_the_participant_record_it_already_made(tmp_path):
+    _run(tmp_path, ONE_RECORD, "ONE RECORD OK")
