@@ -110,6 +110,11 @@ def _container_definition() -> str:
 
 
 def _list_in(body: str, key: str) -> str:
+    # `secrets = concat([...], cond ? [...] : [])` is read whole, so an entry
+    # added only under a condition (SURVEY_COMPLETION_CODE) is still checked.
+    m = re.search(rf"\b{key} = concat\(", body)
+    if m:
+        return _block_at(body, m.end() - 1, "(", ")")
     return _block_at(body, body.index(f"{key} = ["), "[", "]")
 
 
