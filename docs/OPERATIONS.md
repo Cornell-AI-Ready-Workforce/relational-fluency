@@ -479,28 +479,71 @@ The invented text came from the old pipeline: 16 kHz audio read as 24 kHz,
 whisper-1, and buffers of up to 44 s. Earlier live transcripts should be
 read with that in mind. The offline re-transcription is the analysis copy.
 
-## The seven-minute floor, and the thirteen-minute stop
+## What changed on 2026-09-28 (pipeline_version 2026-09-28a, room_pacing_version 2026-09-28a)
 
-Every study encounter runs **at least 7:00** and **at most 13:00**, measured
-from the moment the voice socket opens (the page's timer). Three environment
-variables carry it — `ENCOUNTER_MIN_SECONDS` (420), `ENCOUNTER_WRAP_SECONDS`
-(720) and `ENCOUNTER_MAX_SECONDS` (780) — read by `storage.encounter_timing()`
-and served to the page on the run (`timing`), so the ring that fills next to
-the timer and the server's refusals agree to the second.
+The researchers' decisions of 2026-09-28 on the end of an encounter (#34) and
+the turn cue (#49), with two issue #21 follow-ups and one room latency fix
+(#25). The end policy is described in full in the next section.
 
-- **Floor.** The runner will not complete an encounter before it: the actor's
-  `end_conversation`, the auto-advance after the last planted beat and the
-  participant's *move on* are all held (event `floor_held`, with the reason),
-  and `POST /api/run/{id}/advance` answers **409** if a page asks anyway. The
-  page's **End conversation** is locked until then and says why. Moving from
-  one interaction to the next inside an encounter is never held.
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 28a | End policy: from 7:00 the participant may move on (End unlocks on every link type, with a notice; `move_on_open`); nothing ends the encounter by itself before 12:00. In the last interaction the auto-advance and the actor's `end_conversation` are held (`auto_end_held`); a held call is answered with a `function_call_output` (`tool_call_answered`), and on gpt the 1:1 character is asked to carry on (`held_call_reply`). The warning is at 11:00 and the stop at 12:00, on the runner's own clock as well as at a finished turn. | `ENCOUNTER_MIN_SECONDS` (420), `ENCOUNTER_WRAP_SECONDS` (660), `ENCOUNTER_MAX_SECONDS` (720); `REALTIME_TOOL_CALL_CONTINUES` (the output's wording) |
+| 28a | Turn cue: the header pill says "<Name> is speaking" while that character's audio plays, "Listening…" once the participant starts speaking, and "You can speak now" when the runner sends `turn_open` (the page has acked the end of the last line's audio and nothing is queued or being generated), in 1:1 and in rooms alike. "Your turn" at generation end, its 4-second switch and "You speak first" in rooms are gone. Each `turn_open` is an event, to read against `turn_timing`. | none |
+| 28a | A participant transcript made only of sound tags ("(laughter)", "[background noise]", "[Music]", "(inaudible)") is `user_turn_suppressed{no_speech}` with `annotation_only: true`, at any voiced level; in a room the turn is skipped. A word outside the tags keeps the line ("Yeah (laughs)"). | `PARTICIPANT_DROP_ANNOTATIONS` (1; 0 restores `24c`) |
+| 28a | 1:1: a `no_speech` suppression withdraws the reply its commit started, as the rate gate does (`suppressed_turn_reply_cancelled` / `reply_to_suppressed_turn` with reason `no_speech`), and gives back the beat that commit fired. | follows the no_speech rules |
+| room 28a | The post-turn steering review runs after the room's floor is released, as a tracked task, one review at a time; the next routed turn no longer waits for it (0.8-1.2 s on `24c`). `knob_set` rows are unchanged (`delivered: false`); a shift may reach a member one brief later than before. A review that raises is `voice_error` with `where: room_steer`. | none |
+
+Caveats for analysis:
+
+- Before `28a` the last interaction could end at the first finished turn past
+  7:00 (`interaction_complete` just after 420 s, with no participant
+  move-on); from `28a` a last interaction ends by the participant's move-on
+  or `ceiling_reached` at 12:00. Encounter durations from the two sides of
+  `28a` are not comparable.
+- A held gpt call's reply (`held_call_reply` requested) is a character line
+  that follows the character's own previous line with no participant turn
+  between them.
+
+## The seven-minute floor, and the twelve-minute stop
+
+Every encounter runs **at least 7:00** and **at most 12:00**, measured from the
+moment the voice socket opens. Three environment variables carry it —
+`ENCOUNTER_MIN_SECONDS` (420), `ENCOUNTER_WRAP_SECONDS` (660) and
+`ENCOUNTER_MAX_SECONDS` (720) — read by `storage.encounter_timing()`, served to
+the page on the run (`timing`) and again by the runner itself on every link
+type (the `encounter_clock` frame, which also lines the page's timer up with
+the server's clock), so the ring that fills next to the timer and the server's
+refusals agree to the second. The end policy is the researchers' of
+2026-09-28 (issue #34); before it the wrap was 12:00, the stop 13:00, and the
+last interaction ended by itself at the first turn past 7:00 once its beats
+were spent or the character had called `end_conversation`.
+
+- **Floor.** From 7:00 the participant may move on whenever they are ready:
+  **End conversation** unlocks, the ring is full, and a neutral notice says so
+  (the runner sends `move_on_open` and records it). Before it End is locked and
+  says why, the participant's *move on* is held (event `floor_held`), and
+  `POST /api/run/{id}/advance` answers **409** if a page asks anyway. The gate
+  holds on **every link type**: study runs, internal `/test` runs and direct
+  researcher links.
+- **Nothing ends it by itself before 12:00.** In the last interaction the
+  auto-advance after the last planted beat and the actor's `end_conversation`
+  are held until the stop (event `auto_end_held`, once per reason). A held
+  call is answered with a `function_call_output` saying the conversation goes
+  on and not to call the tool again yet (`REALTIME_TOOL_CALL_CONTINUES`); on
+  the gpt route the character is then asked to carry on
+  (`tool_call_answered`, `held_call_reply`), so a goodbye is not followed by
+  silence. Moving from one interaction to the next inside an encounter (S1's
+  hand-off, S2's i1 to i2, room interactions) is unchanged.
 - **Withdrawal is never gated.** *Stop and leave the study* works at any second;
   that is the consent promise, and it is a different control from End.
-- **Wrap and stop.** At 12:00 the runner records `ceiling_wrap` and tells the
-  page; at 13:00 it completes the encounter on the next turn (`ceiling_reached`),
-  and the page ends it on its own clock if the participant has gone quiet.
+- **Warning and stop.** At 11:00 the runner records `ceiling_wrap` and the page
+  shows that the conversation ends automatically in about a minute; at 12:00
+  the encounter completes (`ceiling_reached`), from the runner's own clock
+  (its watchdog tick, not only at a finished turn) and from the page's,
+  whichever comes first.
 - **Internal runs** (`cohort=internal`, the `/test` door) are exempt from the
-  floor so the team can walk the study quickly. The ceiling still applies.
+  409 at `/advance`, but the page holds End until 7:00 for them too. Lower
+  `ENCOUNTER_MIN_SECONDS` on a test deployment to walk the study quickly.
 
 ## The base URL also forwards participants (second route in)
 

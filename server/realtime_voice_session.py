@@ -922,6 +922,12 @@ class RealtimeVoiceSessionRunner:
         # so an interaction switch must cancel ALL of them, not just the most
         # recent, or the floor-holder is orphaned and dead-airs the next segment.
         self._group_turn_tasks = set()
+        # The room's post-turn steering reviews, off the floor (issue #25; see
+        # _spawn_room_steer). Tracked so _close_room cancels them the way it
+        # cancels the group turns they used to run inside; the lock keeps two
+        # reviews from overlapping, so they run one at a time in turn order.
+        self._room_steer_tasks: set = set()
+        self._room_steer_lock = asyncio.Lock()
         # Planted triggers fire in order within the current interaction. They
         # are the measurement: each maps to ESCI items, and the participant's
         # response to it is what a rater scores.
@@ -939,6 +945,27 @@ class RealtimeVoiceSessionRunner:
         self._floor_held_noted = False
         self._wrap_noted = False
         self._ceiling_noted = False
+        # The end policy of 2026-09-28 (issue #34; see _hold_to_ceiling): the
+        # reasons an automatic end was already held for (auto_end_held is
+        # written once per reason), whether the participant has been told
+        # they may move on (move_on_open, at the floor), when a held
+        # end_conversation last asked for a reply, and the tasks waiting to
+        # ask for one (_reply_after_held_call).
+        self._auto_end_held_noted: set = set()
+        self._move_on_noted = False
+        self._held_call_reply_at = 0.0
+        self._held_call_tasks: set = set()
+        # THE TURN CUE (issue #49; see _maybe_turn_open). Whether turn_open has
+        # gone to the page since the last line started or the participant last
+        # began to speak; every character turn the page was told of and has
+        # not yet said it finished playing ({seq: {agent_id, audio, done,
+        # at}}), keyed by the turn number its playback acks name; the turn
+        # the page is filling now; and whether a participant turn is being
+        # closed (_on_turn_ended: briefed and committed, not yet answered).
+        self._cue_open = False
+        self._cue_turns: dict = {}
+        self._cue_seq: Optional[int] = None
+        self._participant_turn_closing = False
         self._switching = False
         # True for the whole of _enter, i.e. while the sessions behind self.rt
         # are being torn down and rebuilt. _model_to_client must not pump
@@ -2095,6 +2122,59 @@ class RealtimeVoiceSessionRunner:
                 gt.cancel()
         if hasattr(self, "_group_turn_tasks"):
             self._group_turn_tasks.clear()
+        # And the steering reviews those turns left running (issue #25): they
+        # used to be inside the turn, and were cancelled with it.
+        for st in list(getattr(self, "_room_steer_tasks", ()) or ()):
+            if not st.done():
+                st.cancel()
+        if hasattr(self, "_room_steer_tasks"):
+            self._room_steer_tasks.clear()
+
+    def _spawn_room_steer(self) -> None:
+        """The room's post-turn steering review, run after the floor is
+        released (issue #25; room pacing 2026-09-28a).
+
+        _run_group_turn used to await _steer() while it still held
+        self._floor, so a participant turn spoken meanwhile waited for the
+        review (director_route to knob_set 0.8-1.2 s on 2026-09-24c) before
+        its own routing could start. Nothing in the review needs the floor: a
+        room's shifts re-brief nobody at that moment (knob_set is written
+        delivered=False, by _steer, exactly as before), and the next
+        _brief_member or the interaction re-brief is what carries them. What
+        does change is which of those briefs that is: a review still running
+        when the next turn briefs a member lands in the brief after it.
+
+        One review at a time and in turn order (_room_steer_lock), so two
+        reviews never read and shift the same knobs at once. Tracked, and
+        cancelled with the group turns by _cancel_group_turns (an interaction
+        change, and teardown through _close_room). Session.auto_steer still
+        writes its own auto_steer_error; anything else a review raises is
+        written as voice_error where="room_steer", as a group turn's is."""
+        if self._closed:
+            return
+
+        async def review() -> None:
+            async with self._room_steer_lock:
+                if self._closed:
+                    return
+                await self._steer()
+
+        task = asyncio.ensure_future(review())
+        self._room_steer_tasks.add(task)
+        task.add_done_callback(self._on_room_steer_done)
+
+    def _on_room_steer_done(self, task: asyncio.Task) -> None:
+        self._room_steer_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self.session.store.event(
+                "voice_error", where="room_steer", message=redact_key(str(exc))
+            )
+            self._encounter_event_soon(
+                "voice_error", detail=f"room_steer: {exc}", severity="error"
+            )
 
     async def _close_room(self) -> None:
         # In-flight group turns go first, for the reason _cancel_group_turns
@@ -2898,7 +2978,7 @@ class RealtimeVoiceSessionRunner:
                         "tool_call", name=ev.get("name"), segment=self.segment,
                         agent_id=agent.id,
                     )
-                    asyncio.ensure_future(self._advance_from_tool())
+                    asyncio.ensure_future(self._advance_from_tool(agent.id, rt, ev))
                     # Keep relaying. Ending the pump here killed this character
                     # for the rest of a KEPT room: S4's working session and its
                     # close share a cast, so _enter takes the keep_room branch,
@@ -3025,10 +3105,18 @@ class RealtimeVoiceSessionRunner:
                                     audio_unterminated=audio_unterminated,
                                     retried=retried, reply_end=reply_end)
 
-    async def _advance_from_tool(self) -> None:
-        """Advance the encounter from a room member's end_conversation call."""
+    async def _advance_from_tool(self, agent_id: Optional[str] = None, rt=None,
+                                 ev: Optional[dict] = None) -> None:
+        """Advance the encounter from a room member's end_conversation call.
+
+        In the last interaction the call is held until the ceiling like the
+        1:1 one (_hold_to_ceiling), and answered with its output alone: the
+        room's floor decides who speaks next, so no reply is asked for."""
         try:
-            if await self._hold_at_floor("end_conversation"):
+            if await self._hold_to_ceiling("end_conversation"):
+                if rt is not None and ev is not None:
+                    await self._answer_held_call(rt, ev, agent_id=agent_id,
+                                                 ask_reply=False)
                 return
             if not await self._advance_segment():
                 await self._send({"type": "encounter_complete"})
@@ -3732,10 +3820,25 @@ class RealtimeVoiceSessionRunner:
         # Arrival, not acceptance: a transcript this method goes on to drop
         # as a duplicate or an echo still arrived when it arrived.
         _timer(self).transcript_arrived()
+        # Every no_speech suppression below also withdraws the 1:1 reply its
+        # commit already started, as the rate gate does (pipeline 2026-09-28a).
+        # S2A s_1790278762_09bcbb: a commit at 245.84 s came back "。", was
+        # suppressed, and Morgan's reply to it still played 248.1-258.3 s, so
+        # the character spoke twice in a row to nobody and the beat that
+        # commit fired was spent. Rooms skip the turn in _run_group_turn.
         if _realtime.drop_wordless() and _realtime.is_wordless(text):
             # No letter or digit at all: the transcriber describing a sound,
             # whatever the voiced count (see voice/realtime.drop_wordless).
             suppressed("no_speech")
+            await self._withdraw_reply(text, "no_speech", committed_at, voiced_ms)
+            return
+        if _realtime.drop_annotations() and _realtime.is_annotation_only(text):
+            # "(laughter)" / "[background noise]": the transcriber's tags,
+            # with letters in them, and nothing outside them. The same rule
+            # as the word-less line above, told apart on the record by
+            # `annotation_only` (see voice/realtime.drop_annotations).
+            suppressed("no_speech", annotation_only=True)
+            await self._withdraw_reply(text, "no_speech", committed_at, voiced_ms)
             return
         if (voiced_ms is not None and voiced_ms <= _realtime.drop_voiced_ms()
                 and _realtime.is_filler_only(text)):
@@ -3747,6 +3850,8 @@ class RealtimeVoiceSessionRunner:
             # suppress participants who really said "thank you".
             if text or garbled:
                 suppressed("no_speech")
+                await self._withdraw_reply(text, "no_speech", committed_at,
+                                           voiced_ms)
             else:
                 unreliable("no_speech")
             return
@@ -4393,11 +4498,17 @@ class RealtimeVoiceSessionRunner:
                 )
                 await self.rt.connect()
             await self._announce_opening()
+            # The floor, wrap and stop this runner enforces, and where its
+            # clock stands, for the page's ring and End on every link type.
+            await self._announce_clock()
             if self.is_group():
                 # Only after the banner: the participant must see who is in the
                 # room before one of them starts talking. Spawned so the relay
                 # tasks below start immediately.
                 self._spawn_group_turn(self._open_group_scene())
+            # A 1:1 participant opens the scene, so the cue says they can
+            # speak now; a room's opener, just spawned, holds it back.
+            await self._maybe_turn_open()
             # Record what served this encounter, the audit trail has to say
             # which gateway and which models produced the data.
             # The roster this encounter's voices were chosen from, on the
@@ -4467,6 +4578,10 @@ class RealtimeVoiceSessionRunner:
             # what is known; after the finalizes above, so their
             # assistant_done is on it.
             _timer(self).flush()
+            # A held call's reply still waiting to be asked for has nobody to
+            # ask now (see _reply_after_held_call).
+            for task in list(getattr(self, "_held_call_tasks", ()) or ()):
+                task.cancel()
             await self._close_room()
             if self.rt:
                 await self.rt.close()
@@ -4490,6 +4605,16 @@ class RealtimeVoiceSessionRunner:
                 raise asyncio.CancelledError
 
     async def _on_turn_ended(self) -> None:
+        """_end_participant_turn, marked for the turn cue: while a 1:1 turn
+        is being briefed and committed nothing is generating yet, and the
+        participant must not be told they can speak in that gap (issue #49)."""
+        self._participant_turn_closing = True
+        try:
+            await self._end_participant_turn()
+        finally:
+            self._participant_turn_closing = False
+
+    async def _end_participant_turn(self) -> None:
         """The participant's turn is over: route a room, or brief and commit a
         1:1 reply. This is the block that used to sit under `turn_ended` in
         _client_to_model, unchanged; what changed is WHEN it runs on the family
@@ -5341,13 +5466,7 @@ class RealtimeVoiceSessionRunner:
                 ))
 
             elif etype == "tool_call":
-                self.session.store.event(
-                    "tool_call", name=ev.get("name"), segment=self.segment
-                )
-                if await self._hold_at_floor("end_conversation"):
-                    continue
-                if not await self._advance_segment():
-                    await self._send({"type": "encounter_complete"})
+                if await self._on_tool_call(rt, ev):
                     return
 
             elif etype == "error":
@@ -5582,6 +5701,13 @@ class RealtimeVoiceSessionRunner:
             # The page saying a turn's first chunk started playing, or its
             # scheduled audio ended (static/v2.html; server/turn_timing.py).
             _timer(self).ack(msg)
+            if msg.get("phase") == "end":
+                # The real end of that line's audio, which is what the turn
+                # cue waits for (issue #49).
+                turn = msg.get("turn")
+                if isinstance(turn, int) and not isinstance(turn, bool):
+                    self._cue_turns.pop(turn, None)
+                await self._maybe_turn_open()
             return
         if msg.get("type") == "client_audio_settings":
             self._record_client_audio(msg)
@@ -5670,13 +5796,16 @@ class RealtimeVoiceSessionRunner:
         return self._encounter_elapsed() >= encounter_timing()["min_seconds"]
 
     async def _hold_at_floor(self, reason: str) -> bool:
-        """If completing now would break the floor, record it and say so.
+        """If the participant's move-on would complete the encounter before
+        the floor, record it and say so.
 
         Returns True when the caller must NOT complete the encounter. Only the
         exit that would end the encounter is held: moving from one interaction
         to the next is never gated, because the per-interaction floors already
         pace those and the participant still has the later scenes to fill.
-        Withdrawal does not come through here at all.
+        Withdrawal does not come through here at all, and neither, since
+        2026-09-28, do the automatic exits (the actor's end tool, the
+        auto-advance): those are held to the ceiling (_hold_to_ceiling).
         """
         if not self._is_last_segment() or self._floor_open():
             return False
@@ -5693,14 +5822,194 @@ class RealtimeVoiceSessionRunner:
                           "seconds_left": round(left)})
         return True
 
+    async def _hold_to_ceiling(self, reason: str) -> bool:
+        """THE END POLICY OF 2026-09-28 (issue #34). True when an automatic
+        exit (`reason`: "end_conversation", the actor's tool, or
+        "auto_advance", the beats being spent) must NOT complete the encounter.
+
+        The researchers' decision: from 7:00 the participant may move on, and
+        may keep talking until 12:00; nothing ends the encounter by itself
+        before the ceiling. Until then the last interaction completed at the
+        first finished turn past 7:00 once its beats were spent, or once the
+        character had called end_conversation (s_1790273626_376454: the call
+        at 318.8 s was held, and the next turn past 420 s ended it, 429.0 s;
+        the reporter saw the camera go off mid-conversation). So in the last
+        interaction these are held until ENCOUNTER_MAX_SECONDS, where
+        _at_ceiling ends it; moving between interactions is never held.
+
+        Written once per reason as auto_end_held. Before the floor the page
+        is also sent floor_held, as it was, so a goodbye from the character
+        is followed by "keep going"; after it the page already says the
+        participant may move on (move_on_open) and nothing more is sent."""
+        if not self._is_last_segment():
+            return False
+        from .storage import encounter_timing
+        t = encounter_timing()
+        elapsed = self._encounter_elapsed()
+        if elapsed >= t["max_seconds"]:
+            return False
+        if reason not in self._auto_end_held_noted:
+            self._auto_end_held_noted.add(reason)
+            self.session.store.event(
+                "auto_end_held", reason=reason, elapsed_s=round(elapsed, 1),
+                seconds_to_ceiling=round(t["max_seconds"] - elapsed, 1),
+                interaction=self._interaction_id(), segment=self.segment,
+            )
+        if reason == "end_conversation" and not self._floor_open():
+            await self._send({
+                "type": "floor_held", "reason": reason,
+                "seconds_left": round(max(0.0, t["min_seconds"] - elapsed)),
+            })
+        return True
+
+    async def _on_tool_call(self, rt, ev: dict) -> bool:
+        """The 1:1 actor's end_conversation call. True when it completed the
+        encounter (the pump then returns).
+
+        Between interactions it advances, as always (S1's hand-off, S2's
+        i1 -> i2). In the last interaction it is held until the ceiling
+        (_hold_to_ceiling) and answered (_answer_held_call), so the
+        character keeps speaking instead of leaving the participant in
+        silence: s_1790278762_09bcbb (gpt, 2026-09-24c) held a call 1.5 s
+        before the floor and then had no event at all for 140 s."""
+        self.session.store.event(
+            "tool_call", name=ev.get("name"), segment=self.segment
+        )
+        if await self._hold_to_ceiling("end_conversation"):
+            await self._answer_held_call(rt, ev, agent_id=self.agent_id,
+                                         ask_reply=True)
+            return False
+        if not await self._advance_segment():
+            await self._send({"type": "encounter_complete"})
+            # Over: returning with the runner still open read to
+            # _model_to_client as the gateway closing a live encounter, and it
+            # rebuilt a session after the end (fix/gemini-native 69e6fbb).
+            self._closed = True
+            return True
+        return False
+
+    async def _answer_held_call(self, rt, ev: dict, *, agent_id: Optional[str],
+                                ask_reply: bool) -> None:
+        """Answer a held end_conversation call: its function_call_output
+        (TOOL_CALL_CONTINUES, "the conversation goes on, do not call it again
+        yet"), and on a route that answers an output only when asked
+        (tool_output "request": gpt) a reply once the one that made the call
+        is over (_reply_after_held_call), where `ask_reply` (1:1; a room's
+        floor decides who speaks). Written as tool_call_answered. A route
+        whose row says nothing (tool_output None) is left as it was."""
+        mode = _realtime.tool_output_for(getattr(rt, "model", "") or "")
+        call_id = ev.get("call_id")
+        if (mode is None or not call_id or self._closed
+                or not hasattr(rt, "answer_tool_call")
+                or getattr(rt, "ws", None) is None):
+            return
+        output = _realtime.TOOL_CALL_CONTINUES
+        try:
+            sent = await rt.answer_tool_call(call_id, output)
+        except Exception as exc:  # noqa: BLE001 - the session stands
+            self.session.store.event(
+                "voice_error", where="tool_call_output", agent_id=agent_id,
+                message=redact_key(str(exc)))
+            return
+        if not sent:
+            return
+        reply = ask_reply and mode == "request"
+        self.session.store.event(
+            "tool_call_answered", name=ev.get("name"), call_id=call_id,
+            reason="held_to_ceiling", agent_id=agent_id, segment=self.segment,
+            output=output, reply_requested=reply,
+        )
+        if reply:
+            task = asyncio.ensure_future(
+                self._reply_after_held_call(rt, time.time()))
+            self._held_call_tasks.add(task)
+            task.add_done_callback(self._held_call_tasks.discard)
+
+    async def _reply_after_held_call(self, rt, held_at: float) -> None:
+        """Ask the 1:1 actor to go on speaking after a held call, once the
+        reply that made the call is over (a response.create during it is
+        refused on gpt).
+
+        Not asked when anything else has spoken for the participant's turn
+        by then: they started talking, a commit went out after the call
+        (that commit's reply answers them), a reply is in flight, the session
+        changed, or a held call already drew one reply since the
+        participant's last commit (a character that calls the tool again in
+        that reply is answered but not asked again, so the two cannot loop).
+        Each outcome is written as held_call_reply."""
+        deadline = time.time() + 15.0
+        while (not self._closed and time.time() < deadline
+               and (getattr(rt, "responding", False) or self._speaking)):
+            await asyncio.sleep(0.05)
+        last_commit = getattr(rt, "last_commit_at", 0.0)
+        last_commit = last_commit if isinstance(last_commit, (int, float)) else 0.0
+        why = None
+        if self._closed or rt is not self.rt or getattr(rt, "ws", None) is None:
+            why = "session_gone"
+        elif self._advancing or self._transitioning:
+            why = "transition"
+        elif self.vad.speaking or self._turn_end_pending_ms is not None:
+            why = "participant_speaking"
+        elif last_commit > held_at:
+            why = "participant_turn"
+        elif getattr(rt, "responding", False) or self._speaking:
+            why = "reply_in_flight"
+        elif self._held_call_reply_at > last_commit:
+            why = "already_asked"
+        fields = dict(agent_id=self.agent_id, segment=self.segment,
+                      interaction=self._interaction_id())
+        if why is not None:
+            self.session.store.event("held_call_reply", requested=False,
+                                     skipped=why, **fields)
+            return
+        self._held_call_reply_at = time.time()
+        await rt.request_response()
+        self.session.store.event("held_call_reply", requested=True, **fields)
+
+    async def _announce_clock(self) -> None:
+        """The encounter clock, to the page on every link type (issue #34).
+
+        The page read its floor, wrap and stop from the run (runs.view), so a
+        direct researcher link or a changed ENCOUNTER_* ran on the page's
+        built-in numbers; and its timer starts when Start is pressed, a
+        connect earlier than this clock, so End could unlock a second or two
+        before the server's floor. `elapsed_s` lets it line its timer up."""
+        from .storage import encounter_timing
+        await self._send({"type": "encounter_clock", **encounter_timing(),
+                          "elapsed_s": round(self._encounter_elapsed(), 3)})
+
+    async def _encounter_clock_tick(self) -> bool:
+        """The encounter clock on its own tick (the silence watchdog's), not
+        only at a finished turn: the participant is told at the floor that
+        they may move on (move_on_open, once), the wrap warning goes out at
+        ENCOUNTER_WRAP_SECONDS and the encounter completes at
+        ENCOUNTER_MAX_SECONDS even when nobody is speaking (s_1790278762: a
+        silent last interaction had no upper bound on a direct link). True
+        when the encounter was completed here."""
+        from .storage import encounter_timing
+        if self._closed:
+            return False
+        elapsed = self._encounter_elapsed()
+        if not self._move_on_noted and elapsed >= encounter_timing()["min_seconds"]:
+            self._move_on_noted = True
+            self.session.store.event(
+                "move_on_open", elapsed_s=round(elapsed, 1),
+                interaction=self._interaction_id(), segment=self.segment,
+            )
+            await self._send({"type": "move_on_open"})
+        return await self._at_ceiling()
+
     async def _at_ceiling(self) -> bool:
         """Wrap at ENCOUNTER_WRAP_SECONDS, complete at ENCOUNTER_MAX_SECONDS.
 
         Returns True when the encounter has been completed here. The wrap is
-        recorded and sent to the page; on the configured Gemini family a
+        recorded and sent to the page, which shows the participant that the
+        conversation is about to end; on the configured Gemini family a
         mid-session direction does not reach the actor (README, "What the
         participant hears"), so the record says the wrap was *called* and the
-        hard stop is what guarantees the ceiling.
+        hard stop is what guarantees the ceiling. Reached from every finished
+        turn (_maybe_advance) and from the clock's own tick, so the page is
+        sent encounter_complete once.
         """
         from .storage import encounter_timing
         t = encounter_timing()
@@ -5713,7 +6022,7 @@ class RealtimeVoiceSessionRunner:
                     interaction=self._interaction_id(),
                     segment=self.segment,
                 )
-            await self._send({"type": "encounter_complete", "reason": "ceiling"})
+                await self._send({"type": "encounter_complete", "reason": "ceiling"})
             return True
         if elapsed >= t["wrap_seconds"] and not self._wrap_noted:
             self._wrap_noted = True
@@ -5790,9 +6099,11 @@ class RealtimeVoiceSessionRunner:
             return
         if elapsed < min_seconds:
             return
-        # The encounter-level floor: the last interaction stays open until the
-        # study's seven minutes have passed, however spent its beats are.
-        if await self._hold_at_floor("auto_advance"):
+        # The last interaction is never ended by this: it stays open until the
+        # participant moves on (from the floor) or the ceiling, however spent
+        # its beats are (the end policy of 2026-09-28; see _hold_to_ceiling).
+        # Between interactions this advances exactly as before.
+        if await self._hold_to_ceiling("auto_advance"):
             return
 
         self.session.store.event(
@@ -6528,6 +6839,16 @@ class RealtimeVoiceSessionRunner:
         tick = _realtime.probe_tick_s()
         while not self._closed:
             await asyncio.sleep(tick)
+            # The encounter clock rides on this tick (issue #34): the move-on
+            # notice, the wrap warning and the stop do not wait for a turn to
+            # finish. Returning ends run(), as the 1:1 pump's does when the
+            # encounter completes.
+            if await self._encounter_clock_tick():
+                return
+            # The turn cue's backstop (issue #49): an opening no frame marked,
+            # such as a room turn that released the floor after its last line
+            # had already played, or a page that never acked a play_end.
+            await self._maybe_turn_open()
             if self._closed or self._speaking or self.vad.speaking:
                 continue
             if await self._proactive_handoff():
@@ -7489,7 +7810,9 @@ class RealtimeVoiceSessionRunner:
                 if self._closed or self.room is not room:
                     return
             room.speaking = None
-            await self._steer()
+        # The steering review, off the floor (issue #25): the next routed turn
+        # no longer waits for it. See _spawn_room_steer.
+        self._spawn_room_steer()
         # A group interaction otherwise has no automatic exit: the 1:1 path
         # reaches _maybe_advance from _finalize_turn, but the group path never
         # did, so S3/S4 stalled in interaction 1 unless an actor happened to
@@ -8455,6 +8778,116 @@ class RealtimeVoiceSessionRunner:
         tee._rf_encounter_tee = True
         store.event = tee
 
+    # ── the turn cue (issue #49) ───────────────────────────────────────────
+    # The researchers' decision of 2026-09-28: one neutral cue, the same in
+    # 1:1 and in the S3/S4 rooms. "<Name> is speaking" while a character's
+    # audio plays, "You can speak now" once the last queued line has FINISHED
+    # PLAYING and nothing else is queued or being generated, "Listening..."
+    # while the participant speaks. The page draws the first and last from
+    # its own audio clock and speech_started; this is the middle one, the
+    # only one it cannot know alone. Before it the page said "Your turn" at
+    # generation end, 7-17 s before the character stopped in e80fca and more
+    # than 1 s early on 24 of 28 turns in 77ee7e. Room pacing is untouched:
+    # this says when the floor is open, it does not open it.
+
+    # How long past the server's own model of the end of playback
+    # (_play_cursor) the page's play_end ack is waited for before the line is
+    # taken as played: the ack is the real end (outputLatency, the page's
+    # scheduling), and a page that never sends one must not hold the cue
+    # shut for ever.
+    CUE_ACK_GRACE_S = 2.0
+    # A line the page was told of and never told the end of (no
+    # assistant_done) stops counting as "being generated" after this long.
+    CUE_STALE_S = 60.0
+
+    def _cue_track(self, kind: str, payload: dict, seq: Optional[int]) -> None:
+        """Keep the cue's picture of the page's lines, from the frames that
+        open and close them (called by _send)."""
+        turns = getattr(self, "_cue_turns", None)
+        if turns is None:
+            return
+        now = time.time()
+        if kind == "speech_started":
+            self._cue_open = False
+            return
+        if kind == "assistant_started":
+            self._cue_open = False
+            # An older line that never sent audio and was never closed is not
+            # coming back (the page's currentTurn has moved on too).
+            for old in [s for s, t in turns.items() if not t["audio"]]:
+                turns.pop(old, None)
+            if seq is not None:
+                turns[seq] = {"agent_id": payload.get("agent_id"), "audio": False,
+                              "done": False, "at": now}
+            self._cue_seq = seq
+            return
+        cur = getattr(self, "_cue_seq", None)
+        agent_id = payload.get("agent_id")
+        for s, t in list(turns.items()):
+            if s == cur or (kind == "assistant_done" and agent_id
+                            and t["agent_id"] == agent_id):
+                t["done"] = True
+                if not t["audio"]:
+                    turns.pop(s, None)      # nothing to play out
+        self._cue_seq = None
+
+    def _turn_cue_blocker(self) -> Optional[str]:
+        """Why the participant is not (yet) told they can speak, or None."""
+        if getattr(self, "_closed", True):
+            return "closed"
+        vad = getattr(self, "vad", None)
+        if (getattr(vad, "speaking", False)
+                or getattr(self, "_turn_end_pending_ms", None) is not None
+                or getattr(self, "_participant_turn_closing", False)):
+            return "participant"
+        if getattr(self, "_advancing", False) or getattr(self, "_transitioning", False):
+            return "transition"
+        now = time.time()
+        cursor = getattr(self, "_play_cursor", 0.0) or 0.0
+        if now < cursor:
+            return "playing"
+        for t in (getattr(self, "_cue_turns", None) or {}).values():
+            if not t["done"] and now - t["at"] < self.CUE_STALE_S:
+                return "generating"
+            if t["done"] and t["audio"] and now < cursor + self.CUE_ACK_GRACE_S:
+                return "playing"
+        if getattr(self, "_held_call_tasks", None):
+            return "generating"
+        if self.is_group() or getattr(self, "room", None) is not None:
+            room = getattr(self, "room", None)
+            if (self._floor.locked() or getattr(self, "_group_turn_tasks", None)
+                    or getattr(self, "_group_turn_waiting", False)):
+                return "generating"
+            if room is not None:
+                if room.speaking is not None:
+                    return "generating"
+                if any(getattr(m, "responding", False)
+                       for m in list(room.sessions.values())):
+                    return "generating"
+            return None
+        rt = getattr(self, "rt", None)
+        if (getattr(self, "_speaking", False) or getattr(rt, "responding", False)
+                or getattr(rt, "autofire_active", False)):
+            return "generating"
+        return None
+
+    async def _maybe_turn_open(self) -> None:
+        """Tell the page the participant can speak now, once per opening:
+        after the last line's play_end, at a line that played nothing, on
+        the watchdog's tick, and as the encounter opens. Written as
+        turn_open, so the cue can be read against turn_timing."""
+        try:
+            if getattr(self, "_cue_open", True) or self._turn_cue_blocker() is not None:
+                return
+        except Exception:  # noqa: BLE001 - a cue must never break a turn
+            return
+        self._cue_open = True
+        self.session.store.event(
+            "turn_open", segment=getattr(self, "segment", None),
+            interaction=self._interaction_id(),
+        )
+        await self._send({"type": "turn_open"})
+
     # ── transport helpers ──────────────────────────────────────────────────
     async def _send(self, payload: dict) -> None:
         # The turn clock watches the three frames the page opens and closes
@@ -8463,6 +8896,7 @@ class RealtimeVoiceSessionRunner:
         # page's playback acks name. A copy, so a caller's dict is not edited.
         kind = payload.get("type") if isinstance(payload, dict) else None
         timing = getattr(self, "_timing", None)
+        seq = None
         if timing is not None and kind in ("assistant_started", "assistant_done",
                                            "assistant_interrupted"):
             if kind == "assistant_started":
@@ -8473,10 +8907,17 @@ class RealtimeVoiceSessionRunner:
                 timing.done(payload.get("agent_id"))
             else:
                 timing.interrupted()
+        if kind in ("assistant_started", "assistant_done", "assistant_interrupted",
+                    "speech_started"):
+            self._cue_track(kind, payload, seq)
         try:
             await self.ws.send_json(payload)
         except Exception:  # noqa: BLE001, client vanished
             self._closed = True
+            return
+        if kind in ("assistant_done", "assistant_interrupted"):
+            # A line that sent the page no audio has nothing to wait for.
+            await self._maybe_turn_open()
 
     def _first_gateway_audio_at(self, agent_id: Optional[str]) -> Optional[float]:
         """When the bridge serving `agent_id` saw its latest reply's first
@@ -8495,6 +8936,12 @@ class RealtimeVoiceSessionRunner:
         except Exception:  # noqa: BLE001
             self._closed = True
             return
+        # The page's current turn now has audio to play out (the turn cue
+        # waits for its play_end; see _turn_cue_blocker).
+        cue = getattr(self, "_cue_turns", None)
+        seq = getattr(self, "_cue_seq", None)
+        if cue is not None and seq in cue:
+            cue[seq]["audio"] = True
         # The first chunk of the page's current turn: turn_timing's
         # first_audio_to_client, and the bridge's own first-delta time beside
         # it. Guarded whole, because this runs on the participant's audio path.

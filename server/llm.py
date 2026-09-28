@@ -509,13 +509,34 @@ def text_client() -> AsyncAnthropic:
 #                "Thank you.", "Casey?" heard as "TC?") unanswered. It
 #                routes as before 24a, on context; only a gate suppression
 #                (implausible_rate, no_speech, probe_pad) skips the turn.
+#   2026-09-28a  the post-turn steering review runs after the floor is
+#                released, as a tracked task and one review at a time, so the
+#                next routed turn no longer waits 0.8-1.2 s for it (#25); rooms
+#                get the turn_open cue (#49) and the 2026-09-28 end policy
+#                (#34; a member's held end_conversation is answered with its
+#                output alone). Who speaks next, and when, is unchanged.
+#
+# PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
 #                is suppressed as no_speech at any voiced level
 #                (PARTICIPANT_DROP_WORDLESS), and a gateway
 #                response_cancel_not_active with no reply in flight is
 #                recorded but no longer shown to the participant as an error.
-PIPELINE_VERSION = "2026-09-24c"
-ROOM_PACING_VERSION = "2026-09-24b"
+#   2026-09-28a  the researchers' decisions of 2026-09-28. End policy (#34):
+#                from 7:00 the participant may move on (End unlocks on every
+#                link type, with a notice; move_on_open), and nothing ends an
+#                encounter by itself before 12:00 (warning 11:00, stop 12:00;
+#                were 12:00 and 13:00): the last interaction's auto-advance and
+#                end_conversation are held (auto_end_held), a held call is
+#                answered (tool_call_answered) and on gpt the character asked to
+#                go on (held_call_reply), and the clock runs on the watchdog's
+#                tick. Turn cue (#49): turn_open once the last line has played
+#                and nothing is queued or being generated. Issue #21: a
+#                transcript of sound tags alone ("(laughter)") is no_speech
+#                (PARTICIPANT_DROP_ANNOTATIONS), and in 1:1 a no_speech
+#                commit's reply is withdrawn.
+PIPELINE_VERSION = "2026-09-28a"
+ROOM_PACING_VERSION = "2026-09-28a"
 
 
 def _voice_style_provenance():

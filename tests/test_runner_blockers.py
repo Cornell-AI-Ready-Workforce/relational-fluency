@@ -412,7 +412,9 @@ def test_member_pump_survives_its_own_end_conversation():
         runner.room.sessions[dan.id] = rt
         runner.room.speaking = dan.id
 
-        async def no_advance():
+        # The member, its session and the call ride along since 2026-09-28
+        # (a held call is answered on that session; see _advance_from_tool).
+        async def no_advance(*_args, **_kwargs):
             return None
         runner._advance_from_tool = no_advance
 
