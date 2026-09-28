@@ -524,3 +524,43 @@ def test_the_quiet_room_requirement_is_first_on_the_first_screen_and_again_at_th
         "the requirement sits below the fiction notice on the first screen"
     # And styled as a requirement, not as the muted small print around it.
     assert re.search(r"\.quiet-notice\s*\{[^}]*border", src), "the notice has no box"
+
+
+# =========================================================================== #
+# The build tag (the BUILD contract, 2026-09-28): the image carries its commit,
+# /api/run/config serves it as `build`, and the page shows it small and out of
+# the way — "build 4798e64" — or nothing at all when the server does not say.
+# =========================================================================== #
+
+BUILD_TAG = r"""
+  const tag = async (config, search) => {
+    const b = boot(search || '?scenario=S4A', (b) => [
+      { match: '/api/run/config', fn: () => b.net.res(200, config) },
+      { match: '/api/run/', fn: () => b.net.res(503, {}) },
+      { match: '/api/scenarios/', fn: () => b.net.res(200, BRIEF) },
+    ]);
+    await b.clock.advance(50);
+    const el = b.dom.$('buildTag');
+    return { text: el.textContent, visible: el.style.display !== 'none' };
+  };
+
+  let t = await tag({ return_url: '', build: '4798e64' });
+  assert.deepStrictEqual(t, { text: 'build 4798e64', visible: true });
+
+  t = await tag({ return_url: '', build: '4798e64b2f0c9a1d3e5f7a9b0c1d2e3f4a5b6c7d' });
+  assert.strictEqual(t.text, 'build 4798e64', 'a full hash was not shortened: ' + t.text);
+
+  t = await tag({ return_url: '', build: null });
+  assert.deepStrictEqual(t, { text: '', visible: false }, 'an unstamped build showed a tag');
+  t = await tag({ return_url: '' });
+  assert.deepStrictEqual(t, { text: '', visible: false }, 'a server without the field showed a tag');
+
+  // On a run that cannot be loaded too: that blocking card is the screen a bug
+  // report is most often a picture of.
+  t = await tag({ return_url: '', build: 'a1b2c3d' }, '?run=r_1');
+  assert.deepStrictEqual(t, { text: 'build a1b2c3d', visible: true });
+"""
+
+
+def test_the_page_shows_which_build_served_it(tmp_path):
+    _run(tmp_path, BUILD_TAG, "BUILD TAG OK")

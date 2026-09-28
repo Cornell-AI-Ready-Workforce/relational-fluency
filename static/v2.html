@@ -308,6 +308,10 @@
   .consent-card .code-row input:focus { outline: none; border-color: var(--accent); }
   .consent-card .actions { display:flex; gap:8px; justify-content:flex-end; margin-top: 14px; }
   .consent-card .err { color: var(--accent); font-size: 13px; min-height: 18px; margin-top: 4px; }
+  /* The build tag: for a bug report or a screenshot, so it is small, muted and
+     below everything a participant reads. */
+  .build-tag { padding: 0 20px 10px; text-align: right; font-size: 11px; color: var(--muted);
+    font-family: ui-monospace, Menlo, monospace; opacity: .75; user-select: all; }
   /* The quiet-room requirement (issue #37): a requirement, not a tip, so it is
      boxed and bold at the top of the first intro screen and of the audio check. */
   .quiet-notice { border: 2px solid var(--accent); background: var(--accent-soft); color: var(--fg);
@@ -527,6 +531,9 @@
     <div class="transcript" id="transcript" aria-live="polite"></div>
   </div>
 </main>
+<!-- Which build served this page (see showBuild). Empty and hidden when the
+     server does not say. -->
+<footer class="build-tag" id="buildTag" style="display:none"></footer>
 
 <script>
   const params = new URLSearchParams(location.search);
@@ -1165,6 +1172,22 @@
   }
 
   async function contactWho() { return contactPhrase(await loadRunCfg()); }
+
+  // ---------- the build tag ----------
+  // Which build this page came from, small and out of the way, so a tester's
+  // screenshot or a participant's report can say which code it was without
+  // anybody asking the server. The image carries its commit (BUILD_SHA) and
+  // /api/run/config serves it as `build`; a server that does not know, or that
+  // predates the field, says null or nothing, and then nothing is shown rather
+  // than a guess. A full commit hash is shortened the way git shortens one.
+  function showBuild(cfg) {
+    const el = $('buildTag');
+    if (!el) return;
+    let build = (cfg && typeof cfg.build === 'string') ? cfg.build.trim().slice(0, 40) : '';
+    if (/^[0-9a-f]{8,40}$/i.test(build)) build = build.slice(0, 7);
+    el.textContent = build ? `build ${build}` : '';
+    el.style.display = build ? 'block' : 'none';
+  }
 
   // ---------- the upstream consent handoff ----------
   // There is no consent form on this platform: it is handled in the survey,
@@ -4445,6 +4468,10 @@
   }
 
   (async () => {
+    // Not awaited, and first: the build tag belongs on every screen this page
+    // can end up on, a blocking error included, since that is the screen a
+    // bug report is most often a picture of.
+    loadRunCfg().then(showBuild, () => {});
     // Resolve the run first: it decides which scenario this page is serving.
     // If it could not be resolved (or the run is already finished), stop here
     // rather than falling through to the default scenario.
