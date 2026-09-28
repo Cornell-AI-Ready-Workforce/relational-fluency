@@ -1413,11 +1413,13 @@
   // skipped_triggers, so the encounter is at least honest about it afterwards,
   // but an empty record is not a measurement.
   //
-  // This delays the control, it does not lock the participant in: End
-  // conversation is live from the first second and is never refused (consent
-  // promises they can stop at any time), and the floor expires on its own inside
-  // a 7-12 minute encounter. Internal and non-study runs skip it, exactly as
-  // they skip the 7-minute end gate, so the team can still move fast.
+  // This delays the control, it does not lock the participant in: "Stop and
+  // leave the study" is live from the first second and is never refused
+  // (consent promises they can stop at any time), and the floor expires on its
+  // own inside a 7-12 minute encounter. Internal and non-study runs skip it
+  // (gateActive), so the team can still walk the beats fast. The 7-minute gate
+  // on End is a different gate and no longer shares this exemption: since
+  // 2026-09-28 it holds on every link type (#34, renderGate).
   const ADVANCE_MIN_S = 180;
   function advanceFloorMet() {
     if (!gateActive()) return true;
