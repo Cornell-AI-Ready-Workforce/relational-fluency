@@ -616,7 +616,8 @@ rollout. Two rules:
 curl -s https://rf.ai-ready-workforce.ai.cornell.edu/health | python -c "import json,sys; print('active sessions:', json.load(sys.stdin).get('active_sessions'))"
 ```
 
-2. After `tofu apply`, wait for the rollout to finish before anyone tests:
+2. After the apply (`tofu -chdir=infra/terraform apply tfplan.bin`), wait
+   for the rollout to finish before anyone tests:
 
 ```bash
 aws ecs describe-services --cluster relational-fluency --services platform --query 'services[0].deployments[0].rolloutState' --output text
@@ -962,6 +963,33 @@ says; the only question is whether that checkout is `main`. The history before
 that, when the state was not in the account's state bucket and every revision
 was registered by hand, is in
 [`DEPLOY-AWS.md`](DEPLOY-AWS.md#read-this-first-the-runbook-and-the-practice-have-diverged).
+
+### A change to `terraform.tfvars` is a release
+
+Not only a new image: every setting in `infra/terraform/terraform.tfvars`
+(`survey_return_url`, `survey_completion_code_enabled`,
+`analysis_db_allowed_cidrs`, ...) reaches production the same way, through the
+guard, and never by editing the file locally and running a plain `tofu apply`
+from whatever checkout is at hand. That skips every check above, and the plan
+it makes also carries whatever image *that* checkout pins: a branch behind
+`main` rolls production back while applying an unrelated setting, which is the
+24 September incident. The guard also refuses a dirty tree, so an edit that has
+not been merged cannot be applied through it.
+
+1. Change `terraform.tfvars` in a PR of its own, and merge it.
+2. From an up-to-date `main`, plan through the guard and apply that plan:
+
+   ```bash
+   git switch main && git pull --ff-only && tools/deploy.sh
+   tofu -chdir=infra/terraform apply tfplan.bin
+   ```
+
+3. Between those two commands, read the plan summary `tools/deploy.sh`
+   prints: a settings change should say `IMAGE: unchanged`. A change that touches only resources the task does not
+   run on (a security group rule, say) and lists no `aws_ecs_*` change does not
+   restart anything, so `--allow-active-sessions` is safe for it; anything
+   that changes the task definition is a rollout and waits for
+   `active_sessions` 0 like a new image.
 
 Build and push by hand, when the workflow is unavailable (from a clean
 checkout of the commit being released):
@@ -1392,7 +1420,9 @@ Set the Qualtrics continuation link so the app can return them:
 survey_return_url = "https://cornell.qualtrics.com/jfe/form/SV_xxxxx?..."
 ```
 
-then `tofu apply`. After the fourth encounter the participant sees their
+in a PR, and release it like any other settings change ([A change to
+`terraform.tfvars` is a release](#a-change-to-terraformtfvars-is-a-release)).
+After the fourth encounter the participant sees their
 completion code and a **Return to the survey** button, which appends:
 
 ```
@@ -1434,14 +1464,21 @@ code anyone can type without doing the study. Order matters, because ECS will
 not start a task whose secret has no value:
 
 ```bash
-# 1. Create the (empty) secret: the normal plan/apply, with
-#    survey_completion_code_enabled = false in terraform.tfvars
-tofu plan -out tfplan.bin && tofu apply tfplan.bin
+# 1. Create the (empty) secret: release the stack with
+#    survey_completion_code_enabled = false in terraform.tfvars, through the
+#    guard, from an up-to-date main
+git switch main && git pull --ff-only && tools/deploy.sh
+tofu -chdir=infra/terraform apply tfplan.bin
 # 2. Put the code (never in git)
 aws secretsmanager put-secret-value --region us-east-1 \
   --secret-id relational-fluency/survey-completion-code --secret-string 'THE-CODE'
-# 3. terraform.tfvars: survey_completion_code_enabled = true, then plan/apply again
+# 3. A PR setting survey_completion_code_enabled = true in terraform.tfvars;
+#    merge it, then the same two commands as step 1 again
 ```
+
+Both applies are [settings releases](#a-change-to-terraformtfvars-is-a-release):
+the second changes the task definition, so it is a rollout and waits for
+`active_sessions` 0.
 
 The task reads the secret when it starts, so a later change to the value needs
 a new deployment (`aws ecs update-service ... --force-new-deployment`).
@@ -1458,28 +1495,35 @@ record, and the instance can be dropped and rebuilt from the bucket.
 
 ### First-time setup (administrator)
 
+From the repository root, on an up-to-date `main`:
+
 ```bash
-# 1. Create it (part of the normal tofu plan/apply; takes ~10 minutes)
-cd infra/terraform && tofu apply
+# 1. Create it: it is part of the stack, so the release that first carries
+#    analysis_db.tf creates it (takes ~10 minutes), through the guard
+git switch main && git pull --ff-only && tools/deploy.sh
+tofu -chdir=infra/terraform apply tfplan.bin
 
 # 2. Where it is, and the master password RDS generated (never in git)
-tofu output -raw analysis_db_endpoint
-SECRET=$(tofu output -raw analysis_db_master_secret_arn)
+tofu -chdir=infra/terraform output -raw analysis_db_endpoint
+SECRET=$(tofu -chdir=infra/terraform output -raw analysis_db_master_secret_arn)
 aws secretsmanager get-secret-value --secret-id "$SECRET" --region us-east-1 --query SecretString --output text
 #    -> {"username":"rf_admin","password":"..."}  (paste the password when psql asks)
 
-# 3. Let your own address in, then re-apply. Find it with: curl -s https://checkip.amazonaws.com
-#    infra/terraform/terraform.tfvars:
+# 3. Let your own address in (find it with: curl -s https://checkip.amazonaws.com):
+#    a PR adding it to infra/terraform/terraform.tfvars,
 #      analysis_db_allowed_cidrs = ["203.0.113.7/32"]
-tofu apply
+#    merged, then the same two commands as step 1
 
 # 4. Schema and roles (TLS is required; psql negotiates it by default)
-HOST=$(tofu output -raw analysis_db_endpoint)
-psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -f ../../docs/db-schema.sql
-psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -f ../../docs/db-roles.sql
+HOST=$(tofu -chdir=infra/terraform output -raw analysis_db_endpoint)
+psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -f docs/db-schema.sql
+psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -f docs/db-roles.sql
 psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -c '\password rf_loader'
 psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -c '\password rf_analyst'
 ```
+
+Steps 1 and 3 are [settings releases](#a-change-to-terraformtfvars-is-a-release);
+step 3's plan should change only the security group.
 
 ### Loading (whoever runs the refresh)
 
@@ -1499,8 +1543,11 @@ avoids the prompt.
 ### Giving an analyst access
 
 1. Add their address to `analysis_db_allowed_cidrs` in `terraform.tfvars`
-   and `tofu apply` (the security group is the only door; nothing else
-   changes).
+   in a PR, merge it, and release it through the guard
+   ([A change to `terraform.tfvars` is a release](#a-change-to-terraformtfvars-is-a-release)).
+   The security group is the only door, and the plan should change nothing
+   else: if it also shows an image change, stop, because the pin on `main` is
+   not what production runs, and applying would release that image too.
 2. Give them the `rf_analyst` password. That role reads every table and view
    except `participant_identity`, and may write ratings. Connection string:
    `postgresql://rf_analyst@<endpoint>/rf?sslmode=require`, schema `rf`.

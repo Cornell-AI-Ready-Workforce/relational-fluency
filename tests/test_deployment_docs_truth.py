@@ -131,6 +131,65 @@ def test_no_documented_release_deploys_around_the_pin():
     assert not offenders, "\n".join(offenders)
 
 
+# Every place a reader copies an apply from. A settings change (survey return
+# URL, completion code, an analyst's address) reaches production exactly as an
+# image does: by PR, then tools/deploy.sh from main, then `apply tfplan.bin`.
+# The config procedures in OPERATIONS.md said "edit terraform.tfvars, then
+# `tofu apply`" from whatever checkout was at hand, which skips every check the
+# guard makes and applies whatever image that checkout pins: the 24 September
+# rollback, reached through an unrelated setting (review of 850b08e). Only the
+# two blocks that build a NEW environment, and say so, may apply bare.
+_BARE_APPLY = re.compile(r"\b(tofu|terraform)(\s+-chdir=\S+)?\s+apply\b(?!\s+tfplan\.bin)")
+# A plan is tools/deploy.sh's to make: `tofu plan -out tfplan.bin && tofu
+# apply tfplan.bin` by hand is the same bypass with a saved file in between.
+_BARE_PLAN = re.compile(r"\b(tofu|terraform)(\s+-chdir=\S+)?\s+plan\b")
+_PROSE_APPLY = re.compile(
+    r"\b(then|and|run|re-?run)\s+`(tofu|terraform)(\s+-chdir=\S+)?\s+apply(?!\s+tfplan\.bin)")
+_PIN_AROUND = re.compile(r"-var[ =]container_image")
+INFRA_README = REPO_ROOT / "infra" / "README.md"
+NEW_ENVIRONMENT_ONLY = {DEPLOY_AWS: "## 1. Provision the infrastructure",
+                        INFRA_README: "## Deploy (first time"}
+
+
+def _apply_offenders(doc: Path) -> list:
+    offenders, inside, allowed = [], False, False
+    new_env = NEW_ENVIRONMENT_ONLY.get(doc)
+    for n, line in enumerate(_text(doc).splitlines(), start=1):
+        if line.startswith("## "):
+            allowed = bool(new_env) and line.startswith(new_env)
+        if line.lstrip().startswith("```"):
+            inside = not inside
+            continue
+        if inside:
+            command = re.sub(r"(^|\s)#.*$", "", line)
+            if _PIN_AROUND.search(command) or (not allowed and (
+                    _BARE_APPLY.search(command) or _BARE_PLAN.search(command))):
+                offenders.append(f"{doc.relative_to(REPO_ROOT)}:{n}: {line.strip()}")
+        elif not allowed and _PROSE_APPLY.search(line):
+            offenders.append(f"{doc.relative_to(REPO_ROOT)}:{n}: {line.strip()}")
+    return offenders
+
+
+def test_no_procedure_applies_around_the_guard():
+    offenders = []
+    for doc in (OPERATIONS, DEPLOY_AWS, INFRA_README, README):
+        offenders += _apply_offenders(doc)
+    for tf in sorted((REPO_ROOT / "infra" / "terraform").glob("*.tf")):
+        for n, line in enumerate(_text(tf).splitlines(), start=1):
+            if "description" in line and _PIN_AROUND.search(line):
+                offenders.append(f"{tf.relative_to(REPO_ROOT)}:{n}: {line.strip()}")
+    assert not offenders, "\n".join(offenders)
+
+
+def test_the_new_environment_blocks_say_they_are_for_a_new_environment():
+    for doc, heading in NEW_ENVIRONMENT_ONLY.items():
+        body = _text(doc)
+        section = body.split(heading, 1)[1].split("\n## ", 1)[0]
+        assert "new environment" in section.lower() or "new* environment" in section.lower(), doc
+    assert "#a-change-to-terraformtfvars-is-a-release" in _text(OPERATIONS)
+    assert "### A change to `terraform.tfvars` is a release" in _text(OPERATIONS)
+
+
 @pytest.mark.parametrize("doc", [DEPLOY_AWS, OPERATIONS], ids=["DEPLOY-AWS", "OPERATIONS"])
 def test_the_missing_terraform_state_is_written_down(doc):
     """Where the Terraform state is, and where it once was not.
