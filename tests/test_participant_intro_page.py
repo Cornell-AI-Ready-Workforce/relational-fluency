@@ -948,37 +948,65 @@ LIVE = RUN_VIEW + A11Y_DOM + r"""
   const frame = (m) => b.ctx.handleServerFrame({ data: JSON.stringify(m) });
   frame({ type: 'session', session_id: 's_1', scenario: { title: 'T', mode: 'group' }, cast: BRIEF.cast });
 
+  // The start of a conversation comes in one server tick. The start cue is
+  // said, and the floor opening under it is not said over it: the cue has
+  // just said so. (It used to be replaced by "You can speak now" before it
+  // could be read.)
   frame({ type: 'awaiting_participant', reason: 'start', names: ['Dan'] });
+  frame({ type: 'turn_open' });
   assert.strictEqual(said(), "You start the conversation. Say hello when you're ready.",
     'the start cue was not said: ' + JSON.stringify(said()));
+  // Whatever else is said in the same moment is said with it, in order.
+  b.ctx.appendNotice('The other person’s line broke up for a moment');
+  assert.strictEqual(said(), "You start the conversation. Say hello when you're ready. "
+    + 'The other person’s line broke up for a moment', 'one burst, not said together: ' + JSON.stringify(said()));
+  b.ctx.appendNotice('The camera stopped.');
+  assert(/moment\. The camera stopped\.$/.test(said()), JSON.stringify(said()));
+  await b.clock.advance(1000);
 
-  frame({ type: 'turn_open' });
-  assert.strictEqual(said(), 'You can speak now');
-  b.dom.$('srStatus').textContent = '';
-  frame({ type: 'turn_open' });
-  assert.strictEqual(said(), '', 'a floor that was already open was said again');
-
+  // Their first line is accepted and the start cue goes; a character speaks.
+  frame({ type: 'participant_opened', first_of_encounter: true });
   // A character talking is the voice's to say, not the status region's.
+  b.dom.$('srStatus').textContent = '';
   b.ctx.setActiveSpeaker('dan');
   assert.strictEqual(b.dom.$('turnState').textContent, 'Dan is speaking');
   assert.strictEqual(said(), '', '"Dan is speaking" was announced: ' + JSON.stringify(said()));
   b.ctx.setActiveSpeaker(null);
   frame({ type: 'turn_open' });
   assert.strictEqual(said(), 'You can speak now', 'the floor opening again was not said');
+  await b.clock.advance(1000);
+  b.dom.$('srStatus').textContent = '';
+  frame({ type: 'turn_open' });
+  assert.strictEqual(said(), '', 'a floor that was already open was said again');
 
   // A caption is not said at all: the transcript is not the live region.
   frame({ type: 'user_transcript', text: 'I think we should', final: false });
-  assert.strictEqual(said(), 'You can speak now', 'a caption reached the status region');
+  assert.strictEqual(said(), '', 'a caption reached the status region');
 
   // What the app itself says is said, and the same words twice are said twice.
   b.ctx.appendNotice('The other person’s line broke up for a moment.');
   assert.strictEqual(said(), 'The other person’s line broke up for a moment.');
+  await b.clock.advance(1000);
   b.ctx.showGateNote('Keep going.');
   const first = said();
+  await b.clock.advance(1000);
   b.ctx.showGateNote('Keep going.');
   assert.strictEqual(first.trim(), 'Keep going.');
   assert.notStrictEqual(said(), first, 'a second press of End was not said again');
   assert.strictEqual(said().trim(), 'Keep going.');
+
+  // S1's hand-off: the cue for the new person is said, and the floor opening
+  // 0.4 s later does not cut it off.
+  b.ctx.setActiveSpeaker('dan');
+  b.ctx.setActiveSpeaker(null);
+  await b.clock.advance(1000);
+  frame({ type: 'awaiting_participant', reason: 'handoff', names: ['Sam'] });
+  assert.strictEqual(said(), "You're now with Sam. You start.");
+  await b.clock.advance(430);
+  frame({ type: 'turn_open' });
+  assert.strictEqual(b.dom.$('turnState').textContent, 'You can speak now');
+  assert.strictEqual(said(), "You're now with Sam. You start.",
+    'the hand-off cue was cut off: ' + JSON.stringify(said()));
 
   // And the status region is not hidden with the page behind a card.
   b.dom.document.body.children.push(b.dom.$('srStatus'));

@@ -2265,7 +2265,10 @@
     } else if (cueOpen) {
       // Said once each time the floor opens (A11Y-02), for somebody who
       // cannot see the pill. "<Name> is speaking" is not: the voice says it.
-      if ($('turnState').textContent !== 'You can speak now') announce('You can speak now');
+      // Nor while the start cue is up, which has just said it ("You start
+      // the conversation…", "You're now with Sam. You start."): at S1's
+      // hand-off turn_open comes 0.4 s after it and would cut it off.
+      if (!startCueEl && $('turnState').textContent !== 'You can speak now') announce('You can speak now');
       setTurnState('You can speak now', 'you');
     } else {
       setTurnState('');
@@ -2329,11 +2332,24 @@
   // Said to a screen reader through the page's one status region (#srStatus).
   // The transcript is not live, so what the app itself has to say, and the
   // cues that it is the participant's turn, are said here and nothing else.
+  //
+  // What is said in one burst is said together, in order. At the start of
+  // every conversation segment_start, awaiting_participant and turn_open
+  // arrive in the same server tick, and each announce() replaced the one
+  // before it before the region was read: a screen reader heard "You can
+  // speak now" and never who they were with, or that they start.
+  const ANNOUNCE_BURST_MS = 100;
+  let saidInBurst = '', burstTimer = null;
   function announce(text) {
     const s = $('srStatus');
+    if (!s) return;
+    const said = !saidInBurst ? text
+      : saidInBurst + (/[.!?…]$/.test(saidInBurst) ? ' ' : '. ') + text;
+    saidInBurst = said;
+    if (!burstTimer) burstTimer = setTimeout(() => { saidInBurst = ''; burstTimer = null; }, ANNOUNCE_BURST_MS);
     // The same words again (a second press of End) have to be a change, or
     // they are not read: a trailing no-break space makes them one.
-    if (s) s.textContent = s.textContent === text ? text + '\u00a0' : text;
+    s.textContent = s.textContent === said ? said + '\u00a0' : said;
   }
 
   // ---------- the notice for a capture that would not start ----------
