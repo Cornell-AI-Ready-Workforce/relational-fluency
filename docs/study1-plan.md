@@ -191,11 +191,10 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
 ### E4 — Seven-minute floor and timer
 
 **4.1 Server-side encounter floor** — M · app — ✅ done 2026-09-17 (`storage.encounter_timing`, runner `_hold_at_floor`, 409 on `/advance`; `tests/test_encounter_floor.py`)
-- `ENCOUNTER_MIN_SECONDS=420`. An encounter may not emit `encounter_complete`
-  or be advanced before 420 s from its first participant turn; the actor's
-  `end_conversation` and the per-interaction auto-advance (`INTERACTION_MIN_*`)
-  are bounded by it (e.g. interaction floors derived so the last interaction
-  is still open at 7:00). Withdrawal (`/api/run/{id}/withdraw`) is never gated.
+- `ENCOUNTER_MIN_SECONDS=420`. The participant may not advance before 420 s
+  from the first participant turn; actor and automatic completion are held at
+  that floor and the final interaction remains open to the 12:00 ceiling.
+  Withdrawal (`/api/run/{id}/withdraw`) is never gated.
 - AC: an encounter driven to finish at 4:00 is held open and completes at
   ≥ 7:00; `advance` before the floor is refused with a reason; withdrawal at
   any time works.
@@ -208,10 +207,10 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
 - AC: before 7:00 the End control is visibly locked with a reason; Stop works;
   after 7:00 End advances.
 
-**4.3 Ceiling** — S · app (confirmed 2026-09-17: 12 min wrap, 13 min hard stop) — ✅ done 2026-09-17 (`ceiling_wrap` / `ceiling_reached` events; the page also stops on its own clock). Note: on the configured Gemini family a mid-session wrap direction does not reach the actor, so the record says the wrap was *called*; the hard stop is what guarantees the ceiling.
-- At 12:00 the actor is directed to close the scene within two turns; at 13:00
+**4.3 Ceiling** — S · app (12 min hard stop) — ✅ implemented (`ceiling_wrap` / `ceiling_reached` events; the page also stops on its own clock). Note: on the configured Gemini family a mid-session wrap direction does not reach the actor, so the record says the wrap was *called*; the hard stop is what guarantees the ceiling.
+- At 11:00 the actor is directed to close the scene within two turns; at 12:00
   the encounter completes regardless. Record both on the events trail.
-- AC: no encounter in the pilot exceeds 13:00.
+- AC: no encounter exceeds 12:00.
 
 **4.4 Duration report** — S · analysis ✅ 2026-09-17: `tools/encounter_health.py` prints duration, turns, floor/wrap/ceiling marks per encounter.
 - `tools/encounter_health.py` prints per-encounter duration, turns, floor and

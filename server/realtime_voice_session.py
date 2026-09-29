@@ -3028,7 +3028,11 @@ class RealtimeVoiceSessionRunner:
     async def _advance_from_tool(self) -> None:
         """Advance the encounter from a room member's end_conversation call."""
         try:
+            if await self._at_ceiling():
+                return
             if await self._hold_at_floor("end_conversation"):
+                return
+            if self._is_last_segment():
                 return
             if not await self._advance_segment():
                 await self._send({"type": "encounter_complete"})
@@ -5778,11 +5782,10 @@ class RealtimeVoiceSessionRunner:
         if self._next_trigger() is not None:
             return  # beats remain in this interaction
 
-        # An encounter is meant to run 7-12 minutes across its interactions, so
-        # firing the last planted trigger is a floor, not a finish line. Hold
-        # the scene open until it has had both enough turns and enough time,
-        # otherwise a scenario with one planted beat ends after three exchanges
-        # and there is nothing for a rater to score.
+        # Firing the last planted trigger is not a finish line. Hold the scene
+        # open until it has had both enough turns and enough time, otherwise a
+        # scenario with one planted beat ends after three exchanges and there
+        # is nothing for a rater to score.
         min_turns = int(os.getenv("INTERACTION_MIN_TURNS", "8"))
         min_seconds = float(os.getenv("INTERACTION_MIN_SECONDS", "180"))
         elapsed = time.time() - self._interaction_started_at
@@ -5790,8 +5793,10 @@ class RealtimeVoiceSessionRunner:
             return
         if elapsed < min_seconds:
             return
-        # The encounter-level floor: the last interaction stays open until the
-        # study's seven minutes have passed, however spent its beats are.
+        if self._is_last_segment():
+            return
+        # A participant can end from the page after the floor; automated
+        # completion of the final interaction remains reserved for the ceiling.
         if await self._hold_at_floor("auto_advance"):
             return
 

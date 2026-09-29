@@ -1,5 +1,5 @@
-"""The encounter clock: a seven-minute floor, a twelve-minute wrap, a
-thirteen-minute stop (docs/study1-plan.md, E4).
+"""The encounter clock: a seven-minute floor, an eleven-minute wrap, and a
+twelve-minute stop (docs/study1-plan.md, E4).
 
 The floor is enforced in two places and this file holds both to the same
 numbers: the runner (auto-advance, the actor's end tool, the participant's
@@ -33,7 +33,7 @@ import test_lost_participant_round as harness  # noqa: E402  (FakeSession / make
 def test_the_defaults_are_the_studys_numbers(monkeypatch):
     for k in ("ENCOUNTER_MIN_SECONDS", "ENCOUNTER_WRAP_SECONDS", "ENCOUNTER_MAX_SECONDS"):
         monkeypatch.delenv(k, raising=False)
-    assert storage.encounter_timing() == {"min_seconds": 420.0, "wrap_seconds": 720.0, "max_seconds": 780.0}
+    assert storage.encounter_timing() == {"min_seconds": 420.0, "wrap_seconds": 660.0, "max_seconds": 720.0}
 
 
 def test_the_environment_overrides_them(monkeypatch):
@@ -258,13 +258,43 @@ def test_the_actors_end_tool_is_held_the_same_way(monkeypatch):
     assert calls == [] and session.store.of("floor_held")[0]["reason"] == "end_conversation"
 
 
+def test_the_actors_end_tool_does_not_finish_the_final_segment_after_the_floor(monkeypatch):
+    runner, session, ws = harness.make_runner("S1A")
+    _last_segment(runner)
+    runner._encounter_started_at = time.time() - 500
+    calls = []
+
+    async def advance():
+        calls.append(1)
+        return False
+    monkeypatch.setattr(runner, "_advance_segment", advance)
+    _run(runner._advance_from_tool())
+    assert calls == [] and not ws.frames("encounter_complete")
+
+
+def test_automatic_advance_keeps_the_final_segment_open_until_the_ceiling(monkeypatch):
+    runner, session, ws = harness.make_runner("S1A")
+    _last_segment(runner)
+    runner._encounter_started_at = time.time() - 500
+    runner._turns_this_interaction = 20
+    runner._next_trigger = lambda: None
+    calls = []
+
+    async def advance():
+        calls.append(1)
+        return False
+    monkeypatch.setattr(runner, "_advance_segment", advance)
+    _run(runner._maybe_advance())
+    assert calls == [] and not ws.frames("encounter_complete")
+
+
 def test_the_wrap_is_called_once_and_the_stop_completes_the_encounter():
     runner, session, ws = harness.make_runner("S1A")
-    runner._encounter_started_at = time.time() - 730       # past 12:00, before 13:00
+    runner._encounter_started_at = time.time() - 670       # past 11:00, before 12:00
     assert _run(runner._at_ceiling()) is False
     assert _run(runner._at_ceiling()) is False
     assert len(session.store.of("ceiling_wrap")) == 1 and len(ws.frames("wrap_up")) == 1
-    runner._encounter_started_at = time.time() - 790       # past 13:00
+    runner._encounter_started_at = time.time() - 730       # past 12:00
     assert _run(runner._at_ceiling()) is True
     done = ws.frames("encounter_complete")
     assert done and done[-1]["reason"] == "ceiling"
@@ -286,6 +316,7 @@ def test_the_stop_outranks_planted_beats_still_waiting(monkeypatch):
 def test_the_page_takes_its_clock_from_the_run_and_holds_end_until_the_floor():
     src = (ROOT / "static" / "v2.html").read_text(encoding="utf-8")
     assert "applyTiming(run.timing)" in src
+    assert "let MIN_S = 7 * 60, WRAP_S = 11 * 60, MAX_S = 12 * 60;" in src
     early = src[src.index("$('stopBtn').addEventListener('click'"):]
     early = early[:early.index("if (!confirm('Finish this conversation and move on?'))")]
     assert "return;" in early and "endSession()" not in early, \
