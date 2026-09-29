@@ -135,6 +135,13 @@ def test_a_dirty_report_is_never_the_builds_report(tmp_path):
 STUBS = {
     "aws": """
         echo "aws $*" >> "$STUB_LOG"
+        case " $* " in
+          *" ecs describe-services "*)
+            case "${STUB_ECS:-1 1}" in
+              denied) echo "An error occurred (AccessDeniedException) when calling the DescribeServices operation" >&2; exit 254 ;;
+              *) printf '%s\\t%s\\n' ${STUB_ECS:-1 1}; exit 0 ;;
+            esac ;;
+        esac
         case "${STUB_ECR:-present}" in
           present) echo "1790276635.436"; exit 0 ;;
           absent) echo "An error occurred (ImageNotFoundException) when calling the DescribeImages operation: The image does not exist" >&2; exit 254 ;;
@@ -208,7 +215,8 @@ def world(tmp_path, monkeypatch):
     log.write_text("", encoding="utf-8")
     env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}",
                PYTHON=sys.executable, STUB_LOG=str(log), STUB_PLAN_JSON=str(plan), NO_COLOR="1")
-    for k in ("TF_CLI_ARGS", "TF_CLI_ARGS_plan", "STUB_ECR", "STUB_HEALTH", "STUB_PLAN_RC"):
+    for k in ("TF_CLI_ARGS", "TF_CLI_ARGS_plan", "STUB_ECR", "STUB_ECS", "STUB_HEALTH",
+              "STUB_PLAN_RC"):
         env.pop(k, None)
 
     class W:
@@ -323,6 +331,39 @@ def test_someone_mid_encounter_is_refused_unless_overridden(world):
     assert "tofu" not in r.calls
     r = world.run("--allow-active-sessions", STUB_HEALTH=busy)
     assert r.returncode == 0 and "WARNING: 2 encounter(s) in progress" in r.out
+
+
+@bash_only
+@pytest.mark.parametrize("ecs", ["2 2", "2 1", "1 2"])
+def test_more_than_one_task_is_refused_because_health_counts_one(world, ecs):
+    """active_sessions is one process's registry, and the ALB's lb_cookie
+    stickiness sends a cookieless /health to one task at random. With two
+    (desired_count "2 during collection"; Terraform ignores a manual
+    scale-up, and a rollout runs old and new side by side), "0" can be the
+    idle task while the other holds a live encounter."""
+    r = world.run(STUB_ECS=ecs)
+    assert r.returncode == 1 and "/health answers for one of them" in r.out, r.out
+    assert "tofu" not in r.calls
+    assert "ecs describe-services --region us-east-1 --cluster relational-fluency " \
+           "--services platform" in r.calls, "the count is read, read-only, from ECS"
+    r = world.run("--allow-active-sessions", STUB_ECS=ecs)
+    assert r.returncode == 0, r.out
+    assert "WARNING: the service runs 2 tasks" in r.out, r.out
+
+
+@bash_only
+def test_a_task_count_ecs_will_not_give_is_refused_unless_overridden(world):
+    r = world.run(STUB_ECS="denied")
+    assert r.returncode == 1 and "could not read how many tasks" in r.out, r.out
+    r = world.run("--allow-active-sessions", STUB_ECS="denied")
+    assert r.returncode == 0 and "WARNING: could not read how many tasks" in r.out, r.out
+
+
+@bash_only
+def test_one_task_is_what_health_covers(world):
+    r = world.run(STUB_ECS="1 1")
+    assert r.returncode == 0, r.out
+    assert "one task running" in r.out
 
 
 @bash_only

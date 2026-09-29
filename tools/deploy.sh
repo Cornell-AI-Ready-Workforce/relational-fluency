@@ -26,10 +26,12 @@
 #      commit reachable from origin/main, and exists in ECR (read-only
 #      `aws ecr describe-images`), so the plan cannot point the service at an
 #      image that is not there;
-#   4. production's GET /health says active_sessions is 0, because a rollout
-#      cuts every encounter on the old task about two minutes in
-#      (docs/OPERATIONS.md, "Before every deploy"), and, where /health reports
-#      the running build, the pin is not OLDER than it;
+#   4. the service runs one task (read-only `aws ecs describe-services`),
+#      because /health answers for one task only, and production's GET
+#      /health says active_sessions is 0, because a rollout cuts every
+#      encounter on the old task about two minutes in (docs/OPERATIONS.md,
+#      "Before every deploy"); and, where /health reports the running build,
+#      the pin is not OLDER than it;
 #   5. and it WARNS, without refusing, when tools/sim/reports/<tag>.json is
 #      missing or did not pass (tools/sim/check.py, the pre-deploy sim check).
 #
@@ -53,6 +55,8 @@
 set -euo pipefail
 
 PROD_URL="${RF_URL:-https://rf.ai-ready-workforce.ai.cornell.edu}"
+ECS_CLUSTER="relational-fluency"
+ECS_SERVICE="platform"
 TF_DIR="infra/terraform"
 PLAN_FILE="tfplan.bin"
 
@@ -186,6 +190,42 @@ fi
 
 # --- 4. production ------------------------------------------------------------
 step "Production ($PROD_URL)"
+# How many tasks /health could be answered by, first. active_sessions is the
+# session registry of ONE process, and the ALB's lb_cookie stickiness sends a
+# cookieless request to one task picked at random. The service is meant to run
+# two during collection (variables.tf), Terraform ignores a manual scale-up
+# (ecs.tf ignore_changes) and never scales back, and a rollout runs old and new
+# side by side: with two, "0" can be the idle task while the other holds a live
+# encounter, the very case this check exists to refuse.
+if tasks=$(aws ecs describe-services --region "$REGION" --cluster "$ECS_CLUSTER" \
+             --services "$ECS_SERVICE" --query 'services[0].[runningCount,desiredCount]' \
+             --output text 2>&1) \
+   && read -r RUNNING DESIRED <<<"$tasks" \
+   && [[ "$RUNNING" =~ ^[0-9]+$ && "$DESIRED" =~ ^[0-9]+$ ]]; then
+  MOST=$RUNNING; [ "$DESIRED" -gt "$MOST" ] && MOST=$DESIRED
+  if [ "$MOST" -gt 1 ]; then
+    if [ "$ALLOW_ACTIVE" = 1 ]; then
+      warn "the service runs $MOST tasks (running $RUNNING, desired $DESIRED); /health answers for one of them, so its active_sessions below covers one task only (--allow-active-sessions)"
+    else
+      refuse "the service runs $MOST tasks (running $RUNNING, desired $DESIRED), and /health answers for one of them" \
+        "active_sessions is one task's count, and a request with no cookie reaches one task" \
+        "at random: \"0\" can be the idle one while another holds a live encounter." \
+        "After a collection burst, scale back to one and wait for running 1:" \
+        "  aws ecs update-service --region $REGION --cluster $ECS_CLUSTER --service $ECS_SERVICE --desired-count 1" \
+        "During a rollout, wait for it to finish. Or pass --allow-active-sessions."
+    fi
+  else
+    ok "one task running (running $RUNNING, desired $DESIRED): /health speaks for all of it"
+  fi
+else
+  if [ "$ALLOW_ACTIVE" = 1 ]; then
+    warn "could not read how many tasks $ECS_SERVICE runs, so /health may speak for only one of them (--allow-active-sessions)"
+  else
+    refuse "could not read how many tasks $ECS_SERVICE runs from ECS" "${tasks:-}" \
+      "/health answers for one task, so its active_sessions means nothing without the count." \
+      "(ecs:DescribeServices on your identity? aws sts get-caller-identity?)"
+  fi
+fi
 PROD_BUILD=""
 if health=$(curl -fsS --max-time 20 "$PROD_URL/health" 2>&1) \
    && parsed=$(printf '%s' "$health" | guard health -); then

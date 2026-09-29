@@ -86,7 +86,10 @@ curl https://rf.yourlab.org/health
   **Freeze during collection.**
 - **Scale for collection bursts:** `aws ecs update-service --cluster
   relational-fluency --service platform --desired-count 2` (Terraform ignores
-  manual count changes by design).
+  manual count changes by design, so it never scales back: set
+  `--desired-count 1` again afterwards). `tools/deploy.sh` refuses to plan
+  while more than one task runs, because `/health` answers for one task only
+  and its `active_sessions` cannot speak for the other.
 - **Model pinning:** `actor_model` / `director_model` are Terraform variables →
   environment variables. Set snapshots explicitly; record them in the wave notes.
 - **Costs:** tracked against `docs/RelationalFluency_AWS_Cost_Estimation.pdf`

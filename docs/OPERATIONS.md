@@ -947,7 +947,7 @@ only one that changes production is step 6:
 `tools/deploy.sh` (bash; on Windows, Git Bash or WSL) refuses to plan unless
 the working tree is clean, `HEAD` is exactly `origin/main` after a fetch, the
 pinned tag is a commit on `main`'s history and exists in ECR, and production
-reports `active_sessions` 0 and no build newer than the pin; it warns when the
+runs one task and reports `active_sessions` 0 and no build newer than the pin; it warns when the
 tag has no passing sim report, checks the plan's own before and after images,
 and prints the apply command rather than running it. What each refusal means,
 and the two overrides (`--allow-active-sessions`, `--allow-rollback`), are in
