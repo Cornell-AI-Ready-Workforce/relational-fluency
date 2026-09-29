@@ -889,3 +889,58 @@ def test_the_page_notices_are_readable():
     assert "italic" not in note, note
     size = float(re.search(r"font-size:\s*([\d.]+)px", note).group(1))
     assert size >= 14, note
+
+
+# =========================================================================== #
+# A11Y-06 and FLOW-13. The audio check's verdicts changed with nothing said,
+# "I heard it" appeared in the status column without focus, the card never
+# said why Continue stayed disabled, and "Didn't hear it?" opened with the
+# first play, before the participant had answered, reading as a fault.
+# =========================================================================== #
+
+def test_the_audio_check_says_its_verdicts_and_why_continue_waits():
+    src = V2.read_text(encoding="utf-8")
+    markup = src[:src.index("<script>")]
+    for row in ("mic", "spk", "cam"):
+        assert _attrs(_open_tag(markup, f"{row}Status")).get("role") == "status", row
+        assert _attrs(_open_tag(markup, f"{row}TestBtn")).get("aria-describedby") == f"{row}Status", row
+    cont = _attrs(_open_tag(markup, "audioCheckContinue"))
+    note = re.search(r'<p class="check-note" id="(\w+)">([^<]*)</p>', markup)
+    assert note and cont.get("aria-describedby") == note.group(1), cont
+    assert note.group(2) == "Continue unlocks when all three checks have passed.", note.group(2)
+
+
+SPEAKER_CHECK = A11Y_DOM + r"""
+  const b = boot('?run=r_1', (b) => [{ match: '/api/run/', fn: () => b.net.res(503, {}) }]);
+  const { doc } = a11y(b);
+  await b.clock.flush();
+  // The stub's audio graph has no oscillator; the chime needs three.
+  b.sandbox.AudioContext.prototype.createOscillator = () =>
+    ({ type: '', frequency: {}, connect() {}, start() {}, stop() {} });
+  b.ctx.runAudioCheck();
+  await b.clock.advance(10);
+  const help = b.dom.$('spkHelp');
+
+  b.dom.$('spkTestBtn').click();
+  await b.clock.advance(10);
+  const heard = () => b.dom.$('spkStatus').children.filter(c => c.tagName === 'BUTTON').pop();
+  assert(heard() && heard().textContent === 'I heard it', 'no "I heard it" after the chime');
+  assert.strictEqual(doc.activeElement, heard(), 'focus did not move to "I heard it"');
+  assert(!help.classList.contains('show'), '"Didn\'t hear it?" opened before they had answered');
+
+  // Played again without answering: now the help.
+  b.dom.$('spkTestBtn').click();
+  await b.clock.advance(10);
+  assert(help.classList.contains('show'), 'a second play did not bring up the help');
+  assert.strictEqual(doc.activeElement, heard());
+
+  heard().click();
+  assert.strictEqual(b.dom.$('spkStatus').textContent, 'Sound works');
+  assert(!help.classList.contains('show'));
+  assert.strictEqual(doc.activeElement, b.dom.$('spkTestBtn'),
+    'focus went with the button that was pressed and removed');
+"""
+
+
+def test_i_heard_it_takes_focus_and_the_help_waits_for_a_second_play(tmp_path):
+    _run(tmp_path, SPEAKER_CHECK, "SPEAKER CHECK OK")

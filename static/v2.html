@@ -181,6 +181,10 @@
   .check-help { display: none; font-size: 13.5px; color: var(--fg); background: var(--accent-soft, #fbeeee); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
   .check-help.show { display: block; }
   .check-actions { display: flex; gap: 10px; align-items: center; margin-top: 18px; }
+  /* Why Continue waits, next to it: the card never said, and a disabled
+     button with no reason reads as broken. */
+  .check-note { margin: 14px 0 0; font-size: 13.5px; color: var(--muted); }
+  .check-note + .check-actions { margin-top: 8px; }
   .check-actions .skip { font-size: 13px; font-weight: 400; color: var(--muted); background: none; border: none; text-decoration: underline; cursor: pointer; padding: 0; }
   /* A link under the pointer too, not the primary's dark red behind grey text. */
   .check-actions .skip:hover:not(:disabled) { background: none; }
@@ -459,7 +463,7 @@
     .consent-card .body, .situation-card .body, .situation-text ul, .consent-card label { font-size: 16px; }
     .transcript .system-note, .transcript .scene, .ai-banner, .brief .cast-line,
     .brief .body.rich .sit-note, .sit-note, .fiction-reminder { font-size: 14px; }
-    .check-row .what span, .check-row .status, .check-help, .check-actions .skip { font-size: 15px; }
+    .check-row .what span, .check-row .status, .check-help, .check-actions .skip, .check-note { font-size: 15px; }
     .brief .label, .brief .body.rich h4 { font-size: 12px; }
   }
   /* Very narrow phones: keep tiles legible. */
@@ -576,32 +580,37 @@
       quiet room, away from anyone talking, before you go on. If you cannot, noise-cancelling
       headphones also work.</div>
       <p>You will be talking out loud with AI characters for about 10 minutes at a time. Please use <b>headphones</b> if you have them.</p>
+      <!-- Each verdict is live (role=status) and describes its button. The
+           help under a row is not in that description: a description is read
+           even while its paragraph is hidden, and "We can't hear anything
+           yet" would be said before any test had run. -->
       <div class="check-row">
         <div class="what"><b>1. Your microphone</b><span>Press the button, then say "testing, one two three".</span>
           <div class="meter"><i id="micMeter"></i></div>
           <div class="check-help" id="micHelp">We can't hear anything yet. Check that your browser allowed the microphone (look for a mic icon in the address bar), that the right input device is selected, and that nothing is muted. Then try again.</div>
         </div>
-        <button id="micTestBtn">Test my microphone</button>
-        <div class="status" id="micStatus">Not tested</div>
+        <button id="micTestBtn" aria-describedby="micStatus">Test my microphone</button>
+        <div class="status" id="micStatus" role="status">Not tested</div>
       </div>
       <div class="check-row">
         <div class="what"><b>2. Your speakers or headphones</b><span>Play a short sound and confirm you heard it.</span>
           <div class="check-help" id="spkHelp">Didn't hear it? Check your volume and output device, then play it again.</div>
         </div>
-        <button id="spkTestBtn">Play a test sound</button>
-        <div class="status" id="spkStatus">Not tested</div>
+        <button id="spkTestBtn" aria-describedby="spkStatus">Play a test sound</button>
+        <div class="status" id="spkStatus" role="status">Not tested</div>
       </div>
       <div class="check-row">
         <div class="what"><b>3. Your camera</b><span>Every conversation is recorded on video. Turn the camera on and check you can see yourself.</span>
           <video id="camPreview" autoplay muted playsinline style="display:none;width:160px;height:120px;border-radius:8px;background:#000;margin-top:8px"></video>
           <div class="check-help" id="camHelp">We couldn't start your camera. Check that your browser allowed it (the camera icon in the address bar), that no other app is using it, and try again.</div>
         </div>
-        <button id="camTestBtn">Turn on my camera</button>
-        <div class="status" id="camStatus">Not tested</div>
+        <button id="camTestBtn" aria-describedby="camStatus">Turn on my camera</button>
+        <div class="status" id="camStatus" role="status">Not tested</div>
       </div>
     </div>
+    <p class="check-note" id="checkNote">Continue unlocks when all three checks have passed.</p>
     <div class="check-actions">
-      <button id="audioCheckContinue" disabled>Continue</button>
+      <button id="audioCheckContinue" aria-describedby="checkNote" disabled>Continue</button>
       <button class="skip" id="audioCheckSkip">Skip the check</button>
     </div>
   </div>
@@ -4753,6 +4762,7 @@
       const ov = $('audioCheckOverlay');
       resetAudioCheck();
       const micOk = { v: false }, spkOk = { v: false }, camOk = { v: false };
+      let spkPlays = 0;
       let testStream = null, testCtx = null, meterInt = null, micTimer = null, camStream = null;
       const update = () => { $('audioCheckContinue').disabled = !(micOk.v && spkOk.v && camOk.v); };
       // Release the microphone the moment the test has its answer.
@@ -4930,9 +4940,17 @@
             $('spkStatus').textContent = 'Sound works'; $('spkStatus').className = 'status ok';
             $('spkHelp').classList.remove('show');
             update();
+            // The button pressed has just gone; focus back to the row's own.
+            $('spkTestBtn').focus();
           });
           $('spkStatus').appendChild(yes);
-          $('spkHelp').classList.add('show');
+          // The question to answer now, where a keyboard or screen-reader
+          // user is: it appeared in the status column with nothing said.
+          yes.focus();
+          // The help is for a sound that was not heard, so it waits for a
+          // second play: shown with the first, beside "I heard it", it read
+          // as a fault before the participant had answered (FLOW-13).
+          if (++spkPlays > 1) $('spkHelp').classList.add('show');
         } catch (e) {
           $('spkStatus').textContent = 'Could not play';
         }
