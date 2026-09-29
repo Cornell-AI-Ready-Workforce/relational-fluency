@@ -282,9 +282,22 @@
   .consent-card .body.rich p { margin: 0 0 12px; }
   .consent-card .body.rich ul { margin: 0 0 12px; padding-left: 22px; }
   .consent-card .body.rich li { margin: 0 0 7px; }
-  /* Keep the action button reachable on short screens. */
-  .consent-card { max-height: 88vh; display: flex; flex-direction: column; }
-  .consent-card .body.rich, .situation-card .body { overflow-y: auto; }
+  /* Keep the action button reachable on short screens: an intro card has ONE
+     scroll region (.card-scroll), everything but its actions, and the actions
+     stay pinned under it. The situation card's body was told to scroll but
+     sat in a box that grew with it, so the whole card scrolled and "I'm
+     ready, let me in" was below the fold; the first screen pinned the
+     quiet-room box and scrolled the rules in a small window under it, so a
+     phone showed under half of them above "I understand, continue". The
+     shadow at an edge says there is more that way, which iOS, hiding its
+     scrollbars, does not. */
+  .consent-card { display: flex; flex-direction: column; }
+  .card-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    background:
+      linear-gradient(var(--surface) 30%, rgba(255,255,255,0)) top / 100% 24px no-repeat local,
+      linear-gradient(rgba(255,255,255,0), var(--surface) 70%) bottom / 100% 24px no-repeat local,
+      radial-gradient(farthest-side at 50% 0, rgba(47,47,47,.2), rgba(47,47,47,0)) top / 100% 10px no-repeat scroll,
+      radial-gradient(farthest-side at 50% 100%, rgba(47,47,47,.2), rgba(47,47,47,0)) bottom / 100% 10px no-repeat scroll; }
   .consent-card .actions { flex-shrink: 0; padding-top: 6px; }
   .situation-card .actions { margin-top: 22px; }
   .situation-card .actions button { width: 100%; padding: 13px; font-size: 15px; }
@@ -297,7 +310,10 @@
                      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
                       display:flex; align-items:center; justify-content:center; z-index: 50; padding: 20px; }
   .consent-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 14px;
-                  max-width: 620px; width: 100%; padding: 26px 28px; max-height: 92vh; overflow-y: auto;
+                  max-width: 620px; width: 100%; padding: 26px 28px; overflow-y: auto;
+                  /* svh where there is one: iOS counts vh against the viewport
+                     with its toolbars hidden, so a 92vh card ran under them. */
+                  max-height: 92vh; max-height: min(92vh, calc(100svh - 40px));
                   box-shadow: 0 24px 60px rgba(47,47,47,0.18); }
   .consent-card h2 { font-size: 17px; margin: 0 0 14px; }
   .consent-card .body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
@@ -357,6 +373,7 @@
 <body>
 <div class="consent-overlay" id="situationOverlay" style="display:none">
   <div class="consent-card situation-card">
+    <div class="card-scroll">
     <div class="situation-main">
       <img id="situationImg" class="situation-img" alt="" />
       <div class="situation-text">
@@ -366,12 +383,14 @@
     </div>
     <p class="fiction-reminder">Reminder: this is a fictional scenario. Please use
     the names provided and avoid real personal details.</p>
+    </div>
     <div class="actions"><button id="situationStart">I'm ready, let me in</button></div>
   </div>
 </div>
 
 <div class="consent-overlay" id="fictionOverlay" style="display:none">
   <div class="consent-card situation-card">
+    <div class="card-scroll">
     <!-- The quiet-room requirement (issue #37, the researchers' decision of
          2026-09-28), first on the first screen and the same words again at the
          audio check. Other people talking near the participant are picked up,
@@ -414,6 +433,7 @@
       style="display:none"> You can stop taking part in the study at any time with
       “Stop and leave the study”.</span></p>
     </div>
+    </div>
     <div class="actions"><button id="fictionAck">I understand, continue</button></div>
   </div>
 </div>
@@ -431,7 +451,7 @@
 <div class="consent-overlay" id="audioCheckOverlay" style="display:none">
   <div class="consent-card situation-card">
     <h2>Check your audio and camera</h2>
-    <div class="body rich">
+    <div class="body rich card-scroll">
       <div class="quiet-notice" role="note"><b>You need a quiet room to take part.</b>
       You will be talking out loud, and the microphone picks up other people's voices as
       well as yours: the characters hear them as if you had said them. Please move to a
