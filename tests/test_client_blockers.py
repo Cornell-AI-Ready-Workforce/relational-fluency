@@ -890,8 +890,9 @@ const CONFIRM = '/video-uploaded';
    page's own upload chain running against it, and a PUT that lands at
    `putAtMs` — 72 s for the 45 MB a ten-minute encounter makes at the 600 kbps
    this page records, which is an ordinary hotspot or rural uplink and well
-   inside the chain's own 180 s PUT deadline. */
-function primed(putAtMs, advanceDelayMs) {
+   inside the chain's own 180 s PUT deadline. `advanced` is what /advance
+   answers, ADVANCED unless a test says otherwise. */
+function primed(putAtMs, advanceDelayMs, advanced) {
   const b = bootV2(PAGE, '?run=r_1');
   let gone = null;
   b.sandbox.location = { search: '?run=r_1', get href() { return ''; },
@@ -910,7 +911,8 @@ function primed(putAtMs, advanceDelayMs) {
   const later = (ms, v) => new Promise(r => b.clock.setTimeout(() => r(v), ms));
   b.net.route([
     { match: '/advance', fn: () => (advanceDelayMs
-        ? later(advanceDelayMs, b.net.res(200, ADVANCED)) : b.net.res(200, ADVANCED)) },
+        ? later(advanceDelayMs, b.net.res(200, advanced || ADVANCED))
+        : b.net.res(200, advanced || ADVANCED)) },
     { match: '/withdraw', fn: () => b.net.res(200, { ok: true }) },
     { match: '/api/run/config', fn: () => b.net.res(200, {
         return_url: 'https://survey.invalid/x', return_label: 'Return to the survey' }) },
@@ -1035,6 +1037,18 @@ function primed(putAtMs, advanceDelayMs) {
     const { b } = primed(null);
     b.ctx.onEncounterComplete();
     await b.clock.advance(1000);
+    // FLOW-05: on this, the normal path, the door is not a one-tap twin of
+    // "Continue without waiting": it says what it does and asks first.
+    assert.strictEqual($(b, 'nextAlt').textContent, 'Stop the study here');
+    assert(!/continue/i.test($(b, 'nextAlt').textContent));
+    const asked = [];
+    b.sandbox.confirm = (q) => { asked.push(q); return false; };
+    $(b, 'nextAlt').onclick();
+    await b.clock.advance(500);
+    assert(/Saving your recording/.test($(b, 'nextTitle').textContent),
+      'a cancelled exit still left the study: ' + $(b, 'nextTitle').textContent);
+    assert.deepStrictEqual(asked, ['Stop the study here? You will not go on to the remaining conversations.']);
+    b.sandbox.confirm = () => true;
     $(b, 'nextAlt').onclick();
     await b.clock.advance(500);
     assert(/Finishing here/.test($(b, 'nextTitle').textContent), 'the exit door did not open');
@@ -1044,6 +1058,18 @@ function primed(putAtMs, advanceDelayMs) {
     assert(/counted towards your run/.test(body), 'the door did not say what did happen: ' + body);
     assert(!/CODE1/.test(body), 'the between-encounter exit handed out the completion code');
     assert(/contact below/.test(body), 'the exit does not say who to tell: ' + body);
+  }
+
+  // --- after the last conversation the wait has no door to stop by ---------
+  // There is nothing left to stop, and the door's closing card has no code:
+  // it skipped the completion code the run had just earned (FLOW-05).
+  {
+    const { b } = primed(null, 0, Object.assign({}, ADVANCED, { done: true, position: 5 }));
+    set(b, "$('nextAlt').style.display = 'inline-block';");   // left from a failed advance
+    b.ctx.onEncounterComplete();
+    await b.clock.advance(1000);
+    assert(/Saving your recording/.test($(b, 'nextTitle').textContent), $(b, 'nextTitle').textContent);
+    assert.strictEqual($(b, 'nextAlt').style.display, 'none', 'a way out that skips the code');
   }
 
   // --- a recorder that died mid-encounter is still said on the next screen --

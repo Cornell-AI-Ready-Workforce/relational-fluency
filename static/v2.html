@@ -949,20 +949,23 @@
   // offered during the upload wait sits on the far side of a successful advance
   // — `run = advanced` has already happened there — so that call site passes its
   // own body rather than telling the participant something the code knows to be
-  // untrue about their own run.
-  function offerExit(label, bodyHtml) {
+  // untrue about their own run. It passes `confirmText` too: see there.
+  function offerExit(label, bodyHtml, confirmText) {
     const alt = $('nextAlt');
     alt.textContent = label;
     alt.style.display = 'inline-block';
-    alt.onclick = () => showClosing(
-      'Finishing here',
-      bodyHtml ||
-      ('<p>Thank you for the conversations you did have. What you recorded is ' +
-       'stored on our side, though this last one may not have been counted ' +
-       'towards your run.</p>' +
-       '<p>Please use the contact below to tell the study team how far you ' +
-       'got.</p>'),
-      '');
+    alt.onclick = () => {
+      if (confirmText && !confirm(confirmText)) return;
+      showClosing(
+        'Finishing here',
+        bodyHtml ||
+        ('<p>Thank you for the conversations you did have. What you recorded is ' +
+         'stored on our side, though this last one may not have been counted ' +
+         'towards your run.</p>' +
+         '<p>Please use the contact below to tell the study team how far you ' +
+         'got.</p>'),
+        '');
+    };
   }
 
   // The lost-recording line, consumed once. Whichever screen comes next after
@@ -1099,12 +1102,21 @@
       // died with no notice, no confirm and no events line.
       const skipped = new Promise(r => { skip = () => r({ ok: false, reason: 'skipped', pending: true }); });
       $('nextBtn').onclick = skip;
-      offerExit('I can’t continue, finish here',
+      // The door stays, but not as a one-tap twin of the way on (FLOW-05).
+      // This wait follows every conversation, so it is the normal path; both
+      // buttons said "continue", and this one ends the study for them with no
+      // code. It says what it does and asks first. After the last
+      // conversation there is nothing left to stop, and leaving here would
+      // skip the completion code, so it is not offered (nor left over from a
+      // failed advance that a Retry got past).
+      if (run.done) $('nextAlt').style.display = 'none';
+      else offerExit('Stop the study here',
         '<p>Thank you for the conversations you did have. The one you just ' +
         'finished was counted towards your run, only its video was still ' +
         'uploading, and the study team can see how that ended.</p>' +
         '<p>Please use the contact below to tell the study team how far you ' +
-        'got.</p>');
+        'got.</p>',
+        'Stop the study here? You will not go on to the remaining conversations.');
       showOverlay($('nextOverlay'));
       let outcome = await Promise.race([
         videoUpload.catch(() => ({ ok: false, reason: 'upload_threw' })),
