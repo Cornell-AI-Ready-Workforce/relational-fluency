@@ -142,8 +142,8 @@
   /* Held, and it looks held: End does not finish a study conversation before
      the floor (storage.encounter_timing, 7:00 by default). Stopping the STUDY
      is a different control — "Stop and leave the study" — and that one is never
-     locked, which is what keeps the consent promise. */
-  button#stopBtn.locked { opacity: .55; cursor: not-allowed; }
+     locked, which is what keeps the consent promise. It wears the look of any
+     control that is not available now (with button:disabled below). */
   .gate-note { display: none; position: fixed; top: 104px; right: 20px; max-width: 340px; z-index: 50;
     background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px;
     font-size: 14px; line-height: 1.5; box-shadow: 0 8px 24px rgba(47,47,47,0.12);
@@ -170,20 +170,34 @@
   .check-help { display: none; font-size: 13.5px; color: var(--fg); background: var(--accent-soft, #fbeeee); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
   .check-help.show { display: block; }
   .check-actions { display: flex; gap: 10px; align-items: center; margin-top: 18px; }
-  .check-actions button[disabled] { opacity: .5; cursor: not-allowed; }
-  .check-actions .skip { font-size: 13px; color: var(--muted); background: none; border: none; text-decoration: underline; cursor: pointer; padding: 0; }
+  .check-actions .skip { font-size: 13px; font-weight: 400; color: var(--muted); background: none; border: none; text-decoration: underline; cursor: pointer; padding: 0; }
+  /* A link under the pointer too, not the primary's dark red behind grey text. */
+  .check-actions .skip:hover:not(:disabled) { background: none; }
   .timer { font-family: ui-monospace, Menlo, monospace; font-size: 13px; font-weight: 600;
            color: var(--fg); background: var(--surface-2); padding: 5px 10px; border-radius: 8px;
            letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 6px; }
   .timer::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
   .timer.running::before { background: var(--accent); animation: pulse 1.6s infinite; }
+  /* The weight after the font shorthand, which resets it: every button was
+     rendering at 400. */
   button { padding: 11px 22px; border: 0; border-radius: 10px; background: var(--accent);
-           color: #fff; font-weight: 600; cursor: pointer; font: inherit; font-size: 14px;
+           color: #fff; cursor: pointer; font: inherit; font-weight: 600; font-size: 14px;
            transition: background 0.15s, transform 0.05s; }
   button:hover:not(:disabled) { background: var(--accent-deep); }
   button:active:not(:disabled) { transform: translateY(1px); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
   button.secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--line); }
+  /* A secondary button stays readable under the pointer. The primary's hover
+     outranked it, so "Stop and leave the study" and End went dark red behind
+     dark text (1.5:1), and on a touch screen that sticks after the tap. */
+  button.secondary:hover:not(:disabled) { background: var(--surface-2); }
+  /* One look for a control that cannot be used now, whatever the reason.
+     There were four (opacity .4, .5, .55 and .6), and a faded red primary,
+     such as the audio check's Continue, read as an error tint. */
+  button:disabled, button#stopBtn.locked, .tile .talk-btn[disabled] { opacity: 1; background: var(--surface-2);
+    color: var(--muted); border-color: var(--line-soft); cursor: not-allowed; }
+  /* Except work in progress ("Connecting…"), which is not unavailable, only
+     not done yet. */
+  button[aria-busy="true"]:disabled { background: var(--accent); color: #fff; cursor: progress; }
   select { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px;
            background: var(--surface); font: inherit; font-size: 13px; color: var(--fg); cursor: pointer; }
   select:focus { outline: none; border-color: var(--accent); }
@@ -228,7 +242,6 @@
     padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
     white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
   .tile .talk-btn:hover { filter: brightness(1.08); }
-  .tile .talk-btn[disabled] { opacity: .6; cursor: default; }
   /* The banner and the header. No box of its own on a wide screen, so the
      banner stays sticky against the page as it always was; on a phone the
      two stick together (see the small-screen rules). */
@@ -1478,6 +1491,7 @@
     $('situationOverlay').style.display = 'flex';
     $('situationStart').addEventListener('click', async () => {
       $('situationStart').disabled = true;
+      $('situationStart').setAttribute('aria-busy', 'true');
       $('situationStart').textContent = 'Connecting…';
       await ensureParticipant();
       $('situationOverlay').style.display = 'none';
