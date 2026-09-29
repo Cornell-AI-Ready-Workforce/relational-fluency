@@ -339,6 +339,13 @@
     .transcript { max-height: 220px; padding: 12px 14px; border-radius: 10px; }
     .consent-card { padding: 20px 18px; }
     .consent-card h2 { font-size: 16px; }
+    /* The audio check's rows. A fixed 120px verdict and a nowrap button left
+       the instructions, and the mic meter inside them, 0-13px wide at 375px:
+       one word per line, under the button. Here they take the whole row, with
+       the button and its verdict on the line below. */
+    .check-row { flex-wrap: wrap; }
+    .check-row .what { flex: 1 1 100%; }
+    .check-row .status { width: auto; flex: 1 1 auto; text-align: left; }
   }
   /* Very narrow phones: keep tiles legible. */
   @media (max-width: 360px) {
