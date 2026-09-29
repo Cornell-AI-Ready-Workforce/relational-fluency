@@ -2154,6 +2154,8 @@ class RealtimeVoiceSessionRunner:
             self._room_steer_tasks.clear()
         running = getattr(self, "_room_steer_running", None)
         steering = bool(getattr(self.session, "auto_steering", False))
+        # The one in its review first: the set has no order of its own.
+        tasks.sort(key=lambda t: t is not running)
         for t in tasks:
             t.cancel()
             if steering:
