@@ -147,13 +147,99 @@ def test_the_participant_speaking_closes_it_and_a_turn_that_came_to_nothing_reop
 
 
 def test_a_page_that_never_acks_does_not_hold_the_floor_shut():
+    """The line is taken as played CUE_ACK_GRACE_S after ITS OWN end."""
     async def go():
         runner, session, ws = _one_to_one()
+        runner.CUE_ACK_GRACE_S = 0.2
         await _line(runner)
         await runner._maybe_turn_open()
         assert not ws.frames("turn_open")
-        runner._play_cursor = time.time() - runner.CUE_ACK_GRACE_S - 0.1
+        await asyncio.sleep(0.3)
         await runner._maybe_turn_open()
+        return ws
+
+    assert len(_run(go()).frames("turn_open")) == 1
+
+
+async def _overlap(runner):
+    """S4A's held-reply adoption (turns 11/12 Chris, 14/15 Priya, 20/21 Dan in
+    the native run of 2026-09-28): a second assistant_started 0.1 s after the
+    first, before the first line's assistant_done. The page makes the second
+    its currentTurn, so the first is never done there and never acked."""
+    await runner._send({"type": "assistant_started", "agent_id": "chris",
+                        "agent_name": "Chris"})
+    first = runner._cue_seq
+    await runner._send_bytes(b"\x00\x01" * 1600)
+    await runner._send({"type": "assistant_started", "agent_id": "dan",
+                        "agent_name": "Dan"})
+    second = runner._cue_seq
+    await runner._send_bytes(b"\x00\x01" * 1600)
+    runner._play_cursor = time.time()
+    await runner._send({"type": "assistant_done", "agent_id": "chris"})
+    await runner._send({"type": "assistant_done", "agent_id": "dan"})
+    return first, second
+
+
+def test_a_line_the_page_never_acked_does_not_delay_every_later_opening():
+    """Review of 850b08e: one un-acked line stayed in _cue_turns {audio, done}
+    for the rest of the encounter and, against the GLOBAL cursor, held every
+    later turn_open until 2 s past the line playing then (15 of 15 openings
+    2.0-3.4 s late in s_1790638741_2e022c)."""
+    async def go():
+        runner, session, ws = _room_runner()
+        first, second = await _overlap(runner)
+        await _ack_end(runner, second)
+        assert first not in runner._cue_turns, (
+            "an end for a later line is an end for every earlier one")
+        opened = len(ws.frames("turn_open"))
+        # A whole new, normal line, acked the moment it ends.
+        runner._cue_open = False
+        seq = await _line(runner, agent="dan", name="Dan")
+        await _ack_end(runner, seq)
+        assert len(ws.frames("turn_open")) == opened + 1, (
+            f"held back: {runner._turn_cue_blocker()} {runner._cue_turns}")
+        return ws
+
+    _run(go())
+
+
+def test_an_orphan_nothing_later_acks_expires_after_its_own_end():
+    async def go():
+        runner, session, ws = _room_runner()
+        runner.CUE_ACK_GRACE_S = 0.2
+        first, second = await _overlap(runner)
+        # The second line played nothing the page acked either (it went
+        # quiet); a new line is under way and keeps the playback clock ahead.
+        await asyncio.sleep(0.3)
+        runner._play_cursor = time.time() - 0.01
+        assert runner._turn_cue_blocker() is None, (
+            f"{runner._turn_cue_blocker()}: waiting on the global cursor, not "
+            f"the line's own end")
+        return ws
+
+    _run(go())
+
+
+def test_a_characters_new_line_closes_its_older_one():
+    """A line that never gets its assistant_done must not read as 'being
+    generated' for CUE_STALE_S once the same character has started another."""
+    async def go():
+        runner, session, ws = _room_runner()
+        await runner._send({"type": "assistant_started", "agent_id": "chris",
+                            "agent_name": "Chris"})
+        first = runner._cue_seq
+        await runner._send_bytes(b"\x00\x01" * 1600)
+        await runner._send({"type": "assistant_started", "agent_id": "chris",
+                            "agent_name": "Chris"})
+        assert runner._cue_turns[first]["done"] is True, "still 'generating'"
+        # Its playback is still waited for, until a later end covers it.
+        assert runner._turn_cue_blocker() is not None
+        second = runner._cue_seq
+        await runner._send_bytes(b"\x00\x01" * 1600)
+        runner._play_cursor = time.time()
+        await runner._send({"type": "assistant_done", "agent_id": "chris"})
+        assert runner._turn_cue_blocker() == "playing"
+        await _ack_end(runner, second)
         return ws
 
     assert len(_run(go()).frames("turn_open")) == 1

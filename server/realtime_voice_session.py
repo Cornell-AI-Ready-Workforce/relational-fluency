@@ -961,9 +961,11 @@ class RealtimeVoiceSessionRunner:
         # gone to the page since the last line started or the participant last
         # began to speak; every character turn the page was told of and has
         # not yet said it finished playing ({seq: {agent_id, audio, done,
-        # at}}), keyed by the turn number its playback acks name; the turn
-        # the page is filling now; and whether a participant turn is being
-        # closed (_on_turn_ended: briefed and committed, not yet answered).
+        # at, end}}, `end` being where that line's own audio ends on the
+        # playback clock), keyed by the turn number its playback acks name;
+        # the turn the page is filling now; and whether a participant turn is
+        # being closed (_on_turn_ended: briefed and committed, not yet
+        # answered).
         self._cue_open = False
         self._cue_turns: dict = {}
         self._cue_seq: Optional[int] = None
@@ -5750,7 +5752,15 @@ class RealtimeVoiceSessionRunner:
                 # cue waits for (issue #49).
                 turn = msg.get("turn")
                 if isinstance(turn, int) and not isinstance(turn, bool):
-                    self._cue_turns.pop(turn, None)
+                    # And the end of every line before it: the page plays all
+                    # of them on one queue (playbackTime), so an end for this
+                    # one means each earlier line has finished or been
+                    # stopped. The page acks only the line it closed with
+                    # assistant_done; one whose currentTurn a second
+                    # assistant_started replaced is never acked, and waiting
+                    # for it was what held the cue shut (review of 850b08e).
+                    for older in [s for s in self._cue_turns if s <= turn]:
+                        self._cue_turns.pop(older, None)
                 await self._maybe_turn_open()
             return
         if msg.get("type") == "client_audio_settings":
@@ -8834,11 +8844,15 @@ class RealtimeVoiceSessionRunner:
     # than 1 s early on 24 of 28 turns in 77ee7e. Room pacing is untouched:
     # this says when the floor is open, it does not open it.
 
-    # How long past the server's own model of the end of playback
-    # (_play_cursor) the page's play_end ack is waited for before the line is
-    # taken as played: the ack is the real end (outputLatency, the page's
-    # scheduling), and a page that never sends one must not hold the cue
-    # shut for ever.
+    # How long past the server's own model of the end of a line's playback
+    # (that line's `end`, from _play_cursor) the page's play_end ack is waited
+    # for before the line is taken as played: the ack is the real end
+    # (outputLatency, the page's scheduling), and a page that never sends one
+    # must not hold the cue shut for ever. Per line, not from the global
+    # cursor: one line the page never acks would otherwise hold every later
+    # opening until 2 s past whatever line is playing THEN, for the rest of
+    # the encounter (review of 850b08e: every turn_open from 207 s to 706 s of
+    # s_1790638741_2e022c came 2.0-3.4 s after its line's play_end).
     CUE_ACK_GRACE_S = 2.0
     # A line the page was told of and never told the end of (no
     # assistant_done) stops counting as "being generated" after this long.
@@ -8857,9 +8871,17 @@ class RealtimeVoiceSessionRunner:
         if kind == "assistant_started":
             self._cue_open = False
             # An older line that never sent audio and was never closed is not
-            # coming back (the page's currentTurn has moved on too).
-            for old in [s for s, t in turns.items() if not t["audio"]]:
-                turns.pop(old, None)
+            # coming back (the page's currentTurn has moved on too). One of the
+            # same character's that did send audio is no longer being
+            # generated either, whether or not its assistant_done ever comes
+            # (a room member's held reply adopted 0.1 s later is announced
+            # twice): only its playback is left to wait for.
+            agent_id = payload.get("agent_id")
+            for old, t in list(turns.items()):
+                if not t["audio"]:
+                    turns.pop(old, None)
+                elif agent_id and t["agent_id"] == agent_id:
+                    t["done"] = True
             if seq is not None:
                 turns[seq] = {"agent_id": payload.get("agent_id"), "audio": False,
                               "done": False, "at": now}
@@ -8893,7 +8915,8 @@ class RealtimeVoiceSessionRunner:
         for t in (getattr(self, "_cue_turns", None) or {}).values():
             if not t["done"] and now - t["at"] < self.CUE_STALE_S:
                 return "generating"
-            if t["done"] and t["audio"] and now < cursor + self.CUE_ACK_GRACE_S:
+            if (t["done"] and t["audio"]
+                    and now < (t.get("end") or cursor) + self.CUE_ACK_GRACE_S):
                 return "playing"
         if getattr(self, "_held_call_tasks", None):
             return "generating"
@@ -8986,6 +9009,11 @@ class RealtimeVoiceSessionRunner:
         seq = getattr(self, "_cue_seq", None)
         if cue is not None and seq in cue:
             cue[seq]["audio"] = True
+            # Where this line's audio ends: every relay path advances the
+            # playback clock for a chunk before sending it, and a chunk only
+            # just handed to the page cannot have finished before now.
+            cue[seq]["end"] = max(getattr(self, "_play_cursor", 0.0) or 0.0,
+                                  time.time())
         # The first chunk of the page's current turn: turn_timing's
         # first_audio_to_client, and the bridge's own first-delta time beside
         # it. Guarded whole, because this runs on the participant's audio path.
