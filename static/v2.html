@@ -425,6 +425,12 @@
     .avatar { width: 48px; height: 48px; font-size: 18px; }
     .mic-level { width: 38px; }
   }
+  /* Somebody who has asked their system for less motion gets none: three
+     pulses run for the whole 7-12 minutes (the timer, the turn cue, the mic),
+     and the cue's words say whose turn it is without them. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
 </style>
 </head>
 <body>
