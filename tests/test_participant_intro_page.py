@@ -795,6 +795,48 @@ def test_every_card_takes_focus_gives_it_back_and_leaves_the_page_behind_inert(t
     _run(tmp_path, DIALOGS, "DIALOGS OK")
 
 
+# The drop card and the gate note are placed under the header (placeNote), and
+# again whenever the page moves under them. Placed only when they came up, a
+# drop while the page was scrolled left the card 35px from the top, over "Stop
+# and leave the study" and Start once the participant scrolled back up (1280
+# and 1440 wide, measured), and after a rotation the card kept the old
+# screen's top and height, so Reconnect was below the new one. The stub has no
+# layout, so the header's place is given here, as a browser would report it.
+PLACED = RUN_VIEW + A11Y_DOM + r"""
+  const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+  a11y(b);
+  await b.clock.advance(50);
+  b.dom.$('fictionAck').click(); await b.clock.advance(50);
+  b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+  b.dom.$('situationStart').click(); await b.clock.advance(50);
+  let headerBottom = -193;   // scrolled 300px: only the banner is on screen
+  b.dom.$('aiBanner').getBoundingClientRect = () => ({ bottom: 27 });
+  b.dom.document.querySelector('header').getBoundingClientRect = () => ({ bottom: headerBottom });
+  b.sandbox.innerHeight = 800;
+  b.sandbox.requestAnimationFrame = (f) => { f(); return 1; };
+  const drop = b.dom.$('dropNote');
+  b.dom.document.querySelectorAll = (sel) =>
+    (sel === '.gate-note.show' && drop.classList.contains('show') ? [drop] : []);
+
+  b.ctx.onConnectionDropped();
+  assert(drop.classList.contains('show'), 'no drop card');
+  assert.strictEqual(drop.style.top, '35px');
+  headerBottom = 107;        // back at the top
+  b.fire('scroll');
+  assert.strictEqual(drop.style.top, '115px', 'the card stayed over the header: ' + drop.style.top);
+  assert.strictEqual(drop.style.maxHeight, '673px');
+  b.sandbox.innerHeight = 375;   // turned on its side
+  headerBottom = 158;
+  b.fire('resize');
+  assert.strictEqual(drop.style.top, '166px');
+  assert.strictEqual(drop.style.maxHeight, '197px', 'the card kept the old screen\'s height');
+"""
+
+
+def test_a_note_follows_the_header_when_the_page_scrolls_or_turns(tmp_path):
+    _run(tmp_path, PLACED, "PLACED OK")
+
+
 def test_the_page_has_one_top_level_heading_and_it_is_the_scenario():
     """#43: 'the page has no top-level heading'. The header's title is it."""
     src = V2.read_text(encoding="utf-8")

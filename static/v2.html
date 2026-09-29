@@ -2165,6 +2165,16 @@
     n.style.top = top + 'px';
     if (window.innerHeight) n.style.maxHeight = (window.innerHeight - top - 12) + 'px';
   }
+  // And again whenever the page moves under a note that is showing. Placed
+  // only when it came up, a drop while the page was scrolled left the card
+  // 35px from the top, which is where "Stop and leave the study" and Start
+  // are once the participant scrolls back up (and the first drop's card
+  // offers only Reconnect); after a rotation it kept the old screen's top
+  // and height, and Reconnect sat below the new one.
+  const placeShownNotes = () => requestAnimationFrame(() =>
+    document.querySelectorAll('.gate-note.show').forEach(placeNote));
+  window.addEventListener('scroll', placeShownNotes, { passive: true });
+  window.addEventListener('resize', placeShownNotes, { passive: true });
 
   // ---------- turn state ----------
   // First-time voice users mostly stall on one question: is it my turn? The
