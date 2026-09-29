@@ -7,13 +7,21 @@ measured 0.8-1.2 s on 2026-09-24c) before its own routing could start. A
 room's shifts re-brief nobody at that moment anyway (knob_set delivered=False;
 the next _brief_member or the interaction re-brief carries them), so the review
 now runs as a tracked task after the floor is released: one at a time and in
-turn order, cancelled with the group turns at an interaction change and at
-teardown, and its failures written where group-turn failures are.
+turn order, and its failures written where group-turn failures are.
+
+It is NOT cancelled at an interaction change (review of 850b08e). The turn
+that closes an interaction spawns its review and then its own auto-advance,
+and the advance's _cancel_group_turns cancelled the review a few ms into its
+LLM call, every time, writing nothing: the closing turn's shifts were lost and
+the record read as a review that chose no change. On origin/main that review
+was awaited inside the turn and always finished. Only teardown cancels a
+review now, and it says so (auto_steer_cancelled).
 """
 from __future__ import annotations
 
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -23,6 +31,7 @@ for p in (ROOT, ROOT / "tests"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
+import server.realtime_voice_session as rvs  # noqa: E402
 from test_group_model_passthrough import GPT, _runner_with_room  # noqa: E402
 
 
@@ -94,8 +103,75 @@ def test_reviews_never_overlap_and_run_in_turn_order():
     assert log == [("start", 0), ("end", 0), ("start", 1), ("end", 1)]
 
 
-def test_an_interaction_change_cancels_a_review_in_flight():
+def test_the_auto_advance_a_turn_spawns_leaves_that_turns_review_to_finish():
+    """The review of 850b08e, on the real chain: _run_group_turn spawns the
+    review and then _advance_when_spent, and _maybe_advance -> _advance_segment
+    -> _enter (a kept room: S4A's two interactions share the cast and the
+    scene) runs _cancel_group_turns while the review is still in its call."""
     runner, session, room = _room_runner()
+    runner._advance_when_spent = (
+        rvs.RealtimeVoiceSessionRunner._advance_when_spent.__get__(runner))
+    # Interaction 1's beats are spent and its floor is passed: the advance
+    # is due the moment this turn ends.
+    runner._trigger_idx = len(runner._triggers())
+    runner._turns_this_interaction = 100
+    runner._interaction_started_at = time.time() - 1000
+    outcome = []
+
+    async def go():
+        async def review(*, delivered=None):
+            try:
+                await asyncio.sleep(0.5)     # a director review is 0.8-11 s
+            except asyncio.CancelledError:
+                outcome.append("cancelled")
+                raise
+            session.steering_log.append({"knob": "warmth", "delivered": delivered})
+            outcome.append("finished")
+        session.auto_steer = review
+        await asyncio.wait_for(runner._run_group_turn(), timeout=5)
+        await asyncio.sleep(0.2)
+        assert runner.segment == 1, "the advance did not run"
+        assert outcome == [], "the review was over before the advance, not beside it"
+        await asyncio.wait_for(
+            asyncio.gather(*runner._room_steer_tasks), timeout=3)
+
+    asyncio.run(go())
+    assert [e["interaction"] for e in session.store.of("interaction_complete")] == ["i1"]
+    assert outcome == ["finished"], "the closing turn's review was dropped"
+    assert session.steering_log == [{"knob": "warmth", "delivered": False}]
+    assert not session.store.of("auto_steer_cancelled")
+
+
+def test_a_room_rebuilt_at_an_interaction_change_leaves_the_review_running():
+    """_open_room closes the old room first; that is not teardown."""
+    runner, session, room = _room_runner()
+    done = []
+
+    async def go():
+        release = asyncio.Event()
+
+        async def review(*, delivered=None):
+            await release.wait()
+            done.append(True)
+        session.auto_steer = review
+        runner._spawn_room_steer()
+        await asyncio.sleep(0.05)
+        await runner._close_room()
+        assert runner._room_steer_tasks, "an interaction change dropped the review"
+        release.set()
+        await asyncio.wait_for(
+            asyncio.gather(*runner._room_steer_tasks), timeout=3)
+
+    asyncio.run(go())
+    assert done == [True]
+    assert not session.store.of("auto_steer_cancelled")
+
+
+def test_teardown_cancels_the_reviews_left_and_says_so():
+    """A cancelled review writes nothing of its own (Session.auto_steer only
+    catches Exception), so without this event it would read as 'no change'."""
+    runner, session, room = _room_runner()
+    session.auto_steering = True
     cancelled = []
 
     async def go():
@@ -106,15 +182,37 @@ def test_an_interaction_change_cancels_a_review_in_flight():
                 cancelled.append(True)
                 raise
         session.auto_steer = review
-        runner._spawn_room_steer()
+        runner._spawn_room_steer()          # in the review
+        runner._spawn_room_steer()          # queued behind it
         await asyncio.sleep(0.05)
+        runner._closed = True               # what run()'s finally sets first
         await runner._close_room()
         await asyncio.sleep(0.05)
         assert not runner._room_steer_tasks
 
     asyncio.run(go())
-    assert cancelled == [True]
+    assert cancelled == [True], "only the first had started its review"
+    rows = session.store.of("auto_steer_cancelled")
+    assert [(r["reason"], r["started"]) for r in rows] == [
+        ("teardown", True), ("teardown", False)]
     assert not session.store.of("voice_error"), "a cancel is not a failure"
+
+
+def test_no_cancel_is_recorded_when_auto_steering_is_off():
+    runner, session, room = _room_runner()
+    session.auto_steering = False
+
+    async def go():
+        async def review(*, delivered=None):
+            await asyncio.sleep(30)
+        session.auto_steer = review
+        runner._spawn_room_steer()
+        await asyncio.sleep(0.05)
+        runner._closed = True
+        await runner._close_room()
+
+    asyncio.run(go())
+    assert not session.store.of("auto_steer_cancelled")
 
 
 def test_a_review_that_raises_is_written_down():

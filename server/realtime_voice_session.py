@@ -923,11 +923,13 @@ class RealtimeVoiceSessionRunner:
         # recent, or the floor-holder is orphaned and dead-airs the next segment.
         self._group_turn_tasks = set()
         # The room's post-turn steering reviews, off the floor (issue #25; see
-        # _spawn_room_steer). Tracked so _close_room cancels them the way it
-        # cancels the group turns they used to run inside; the lock keeps two
-        # reviews from overlapping, so they run one at a time in turn order.
+        # _spawn_room_steer). Tracked so teardown can cancel them, and say so
+        # (_cancel_room_steers); an interaction change leaves them to finish.
+        # The lock keeps two reviews from overlapping, so they run one at a
+        # time in turn order; _room_steer_running is the one holding it.
         self._room_steer_tasks: set = set()
         self._room_steer_lock = asyncio.Lock()
+        self._room_steer_running: Optional[asyncio.Task] = None
         # Planted triggers fire in order within the current interaction. They
         # are the measurement: each maps to ESCI items, and the participant's
         # response to it is what a rater scores.
@@ -2122,13 +2124,41 @@ class RealtimeVoiceSessionRunner:
                 gt.cancel()
         if hasattr(self, "_group_turn_tasks"):
             self._group_turn_tasks.clear()
-        # And the steering reviews those turns left running (issue #25): they
-        # used to be inside the turn, and were cancelled with it.
-        for st in list(getattr(self, "_room_steer_tasks", ()) or ()):
-            if not st.done():
-                st.cancel()
+        # NOT the steering reviews those turns leave running (issue #25). This
+        # runs at every interaction change, and the auto-advance that closes an
+        # interaction is spawned by the very turn whose review has just been
+        # spawned beside it: cancelling reviews here dropped that turn's review
+        # a few ms into a 0.8-11 s LLM call, every time, with nothing on the
+        # record to tell it from a review that chose no change. A review needs
+        # neither the floor nor the room; teardown cancels them
+        # (_cancel_room_steers).
+
+    def _cancel_room_steers(self, reason: str) -> None:
+        """Cancel the room's steering reviews still pending, each with an
+        auto_steer_cancelled event.
+
+        Only teardown does this (_close_room once the encounter is closed).
+        A cancelled review writes nothing of its own: no knob_set, and no
+        auto_steer_error, because Session.auto_steer only catches Exception.
+        Without this event a review dropped here reads exactly like one that
+        looked and chose no change, which steering.review's contract says a
+        failure must never do. `started` says whether it was inside the review
+        (holding _room_steer_lock) or still queued behind another. Nothing is
+        written while auto steering is off: such a task would have reviewed
+        nothing."""
+        tasks = [t for t in list(getattr(self, "_room_steer_tasks", ()) or ())
+                 if not t.done()]
         if hasattr(self, "_room_steer_tasks"):
             self._room_steer_tasks.clear()
+        running = getattr(self, "_room_steer_running", None)
+        steering = bool(getattr(self.session, "auto_steering", False))
+        for t in tasks:
+            t.cancel()
+            if steering:
+                self.session.store.event(
+                    "auto_steer_cancelled", reason=reason,
+                    started=t is running, segment=getattr(self, "segment", None),
+                )
 
     def _spawn_room_steer(self) -> None:
         """The room's post-turn steering review, run after the floor is
@@ -2146,10 +2176,15 @@ class RealtimeVoiceSessionRunner:
 
         One review at a time and in turn order (_room_steer_lock), so two
         reviews never read and shift the same knobs at once. Tracked, and
-        cancelled with the group turns by _cancel_group_turns (an interaction
-        change, and teardown through _close_room). Session.auto_steer still
-        writes its own auto_steer_error; anything else a review raises is
-        written as voice_error where="room_steer", as a group turn's is."""
+        NOT cancelled at an interaction change: the turn that closes an
+        interaction spawns its own auto-advance right after its review, and
+        that advance used to cancel the review mid-call (see
+        _cancel_group_turns). A review that outlives the change writes its
+        shifts delivered=False like any other, and the next _brief_member
+        carries them. Teardown cancels what is left, on the record
+        (_cancel_room_steers). Session.auto_steer still writes its own
+        auto_steer_error; anything else a review raises is written as
+        voice_error where="room_steer", as a group turn's is."""
         if self._closed:
             return
 
@@ -2157,7 +2192,11 @@ class RealtimeVoiceSessionRunner:
             async with self._room_steer_lock:
                 if self._closed:
                     return
-                await self._steer()
+                self._room_steer_running = asyncio.current_task()
+                try:
+                    await self._steer()
+                finally:
+                    self._room_steer_running = None
 
         task = asyncio.ensure_future(review())
         self._room_steer_tasks.add(task)
@@ -2180,6 +2219,11 @@ class RealtimeVoiceSessionRunner:
         # In-flight group turns go first, for the reason _cancel_group_turns
         # documents: one of them may be holding the floor.
         self._cancel_group_turns()
+        # The steering reviews only at teardown. A room is also closed to be
+        # rebuilt at an interaction change (_open_room) or left for a 1:1 one
+        # (_enter); a review needs no room, and those let it finish.
+        if self._closed:
+            self._cancel_room_steers("teardown")
         for t in self._pumps:
             t.cancel()
         self._pumps = []
