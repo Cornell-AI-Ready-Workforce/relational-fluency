@@ -377,8 +377,8 @@
     .tile { aspect-ratio: 1 / 1; gap: 8px; padding: 12px; border-radius: 12px; }
     .avatar { width: 56px; height: 56px; font-size: 21px; }
     .name { font-size: 13px; }
-    .role { font-size: 11px; }
-    .speaking-indicator { top: 8px; right: 8px; font-size: 10px; padding: 2px 7px; }
+    .role { font-size: 12px; }
+    .speaking-indicator { top: 8px; right: 8px; font-size: 12px; padding: 2px 7px; }
     .mic-icon { bottom: 9px; left: 9px; }
     .mic-level { bottom: 9px; right: 9px; width: 46px; }
     /* The compact height this asked for: the base min-height of 340px beat
@@ -409,6 +409,16 @@
     .check-row { flex-wrap: wrap; }
     .check-row .what { flex: 1 1 100%; }
     .check-row .status { width: auto; flex: 1 1 auto; text-align: left; }
+    /* What a participant reads, at reading size: 16px for body text and for
+       the captions they read back while talking (13px before), 14-15px for
+       the page's notes, scene lines, the banner and the check's instructions,
+       and nothing below 12px. */
+    .transcript, .brief .body, .brief .body.rich ul, .brief .body.rich .sit-lead,
+    .consent-card .body, .situation-card .body, .situation-text ul, .consent-card label { font-size: 16px; }
+    .transcript .system-note, .transcript .scene, .ai-banner, .brief .cast-line,
+    .brief .body.rich .sit-note, .sit-note, .fiction-reminder { font-size: 14px; }
+    .check-row .what span, .check-row .status, .check-help, .check-actions .skip { font-size: 15px; }
+    .brief .label, .brief .body.rich h4 { font-size: 12px; }
   }
   /* Very narrow phones: keep tiles legible. */
   @media (max-width: 360px) {
