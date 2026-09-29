@@ -1277,6 +1277,17 @@ def room_split_turn_s() -> float:
     return max(0.0, _float_setting("ROOM_SPLIT_TURN_S", 1.5))
 
 
+def followup_gap_s() -> float:
+    """FOLLOWUP_GAP_S, default 1.0 (the researchers' decision of 2026-09-29,
+    room pacing 2026-09-29a). The silence the participant hears after a
+    character's line, counted from when the page says it has finished
+    playing, before the next character of the same room turn is given the
+    floor (see _await_followup_gap in realtime_voice_session). It was granted
+    at the previous reply's generation end, and so started 0.0-0.2 s after
+    that line on the page. Below 0 puts that back."""
+    return _float_setting("FOLLOWUP_GAP_S", 1.0)
+
+
 def probe_after_seconds() -> float:
     """PROBE_AFTER_SECONDS, default 12, read the way the watchdog always has
     (the process environment), so this is the value the probe fires on."""
@@ -1326,6 +1337,7 @@ def pacing_provenance() -> dict:
         "room_grant_unanswered_s": room_grant_unanswered_s(),
         "room_adopt_guard": room_adopt_guard(),
         "room_split_turn_s": room_split_turn_s(),
+        "followup_gap_s": followup_gap_s(),
         "room_play_clock": "per_turn",
         "probe_after_s": probe_after_seconds(),
         "probe_tick_s": probe_tick_s(),
