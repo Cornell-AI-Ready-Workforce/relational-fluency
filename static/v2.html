@@ -122,10 +122,15 @@
      has run its pacing floor (see renderAdvance).
      Long scenario labels are clipped rather than allowed to bow the header. */
   button#advanceBtn { max-width: 38vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* Live turn-state pill: tells first-time voice users whose turn it is. */
+  /* Live turn-state pill: tells first-time voice users whose turn it is.
+     While a conversation runs it keeps its place and its size, idle (the grey
+     dot and no words) between cues. Hidden and shown, it moved the header and
+     everything under it by 33px several times an exchange, and its width
+     followed the character's name. 12.5em holds the longest cue. */
   .turn-state { display: none; align-items: center; gap: 7px; font-size: 13px; color: var(--muted);
     padding: 4px 11px; border-radius: 99px; border: 1px solid var(--line-soft); background: var(--surface); white-space: nowrap; }
-  .turn-state.show { display: inline-flex; }
+  .turn-state.show { display: inline-flex; min-width: 12.5em; }
+  .turn-state.idle::after { content: "\00a0"; }   /* the line an empty pill would lose */
   .turn-state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
   .turn-state.you::before { background: var(--accent); animation: pulse 1.2s infinite; }
   .turn-state.you { color: var(--fg); font-weight: 600; }
@@ -1990,7 +1995,8 @@
   function setTurnState(text, cls) {
     const el = $('turnState');
     if (!el) return;
-    if (!text) { el.className = 'turn-state'; el.textContent = ''; return; }
+    // Nothing to say during a conversation is the idle pill, not no pill.
+    if (!text) { el.className = started ? 'turn-state show idle' : 'turn-state'; el.textContent = ''; return; }
     el.className = 'turn-state show ' + (cls || '');
     el.textContent = text;
   }
