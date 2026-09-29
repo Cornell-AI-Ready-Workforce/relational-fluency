@@ -1607,11 +1607,18 @@
   function renderAdvance() {
     const b = $('advanceBtn');
     if (!b) return;
-    const show = !!upNext && started && !tileOffersAdvance() && advanceFloorMet();
-    b.style.display = show ? 'inline-block' : 'none';
-    if (!show) return;
+    // Its place in the header is kept from the start of an interaction that
+    // will offer it, invisible (and out of reach) until the floor. Appearing
+    // at 3:00 reflowed the header mid-conversation: a new row on a phone,
+    // 82 -> 133px at 1280, End and "Stop and leave the study" moved under the
+    // pointer and everything below dropped 50px.
+    const offered = !!upNext && started && !tileOffersAdvance();
+    const show = offered && advanceFloorMet();
+    b.style.display = offered ? 'inline-block' : 'none';
+    b.style.visibility = show ? '' : 'hidden';
+    if (!offered) return;
     if (b.dataset.moving === '1') return;   // mid-advance: leave the pending label alone
-    b.disabled = false;
+    b.disabled = !show;
     b.textContent = `Move on: ${nextBeatLabel()}`;
   }
 
