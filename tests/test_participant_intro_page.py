@@ -157,8 +157,14 @@ WORDING = r"""
   assert.strictEqual(b.dom.$('castLine').innerHTML,
     'You will be talking with <strong>Dan</strong>, <strong>Priya</strong>, and <strong>Chris</strong>.');
 
-  // The blocked-microphone help, as the audio check shows it.
+  // The blocked-microphone help, as the audio check shows it, and the room's:
+  // one instruction, each ending on its own button (FLOW-08).
+  const room = vm.runInContext('CAPTURE_MESSAGES.denied', b.ctx);
+  assert.strictEqual(room, 'Your browser has blocked the microphone for this page. Click the mic or '
+    + 'camera icon at the end of the address bar, choose Allow, then reload this page and press '
+    + 'Start conversation again.');
   const denied = vm.runInContext('MIC_CHECK_HELP.denied', b.ctx);
+  assert.strictEqual(denied, room.replace(' and press Start conversation again.', ' and try again.'));
   assert(/Your browser has blocked the microphone for this page\./.test(denied), denied);
   assert(!/refusing this page/.test(denied), denied);
   b.sandbox.navigator.mediaDevices = {
@@ -196,7 +202,7 @@ ONE_NOTICE = r"""
   let n = notes(b);
   assert.strictEqual(n.length, 1,
     'three presses left ' + n.length + ' notices: ' + JSON.stringify(n.map(x => x.textContent)));
-  assert(/allow microphone access/i.test(n[0].textContent), n[0].textContent);
+  assert(/blocked the microphone for this page/.test(n[0].textContent), n[0].textContent);
   // Under the header, next to Start: at the end of the transcript it was
   // 800 px below Start on a phone, and nothing on screen changed.
   assert.strictEqual(b.dom.$('captureSlot').children.length, 1, 'the notice is not next to Start');
@@ -208,7 +214,7 @@ ONE_NOTICE = r"""
   n = notes(b);
   assert.strictEqual(n.length, 1, 'a second kind of failure added a second notice');
   assert(/find a working microphone/i.test(n[0].textContent), n[0].textContent);
-  assert(!/allow microphone access/i.test(n[0].textContent), 'the old reason stayed on screen');
+  assert(!/blocked the microphone/.test(n[0].textContent), 'the old reason stayed on screen');
 
   // Other notices are not the capture notice's to remove.
   b.ctx.appendNotice('The other person’s line broke up for a moment.');
@@ -292,11 +298,16 @@ MIC_EXIT = r"""
     await b.clock.advance(10);
     assert(!shown(b, 'audioCheckOverlay'));
     assert.strictEqual(b.dom.$('startBtn').disabled, false, 'Start is not offered after the check');
+    // FLOW-08: the old failure is not left on screen, and what to do next is.
+    assert.strictEqual(b.dom.$('captureSlot').children.length, 0, 'the old failure stayed up after the check');
+    assert(b.dom.$('gateNote').classList.contains('show')
+      && /Press Start conversation when you are ready/.test(b.dom.$('gateNote').textContent),
+      'nothing says to press Start: ' + b.dom.$('gateNote').textContent);
 
     // Still blocked; this time they finish.
     b.dom.$('startBtn').click();
     await b.clock.advance(50);
-    assert.strictEqual(notes(b).length, 1);
+    assert.strictEqual(b.dom.$('captureSlot').children.length, 1);
     button(notes(b)[0]).click();
     await b.clock.advance(50);
     b.dom.$('micHelpLeave').onclick();
@@ -742,7 +753,9 @@ DIALOGS = RUN_VIEW + A11Y_DOM + r"""
     assert.strictEqual(doc.activeElement, b.dom.$('audioCheckOverlay'));
     assert.strictEqual(page.inert, true);
     b.dom.$('audioCheckSkip').click(); await b.clock.advance(10);
-    assert.strictEqual(doc.activeElement, door, 'the audio check did not hand focus back');
+    // To Start: the button that opened the cards went with its notice
+    // (FLOW-08), and Start is what the note after the check names.
+    assert.strictEqual(doc.activeElement, b.dom.$('startBtn'), 'focus was left on a removed button');
     assert.strictEqual(page.inert, false);
   }
 

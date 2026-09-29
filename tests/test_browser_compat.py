@@ -917,12 +917,12 @@ async function attempt(cfg) {
 
 (async () => {
   const denied = await attempt({ micError: 'NotAllowedError' });
-  assert(/allow microphone access/i.test(denied), 'a real denial lost its wording: ' + denied);
+  assert(/blocked the microphone.*choose Allow/i.test(denied), 'a real denial lost its wording: ' + denied);
 
   const busy = await attempt({ micError: 'NotReadableError' });
   assert(/no other app|using it/i.test(busy),
     'a microphone held by another application was reported as a permission problem: ' + busy);
-  assert(!/allow microphone access/i.test(busy), 'still telling them to allow what they allowed');
+  assert(!/blocked the microphone|choose Allow/i.test(busy), 'still telling them to allow what they allowed');
 
   const missing = await attempt({ micError: 'NotFoundError' });
   assert(/plugged in|find a working microphone/i.test(missing),

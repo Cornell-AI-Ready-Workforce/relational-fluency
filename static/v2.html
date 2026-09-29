@@ -2367,6 +2367,13 @@
       // Back on the room page afterwards, with Start offered: a fresh press
       // is the gesture a browser wants before it asks for the microphone.
       await runAudioCheck();
+      // The notice was about the attempt the check has just been run for,
+      // and it stayed up with nothing saying what to do next (FLOW-08). Focus
+      // goes to the Start button the note names, since the notice it was on
+      // has gone.
+      clearCaptureFailure();
+      showGateNote('The audio check is over. Press Start conversation when you are ready.');
+      $('startBtn').focus();
     };
     $('micHelpLeave').onclick = () => leaveOnCaptureFailure(kind);
     showOverlay($('micHelpOverlay'));
@@ -2495,11 +2502,16 @@
     e.captureKind = kind;
     return e;
   }
+  // A blocked microphone gets one instruction, in the room and in the audio
+  // check (FLOW-08). The room's was "Please allow microphone access and try
+  // again", with no how-to and no reload, beside the check's full one.
+  const MIC_BLOCKED_HOWTO = 'Your browser has blocked the microphone for this page. Click the mic '
+    + 'or camera icon at the end of the address bar, choose Allow, then reload this page';
   const CAPTURE_MESSAGES = {
     camera: 'This study records video, so your camera needs to be on for every conversation. ' +
             'Please allow camera access (look for the camera icon in the address bar), close any ' +
             'other app that is using the camera, then press Start conversation again.',
-    denied: 'We couldn’t turn on your microphone. Please allow microphone access and try again.',
+    denied: MIC_BLOCKED_HOWTO + ' and press Start conversation again.',
     missing: 'We couldn’t find a working microphone. Check that one is plugged in and that no other ' +
              'app (a video call, a recorder) is using it, then try again.',
     insecure: 'This page is not being served over a secure connection, so the browser will not let it ' +
@@ -2530,8 +2542,7 @@
     quiet: "We can't hear anything yet. Check that your browser allowed the microphone (look for a "
          + 'mic icon in the address bar), that the right input device is selected, and that nothing '
          + 'is muted. Then try again.',
-    denied: 'Your browser has blocked the microphone for this page. Click the mic or camera icon at '
-          + 'the end of the address bar, choose Allow, then reload this page and try again.',
+    denied: MIC_BLOCKED_HOWTO + ' and try again.',
     unanswered: 'Your browser has asked whether this page may use your microphone and is still '
               + 'waiting for an answer. Look for the permission bar at the top of the window, or the '
               + 'icon at the end of the address bar, choose Allow, then press Test my microphone again.',
