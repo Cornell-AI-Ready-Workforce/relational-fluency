@@ -2069,6 +2069,9 @@ class RealtimeVoiceSession:
         self.first_audio_at: Optional[float] = None
         self._first_audio_key = None
         self._response_output_items = 0
+        # Whether the reply in flight made a function call, which is a reply
+        # with no voice and no words that is NOT a lost one (see _undelivered).
+        self._response_called = False
         # The recovery's books. `_retries_this_turn` is reset by every commit
         # (a new participant turn) and by a reply the gateway starts on its own,
         # and incremented only by retry_response, so a turn can be re-asked
@@ -2856,6 +2859,7 @@ class RealtimeVoiceSession:
         self._response_text = ""
         self._response_audio_bytes = 0
         self._response_output_items = 0
+        self._response_called = False
         self._retry_in_flight = False
         self._replay_in_flight = False
         self._audio_absent_hold = 0.0
@@ -2883,6 +2887,35 @@ class RealtimeVoiceSession:
         since = max(self._response_started_at, self._audio_absent_hold)
         return since > 0.0 and (time.time() - since) > (
             REQUEST_UNANSWERED_S + self._request_hold_s)
+
+    def _undelivered(self, shape: str, info: Optional[dict] = None) -> Optional[dict]:
+        """The `reply_missing` that the reply now ending amounts to, or None.
+
+        _request_unanswered's case after the gateway has named the reply: one
+        this bridge asked for, that response.created named (which is what
+        disarms _request_unanswered), and that is ending with no audio, no
+        words and no function call, so there is nothing to play, show or act
+        on. `shape` says how it ended: "empty_done", the gateway's own
+        response.done; "absent_done", AUDIO_ABSENT_S after a frame that was
+        none of those. Carried on the response_done: no turn is open behind
+        such a reply, and the 1:1 runner used to drop the done unrecorded and
+        never ask again (S2A 2026-09-29: four participant lines in a row
+        answered by nothing, 150-237 s, with no event of any kind). `info` is
+        _done_info's, so the record says what the gateway called the reply."""
+        if not (self._requested and self._response_created_id
+                and not self._response_audio_seen
+                and not self._response_text.strip()
+                and not self._response_called):
+            return None
+        started = self._response_started_at
+        out = {"type": "reply_missing", "shape": shape,
+               "waited_s": round(time.time() - started) if started else None,
+               "retryable": self._retries_this_turn < AUDIO_RETRY_LIMIT}
+        for key in ("response_status", "status_reason", "output_items",
+                    "output_tokens"):
+            if (info or {}).get(key) is not None:
+                out[key] = info[key]
+        return out
 
     # -- audio recovery --------------------------------------------------------
     def _drop_deferred(self, why: str) -> None:
@@ -3515,11 +3548,13 @@ class RealtimeVoiceSession:
                     waited = round(time.time() - self._audio_absent_since())
                     verdict = self._retry_verdict("absent")
                     retried = self._retry_in_flight
+                    undelivered = self._undelivered("absent_done")
                     self._end_response()
                     self._cancelled_by_us = False
                     yield {"type": "response_done", "interrupted": True,
                            "audio_absent": True, "retried": retried,
-                           "waited_s": waited, **verdict}
+                           "waited_s": waited, **verdict,
+                           **({"undelivered": undelivered} if undelivered else {})}
                     if not verdict["retryable"]:
                         yield {
                             "type": "error", "recoverable": True,
@@ -4106,10 +4141,14 @@ class RealtimeVoiceSession:
                     verdict = self._retry_verdict(
                         "truncated" if self._truncated(unterminated) else None)
                     retried = self._retry_in_flight
+                    undelivered = (None if cancelled
+                                   else self._undelivered("empty_done", info))
                     self._end_response()
                     self._cancelled_by_us = False
                     if cancelled:
                         verdict["cancelled"] = True
+                    if undelivered:
+                        verdict["undelivered"] = undelivered
                     # The reply's own name, where the gateway gives one, so a
                     # pump holding a latch on a DIFFERENT reply can tell this
                     # done from that one's (see _pump_member's refused hold).
@@ -4130,6 +4169,7 @@ class RealtimeVoiceSession:
                            "retried": retried, **verdict, **info}
 
                 elif etype == "response.function_call_arguments.done":
+                    self._response_called = True
                     yield {
                         "type": "tool_call",
                         "name": ev.get("name"),
@@ -4156,7 +4196,15 @@ class RealtimeVoiceSession:
                         continue
 
                     if (code == "response_cancel_not_active"
-                            and not self._response_active):
+                            and (not self._response_active
+                                 # The cancel retry_response / replay_input
+                                 # lead with, refused before the retry's
+                                 # reply began: after a reply that ended
+                                 # empty there is nothing left to cancel.
+                                 # Taken as a failure it put the retry's
+                                 # flags down and an `error` on the page.
+                                 or (self._retry_in_flight
+                                     and not self._response_saw_output))):
                         # A cancel that found nothing to cancel, with no reply
                         # of ours in flight: the unconditional cancel_response()
                         # _enter sends on a fresh session at an interaction

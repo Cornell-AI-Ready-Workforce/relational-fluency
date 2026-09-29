@@ -5471,6 +5471,14 @@ class RealtimeVoiceSessionRunner:
                     # runner has already closed (a barge-in finalises early).
                     # Without this the duplicate would wait out the whole grace
                     # on a fresh, empty buffer and log a phantom turn.
+                    if ev.get("undelivered"):
+                        # Not a repeat: a reply asked for, named by the
+                        # gateway, and ended with nothing in it (see the
+                        # bridge's _undelivered). No turn to close; dropped
+                        # here it went unrecorded and was never asked for
+                        # again (S2A 2026-09-29, four lines in a row).
+                        await self._reply_missing(rt, self.agent_id,
+                                                  ev["undelivered"], has_floor=True)
                     continue
                 if ev.get("retry_reason") and await self._retry_reply(
                         rt, self.agent_id, ev):
@@ -8722,6 +8730,12 @@ class RealtimeVoiceSessionRunner:
         fields = dict(agent_id=agent_id, segment=self.segment,
                       interaction=self._interaction_id(),
                       waited_s=ev.get("waited_s"))
+        # A reply the gateway named and ended empty says how (the bridge's
+        # _undelivered); one that drew no frame at all has none of these.
+        for key in ("shape", "response_status", "status_reason",
+                    "output_items", "output_tokens"):
+            if ev.get(key) is not None:
+                fields[key] = ev[key]
         self.session.store.event("reply_missing", **fields)
         why = None
         if not ev.get("retryable"):
