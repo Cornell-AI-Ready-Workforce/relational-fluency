@@ -60,7 +60,9 @@ def _study_numbers(monkeypatch):
 def _last(runner, *, ago):
     runner.segment = len(runner.interactions) - 1
     runner._series_idx = 0
-    runner._encounter_started_at = time.time() - ago
+    # The participant spoke as the encounter opened: the floor counts from
+    # their first line since pipeline 2026-09-28b, the ceiling from the start.
+    runner._encounter_started_at = runner._first_line_at = time.time() - ago
 
 
 def _spent(runner, monkeypatch):
@@ -120,7 +122,7 @@ def test_the_participants_move_on_still_opens_at_the_floor(monkeypatch):
     calls = _spent(runner, monkeypatch)
     _run(runner._handle_client_command(json.dumps({"type": "advance_interaction"})))
     assert calls == [] and session.store.of("floor_held")[0]["reason"] == "move_on"
-    runner._encounter_started_at = time.time() - 425
+    runner._encounter_started_at = runner._first_line_at = time.time() - 425
     _run(runner._handle_client_command(json.dumps({"type": "advance_interaction"})))
     assert calls == [1] and ws.frames("encounter_complete")
 
@@ -279,10 +281,11 @@ def test_a_room_members_call_is_answered_without_asking_for_a_reply():
 
 def test_the_clock_announces_the_floor_the_warning_and_the_stop():
     runner, session, ws = harness.make_runner("S2A")
-    runner._encounter_started_at = time.time() - 100
+    # The participant spoke as the encounter opened (the floor's clock).
+    runner._encounter_started_at = runner._first_line_at = time.time() - 100
     assert _run(runner._encounter_clock_tick()) is False
     assert not ws.frames("move_on_open")
-    runner._encounter_started_at = time.time() - 421
+    runner._encounter_started_at = runner._first_line_at = time.time() - 421
     assert _run(runner._encounter_clock_tick()) is False
     assert _run(runner._encounter_clock_tick()) is False
     assert len(ws.frames("move_on_open")) == 1 and len(session.store.of("move_on_open")) == 1

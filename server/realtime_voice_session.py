@@ -970,6 +970,19 @@ class RealtimeVoiceSessionRunner:
         self._cue_turns: dict = {}
         self._cue_seq: Optional[int] = None
         self._participant_turn_closing = False
+        # THE PARTICIPANT OPENS (the researchers' rule of 2026-09-28, pipeline
+        # 2026-09-28b; see _await_participant). True from the start of a
+        # conversation until the participant's first ACCEPTED line (a
+        # user_turn, not a line a gate suppressed): no character speaks before
+        # it. Armed by run() and again at a move to somebody new (S1's
+        # hand-off). `_first_line_at` is the encounter's first accepted line,
+        # which the 7:00 floor counts from; `_conversation_opened_at` the
+        # current conversation's, which the S1 timebox counts from.
+        self._awaiting_participant = False
+        self._awaiting_reason = "start"
+        self._awaiting_since = 0.0
+        self._first_line_at: Optional[float] = None
+        self._conversation_opened_at: Optional[float] = None
         self._switching = False
         # True for the whole of _enter, i.e. while the sessions behind self.rt
         # are being torn down and rebuilt. _model_to_client must not pump
@@ -1146,21 +1159,32 @@ class RealtimeVoiceSessionRunner:
         caps = _realtime.capabilities_for(model or realtime_model())
         return caps is not None and not caps.honours_session_update
 
-    def _opening_direction(self, opening: str) -> str:
-        """The direction that makes a room's lead open the scene; see
-        _open_group_scene for why it names the part to be spoken."""
+    def _first_room_reply_note(self, opening: str) -> str:
+        """A room lead's framing, as a standing note for its FIRST reply.
+
+        Until pipeline 2026-09-28b this was the direction that made the lead
+        open the scene unprompted (_open_group_scene). The participant opens
+        every conversation now, so the room's `opening:` is what the lead's
+        answer to their first line carries, as a 1:1 `opening:` always was
+        (_first_reply_note). Three of the four group `opening:` values are
+        third-person stage notes, so the note still names which part is to be
+        spoken and forbids describing the scene aloud: a narrator voice-over
+        would be the encounter's first character turn, and a rater scores it.
+        A FIRST REPLY header like the 1:1 note's, not a DIRECTOR NOTE, so a
+        beat briefed for the same reply (_brief_member) stays the only
+        director note in the brief. No sentence count: SPEECH_RULES sets it.
+        """
         return (
-            # No sentence count here: SPEECH_RULES, three lines above this
-            # note in the same prompt, already sets the length of a turn.
-            # A second count in the moment-note is how the prompt grew six
-            # of them.
-            "You speak first and open the scene, in character. Here is "
-            "where the scene is found — "
-            f"{opening} — if that quotes a line of dialogue, say that "
-            "line; otherwise begin from that situation in your own words. "
-            "Never read the description out, and never narrate or describe "
-            "the scene or your own actions: speak only what your character "
-            "says to the people in the room."
+            "\n\nFIRST REPLY, for you alone — never say any of this out loud:\n"
+            "The person you are all meeting with speaks first. Your FIRST "
+            "reply in this meeting, whatever they opened with, is where the "
+            f"scene is found: «{opening}». If that quotes a line of dialogue, "
+            "say that line, in your own words if you like, as your answer to "
+            "them; where it describes the situation instead, answer them from "
+            "inside that situation, as yourself. Never read the description "
+            "out, and never narrate or describe the scene or your own "
+            "actions: speak only what your character says to the people in "
+            "the room. That belongs to your first reply ONLY."
         )
 
     def _first_reply_note(self, opening: str, agent_name: str = "") -> str:
@@ -1257,8 +1281,12 @@ class RealtimeVoiceSessionRunner:
         Returns True when the framing was folded into the connect-time brief
         (the actor's session must be built AFTER this call), False when the
         family honours mid-session updates and the existing path carries it
-        (the t1 beat's cue in 1:1, the opening stage direction in a room),
-        None when the interaction has no `opening:` at all.
+        (the t1 beat's cue in 1:1), None when the interaction has no
+        `opening:` at all. A room's lead is folded on every family since
+        pipeline 2026-09-28b: nothing prompts it to open the scene any more,
+        so the framing rides on each brief it is given until it has spoken
+        under it (_first_room_reply_note), and the room's first unnamed turn
+        goes to it (_run_group_turn).
 
         Recorded as `opening_framing` either way, because the two routes are
         not equally trustworthy and an analyst reading the record has to be
@@ -1268,9 +1296,9 @@ class RealtimeVoiceSessionRunner:
         if not opening:
             return None
         model = realtime_model()
-        folded = self._steering_is_inert(model)
+        folded = group or self._steering_is_inert(model)
         if folded:
-            self._opening_note = (self._director_note(self._opening_direction(opening))
+            self._opening_note = (self._first_room_reply_note(opening)
                                   if group else self._first_reply_note(
                                       opening, getattr(agent, "name", "") or ""))
             self._opening_agent = agent.id
@@ -1280,9 +1308,9 @@ class RealtimeVoiceSessionRunner:
         self.session.store.event(
             "opening_framing", agent_id=agent.id, interaction=self._interaction_id(),
             segment=self.segment, mode="group" if group else "one_to_one",
-            via="connect_brief" if folded else (
-                "stage_direction" if group else "trigger_cue"),
-            model=model, honours_session_update=not folded,
+            via=("first_reply_note" if group else
+                 "connect_brief" if folded else "trigger_cue"),
+            model=model, honours_session_update=not self._steering_is_inert(model),
         )
         return folded
 
@@ -1904,134 +1932,7 @@ class RealtimeVoiceSessionRunner:
                 self._spawn_pump(self._pump_member(a, rt))
         if room.scribe is not None:
             self._spawn_pump(self._pump_scribe(room.scribe))
-        # Who speaks first is decided by _open_group_scene, which the caller
-        # runs AFTER the segment_start banner has gone out, so the participant
-        # is never hearing a character the UI has not introduced yet.
-
-    async def _open_group_scene(self) -> None:
-        """Have the lead character open a group scene.
-
-        Context has to land in-scene (docs/scenario-spec-v3.md): a group
-        interaction is authored as a meeting already under way, and the
-        interaction's `opening:` says where that meeting is found — usually as a
-        stage note, occasionally as a quoted line. Nobody used to speak at all
-        here, so S3A's team meeting and S4A's working session
-        began in total silence and stayed that way until the participant spoke
-        — and a participant who freezes produced a silent WAV and an empty
-        transcript, i.e. the missing data the study design exists to avoid.
-
-        Opening IS possible on this bridge even though a response can only
-        follow committed audio: give_floor pads a buffer holding less than
-        300 ms with silence before committing, precisely so a session that has
-        heard nothing can still be asked to speak (committing a genuinely
-        empty buffer is what kills a session). The brief goes out immediately
-        before the floor is granted and never mid-response, which is the same
-        ordering _brief_member relies on.
-        """
-        room = self.room
-        if room is None or self._closed:
-            return
-        agents = self._resolve_agents()
-        if not agents:
-            return
-        lead = agents[0]
-        opening = str(self._interaction().get("opening") or "").strip()
-        rt = room.session_for(lead.id)
-        if not opening or rt is None:
-            # Nothing authored to open with: fall back to the old behaviour and
-            # let the participant speak first. Recorded, because a scene that
-            # opens in silence is a data risk a rater should be able to see.
-            self.session.store.event(
-                "group_scene_awaits_participant", agent_id=lead.id
-            )
-            return
-        async with self._floor:
-            if self.room is not room or self._closed:
-                return
-            # Three of the four group `opening:` values in the bank are
-            # third-person stage notes about how the scene is found ("The
-            # meeting is already convened...", "Opens mid-flow, Dan pitching.");
-            # only S4B's quotes a line of dialogue. "Play this: <stage note>"
-            # invites a speech-to-speech model to read the stage note out, and
-            # that narrator voice-over would then BE the recorded first turn of
-            # the encounter — a turn a rater has to score. So the direction
-            # names which part is to be spoken and forbids describing the scene
-            # aloud, rather than trusting one wording to cover both kinds.
-            direction = self._opening_direction(opening)
-            # Two routes, and the record says which. On a family that honours a
-            # mid-session session.update the direction goes out now, as the
-            # brief the lead speaks under, and the floor is a pad+commit+create
-            # like any other grant. On the configured Gemini family that update
-            # is inert AND a commit of pure silence draws no frame at all (5/5
-            # rooms yesterday: the opener was never spoken, `empty_response`,
-            # and the unanswered create left `responding` latched so the next
-            # grant was skipped as "already answering"). There the direction
-            # was folded into the lead's CONNECT brief by _open_room, and the
-            # lead is made to speak by a user text item + response.create,
-            # which drew a full in-character opening 4/4 on the same sessions.
-            folded = (bool(self._opening_note)
-                      and self._opening_agent == lead.id)
-            if folded:
-                instructions = self._instructions_for(lead)
-                acked = None
-            else:
-                instructions = self._instructions_for(lead) + self._director_note(direction)
-                acked = await self._deliver_brief(rt, instructions)
-            # The opening line is a director instruction like any other, so it
-            # belongs in the steering log; it fires no planted trigger, hence
-            # the null trigger_id.
-            self._pending_direction = {
-                "acked": acked,
-                "turn": self._turn_index,
-                "segment": self.segment,
-                "interaction": self._interaction_id(),
-                "agent_id": lead.id,
-                "agent_name": lead.name,
-                "voice": getattr(rt, "voice", None),
-                "stage_direction": direction,
-                "trigger_id": None,
-                "esci": [],
-                "probing": False,
-                "opening": True,
-                "via": "connect_brief" if folded else "session_update",
-                "instructions_sha256": hashlib.sha256(instructions.encode()).hexdigest()[:16],
-                "director_model": (self.director.model if getattr(self, "director", None)
-                                   else provenance()["text_model"]),
-            }
-            self.session.store.event("stage_direction", **self._pending_direction)
-            self._response_done.clear()
-            if folded and hasattr(room, "open_scene"):
-                granted = await room.open_scene(
-                    lead.id, prompt=getattr(_realtime, "SCENE_OPEN_PROMPT", ""))
-            else:
-                granted = await room.give_floor(lead.id)
-                self._note_grant(room)
-            if granted is None:
-                # give_floor drops a member whose commit failed but leaves
-                # `speaking` pointing at it; clear it, or every other member's
-                # has_floor test stays False and the room is mute for good.
-                room.speaking = None
-                self.session.store.event(
-                    "group_scene_open_failed", agent_id=lead.id
-                )
-                # The opening direction was never spoken, so it must not be
-                # left pending and paired with whichever turn finalises next.
-                self._pending_direction = None
-                return
-            self.session.store.event("group_scene_opened", agent_id=lead.id)
-            # Keep the floor until the opener is done, so the watchdog does not
-            # read the opening pause as participant silence and probe over it.
-            self._last_activity = time.time()
-            try:
-                await asyncio.wait_for(self._response_done.wait(), timeout=45)
-            except asyncio.TimeoutError:
-                self.session.store.event(
-                    "group_turn_timeout", agent_id=lead.id, opening=True
-                )
-                rt.clear_response_state()
-            if self.room is room:
-                room.speaking = None
-            self._last_activity = time.time()
+        # Nobody speaks until the participant has (_await_participant).
 
     def _spawn_pump(self, coro) -> None:
         """Start a relay pump, with its exceptions logged rather than lost.
@@ -3623,15 +3524,13 @@ class RealtimeVoiceSessionRunner:
             direction = None
         self._turn_index += 1
         # _maybe_advance's pacing gate counts conversational exchanges, and it
-        # was calibrated on turns the participant prompted. The room now opens
-        # itself (see _open_group_scene), and that opening turn is prompted by
-        # nobody, so counting it brought every group interaction's automatic
-        # advance one exchange early. A probe reply is deliberately still
-        # counted: when a participant has gone quiet the probes are the only
-        # thing that moves the gate at all, and excluding them would wedge that
-        # encounter in its first interaction for good.
-        if not (direction or {}).get("opening"):
-            self._turns_this_interaction += 1
+        # was calibrated on turns the participant prompted. Until pipeline
+        # 2026-09-28b the room's unprompted opener was left out of it; nothing
+        # speaks unprompted now, so every turn counts. A probe reply is
+        # deliberately counted: when a participant has gone quiet the probes
+        # are the only thing that moves the gate at all, and excluding them
+        # would wedge that encounter in its first interaction for good.
+        self._turns_this_interaction += 1
         # The actor has now spoken under the continuation note, which says "do
         # not greet again" — a one-off instruction, not a standing one. The
         # lead's folded opening (see _fold_opening) is spent the same way.
@@ -4086,6 +3985,9 @@ class RealtimeVoiceSessionRunner:
         await self.session.broadcast(
             {"type": "transcript", "role": "user", "text": text}
         )
+        # An accepted line: the first of a conversation lets the characters
+        # answer (pipeline 2026-09-28b).
+        await self._note_participant_opened()
 
     async def _withdraw_reply(self, text: str, reason: str,
                               committed_at: Optional[float],
@@ -4315,7 +4217,12 @@ class RealtimeVoiceSessionRunner:
         # boundary before the two continuation branches below decide whether
         # this one deserves a fresh one.
         self._scene_note = ""
-        opened_room = False
+        # Whether the participant is now with somebody they have not been
+        # talking to (S1's hand-off, a room of other people or a new scene):
+        # that conversation starts with them too (_await_participant). Not a
+        # continuation with the same character or room (S2 i1 -> i2, S4's
+        # working session then its close): they have spoken there already.
+        new_conversation = False
         failure: Optional[BaseException] = None
         # Hold _model_to_client off self.rt for the whole swap: mid-transition
         # it points at a session that has just been closed or is not connected
@@ -4364,8 +4271,8 @@ class RealtimeVoiceSessionRunner:
                     )
                 else:
                     old = self.rt
+                    new_conversation = new_scene or set(wanted) != set(have)
                     await self._open_room()
-                    opened_room = True
                     # Close a previous NON-room (1:1) session before adopting a
                     # room member. Otherwise _model_to_client stays blocked
                     # forever in the old session's pump (its async-for never
@@ -4398,6 +4305,7 @@ class RealtimeVoiceSessionRunner:
                 and self.rt is not None
                 and self.rt.ws is not None
             ):
+                new_conversation = changed or self.room is not None
                 await self._close_room()
                 new_rt = await self._switch_character(agent)
                 if new_rt is None:
@@ -4520,12 +4428,12 @@ class RealtimeVoiceSessionRunner:
         }
         self.session.store.event("segment_start", **payload)
         await self._send({"type": "segment_start", **payload})
-        if opened_room:
-            # A freshly built room is a fresh scene, and somebody has to open
-            # it. Spawned, not awaited: _open_group_scene holds the floor until
-            # the opener finishes, and _enter's callers (a pump's tool_call, the
-            # participant's advance command) must not block on that.
-            self._spawn_group_turn(self._open_group_scene())
+        if new_conversation:
+            # Somebody new (S1's hand-off to Sam or Drew, or a room of other
+            # people): they wait for the participant too, and the page says so
+            # ("You're now with Sam. You start."). A freshly built room used to
+            # be opened here by its lead (_open_group_scene, gone in 28b).
+            await self._await_participant("handoff")
         return True
 
     async def run(self) -> None:
@@ -4549,13 +4457,11 @@ class RealtimeVoiceSessionRunner:
             # The floor, wrap and stop this runner enforces, and where its
             # clock stands, for the page's ring and End on every link type.
             await self._announce_clock()
-            if self.is_group():
-                # Only after the banner: the participant must see who is in the
-                # room before one of them starts talking. Spawned so the relay
-                # tasks below start immediately.
-                self._spawn_group_turn(self._open_group_scene())
-            # A 1:1 participant opens the scene, so the cue says they can
-            # speak now; a room's opener, just spawned, holds it back.
+            # The participant opens every conversation, 1:1 and rooms alike
+            # (pipeline 2026-09-28b): nobody is prompted to speak here, and the
+            # page says plainly that they start. After the banner, so they see
+            # who they are with first.
+            await self._await_participant("start")
             await self._maybe_turn_open()
             # Record what served this encounter, the audit trail has to say
             # which gateway and which models produced the data.
@@ -5280,7 +5186,9 @@ class RealtimeVoiceSessionRunner:
         # And this is how it counts voiced audio per commit for the
         # transcript gate (see _record_user_turn and _tag_commit).
         rt.voiced_bar = self.vad.effective_threshold
-        async for ev in rt.events():
+        # Until the participant has opened, a reply is held back rather than
+        # relayed (pipeline 2026-09-28b; see _hold_first_reply).
+        async for ev in self._hold_first_reply(rt, rt.events()):
             etype = ev["type"]
 
             if etype == "agent_audio":
@@ -5836,9 +5744,175 @@ class RealtimeVoiceSessionRunner:
             user_agent=ua[:400] if isinstance(ua, str) else None,
         )
 
+    # ── the participant opens (pipeline 2026-09-28b) ─────────────────────
+    #
+    # The researchers' rule (2026-09-28, confirmed 2026-09-29): no character
+    # says anything first. At the start of every encounter, 1:1 and rooms, and
+    # at S1's hand-off to Sam or Drew, the characters stay silent until the
+    # participant's first ACCEPTED line: a user_turn, not a line a gate
+    # suppressed (no_speech, a sound tag, a probe pad, an echo, an empty or
+    # implausible transcript). Nothing makes a character speak before it: no
+    # room opener, no probe or hand-off line (_silence_watchdog), no reply to
+    # an unaccepted line (_hold_first_reply), no room turn routed on nothing
+    # (_run_group_turn), no re-ask or replay (_reply_missing, the reconnect).
+    # A beat written as the opener is briefed at the participant's first turn
+    # end, as every 1:1 beat is, so its direction applies to the reply to that
+    # line; if the line is not accepted the beat is given back. It does not
+    # apply later in the same conversation with the same character (S2
+    # i1 -> i2). If the participant stays silent only the page repeats its
+    # cue.
+
+    # The 1:1 bridge events that make up a character's reply (_hold_first_reply).
+    _REPLY_EVENTS = frozenset((
+        "agent_audio", "agent_transcript_delta", "agent_transcript",
+        "response_done", "tool_call"))
+
+    async def _await_participant(self, reason: str) -> None:
+        """Arm the rule for the conversation just entered, and tell the page.
+
+        `reason` is "start" (run) or "handoff" (somebody new, _enter). Written
+        as awaiting_participant; the page shows its start cue ("You start the
+        conversation. Say hello when you're ready." / "You're now with Sam.
+        You start.") until participant_opened."""
+        self._awaiting_participant = True
+        self._awaiting_reason = reason
+        self._awaiting_since = time.time()
+        self._conversation_opened_at = None
+        present = self._resolve_agents()
+        if self._interaction_mode() == "one_to_one_series" or not self.is_group():
+            present = [self.agent]
+        names = [a.name for a in present]
+        self.session.store.event(
+            "awaiting_participant", reason=reason, segment=self.segment,
+            interaction=self._interaction_id(), agent_id=self.agent_id,
+            names=names, elapsed_s=round(self._encounter_elapsed(), 3))
+        await self._send({"type": "awaiting_participant", "reason": reason,
+                          "agent_id": self.agent_id, "names": names})
+
+    async def _note_participant_opened(self) -> None:
+        """The participant's first accepted line of this conversation has just
+        been recorded (_record_user_turn): the characters may answer it.
+        Written as participant_opened, with where it fell on the encounter
+        clock and how long they took; the encounter's first is what the 7:00
+        floor counts from (_floor_elapsed)."""
+        if not self._awaiting_participant:
+            return
+        now = time.time()
+        first = self._first_line_at is None
+        self._awaiting_participant = False
+        self._conversation_opened_at = now
+        if first:
+            self._first_line_at = now
+        fields = dict(
+            reason=self._awaiting_reason, first_of_encounter=first,
+            elapsed_s=round(self._encounter_elapsed(), 3),
+            waited_s=round(now - self._awaiting_since, 3),
+            utterance=self._user_utterances, segment=self.segment,
+            interaction=self._interaction_id(), agent_id=self.agent_id)
+        self.session.store.event("participant_opened", **fields)
+        await self._send({"type": "participant_opened", "reason": fields["reason"],
+                          "first_of_encounter": first})
+
+    async def _hold_first_reply(self, rt, source):
+        """The 1:1 bridge stream, with any reply held back while the
+        participant has not opened.
+
+        On the gpt route our commit itself starts the reply, and the
+        transcript that says what was committed arrives 0.6-1.6 s later, not
+        always before the reply's first audio; native-audio fires its own
+        reply at speech plus silence, noise included. So until an accepted
+        line, a reply's frames are kept in order, not relayed, and the next
+        transcript decides. Accepted: they go out as they came, except those
+        that arrived before that line's own commit, which answer an earlier
+        line nobody accepted. Not accepted: they are dropped, the reply is
+        cancelled where the route can cancel it (and the rest of it dropped as
+        it arrives where it cannot), and the beat briefed for it is given back
+        (_retract_withdrawn_beat). A later commit than the rejected line's is
+        the participant speaking again, and what answers it is kept."""
+        held: list = []          # (arrived_at, event)
+        dropping = False
+        async for ev in source:
+            etype = ev.get("type")
+            if etype in self._REPLY_EVENTS and rt is self.rt:
+                if dropping:
+                    dropping = etype != "response_done"
+                    continue
+                if self._awaiting_participant:
+                    held.append((time.time(), ev))
+                    continue
+            yield ev
+            if etype != "user_transcript" or ev.get("probe") or rt is not self.rt:
+                continue
+            if not self._awaiting_participant:
+                if held:
+                    since = ev.get("committed_at") or 0.0
+                    keep = [h for at, h in held if at >= since]
+                    self._note_first_reply("first_reply_released", held, len(keep))
+                    held = []
+                    for h in keep:
+                        yield h
+                continue
+            latest = getattr(rt, "last_commit_at", None)
+            committed_at = ev.get("committed_at")
+            later = (isinstance(latest, (int, float)) and committed_at is not None
+                     and latest > committed_at)
+            gone = [(at, h) for at, h in held if not later or at < latest]
+            held = [(at, h) for at, h in held if later and at >= latest]
+            cancel = None
+            if not later and (getattr(rt, "responding", False)
+                              or getattr(rt, "autofire_active", False)):
+                fn = getattr(rt, "cancel_unheard_reply", None)
+                rid = await fn() if fn is not None else None
+                cancel = "not_on_this_route" if rid is None else "cancelled"
+                dropping = rid is None
+            if gone or cancel:
+                self._note_first_reply("first_reply_withheld", gone, 0,
+                                       cancel=cancel, dropping=dropping)
+            if not later:
+                self._retract_withdrawn_beat()
+
+    def _note_first_reply(self, kind: str, held: list, released: int, **extra) -> None:
+        """first_reply_released / first_reply_withheld, with what the model
+        produced, so the record keeps every frame it did not relay."""
+        dropped = held[:len(held) - released] if kind == "first_reply_released" else held
+        self.session.store.event(
+            kind, agent_id=self.agent_id, segment=self.segment,
+            interaction=self._interaction_id(), released_frames=released,
+            dropped_frames=len(dropped),
+            dropped_audio_ms=sum(len(h.get("pcm") or b"") for _, h in dropped
+                                 if h.get("type") == "agent_audio") // 32,
+            dropped_text="".join(h.get("text") or "" for _, h in dropped
+                                 if h.get("type") == "agent_transcript_delta") or None,
+            **extra)
+
     # ── the encounter clock ──────────────────────────────────────────────
+    #
+    # WHICH CLOCK EACH LIMIT COUNTS ON (pipeline 2026-09-28b). The 12:00
+    # ceiling (and the 11:00 warning before it) is a hard wall-clock cap from
+    # encounter start (_encounter_elapsed): it never moves, however long the
+    # participant took to start. The 7:00 move-on floor counts from the
+    # participant's first accepted line of the encounter (_floor_elapsed), and
+    # the S1 2:00 hand-off timebox from their first line in that conversation
+    # (_timebox_elapsed): time with nobody saying anything is not
+    # conversation. A participant who waits long enough meets the ceiling
+    # before the floor, and the ceiling wins.
     def _encounter_elapsed(self) -> float:
         return time.time() - self._encounter_started_at
+
+    def _floor_elapsed(self) -> float:
+        """Seconds on the 7:00 floor's clock: since the encounter's first
+        accepted participant line, 0 before it."""
+        at = self._first_line_at
+        return 0.0 if at is None else time.time() - at
+
+    def _timebox_elapsed(self) -> float:
+        """Seconds on the S1 timebox's clock: since the later of this
+        interaction's start and the participant's first line in this
+        conversation, 0 while that line has not come."""
+        if self._awaiting_participant:
+            return 0.0
+        opened = self._conversation_opened_at or 0.0
+        return time.time() - max(self._interaction_started_at, opened)
 
     def _is_last_segment(self) -> bool:
         """True when advancing from here would complete the encounter."""
@@ -5849,7 +5923,7 @@ class RealtimeVoiceSessionRunner:
 
     def _floor_open(self) -> bool:
         from .storage import encounter_timing
-        return self._encounter_elapsed() >= encounter_timing()["min_seconds"]
+        return self._floor_elapsed() >= encounter_timing()["min_seconds"]
 
     async def _hold_at_floor(self, reason: str) -> bool:
         """If the participant's move-on would complete the encounter before
@@ -5866,12 +5940,13 @@ class RealtimeVoiceSessionRunner:
         if not self._is_last_segment() or self._floor_open():
             return False
         from .storage import encounter_timing
-        left = max(0.0, encounter_timing()["min_seconds"] - self._encounter_elapsed())
+        left = max(0.0, encounter_timing()["min_seconds"] - self._floor_elapsed())
         if not self._floor_held_noted:
             self._floor_held_noted = True
             self.session.store.event(
                 "floor_held", reason=reason,
                 elapsed_s=round(self._encounter_elapsed(), 1),
+                floor_elapsed_s=round(self._floor_elapsed(), 1),
                 seconds_left=round(left, 1),
             )
         await self._send({"type": "floor_held", "reason": reason,
@@ -5914,7 +5989,8 @@ class RealtimeVoiceSessionRunner:
         if reason == "end_conversation" and not self._floor_open():
             await self._send({
                 "type": "floor_held", "reason": reason,
-                "seconds_left": round(max(0.0, t["min_seconds"] - elapsed)),
+                "seconds_left": round(max(0.0, t["min_seconds"]
+                                          - self._floor_elapsed())),
             })
         return True
 
@@ -6046,10 +6122,11 @@ class RealtimeVoiceSessionRunner:
         if self._closed:
             return False
         elapsed = self._encounter_elapsed()
-        if not self._move_on_noted and elapsed >= encounter_timing()["min_seconds"]:
+        if not self._move_on_noted and self._floor_open():
             self._move_on_noted = True
             self.session.store.event(
                 "move_on_open", elapsed_s=round(elapsed, 1),
+                floor_elapsed_s=round(self._floor_elapsed(), 1),
                 interaction=self._interaction_id(), segment=self.segment,
             )
             await self._send({"type": "move_on_open"})
@@ -6112,7 +6189,9 @@ class RealtimeVoiceSessionRunner:
         # rather than performed late in the wrong scene.
         tb = self._timebox_seconds()
         if tb is not None and not self.is_group() and not self._is_last_segment():
-            elapsed = time.time() - self._interaction_started_at
+            # From the participant's first line in this conversation, not
+            # from the banner (pipeline 2026-09-28b; _timebox_elapsed).
+            elapsed = self._timebox_elapsed()
             if elapsed >= tb:
                 if not self._handoff_briefed:
                     await self._brief_handoff(elapsed)
@@ -6905,6 +6984,11 @@ class RealtimeVoiceSessionRunner:
             # such as a room turn that released the floor after its last line
             # had already played, or a page that never acked a play_end.
             await self._maybe_turn_open()
+            if self._awaiting_participant:
+                # The participant opens (pipeline 2026-09-28b): no probe and
+                # no hand-off line, however long the silence. The page keeps
+                # its own cue up instead.
+                continue
             if self._closed or self._speaking or self.vad.speaking:
                 continue
             if await self._proactive_handoff():
@@ -6973,7 +7057,7 @@ class RealtimeVoiceSessionRunner:
         if (self.is_group() or self._handoff_probed
                 or self._timebox_seconds() is None or self._is_last_segment()):
             return False
-        elapsed = time.time() - self._interaction_started_at
+        elapsed = self._timebox_elapsed()
         if elapsed < self._timebox_seconds():
             return False
         rt = self.rt
@@ -7426,9 +7510,26 @@ class RealtimeVoiceSessionRunner:
                     interaction=self._interaction_id(),
                 )
                 return
+            if not fresh and self._awaiting_participant:
+                # The scribe-failure routing above is on the conversation so
+                # far; before the participant's first accepted line there is
+                # none, and routing would have a character speak first
+                # (pipeline 2026-09-28b).
+                self.session.store.event(
+                    "group_turn_skipped", reason="awaiting_participant",
+                    text="", arrivals=[], segment=self.segment,
+                    interaction=self._interaction_id(),
+                )
+                return
 
             named_early = self._named_in(fresh)
             first = named_early
+            # What used to be the lead's unprompted opener is its answer to
+            # the participant now (_first_room_reply_note): an unnamed turn
+            # goes to the lead until it has spoken under that framing.
+            lead = self._opening_agent
+            if first is None and self.is_group() and lead in room.sessions:
+                first = lead
             # The director may return an ORDERED multi-speaker sequence (e.g.
             # [A, B, A]); capture it so the follow-up beats play it in order
             # instead of being re-decided by a second route() call. None when the
@@ -8386,6 +8487,10 @@ class RealtimeVoiceSessionRunner:
             why = "already_retried"
         elif self._closed:
             why = "closing"
+        elif self._awaiting_participant:
+            # Nothing of theirs is accepted yet: a re-ask would be the
+            # character speaking first (pipeline 2026-09-28b).
+            why = "awaiting_participant"
         elif not has_floor:
             why = "floor_moved"
         elif self.vad.active_within():
@@ -8506,6 +8611,16 @@ class RealtimeVoiceSessionRunner:
         # them, and the buffer is spent either way: a fresh socket is not
         # handed a line the old one already answered.
         speech = self._replay_speech()
+        if speech and self._awaiting_participant:
+            # Nothing of theirs is accepted yet, and a replay is a commit and
+            # a response.create: the character answering a line nobody has
+            # heard (pipeline 2026-09-28b). They say it again, under the
+            # page's start cue.
+            self.session.store.event(
+                "replay_withheld", reason="awaiting_participant",
+                agent_id=self.agent_id, segment=self.segment,
+                replay_ms=len(speech) // 32)
+            speech = b""
         # NOT cleared here. On 2026-09-18 the gateway dropped the socket twice
         # in seven seconds; the first replay went into a socket that died
         # before answering, and because the buffer was spent on replay the

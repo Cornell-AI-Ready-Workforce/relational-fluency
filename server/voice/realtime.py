@@ -366,8 +366,8 @@ REALTIME_FAMILIES = {
         # and answered, first delta 0.23 s, complete reply. The older finding
         # that a text item closes this socket with 1006 was the 2026-08-19
         # over-specified session config, not the item. Our audio-recovery retry
-        # (retry_response) and our group scene-open (open_scene) both ride on
-        # this being True; do not flip it without re-probing.
+        # (retry_response) rides on this being True, as the group scene-open
+        # did until pipeline 2026-09-28b; do not flip it without re-probing.
         accepts_text_items=True,
         # But colleague audio still goes in as AUDIO here. Our fan-out byte
         # counters (_fanned_since_grant) and give_floor's `heard_something`
@@ -456,7 +456,7 @@ REALTIME_FAMILIES = {
         # Pad-and-commit yields an EMPTY response here: the route has already
         # consumed the audio with a reply of its own that was dropped. A text
         # nudge plus request_response is the only recipe that wakes it -- the
-        # same recipe as open_scene.
+        # recipe the retired group scene-open was measured on.
         grant_via_text_prompt=True,
         # No tools for room members: this route calls end_conversation
         # constantly and every call is an empty turn. END_SEGMENT_TOOL is
@@ -829,7 +829,8 @@ def grants_via_text_prompt(model: str) -> bool:
     True on native-audio: the route has already consumed the audio with a reply
     of its own that was dropped, so a commit of padding yields an empty
     response. Injecting a text item is the only recipe that wakes a session
-    which will not answer a commit -- the same recipe as open_scene.
+    which will not answer a commit -- the recipe the retired group
+    scene-open was measured on.
     """
     caps = capabilities_for(model)
     if caps is not None:
@@ -1617,17 +1618,6 @@ REPLAY_UNANSWERED_S = float(setting("REALTIME_REPLAY_UNANSWERED_S", "4"))
 UNANSWERED_NUDGE = setting(
     "REALTIME_UNANSWERED_NUDGE",
     "(They have just spoken and are waiting for you to answer.)",
-)
-# What opens a group scene on a family whose members answer a commit of pure
-# silence with nothing at all (Gemini: pad + commit + response.create on a
-# session that has heard nothing drew no frame, 5/5 rooms; a user TEXT item +
-# response.create drew a full in-character opening 4/4). Never spoken by the
-# participant and never enters the participant transcript; the runner writes
-# it on the record beside the opening turn.
-SCENE_OPEN_PROMPT = setting(
-    "REALTIME_SCENE_OPEN_PROMPT",
-    "(The meeting is under way and everyone is looking at you. You have the "
-    "floor - speak first, in character.)",
 )
 # The function_call_output a held end_conversation call is answered with
 # (pipeline 2026-09-28a): in the last interaction nothing ends the encounter
@@ -3209,7 +3199,7 @@ class RealtimeVoiceSession:
         """Put a user TEXT item in front of the model and ask it to reply.
 
         The recipe behind every recovery on this gateway, and behind the
-        group scene open on Gemini (see SCENE_OPEN_PROMPT): a text item is new
+        room grant on native-audio (grant_via_text_prompt): a text item is new
         CONTENT for the model to answer, which is what a commit of silence is
         not. No cancel here — callers that need one (retry_response) send it
         first — and no budget: the callers keep the books. The reply it draws

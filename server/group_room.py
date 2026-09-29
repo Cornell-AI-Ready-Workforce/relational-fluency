@@ -776,49 +776,6 @@ class GroupRoom:
         saw = getattr(rt, "_response_saw_output", None)
         return True if saw is None else bool(saw)
 
-    async def open_scene(self, agent_id: str, *, prompt: str
-                         ) -> Optional[RealtimeVoiceSession]:
-        """Make one character speak first, on a family where a commit of
-        silence will not do it.
-
-        Measured on nto.gemini-live-2.5-flash (2026-09-14): pad + commit +
-        response.create on a session that has heard nothing drew NO frame —
-        not response.created, not response.done, not an error — in 5 of 5
-        rooms and 2 of 2 replays, and the unanswered create left `responding`
-        latched (see _reply_evidently_started). A user TEXT item + a
-        response.create on the same sessions drew a full, in-character
-        opening line 4 of 4 times, 0.5-3.9 s to first audio. So the scene
-        opens with a prompt the record shows, exactly as the audio-recovery
-        retry revives a dead reply, and nothing is committed.
-
-        The caller has already put the opening direction into this member's
-        connect-time brief (the family reads no brief after it); the prompt
-        only says "now". Same failure reporting as give_floor: a member whose
-        socket is gone reports None rather than success.
-        """
-        rt = self.sessions.get(agent_id)
-        if rt is None:
-            return None
-        self.speaking = agent_id
-        self._fanned_since_grant.pop(agent_id, None)
-        failures_before = getattr(rt, "send_failures", 0)
-        try:
-            if rt.responding and not self._reply_evidently_started(rt):
-                rt.clear_response_state()
-            await rt.prompt_response(prompt)
-        except Exception:  # noqa: BLE001, a dead session must not kill the turn
-            self.sessions.pop(agent_id, None)
-            return None
-        if (getattr(rt, "ws", True) is None
-                or getattr(rt, "send_failures", 0) > failures_before):
-            await self._went_deaf(
-                agent_id, rt,
-                "the scene was opened on a session whose socket is gone: "
-                f"{getattr(rt, 'last_send_error', '') or 'send failed'}",
-            )
-            return None
-        return rt
-
     async def restart_participant_buffer(self, preroll: bytes) -> Optional[dict]:
         """Start the scribe's buffer again from `preroll`, once per commit.
 
@@ -1120,10 +1077,10 @@ class GroupRoom:
                 # reply of its own that was dropped, so the buffer this would
                 # commit holds only the padding. It does answer a text item.
                 #
-                # This is open_scene's recipe, and deliberately the same one:
-                # a text item is new CONTENT for the model to answer, which a
-                # commit of silence is not. The two paths agree because they
-                # are the same finding on two families.
+                # This was the retired scene open's recipe too (open_scene,
+                # gone with the room opener in pipeline 2026-09-28b), and
+                # deliberately the same one: a text item is new CONTENT for the
+                # model to answer, which a commit of silence is not.
                 #
                 # A reply still latched from a lost response.done would make
                 # request_response send nothing at all, so it is cleared first,

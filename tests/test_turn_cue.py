@@ -318,9 +318,11 @@ def test_the_watchdog_ticks_the_cue_and_the_encounter_opens_with_it():
     wd = src[src.index("    async def _silence_watchdog"):src.index("    async def _proactive_handoff")]
     assert "await self._maybe_turn_open()" in wd
     run_src = src[src.index("    async def run(self)"):src.index("    async def _on_turn_ended")]
-    assert run_src.index("self._spawn_group_turn(self._open_group_scene())") < \
+    # Nobody opens a room any more (pipeline 2026-09-28b): the cue is decided
+    # once the participant has been told they start.
+    assert run_src.index('await self._await_participant("start")') < \
         run_src.index("await self._maybe_turn_open()"), (
-        "the opening cue is decided after a room's opener is spawned")
+        "the opening cue is decided after the start cue")
 
 
 def _run(coro):

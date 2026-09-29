@@ -515,6 +515,14 @@ def text_client() -> AsyncAnthropic:
 #                get the turn_open cue (#49) and the 2026-09-28 end policy
 #                (#34; a member's held end_conversation is answered with its
 #                output alone). Who speaks next, and when, is unchanged.
+#   2026-09-28b  the participant opens every room: the lead no longer opens
+#                the scene (no _open_group_scene, open_scene or
+#                SCENE_OPEN_PROMPT), no silence probe and no turn routed on
+#                nothing before the participant's first accepted line
+#                (group_turn_skipped awaiting_participant). The room's
+#                `opening:` rides on the lead's brief as a first-reply note on
+#                every family, and unnamed turns go to the lead until it has
+#                spoken under it.
 #
 # PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
@@ -535,8 +543,22 @@ def text_client() -> AsyncAnthropic:
 #                transcript of sound tags alone ("(laughter)") is no_speech
 #                (PARTICIPANT_DROP_ANNOTATIONS), and in 1:1 a no_speech
 #                commit's reply is withdrawn.
-PIPELINE_VERSION = "2026-09-28a"
-ROOM_PACING_VERSION = "2026-09-28a"
+#   2026-09-28b  the participant opens every conversation (the researchers'
+#                rule of 2026-09-28, confirmed 2026-09-29): at the start of
+#                every encounter and at S1's hand-off to a new person nothing
+#                makes a character speak before the participant's first
+#                ACCEPTED line (awaiting_participant -> participant_opened):
+#                no silence or hand-off probe, no re-ask or reconnect replay,
+#                and in 1:1 a reply is held until its line is accepted
+#                (first_reply_released) and dropped if it is not
+#                (first_reply_withheld, the beat given back). Clocks: the
+#                7:00 move-on floor counts from the participant's first line,
+#                the S1 2:00 timebox from their first line to Riley or Mel;
+#                the 11:00 warning and the 12:00 ceiling stay on the
+#                encounter's clock. The page shows a start cue until then.
+#                Provenance `opening`.
+PIPELINE_VERSION = "2026-09-28b"
+ROOM_PACING_VERSION = "2026-09-28b"
 
 
 def _voice_style_provenance():
@@ -590,6 +612,17 @@ def provenance(model: Optional[str] = None) -> dict:
         # The deferral rule and the heard_text estimate (pipeline
         # 2026-09-23f); see record_provenance.
         "record": record_provenance(),
+        # Who opens a conversation, and which clock each limit counts on
+        # (pipeline 2026-09-28b; see realtime_voice_session's "the
+        # participant opens"). Before 28b a room's lead opened the scene and
+        # the floor counted from the socket opening.
+        "opening": {
+            "policy": "participant_opens",
+            "clocks": {"floor": "first_participant_line",
+                       "timebox": "first_participant_line_in_conversation",
+                       "wrap": "encounter_start",
+                       "ceiling": "encounter_start"},
+        },
         "pipeline_version": PIPELINE_VERSION,
         "room_pacing_version": ROOM_PACING_VERSION,
         # The commit the running image was built from (server/build_info.py),

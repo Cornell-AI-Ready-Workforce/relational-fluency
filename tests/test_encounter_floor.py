@@ -226,7 +226,9 @@ def test_the_last_interaction_is_held_until_the_floor_and_says_so_once():
 def test_past_the_floor_nothing_is_held():
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
-    runner._encounter_started_at = time.time() - 421
+    # The floor counts from the participant's first line (pipeline
+    # 2026-09-28b); here they spoke as the encounter opened.
+    runner._encounter_started_at = runner._first_line_at = time.time() - 421
     assert _run(runner._hold_at_floor("move_on")) is False
     assert not session.store.of("floor_held")
 
@@ -243,7 +245,7 @@ def test_the_participants_move_on_does_not_complete_an_early_encounter(monkeypat
     _run(runner._handle_client_command(json.dumps({"type": "advance_interaction"})))
     assert calls == [] and not ws.frames("encounter_complete")
     assert ws.frames("floor_held")
-    runner._encounter_started_at = time.time() - 500
+    runner._encounter_started_at = runner._first_line_at = time.time() - 500
     _run(runner._handle_client_command(json.dumps({"type": "advance_interaction"})))
     assert calls == [1] and ws.frames("encounter_complete")
 
@@ -265,7 +267,7 @@ def test_the_actors_end_tool_is_held_past_the_floor_too(monkeypatch):
     assert held["reason"] == "end_conversation"
     assert ws.frames("floor_held"), "a goodbye before the floor is followed by 'keep going'"
     assert not session.store.of("floor_held"), "floor_held is the participant's move-on"
-    runner._encounter_started_at = time.time() - 500
+    runner._encounter_started_at = runner._first_line_at = time.time() - 500
     _run(runner._advance_from_tool())
     assert calls == [] and len(ws.frames("floor_held")) == 1
     runner._encounter_started_at = time.time() - 721       # past the stop

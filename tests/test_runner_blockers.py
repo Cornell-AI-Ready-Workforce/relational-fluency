@@ -714,6 +714,13 @@ def test_the_last_turn_is_written_before_the_store_goes_away():
         runner._client_to_model = client_to_model
         runner._silence_watchdog = watchdog
         runner._model_to_client = model_to_client
+
+        async def already_opened(reason):
+            # The reply below answers a line the participant has said: the
+            # hold on replies before their first accepted line (pipeline
+            # 2026-09-28b) is not what this tests.
+            return None
+        runner._await_participant = already_opened
         rvs.RealtimeVoiceSession = lambda **k: rt
         try:
             # The closing reply: audio plays, and its transcript is one the
@@ -978,6 +985,13 @@ def test_teardown_closes_the_gateway_even_when_run_is_cancelled():
         runner._client_to_model = client_to_model
         runner._silence_watchdog = watchdog
         runner._model_to_client = model_to_client
+
+        async def already_opened(reason):
+            # The reply below answers a line the participant has said: the
+            # hold on replies before their first accepted line (pipeline
+            # 2026-09-28b) is not what this tests.
+            return None
+        runner._await_participant = already_opened
         rvs.RealtimeVoiceSession = lambda **k: rt
         try:
             # A reply whose transcript never comes, so run() is inside the

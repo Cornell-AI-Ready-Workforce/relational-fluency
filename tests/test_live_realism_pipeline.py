@@ -484,35 +484,30 @@ def test_run_opens_the_first_session_with_the_framing_in_its_brief(on_model, mon
     assert session.store.of("opening_framing")[0]["via"] == "connect_brief"
 
 
-def test_a_group_scene_on_gemini_opens_with_a_prompt_and_says_so(on_model, monkeypatch):
-    """The deaf room. On Gemini the lead's opening direction is folded into its
-    connect brief by _open_room, the stage_direction row says `connect_brief`,
-    and the lead is made to speak by a user text item + create — never by a
-    commit of silence, which drew nothing 5/5."""
+def test_a_group_scene_on_gemini_carries_its_opening_into_the_leads_first_reply(on_model, monkeypatch):
+    """The deaf room, since pipeline 2026-09-28b. The lead used to be made to
+    open the scene with a user text item + create (a commit of silence drew
+    nothing 5/5); the participant opens every conversation now, so nothing
+    prompts the lead at all. Its connect brief still carries the `opening:`,
+    as the note for its first reply, and the record says which way it went."""
     on_model(GEMINI)
     monkeypatch.setattr(gr, "RealtimeVoiceSession", FakeRT)
     runner, session, _ = make_runner("S4A")
     lead = runner._resolve_agents()[0]
+    opening = str(runner._interaction()["opening"]).strip()
 
     async def scenario():
         await runner._open_room()
         rt = runner.room.session_for(lead.id)
-        assert "You speak first and open the scene" in rt.instructions
-        opened = asyncio.ensure_future(runner._open_group_scene())
-        await asyncio.sleep(0.1)
-        assert rt.prompts == [rt_mod.SCENE_OPEN_PROMPT]
-        assert rt.pending_input == 0, "the scene was opened with a commit of silence"
-        runner._response_done.set()
-        await asyncio.wait_for(opened, timeout=5)
+        assert "FIRST REPLY" in rt.instructions and opening in rt.instructions
+        assert "You speak first and open the scene" not in rt.instructions
+        assert all(r.prompts == [] for r in runner.room.sessions.values())
         await runner._close_room()
 
     asyncio.run(scenario())
-    direction = [d for d in session.store.of("stage_direction") if d.get("opening")]
-    assert direction and direction[0]["via"] == "connect_brief"
-    assert direction[0]["acked"] is None, "no session.update was sent, so no ack is claimed"
     (framing,) = session.store.of("opening_framing")
-    assert framing["via"] == "connect_brief" and framing["mode"] == "group"
-    assert session.store.of("group_scene_opened")
+    assert framing["via"] == "first_reply_note" and framing["mode"] == "group"
+    assert not session.store.of("stage_direction")
 
 
 def test_a_latched_unanswered_create_does_not_pass_for_a_reply_in_progress():
