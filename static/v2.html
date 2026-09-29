@@ -181,7 +181,8 @@
   .check-row .status { width: 120px; text-align: right; font-size: 13.5px; color: var(--muted); }
   .check-row .status.ok { color: #2f7d4a; font-weight: 600; }
   .meter { height: 10px; border-radius: 99px; background: var(--line-soft); overflow: hidden; margin-top: 8px; }
-  .meter > i { display: block; height: 100%; width: 0; background: #3a9a5c; transition: width 80ms linear; }
+  /* The darker green: #3a9a5c on the track was 2.30:1, this is 3.30:1. */
+  .meter > i { display: block; height: 100%; width: 0; background: #2f7d4a; transition: width 80ms linear; }
   .check-help { display: none; font-size: 13.5px; color: var(--fg); background: var(--accent-soft, #fbeeee); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
   .check-help.show { display: block; }
   .check-actions { display: flex; gap: 10px; align-items: center; margin-top: 18px; }
@@ -211,9 +212,11 @@
   button.secondary:hover:not(:disabled) { background: var(--surface-2); }
   /* One look for a control that cannot be used now, whatever the reason.
      There were four (opacity .4, .5, .55 and .6), and a faded red primary,
-     such as the audio check's Continue, read as an error tint. */
+     such as the audio check's Continue, read as an error tint. Its label
+     darker than --muted, which on this grey was 3.79:1: #4a4a48 is 6.2:1, and
+     the locked End is the control participants look for at 7:00. */
   button:disabled, button#stopBtn.locked, .tile .talk-btn[disabled] { opacity: 1; background: var(--surface-2);
-    color: var(--muted); border-color: var(--line-soft); cursor: not-allowed; }
+    color: #4a4a48; border-color: var(--line-soft); cursor: not-allowed; }
   /* Except work in progress ("Connecting…"), which is not unavailable, only
      not done yet. */
   button[aria-busy="true"]:disabled { background: var(--accent); color: #fff; cursor: progress; }
@@ -283,7 +286,7 @@
   #nextBody .run-steps li { padding:6px 0; border-top:1px solid #eee; font-size:14px; }
   #nextBody .run-steps li.done { color:#2f7d4f; }
   #nextBody .run-steps li.now { font-weight:700; }
-  #nextBody .run-steps li.todo { color:#9a9a97; }
+  #nextBody .run-steps li.todo { color:var(--muted); }   /* #9a9a97 was 2.82:1 */
   #nextBody .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     background:#f2f2f0; border:1px solid #ddd; border-radius:5px; padding:2px 8px; }
   .transcript .speaker { font-weight: 600; color: var(--accent); }
@@ -398,9 +401,10 @@
   .consent-card .actions { display:flex; flex-wrap: wrap; gap:8px; justify-content:flex-end; margin-top: 14px; }
   .consent-card .err { color: var(--accent); font-size: 13px; min-height: 18px; margin-top: 4px; }
   /* The build tag: for a bug report or a screenshot, so it is small, muted and
-     below everything a participant reads. */
+     below everything a participant reads. Not faded as well: at .75 it was
+     2.91:1, too faint to read off a screenshot; muted on the page is 4.63:1. */
   .build-tag { padding: 0 20px 10px; text-align: right; font-size: 11px; color: var(--muted);
-    font-family: ui-monospace, Menlo, monospace; opacity: .75; user-select: all; }
+    font-family: ui-monospace, Menlo, monospace; user-select: all; }
   /* The quiet-room requirement (issue #37): a requirement, not a tip, so it is
      boxed and bold at the top of the first intro screen and of the audio check. */
   .quiet-notice { border: 2px solid var(--accent); background: var(--accent-soft); color: var(--fg);

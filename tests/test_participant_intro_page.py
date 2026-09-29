@@ -963,3 +963,41 @@ def test_the_speaking_badge_is_only_there_for_the_tile_that_is_speaking():
     grid = src[src.index("function renderGrid("):src.index("// Bind the captured webcam stream")]
     for body in (make, grid):
         assert "setAttribute('aria-hidden', 'true')" in body, body[:80]
+
+
+# =========================================================================== #
+# A11Y-12. The rest of the low-contrast text: the between-encounter step list's
+# "To come" (2.82:1), the build tag faded to 2.91:1, the one disabled look's
+# muted label on grey (3.79:1; the locked End is the control people look for
+# at 7:00), and the audio check's mic meter against its track (2.30:1).
+# =========================================================================== #
+
+def _contrast(a: str, b: str) -> float:
+    def lum(h):
+        rgb = [int(h.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        rgb = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+        return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_the_remaining_small_print_is_readable():
+    src = V2.read_text(encoding="utf-8")
+    token = lambda name: re.search(r"--%s:\s*(#[0-9a-f]{6})" % name, src).group(1)
+    colour = lambda rule, prop="color": re.search(
+        r"(?<![-\w])%s:\s*(#[0-9a-f]{6}|var\(--[\w-]+\))" % prop, rule).group(1)
+    value = lambda c: token(c[6:-1]) if c.startswith("var(") else c
+
+    todo = value(colour(_rule(src, "#nextBody .run-steps li.todo")))
+    assert _contrast(todo, "#ffffff") >= 4.5, todo
+
+    tag = _rule(src, ".build-tag")
+    assert "opacity" not in tag, tag
+    assert _contrast(value(colour(tag)), token("bg")) >= 4.5
+
+    disabled = _rule(src, "button:disabled, button#stopBtn.locked, .tile .talk-btn[disabled]")
+    assert _contrast(value(colour(disabled)), value(colour(disabled, "background"))) >= 4.5, disabled
+
+    fill = value(colour(_rule(src, ".meter > i"), "background"))
+    track = value(colour(_rule(src, ".meter"), "background"))
+    assert _contrast(fill, track) >= 3, (fill, track)
