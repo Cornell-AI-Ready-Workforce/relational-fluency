@@ -216,6 +216,13 @@
   /* The next character's tile offers a way in, so the participant can move on
      when the current conversation is done rather than waiting it out. */
   .tile.upnext { opacity: .75; filter: none; outline: 2px dashed var(--accent); }
+  /* Its button sits in room kept for it under the name and role, not on top
+     of them, and the room is there before the button is, so nothing moves
+     when it appears. */
+  .tile.upnext { padding-bottom: 60px; }
+  @media (min-width: 641px) and (max-width: 900px) {
+    .tile.upnext .avatar { width: 56px; height: 56px; font-size: 21px; }
+  }
   .tile .talk-btn { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
     background: var(--accent); color: #fff; border: 0; border-radius: 999px;
     padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
@@ -342,7 +349,7 @@
   .consent-card .code-row { display:flex; gap:10px; align-items:center; margin: 16px 0; }
   .consent-card .code-row input { padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font: inherit; flex: 1; background: var(--surface); color: var(--fg); }
   .consent-card .code-row input:focus { outline: none; border-color: var(--accent); }
-  .consent-card .actions { display:flex; gap:8px; justify-content:flex-end; margin-top: 14px; }
+  .consent-card .actions { display:flex; flex-wrap: wrap; gap:8px; justify-content:flex-end; margin-top: 14px; }
   .consent-card .err { color: var(--accent); font-size: 13px; min-height: 18px; margin-top: 4px; }
   /* The build tag: for a bug report or a screenshot, so it is small, muted and
      below everything a participant reads. */
@@ -361,7 +368,9 @@
     header .title { font-size: 15px; }
     header .meta { font-size: 11px; }
     .controls { gap: 8px; padding: 0; }
-    button { padding: 10px 16px; font-size: 13px; }
+    /* 44px touch targets, and no smaller than on a desktop: this rule used
+       to shrink every button to 35-37px on the one kind of screen people tap. */
+    button { padding: 10px 16px; font-size: 15px; min-height: 44px; }
     main { padding: 14px; gap: 14px; }
     /* Two compact, square tiles per row instead of one tall stacked column. */
     .grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
@@ -385,6 +394,12 @@
        right touched the left edge at 360px and below. */
     .gate-note { left: 16px; right: 16px; max-width: none; }
     .gate-note .note-close { top: 3px; right: 3px; width: 44px; height: 44px; }
+    .capture-slot .capture-note button { margin: 8px 0 0; padding: 10px 16px; font-size: 15px; }
+    /* One pattern for every card's actions on a phone: full-width buttons,
+       one to a row, the primary on top. Side by side they squeezed into two-
+       and three-line labels (mic help: 64, 84 and 133px wide at 375). */
+    .consent-card .actions { flex-direction: column-reverse; align-items: stretch; }
+    .check-actions { flex-direction: column; align-items: stretch; }
     .consent-card { padding: 20px 18px; }
     .consent-card h2 { font-size: 16px; }
     /* The audio check's rows. A fixed 120px verdict and a nowrap button left
@@ -4726,7 +4741,9 @@
           setTimeout(() => { try { ctx.close(); } catch {} }, 1200);
           $('spkStatus').innerHTML = '';
           const yes = document.createElement('button'); yes.textContent = 'I heard it';
-          yes.className = 'secondary'; yes.style.padding = '5px 10px'; yes.style.fontSize = '13px';
+          // A button's own size: the inline 5px padding made it the smallest
+          // target on the screen (27-33px tall).
+          yes.className = 'secondary';
           yes.addEventListener('click', () => {
             spkOk.v = true;
             $('spkStatus').textContent = 'Sound works'; $('spkStatus').className = 'status ok';
