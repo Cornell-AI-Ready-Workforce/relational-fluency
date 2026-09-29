@@ -1,0 +1,230 @@
+{
+ "baseline": {
+  "realtime_model": "gpt-realtime-2.1",
+  "recorded": null
+ },
+ "build": "8c188a6",
+ "build_from": "HEAD's image contents are identical to the pinned tag 8c188a6",
+ "failures": [
+  "S1A: no baseline yet: not recorded on 2026-09-28a yet: the committed values (build a736d51, session s_1790635266_99bdc2) were recorded on pipeline 2026-09-24c / room pacing 2026-09-24b, and 28a's end policy runs S2A to the 720 s ceiling where 24c ended it about 451 s in, so they are a different experiment. They could not be re-recorded: the gateway refused every realtime connection from about 22:44 UTC on 2026-09-28 and still did at 01:01 UTC on 2026-09-29 (gpt-realtime-2.1 HTTP 403). Record it with: python -m tools.sim.check --scenarios S1A,S2A --write-baseline",
+  "S2A: no baseline yet: not recorded on 2026-09-28a yet: the committed values (build a736d51, session s_1790634754_6e4503) were recorded on pipeline 2026-09-24c / room pacing 2026-09-24b, and 28a's end policy runs S2A to the 720 s ceiling where 24c ended it about 451 s in, so they are a different experiment. They could not be re-recorded: the gateway refused every realtime connection from about 22:44 UTC on 2026-09-28 and still did at 01:01 UTC on 2026-09-29 (gpt-realtime-2.1 HTTP 403). Record it with: python -m tools.sim.check --scenarios S1A,S2A --write-baseline",
+  "S3A: no baseline yet: not recorded yet: from about 22:44 UTC on 2026-09-28 the gateway refused every realtime connection (HTTP 403, all three gpt-realtime models) while /v1/models still answered, so no S3A or S4A run could open; still refused at 01:01 UTC on 2026-09-29. Record it with: python -m tools.sim.check --scenarios S3A,S4A --write-baseline",
+  "S4A: no baseline yet: not recorded yet: from about 22:44 UTC on 2026-09-28 the gateway refused every realtime connection (HTTP 403, all three gpt-realtime models) while /v1/models still answered, so no S3A or S4A run could open; still refused at 01:01 UTC on 2026-09-29. Record it with: python -m tools.sim.check --scenarios S3A,S4A --write-baseline"
+ ],
+ "generated_at": "2026-09-29T17:39:05Z",
+ "health": {
+  "build": "8c188a6",
+  "pipeline_version": "2026-09-28b",
+  "realtime_model": "gpt-realtime-2.1",
+  "room_pacing_version": "2026-09-29b"
+ },
+ "passed": false,
+ "scenarios": {
+  "S1A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on 2026-09-28a yet: the committed values (build a736d51, session s_1790635266_99bdc2) were recorded on pipeline 2026-09-24c / room pacing 2026-09-24b, and 28a's end policy runs S2A to the 720 s ceiling where 24c ended it about 451 s in, so they are a different experiment. They could not be re-recorded: the gateway refused every realtime connection from about 22:44 UTC on 2026-09-28 and still did at 01:01 UTC on 2026-09-29 (gpt-realtime-2.1 HTTP 403). Record it with: python -m tools.sim.check --scenarios S1A,S2A --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 11,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 8,
+    "lines_said": 8,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "8c188a6",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-09-28b",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1790701657_de9f10",
+    "speech_end_to_first_played_s": {
+     "n": 9,
+     "p50": 1.993,
+     "p90": 2.454
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_retaliation_fork",
+     "t2_the_opening",
+     "t3_defensiveness",
+     "t4_half_concession"
+    ],
+    "triggers_fired": 4,
+    "turns_suppressed": {
+     "probe_pad": 2
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1790701657_de9f10"
+  },
+  "S2A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on 2026-09-28a yet: the committed values (build a736d51, session s_1790634754_6e4503) were recorded on pipeline 2026-09-24c / room pacing 2026-09-24b, and 28a's end policy runs S2A to the 720 s ceiling where 24c ended it about 451 s in, so they are a different experiment. They could not be re-recorded: the gateway refused every realtime connection from about 22:44 UTC on 2026-09-28 and still did at 01:01 UTC on 2026-09-29 (gpt-realtime-2.1 HTTP 403). Record it with: python -m tools.sim.check --scenarios S1A,S2A --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 22,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 22,
+    "lines_heard": 27,
+    "lines_said": 27,
+    "participant_turns": 26,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "8c188a6",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-09-28b",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1790701886_2a49cd",
+    "speech_end_to_first_played_s": {
+     "n": 22,
+     "p50": 3.553,
+     "p90": 5.579
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_the_opening",
+     "t2_rung1_no_budget",
+     "t3_rung2_everyone_stretched",
+     "t4_rung3_no_precedent",
+     "t5_rung4_the_package",
+     "t6_rung4_fairness"
+    ],
+    "triggers_fired": 6,
+    "turns_suppressed": {
+     "probe_pad": 1
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 1,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1790701886_2a49cd"
+  },
+  "S3A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded yet: from about 22:44 UTC on 2026-09-28 the gateway refused every realtime connection (HTTP 403, all three gpt-realtime models) while /v1/models still answered, so no S3A or S4A run could open; still refused at 01:01 UTC on 2026-09-29. Record it with: python -m tools.sim.check --scenarios S3A,S4A --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 9,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 7,
+    "lines_heard": 9,
+    "lines_said": 9,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "8c188a6",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-09-28b",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1790702608_f13b59",
+    "speech_end_to_first_played_s": {
+     "n": 8,
+     "p50": 4.023,
+     "p90": 9.346
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_public_challenge",
+     "t2_jordans_flat_fine",
+     "t3_caseys_overload"
+    ],
+    "triggers_fired": 3,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 2,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1790702608_f13b59"
+  },
+  "S4A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded yet: from about 22:44 UTC on 2026-09-28 the gateway refused every realtime connection (HTTP 403, all three gpt-realtime models) while /v1/models still answered, so no S3A or S4A run could open; still refused at 01:01 UTC on 2026-09-29. Record it with: python -m tools.sim.check --scenarios S3A,S4A --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 30,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 25,
+    "lines_heard": 31,
+    "lines_said": 31,
+    "participant_turns": 31,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "8c188a6",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-09-28b",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1790702824_ebffd3",
+    "speech_end_to_first_played_s": {
+     "n": 29,
+     "p50": 4.662,
+     "p90": 6.842
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_priya_interrupted",
+     "t2_idea_relabelled",
+     "t3_decisions_close_with_priya_silent",
+     "t4_dan_claims_the_writeup"
+    ],
+    "triggers_fired": 4,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 3,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1790702824_ebffd3"
+  }
+ },
+ "server": "http://127.0.0.1:54879"
+}
