@@ -1447,6 +1447,14 @@
           'This page could not set up a participant record, so the conversation ' +
           'cannot start. Please reload; if it happens again, use the contact below.',
           () => location.reload());
+        // The card has only a body and Retry, so "the contact below" was not
+        // there (FLOW-07). Added once the card is up, as the mic-help card's
+        // is: it is a network call.
+        contactWho().then((who) => {
+          const p = document.createElement('p');
+          p.innerHTML = 'Contact ' + who + '.';
+          $('errOverlay').querySelector('#errBody').appendChild(p);
+        }).catch(() => {});
         return false;
       }
     })();
@@ -4099,7 +4107,13 @@
         // _advance_segment retries the boundary, so a persistent failure
         // wrote one more sentence into the participant's own transcript per
         // attempt.
-        appendNotice('Something went wrong. Please try again.');
+        // Said as what the participant can do (FLOW-07): "Please try again"
+        // pointed at nothing to retry. The conversation goes on past these,
+        // or the socket closes and the drop card takes over; a lost
+        // transcription channel leaves nobody hearing them, and then the way
+        // on is a reload.
+        appendNotice('There was a problem on our side. You can keep talking; if nobody ' +
+                     'answers you, reload this page to start this conversation again.');
         // The message itself is NOT shown: it is written for an operator
         // ("No gateway API key (set LITELLM_API_KEY)") and a participant can
         // do nothing with it. Only the fact that the server stated a reason
@@ -4196,8 +4210,10 @@
       catch (err) {
         if (!frameErrorNoted) {
           frameErrorNoted = true;
-          appendNotice('Something went wrong handling part of this conversation. ' +
-                       'If you stop hearing the other people, click Reconnect.');
+          // No Reconnect is on screen until the drop card is, and "the other
+          // people" was wrong in 1:1 (FLOW-07).
+          appendNotice('Something went wrong on this page. If you stop hearing anyone, ' +
+                       'reload the page to start this conversation again.');
         }
       }
     });

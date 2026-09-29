@@ -1053,3 +1053,58 @@ def test_no_duration_is_typed_into_the_audio_check_or_the_ring():
     assert "7 to 12 minutes at a time" in check, check
     assert "title" not in _attrs(_open_tag(src[:src.index("<script>")], "gate")), (
         "the ring's tooltip is typed into the markup again")
+
+
+# =========================================================================== #
+# FLOW-07. Three messages pointed at things that are not there: "Something
+# went wrong. Please try again." with nothing to retry, "If you stop hearing
+# the other people, click Reconnect." with no Reconnect on screen (and nobody
+# but one other person in 1:1), and a card that said "use the contact below"
+# with no contact on it.
+# =========================================================================== #
+
+ERROR_COPY = RUN_VIEW + r"""
+  const lastNote = (b) => notes(b).pop().textContent;
+  {
+    const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+    await b.clock.advance(50);
+    b.dom.$('fictionAck').click(); await b.clock.advance(50);
+    b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+    b.dom.$('situationStart').click(); await b.clock.advance(50);
+    assert.strictEqual(b.set('started'), true);
+
+    b.ctx.handleServerFrame({ data: JSON.stringify({ type: 'error', message: 'The transcription channel was lost.' }) });
+    assert.strictEqual(lastNote(b), 'There was a problem on our side. You can keep talking; if nobody '
+      + 'answers you, reload this page to start this conversation again.');
+
+    // A frame the page cannot handle, through the socket's own listener.
+    b.set('ws').listeners.message[0]({ data: '{not json' });
+    assert.strictEqual(lastNote(b), 'Something went wrong on this page. If you stop hearing anyone, '
+      + 'reload the page to start this conversation again.');
+    assert(!notes(b).some(n => /Reconnect|other people|try again\./.test(n.textContent)),
+      JSON.stringify(notes(b).map(n => n.textContent)));
+  }
+
+  // The participant record cannot be made: the card says to use the contact
+  // below, so the contact is below.
+  {
+    const b = boot('?run=r_1', (b) => [
+      { match: '/api/run/config', fn: () => b.net.res(200, { return_url: '', contact_name: 'Dr Rivera',
+                                                              contact_email: 'rf@example.edu' }) },
+      { match: '/api/run/r_1', fn: () => b.net.res(200, RUN_VIEW) },
+      { match: '/api/scenarios/S4A', fn: () => b.net.res(200, BRIEF) },
+      { match: '/api/participant', fn: () => b.net.res(503, {}) },
+    ]);
+    await b.clock.advance(50);
+    b.dom.$('fictionAck').click(); await b.clock.advance(50);
+    assert(shown(b, 'errOverlay'), 'no blocking card for a record that could not be made');
+    const body = b.dom.$('errOverlay').querySelector('#errBody');
+    assert(/use the contact below/.test(body.textContent), body.textContent);
+    const contact = body.children.map(c => c.innerHTML).join(' ');
+    assert(/Contact Dr Rivera at .*rf@example\.edu/.test(contact), 'no contact below: ' + contact);
+  }
+"""
+
+
+def test_error_messages_point_at_what_is_there(tmp_path):
+    _run(tmp_path, ERROR_COPY, "ERROR COPY OK")

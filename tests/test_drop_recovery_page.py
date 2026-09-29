@@ -502,7 +502,7 @@ async function connected(position, total, opts) {
     assert.strictEqual(notes.filter(n => /broke up/.test(n)).length, 1, 'the same notice painted more than once: ' + JSON.stringify(notes));
     assert(notes.some(n => /line to Sasha dropped for a moment and is back/.test(n) && /say it again/.test(n)),
       'the rebuilt session is not announced: ' + JSON.stringify(notes));
-    assert(!notes.some(n => /Something went wrong/.test(n)), 'a notice was painted as an error: ' + JSON.stringify(notes));
+    assert(!notes.some(n => /problem on our side/.test(n)), 'a notice was painted as an error: ' + JSON.stringify(notes));
     // A later plain drop is still the reconnect card, not "could not continue".
     drop(b);
     assert.strictEqual(card(b).reconnect, 'Reconnect', card(b).text);
