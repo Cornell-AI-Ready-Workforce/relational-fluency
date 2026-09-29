@@ -352,7 +352,7 @@ async function connected(position, total, opts) {
     drop(b);
     c = card(b);
     assert.strictEqual(c.reconnect, 'Reconnect', 'the retry vanished on the second loss');
-    assert(c.doors.some(d => /encounter 3 of 4/.test(d)),
+    assert(c.doors.some(d => /conversation 3 of 4/.test(d)),
       'no door to the next encounter on a repeated loss: ' + JSON.stringify(c.doors));
     assert(!c.doors.includes('Finish here and get my code'), 'the finish-with-code door is back: ' + JSON.stringify(c.doors));
     assert(/second time/.test(c.text) && /stopped early/.test(c.text),
@@ -360,7 +360,7 @@ async function connected(position, total, opts) {
 
     // Press the door: the run advances on the dropped session, and the next
     // screen says the conversation stopped early rather than that it finished.
-    c.press(c.doors.find(d => /encounter 3 of 4/.test(d)));
+    c.press(c.doors.find(d => /conversation 3 of 4/.test(d)));
     await b.clock.advance(1000);
     const adv = b.net.urlsOf('/advance');
     assert.strictEqual(adv.length, 1, 'the door did not advance the run: ' + JSON.stringify(adv));
@@ -368,7 +368,7 @@ async function connected(position, total, opts) {
     assert(!b.dom.$('dropNote').classList.contains('show'), 'the drop card is still up over the next screen');
     assert.strictEqual(b.dom.$('nextOverlay').style.display, 'flex', 'no next-encounter screen');
     assert(/stopped early/i.test(b.dom.$('nextTitle').textContent), 'the next screen calls a stopped conversation finished: ' + b.dom.$('nextTitle').textContent);
-    assert(/Start encounter 3 of 4/.test(b.dom.$('nextBtn').textContent), b.dom.$('nextBtn').textContent);
+    assert(/Start conversation 3 of 4/.test(b.dom.$('nextBtn').textContent), b.dom.$('nextBtn').textContent);
     assert(/stopped early/.test(b.dom.$('nextBody').innerHTML), b.dom.$('nextBody').innerHTML);
   }
 
@@ -380,7 +380,7 @@ async function connected(position, total, opts) {
     let c = card(b);
     assert.strictEqual(c.reconnect, 'Try once more', 'first stated failure: ' + c.reconnect);
     assert(/could not continue/.test(c.text), c.text);
-    assert(c.doors.some(d => /encounter 3 of 4/.test(d)), 'no way past a failed start on the first card: ' + JSON.stringify(c.doors));
+    assert(c.doors.some(d => /conversation 3 of 4/.test(d)), 'no way past a failed start on the first card: ' + JSON.stringify(c.doors));
 
     // The retry meets the same condition.
     set(b, "serverStatedFailure = false; started = true; sessionId = 's_live_2';");
@@ -388,11 +388,11 @@ async function connected(position, total, opts) {
     drop(b);
     c = card(b);
     assert.strictEqual(c.reconnect, null, 'a third attempt is offered after two stated failures');
-    assert(c.doors.some(d => /encounter 3 of 4/.test(d)),
+    assert(c.doors.some(d => /conversation 3 of 4/.test(d)),
       'exhausted card has no door to the next encounter: ' + JSON.stringify(c.doors));
     assert(!c.doors.includes('Finish here and get my code'), JSON.stringify(c.doors));
     assert(/twice/.test(c.text) && /go on/.test(c.text), 'the card does not say why: ' + c.text);
-    c.press(c.doors.find(d => /encounter 3 of 4/.test(d)));
+    c.press(c.doors.find(d => /conversation 3 of 4/.test(d)));
     await b.clock.advance(1000);
     assert(b.net.urlsOf('/advance')[0].includes('session_id=s_live_2'), JSON.stringify(b.net.urlsOf('/advance')));
     assert(/stopped early/i.test(b.dom.$('nextTitle').textContent), b.dom.$('nextTitle').textContent);
@@ -415,7 +415,7 @@ async function connected(position, total, opts) {
     c.press(door);
     await b.clock.advance(1000);
     assert.strictEqual(b.net.urlsOf('/advance').length, 1);
-    assert(/All encounters complete/.test(b.dom.$('nextTitle').textContent), b.dom.$('nextTitle').textContent);
+    assert(/All conversations complete/.test(b.dom.$('nextTitle').textContent), b.dom.$('nextTitle').textContent);
     assert(/CODE-77/.test(b.dom.$('nextBody').innerHTML), 'no completion code: ' + b.dom.$('nextBody').innerHTML);
   }
 
@@ -428,7 +428,7 @@ async function connected(position, total, opts) {
     set(b, "serverStatedFailure = false; started = true;");
     frame(b, { type: 'error', message: 'x' }); drop(b);
     const c = card(b);
-    assert(!c.doors.some(d => /encounter 3 of 4/.test(d)), 'a door that /advance answers 400 to: ' + JSON.stringify(c.doors));
+    assert(!c.doors.some(d => /conversation 3 of 4/.test(d)), 'a door that /advance answers 400 to: ' + JSON.stringify(c.doors));
     assert(!c.doors.includes('Finish here and get my code'), 'the finish-with-code door is back: ' + JSON.stringify(c.doors));
     assert.strictEqual(c.reconnect, 'Try again', 'the card is left with nothing to press: ' + JSON.stringify(c));
     assert(/study team/.test(c.text) && !/your code/.test(c.text), c.text);

@@ -1121,3 +1121,40 @@ ERROR_COPY = RUN_VIEW + r"""
 
 def test_error_messages_point_at_what_is_there(tmp_path):
     _run(tmp_path, ERROR_COPY, "ERROR COPY OK")
+
+
+# =========================================================================== #
+# FLOW-11. One unit had four names on the participant's screens: "encounter"
+# (the chip, End, the cards between), "conversation" (the first screen, Start,
+# the last card), "part" (the drop card) and "scene" (the scenario's howto,
+# which is scenario content and not the page's). The page says "conversation"
+# for the unit, and "part" only for a phase inside one.
+# =========================================================================== #
+
+UNIT_NAME = RUN_VIEW + r"""
+  const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+  await b.clock.advance(50);
+  assert.strictEqual(b.dom.$('runChip').textContent, 'Conversation 1 of 4');
+  b.dom.$('fictionAck').click(); await b.clock.advance(50);
+  b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+  b.dom.$('situationStart').click(); await b.clock.advance(50);
+  assert.strictEqual(b.dom.$('stopBtn').textContent, 'End conversation (go to conversation 2 of 4)');
+  assert.strictEqual(b.ctx.skipDoorLabel(), 'Go on to conversation 2 of 4 without this one');
+"""
+
+
+def test_the_unit_is_a_conversation_on_every_screen(tmp_path):
+    _run(tmp_path, UNIT_NAME, "UNIT NAME OK")
+
+
+def test_no_participant_string_calls_the_unit_an_encounter():
+    src = V2.read_text(encoding="utf-8")
+    markup = re.sub(r"<!--.*?-->", "", src[:src.index("<script>")], flags=re.S)
+    text = re.sub(r"<[^>]+>", " ", markup[markup.index("<body>"):])
+    assert not re.search(r"\b[Ee]ncounters?\b", text), re.findall(r".{30}[Ee]ncounter.{30}", text)
+    code = [ln for ln in src[src.index("<script>"):].splitlines()
+            if not ln.lstrip().startswith(("//", "*", "/*"))]
+    said = [s for ln in code for s in re.findall(r"""(['"`])((?:(?!\1).)*)\1""", ln)]
+    bad = [s for _, s in said if re.search(r"\b[Ee]ncounters?\b", s)]
+    assert not bad, bad
+    assert "next part of the study" not in src and "go on to the next part" not in src

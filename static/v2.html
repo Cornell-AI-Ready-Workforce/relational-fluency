@@ -649,7 +649,7 @@
 <div class="consent-overlay" id="nextOverlay" style="display:none"
      role="dialog" aria-modal="true" aria-labelledby="nextTitle" tabindex="-1">
   <div class="consent-card">
-    <h2 id="nextTitle">Encounter complete</h2>
+    <h2 id="nextTitle">Conversation complete</h2>
     <div class="body" id="nextBody"></div>
     <!-- Two actions, not one. This overlay covers the whole page and has no
          dismiss control, so whenever the primary action can fail repeatedly
@@ -769,7 +769,11 @@
     if (run.done) { await showRunComplete(); return false; }
     scenario = run.current.id;
     const chip = $('runChip');
-    chip.textContent = `Encounter ${run.position} of ${run.total}`;
+    // "Conversation" is the unit's one name on the participant's screens, and
+    // "part" only a phase inside one (FLOW-11): it was also "encounter" here,
+    // on End and on the cards between, so "End conversation (go to encounter
+    // 2 of 4)" did not say which of them it ended.
+    chip.textContent = `Conversation ${run.position} of ${run.total}`;
     chip.style.display = 'inline-block';
     // Offered from the moment we know there is a run to leave, and kept
     // available for the rest of the page: the promise to stop is not honoured
@@ -795,7 +799,7 @@
 
   async function showRunComplete() {
     const code = run?.completion_code || '';
-    $('nextTitle').textContent = 'All encounters complete';
+    $('nextTitle').textContent = 'All conversations complete';
 
     // The config the page already holds (loadRunCfg, fetched at boot for the
     // build tag), so the card is painted in one go. A fresh fetch here left
@@ -997,7 +1001,7 @@
       $('nextTitle').textContent = 'That conversation did not start';
       $('nextBody').innerHTML =
         '<p>The conversation never connected, so there is nothing to save and ' +
-        'nothing was recorded. You can try this encounter again.</p>';
+        'nothing was recorded. You can try this conversation again.</p>';
       $('nextBtn').textContent = 'Try this conversation again';
       $('nextBtn').style.display = 'inline-block';
       $('nextBtn').onclick = () => { hideOverlay($('nextOverlay')); };
@@ -1036,7 +1040,7 @@
       // discard a finished conversation silently: show the overlay, with a Retry
       // when a retry could plausibly work, and a way out either way.
       const terminal = !!r && TERMINAL_ADVANCE.has(r.status);
-      $('nextTitle').textContent = 'Could not save this encounter';
+      $('nextTitle').textContent = 'Could not save this conversation';
       $('nextBody').innerHTML = terminal
         ? '<p>We could not record that conversation against your run, and trying ' +
           'again will not change that. The recording itself is on our side, but ' +
@@ -1141,8 +1145,8 @@
     $('nextAlt').style.display = 'none';   // the advance landed and the wait is over: no exit to offer
     if (run.done) { await showRunComplete(); return; }
     $('nextTitle').textContent = stoppedEarly
-      ? `Encounter ${run.position - 1} of ${run.total} stopped early`
-      : `Encounter ${run.position - 1} of ${run.total} complete`;
+      ? `Conversation ${run.position - 1} of ${run.total} stopped early`
+      : `Conversation ${run.position - 1} of ${run.total} complete`;
     $('nextBody').innerHTML =
       (stoppedEarly
         ? '<p>That conversation could not be finished. What was recorded of it is ' +
@@ -1151,7 +1155,7 @@
         : '<p>That conversation is finished. Ready for the next one?</p>') +
       takeVideoNotice() +
       runStepsHtml(0);
-    $('nextBtn').textContent = `Start encounter ${run.position} of ${run.total}`;
+    $('nextBtn').textContent = `Start conversation ${run.position} of ${run.total}`;
     $('nextBtn').style.display = 'inline-block';
     $('nextBtn').onclick = () => {
       // Reload into the next encounter: a fresh page gives a clean audio
@@ -4040,7 +4044,7 @@
       } else if (m.type === 'encounter_complete') {
         const el = document.createElement('div');
         el.className = 'scene';
-        el.textContent = 'Encounter complete, thank you.';
+        el.textContent = 'Conversation complete, thank you.';
         $('transcript').appendChild(el);
         // Tear the session down FIRST: endSession finalizes and uploads the
         // webcam recording (sets videoUpload) and stops the mic/camera/ws/timer,
@@ -4174,7 +4178,7 @@
     if (runId && run && !run.done) {
       $('stopBtn').textContent =
         run.position < run.total
-          ? `End conversation (go to encounter ${run.position + 1} of ${run.total})`
+          ? `End conversation (go to conversation ${run.position + 1} of ${run.total})`
           : 'End conversation (finish)';
     }
     started = true;
@@ -4298,12 +4302,12 @@
     const line = document.createElement('div');
     line.className = 'scene';
     line.textContent = fatal
-      ? 'This encounter could not continue. It is not something you did.'
+      ? 'This conversation could not continue. It is not something you did.'
       : 'The connection dropped. Press Reconnect to start this conversation again from the beginning.';
     $('transcript').appendChild(line);
     $('transcript').scrollTop = $('transcript').scrollHeight;
     endSession();
-    setTurnState(fatal ? 'Encounter stopped' : 'Connection lost', '');
+    setTurnState(fatal ? 'Conversation stopped' : 'Connection lost', '');
     // Every branch writes the card, so no state is left wearing another's
     // wording. Static strings only: nothing the server sent reaches innerHTML.
     // Each card says which door it is offering and why, because a participant
@@ -4313,9 +4317,8 @@
         '<b>This is not working at the moment.</b> It stopped twice before the '
         + 'conversation could get going, so it will not be tried a third time. '
         + 'This is not something you did, and you have not lost your place in the '
-        + 'study or anything you have already done. You can go on to the next part '
-        + 'of the study without this conversation; the study team can see that it '
-        + 'did not run.';
+        + 'study or anything you have already done. You can go on without this '
+        + 'conversation; the study team can see that it did not run.';
       $('dropReconnect').style.display = 'none';
       showFailureExit(true);
     } else if (exhausted) {
@@ -4337,7 +4340,7 @@
       showFailureExit(true);
     } else if (fatal) {
       $('dropText').innerHTML =
-        '<b>This encounter could not continue.</b> Something on our side stopped it '
+        '<b>This conversation could not continue.</b> Something on our side stopped it '
         + 'before the conversation got going. It is not something you did, and you '
         + 'have not lost your place in the study. You can try once more; if it stops '
         + 'again, you will be able to go on without it'
@@ -4383,7 +4386,7 @@
             ? ' This is the ' + ordinalWord(encounterDrops) + ' time this conversation '
               + 'has dropped. You do not have to keep trying: '
               + (canSkip
-                  ? 'you can go on to the next part without it, what was recorded of it '
+                  ? 'you can go on without it, what was recorded of it '
                     + 'is kept and the study team can see it stopped early.'
                   : 'please tell the study team using the contact below.')
             : '');
@@ -4414,7 +4417,7 @@
   function skipDoorLabel() {
     if (!run) return 'Go on without this conversation';
     return run.position < run.total
-      ? `Go on to encounter ${run.position + 1} of ${run.total} without this one`
+      ? `Go on to conversation ${run.position + 1} of ${run.total} without this one`
       : 'Finish the study without this conversation';
   }
 

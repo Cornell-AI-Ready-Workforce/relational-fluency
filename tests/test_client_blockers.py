@@ -754,7 +754,7 @@ function primed(uploadJs) {
     await b.clock.advance(43000);
     assert(/Saving your recording/.test($(b, 'nextTitle').textContent), 'the wait ended early');
     await b.clock.advance(3000);
-    assert(/Encounter 1 of 4 complete/.test($(b, 'nextTitle').textContent),
+    assert(/Conversation 1 of 4 complete/.test($(b, 'nextTitle').textContent),
       'the deadline did not release the participant: ' + $(b, 'nextTitle').textContent);
     assert(!/could not save/i.test($(b, 'nextBody').innerHTML),
       'a slow upload was reported to the participant as a lost one');
@@ -767,9 +767,9 @@ function primed(uploadJs) {
     await b.clock.advance(500);
     $(b, 'nextBtn').onclick();
     await b.clock.advance(10);
-    assert(/Encounter 1 of 4 complete/.test($(b, 'nextTitle').textContent),
+    assert(/Conversation 1 of 4 complete/.test($(b, 'nextTitle').textContent),
       'the skip button did not release the wait: ' + $(b, 'nextTitle').textContent);
-    assert(/Start encounter 2 of 4/.test($(b, 'nextBtn').textContent), 'no way on to the next encounter');
+    assert(/Start conversation 2 of 4/.test($(b, 'nextBtn').textContent), 'no way on to the next encounter');
   }
 
   // --- a failed upload is said out loud on the next screen ----------------
@@ -777,7 +777,7 @@ function primed(uploadJs) {
     const b = primed("videoUpload = Promise.resolve({ ok: false, reason: 'put_http_403' });");
     b.ctx.onEncounterComplete();
     await b.clock.advance(1000);
-    assert(/Encounter 1 of 4 complete/.test($(b, 'nextTitle').textContent), 'did not advance');
+    assert(/Conversation 1 of 4 complete/.test($(b, 'nextTitle').textContent), 'did not advance');
     assert(/could not save the video/i.test($(b, 'nextBody').innerHTML),
       'a lost recording produced the identical success screen: ' + $(b, 'nextBody').innerHTML);
   }
@@ -794,7 +794,7 @@ function primed(uploadJs) {
            "videoUpload = Promise.resolve({ ok: false, reason: 'network' });");
     b.ctx.onEncounterComplete();
     await b.clock.advance(1000);
-    assert(/All encounters complete/.test($(b, 'nextTitle').textContent), 'did not finish the run');
+    assert(/All conversations complete/.test($(b, 'nextTitle').textContent), 'did not finish the run');
     assert(/CODE1/.test($(b, 'nextBody').innerHTML), 'the completion code was lost');
     assert(/could not save the video/i.test($(b, 'nextBody').innerHTML), 'the final screen hid the loss');
   }
@@ -928,12 +928,12 @@ function primed(putAtMs, advanceDelayMs) {
     const { b, gone } = primed(72000);
     b.ctx.onEncounterComplete();
     await b.clock.advance(46000);
-    assert(/Encounter 1 of 4 complete/.test($(b, 'nextTitle').textContent),
+    assert(/Conversation 1 of 4 complete/.test($(b, 'nextTitle').textContent),
       'the deadline did not release the participant: ' + $(b, 'nextTitle').textContent);
     assert(/still being saved/i.test($(b, 'nextBody').innerHTML),
       'a release with the upload still running showed the plain success screen: ' +
       $(b, 'nextBody').innerHTML);
-    assert(/Start encounter 2 of 4/.test($(b, 'nextBtn').textContent), 'no way on');
+    assert(/Start conversation 2 of 4/.test($(b, 'nextBtn').textContent), 'no way on');
     $(b, 'nextBtn').onclick();
     await b.clock.advance(10);
     assert.strictEqual(gone(), null, 'the page navigated out from under a running upload');
@@ -995,7 +995,7 @@ function primed(putAtMs, advanceDelayMs) {
     const { b } = primed(2000);
     b.ctx.onEncounterComplete();
     await b.clock.advance(10000);
-    assert(/Encounter 1 of 4 complete/.test($(b, 'nextTitle').textContent), 'did not advance');
+    assert(/Conversation 1 of 4 complete/.test($(b, 'nextTitle').textContent), 'did not advance');
     assert(!/still being saved/i.test($(b, 'nextBody').innerHTML),
       'a landed upload was described as still running');
     b.fire('pagehide');
