@@ -875,6 +875,20 @@ def test_on_a_phone_only_the_banner_and_the_status_row_are_pinned():
                      css[:css.index("/* ---------- Mobile / small screens")])
 
 
+def test_a_touch_screen_of_any_width_gets_44px_targets():
+    """A11Y-09/V8/L11 were fixed by width alone (<=640px), so a phone held
+    sideways (667-932px wide) and a tablet kept the small targets: at 812x375
+    "Skip the check" was 89x16px and the note's close 36x36. Every button,
+    and the close, is 44px on a coarse pointer too (44x44 measured there)."""
+    css = V2.read_text(encoding="utf-8")
+    css = css[css.index("<style>"):css.index("</style>")]
+    for block in (_css_block(css, "/* ---------- Mobile / small screens ---------- */"),
+                  _css_block(css, "@media (pointer: coarse)")):
+        assert re.search(r"(?:^|\s)button \{[^}]*min-height: 44px", block), block[:200]
+        close = re.search(r"\.gate-note \.note-close \{([^}]*)\}", block)
+        assert close and "width: 44px" in close.group(1) and "height: 44px" in close.group(1), block[:200]
+
+
 BANNER = RUN_VIEW + r"""
   const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
   await b.clock.advance(50);

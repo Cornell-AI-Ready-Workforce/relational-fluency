@@ -491,6 +491,14 @@
     .check-row .what span, .check-row .status, .check-help, .check-actions .skip, .check-note { font-size: 15px; }
     .brief .label, .brief .body.rich h4 { font-size: 12px; }
   }
+  /* A touch screen wider than that (a phone held sideways, a tablet) is
+     tapped too, so it gets the same 44px targets: the rules above go by
+     width, and at 812x375 "Skip the check" was 89x16px, Continue and Start
+     39px tall, the capture notice's way out 31px and the note's close 36px. */
+  @media (pointer: coarse) {
+    button { min-height: 44px; }
+    .gate-note .note-close { width: 44px; height: 44px; }
+  }
   /* Very narrow phones: keep tiles legible. */
   @media (max-width: 360px) {
     .avatar { width: 48px; height: 48px; font-size: 18px; }
