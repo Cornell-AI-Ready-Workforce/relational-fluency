@@ -546,7 +546,7 @@ def test_the_quiet_room_requirement_is_first_on_the_first_screen_and_again_at_th
     assert said_first == said_again, "the audio check says something different:\n" \
         f"  first screen: {said_first}\n  audio check:  {said_again}"
     # Prominent: before the fiction notice's own heading, not under it.
-    assert first.index('class="quiet-notice"') < first.index("<h2>"), \
+    assert first.index('class="quiet-notice"') < first.index("<h2"), \
         "the requirement sits below the fiction notice on the first screen"
     # And styled as a requirement, not as the muted small print around it.
     assert re.search(r"\.quiet-notice\s*\{[^}]*border", src), "the notice has no box"
@@ -590,3 +590,193 @@ BUILD_TAG = r"""
 
 def test_the_page_shows_which_build_served_it(tmp_path):
     _run(tmp_path, BUILD_TAG, "BUILD TAG OK")
+
+
+# =========================================================================== #
+# #43. The intro screens are not usable with a screen reader.
+#
+# Seen on production (2026-09-25, /v2?scenario=S4A): the pop-up screens were
+# not announced as dialogs, focus never moved into them, and Tab walked the
+# page behind the scrim. Every card is now a dialog named by its heading, takes
+# focus when it opens and hands it back when it closes, and a card that covers
+# the page leaves the page behind it inert (aria-hidden and a focus guard where
+# the engine has no inert). The drop card is a dialog but not a modal one: the
+# page around it, "Stop and leave the study" included, stays in reach.
+# =========================================================================== #
+
+def _open_tag(markup: str, element_id: str) -> str:
+    m = re.search(r'<[a-z0-9]+\b[^>]*\bid="%s"[^>]*>' % re.escape(element_id), markup)
+    assert m, f"no element with id {element_id}"
+    return m.group(0)
+
+
+def _attrs(tag: str) -> dict:
+    return dict(re.findall(r'([\w-]+)="([^"]*)"', tag))
+
+
+def test_every_card_is_a_dialog_named_by_its_own_heading():
+    src = V2.read_text(encoding="utf-8")
+    markup = src[:src.index("<script>")]
+    cards = re.findall(r'<div class="consent-overlay" id="(\w+)"', markup)
+    assert set(cards) == {"situationOverlay", "fictionOverlay", "audioCheckOverlay",
+                          "micHelpOverlay", "nextOverlay"}, cards
+    for card in cards:
+        a = _attrs(_open_tag(markup, card))
+        assert (a.get("role"), a.get("aria-modal"), a.get("tabindex")) == ("dialog", "true", "-1"), (
+            f"{card} is not a modal dialog that can take focus: {a}")
+        block = _overlay(markup, card)
+        assert re.search(r'<h2 id="%s">' % re.escape(a.get("aria-labelledby", "")), block), (
+            f"{card} is not named by a heading of its own")
+        # A scroll region in a card is a named tab stop, so a keyboard can
+        # scroll it: Safari does not make a scroller focusable, and Chrome
+        # made this one an unnamed stop.
+        for tag in re.findall(r'<div class="[^"]*card-scroll[^"]*"[^>]*>', block):
+            t = _attrs(tag)
+            assert (t.get("tabindex"), t.get("role"), t.get("aria-labelledby")) == (
+                "0", "region", a["aria-labelledby"]), f"{card}: {tag}"
+
+    drop = _attrs(_open_tag(markup, "dropNote"))
+    assert drop.get("role") == "dialog" and drop.get("aria-labelledby") == "dropTitle", drop
+    assert drop.get("aria-modal") != "true", "the drop card would lock the page, and the way to leave the study"
+    assert '<b id="dropTitle">' in markup
+
+    # The one card built in script.
+    fn = src[src.index("function showBlockingError("):src.index("// ---------- situation popup")]
+    for needle in ("setAttribute('role', 'dialog')", "setAttribute('aria-modal', 'true')",
+                   "setAttribute('aria-labelledby', 'errTitle')", '<h2 id="errTitle">'):
+        assert needle in fn, needle
+
+    # And no card is shown or hidden except through the helper, which is what
+    # moves focus and sets the page behind it inert.
+    script = src[src.index("<script>"):]
+    assert not re.search(r"Overlay'\)\.style\.display\s*=", script)
+    assert "$('dropNote').classList" not in script
+
+
+# Focus goes where the page puts it, and a card knows what is in it: the stub's
+# elements do neither, so these harnesses give them both, and stand one element
+# in for the page behind the cards among the body's children.
+A11Y_DOM = r"""
+function a11y(b) {
+  const doc = b.dom.document;
+  const track = (e) => {
+    if (e && !e.__a11y) {
+      e.__a11y = true;
+      e.attrs = {};
+      e.focus = function () { doc.activeElement = this; };
+      e.setAttribute = function (k, v) { this.attrs[k] = String(v); };
+      e.removeAttribute = function (k) { delete this.attrs[k]; };
+      e.contains = function (x) { return x === this || this.children.includes(x); };
+    }
+    return e;
+  };
+  const byId = doc.getElementById.bind(doc);
+  doc.getElementById = (id) => track(byId(id));
+  const make = doc.createElement.bind(doc);
+  doc.createElement = (t) => track(make(t));
+  const page = b.dom.$('pageBehind');
+  doc.body.children.push(page, ...['fictionOverlay', 'audioCheckOverlay', 'situationOverlay',
+    'micHelpOverlay', 'nextOverlay', 'dropNote', 'errOverlay'].map(id => b.dom.$(id)));
+  doc.activeElement = doc.body;
+  return { doc, page };
+}
+const button = (el) => (el.children || []).find(c => c.tagName === 'BUTTON');
+"""
+
+DIALOGS = RUN_VIEW + A11Y_DOM + r"""
+  // --- the intro, card by card ----------------------------------------------
+  {
+    const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+    const { doc, page } = a11y(b);
+    await b.clock.advance(50);
+    for (const [id, next] of [['fictionOverlay', 'fictionAck'], ['audioCheckOverlay', 'audioCheckSkip'],
+                              ['situationOverlay', 'situationStart']]) {
+      assert(shown(b, id), id + ' did not open');
+      assert.strictEqual(doc.activeElement, b.dom.$(id), 'focus did not move into ' + id);
+      assert.strictEqual(page.inert, true, 'the page behind ' + id + ' can still be reached');
+      assert.strictEqual(b.dom.$(id).inert, false, id + ' is inert itself');
+      b.dom.$(next).click();
+      await b.clock.advance(50);
+    }
+    assert(!shown(b, 'situationOverlay'));
+    assert.strictEqual(b.set('started'), true, 'the conversation did not start');
+    assert.strictEqual(page.inert, false, 'the page stayed inert after the last card closed');
+
+    // The drop card: focus moves to it, and the page stays in reach.
+    const end = b.dom.$('stopBtn');
+    end.focus();
+    b.ctx.onConnectionDropped();
+    const drop = b.dom.$('dropNote');
+    assert(drop.classList.contains('show'), 'no drop card');
+    assert.strictEqual(doc.activeElement, drop, 'focus did not move to the drop card');
+    assert.strictEqual(page.inert, false, 'the drop card locked the page, "Stop and leave the study" with it');
+    b.dom.$('dropReconnect').click();
+    await b.clock.advance(50);
+    assert(!drop.classList.contains('show'));
+    assert.strictEqual(doc.activeElement, end, 'focus was not handed back when the drop card closed');
+  }
+
+  // --- a card's focus goes back to what opened it --------------------------
+  {
+    const b = boot('?scenario=S4A&participant_id=p_rec', studyRoutes, { cfg: { micError: 'NotAllowedError' } });
+    const { doc, page } = a11y(b);
+    await b.clock.advance(50);
+    b.dom.$('fictionAck').click(); await b.clock.advance(50);
+    b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+    b.dom.$('situationStart').click(); await b.clock.advance(50);
+    const door = button(notes(b)[0]);
+    assert.strictEqual(doc.activeElement, door, 'the capture failure did not take focus to its way out');
+
+    door.click(); await b.clock.advance(50);
+    assert.strictEqual(doc.activeElement, b.dom.$('micHelpOverlay'), 'focus did not move into the help card');
+    assert.strictEqual(page.inert, true);
+    b.dom.$('micHelpBack').onclick();
+    assert(!shown(b, 'micHelpOverlay'));
+    assert.strictEqual(doc.activeElement, door, 'closing the card did not give focus back to its button');
+    assert.strictEqual(page.inert, false, 'the page stayed inert behind a closed card');
+
+    // One card after another: the audio check, opened from the help card,
+    // hands focus back to the same button.
+    door.click(); await b.clock.advance(50);
+    b.dom.$('micHelpCheck').onclick(); await b.clock.advance(10);
+    assert.strictEqual(doc.activeElement, b.dom.$('audioCheckOverlay'));
+    assert.strictEqual(page.inert, true);
+    b.dom.$('audioCheckSkip').click(); await b.clock.advance(10);
+    assert.strictEqual(doc.activeElement, door, 'the audio check did not hand focus back');
+    assert.strictEqual(page.inert, false);
+  }
+
+  // --- the blocking error is a card like the others ------------------------
+  {
+    const b = boot('?run=r_1', (b) => [{ match: '/api/run/', fn: () => b.net.res(503, {}) },
+                                        { match: '/api/run/config', fn: () => b.net.res(200, {}) }]);
+    const { doc, page } = a11y(b);
+    await b.clock.advance(50);
+    assert(shown(b, 'errOverlay'));
+    assert.strictEqual(doc.activeElement, b.dom.$('errOverlay'), 'focus did not move into the error card');
+    assert.strictEqual(page.inert, true);
+  }
+
+  // --- an engine without inert: aria-hidden, and focus sent back -----------
+  {
+    const b = boot('?run=r_1&participant_id=p_rec', studyRoutes,
+                   { extra: { HTMLElement: function HTMLElement() {} } });
+    const { doc, page } = a11y(b);
+    await b.clock.advance(50);
+    const card = b.dom.$('fictionOverlay');
+    assert.strictEqual(page.attrs['aria-hidden'], 'true', 'the page behind is still read out');
+    assert(!('aria-hidden' in card.attrs), 'the card itself was hidden');
+    const guard = (b.dom.docListeners.focusin || [])[0];
+    assert(guard, 'nothing keeps focus in the card');
+    page.focus(); guard({ target: page });
+    assert.strictEqual(doc.activeElement, card, 'focus that left the card was not sent back');
+    b.dom.$('fictionAck').click(); await b.clock.advance(50);
+    b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+    b.dom.$('situationStart').click(); await b.clock.advance(50);
+    assert(!('aria-hidden' in page.attrs), 'the page stayed hidden after the last card closed');
+  }
+"""
+
+
+def test_every_card_takes_focus_gives_it_back_and_leaves_the_page_behind_inert(tmp_path):
+    _run(tmp_path, DIALOGS, "DIALOGS OK")

@@ -362,6 +362,9 @@
   .consent-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.45);
                      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
                       display:flex; align-items:center; justify-content:center; z-index: 50; padding: 20px; }
+  /* A card takes focus itself when it opens (showOverlay), so a screen reader
+     names it; it is where focus starts, not a control, so it has no ring. */
+  .consent-overlay:focus, #dropNote:focus { outline: none; }
   .consent-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 14px;
                   max-width: 620px; width: 100%; padding: 26px 28px; overflow-y: auto;
                   /* svh where there is one: iOS counts vh against the viewport
@@ -464,9 +467,10 @@
 </style>
 </head>
 <body>
-<div class="consent-overlay" id="situationOverlay" style="display:none">
+<div class="consent-overlay" id="situationOverlay" style="display:none"
+     role="dialog" aria-modal="true" aria-labelledby="situationTitle" tabindex="-1">
   <div class="consent-card situation-card">
-    <div class="card-scroll">
+    <div class="card-scroll" tabindex="0" role="region" aria-labelledby="situationTitle">
     <div class="situation-main">
       <img id="situationImg" class="situation-img" alt="" />
       <div class="situation-text">
@@ -481,9 +485,10 @@
   </div>
 </div>
 
-<div class="consent-overlay" id="fictionOverlay" style="display:none">
+<div class="consent-overlay" id="fictionOverlay" style="display:none"
+     role="dialog" aria-modal="true" aria-labelledby="fictionTitle" tabindex="-1">
   <div class="consent-card situation-card">
-    <div class="card-scroll">
+    <div class="card-scroll" tabindex="0" role="region" aria-labelledby="fictionTitle">
     <!-- The quiet-room requirement (issue #37, the researchers' decision of
          2026-09-28), first on the first screen and the same words again at the
          audio check. Other people talking near the participant are picked up,
@@ -494,7 +499,7 @@
       well as yours: the characters hear them as if you had said them. Please move to a
       quiet room, away from anyone talking, before you go on. If you cannot, noise-cancelling
       headphones also work.</div>
-    <h2>Before you begin: please keep this fictional</h2>
+    <h2 id="fictionTitle">Before you begin: please keep this fictional</h2>
     <div class="body rich">
       <p>These are made-up work situations with AI characters. You are playing a
       role, not telling us about your real life. To protect your privacy and
@@ -532,8 +537,12 @@
 </div>
 
 <div class="gate-note" id="gateNote" role="status"></div>
-<div class="gate-note" id="dropNote" role="alert">
-  <span id="dropText"><b>Connection lost.</b> Your conversation was interrupted. Click Reconnect to carry on — this part will start again from the beginning, and you speak first. You have not lost your place in the study or anything you have already finished.</span>
+<!-- A dialog, but not a modal one: it sits under the header and the page
+     stays usable around it, "Stop and leave the study" above all, which is
+     never locked. Named by its bold first sentence (onConnectionDropped). -->
+<div class="gate-note" id="dropNote" role="dialog" aria-labelledby="dropTitle"
+     aria-describedby="dropText" tabindex="-1">
+  <span id="dropText"><b id="dropTitle">Connection lost.</b> Your conversation was interrupted. Click Reconnect to carry on — this part will start again from the beginning, and you speak first. You have not lost your place in the study or anything you have already finished.</span>
   <div style="margin-top:10px"><button id="dropReconnect">Reconnect</button></div>
   <!-- The other doors out of a dropped encounter (the next encounter, the
        completion code, the contact, the survey), after the retry so the card
@@ -541,10 +550,11 @@
   <div id="dropDoors"></div>
 </div>
 
-<div class="consent-overlay" id="audioCheckOverlay" style="display:none">
+<div class="consent-overlay" id="audioCheckOverlay" style="display:none"
+     role="dialog" aria-modal="true" aria-labelledby="audioCheckTitle" tabindex="-1">
   <div class="consent-card situation-card">
-    <h2>Check your audio and camera</h2>
-    <div class="body rich card-scroll">
+    <h2 id="audioCheckTitle">Check your audio and camera</h2>
+    <div class="body rich card-scroll" tabindex="0" role="region" aria-labelledby="audioCheckTitle">
       <div class="quiet-notice" role="note"><b>You need a quiet room to take part.</b>
       You will be talking out loud, and the microphone picks up other people's voices as
       well as yours: the characters hear them as if you had said them. Please move to a
@@ -585,7 +595,8 @@
 <!-- The way out of a microphone or camera that will not start, which is not a
      withdrawal (issue #41). Opened from the capture-failure notice; see
      openCaptureHelp. -->
-<div class="consent-overlay" id="micHelpOverlay" style="display:none">
+<div class="consent-overlay" id="micHelpOverlay" style="display:none"
+     role="dialog" aria-modal="true" aria-labelledby="micHelpTitle" tabindex="-1">
   <div class="consent-card">
     <h2 id="micHelpTitle">If your microphone will not work</h2>
     <div class="body rich" id="micHelpBody"></div>
@@ -598,7 +609,8 @@
   </div>
 </div>
 
-<div class="consent-overlay" id="nextOverlay" style="display:none">
+<div class="consent-overlay" id="nextOverlay" style="display:none"
+     role="dialog" aria-modal="true" aria-labelledby="nextTitle" tabindex="-1">
   <div class="consent-card">
     <h2 id="nextTitle">Encounter complete</h2>
     <div class="body" id="nextBody"></div>
@@ -786,7 +798,7 @@
         ? '<p>Once you have entered your code in the survey, you can close this window.</p>'
         : '<p>You can close this window and return to the Qualtrics survey.</p>';
     }
-    $('nextOverlay').style.display = 'flex';
+    showOverlay($('nextOverlay'));
     // Finishing does not end the participant's rights: deletion is exercised
     // after the study, so the address has to be on the screen that closes it
     // too. Painted after the overlay is up, so a slow /api/run/config never holds
@@ -810,14 +822,14 @@
     // has just asked to stop, so nothing they are looking at should wait on a
     // network call that may not answer.
     closing = true;   // this surface owns the overlay now; nothing may repaint over it
-    $('situationOverlay').style.display = 'none';
+    hideOverlay($('situationOverlay'));
     $('nextTitle').textContent = title;
     $('nextBody').innerHTML = bodyHtml +
       (code ? `<p>Your code so far is <b class="code">${esc(code)}</b>. Take it back to ` +
               `the survey if you are asked for one.</p>` : '');
     $('nextAlt').style.display = 'none';
     $('nextBtn').style.display = 'none';
-    $('nextOverlay').style.display = 'flex';
+    showOverlay($('nextOverlay'));
     // Held config where there is some, as showRunComplete: the card grew in
     // steps as the fetch and then the contact landed, moving its button.
     const cfg = (await loadRunCfg()) || { return_url: '', return_label: 'Return to the survey' };
@@ -943,9 +955,9 @@
         'nothing was recorded. You can try this encounter again.</p>';
       $('nextBtn').textContent = 'Try this conversation again';
       $('nextBtn').style.display = 'inline-block';
-      $('nextBtn').onclick = () => { $('nextOverlay').style.display = 'none'; };
+      $('nextBtn').onclick = () => { hideOverlay($('nextOverlay')); };
       offerExit('I can’t continue, finish here');
-      $('nextOverlay').style.display = 'flex';
+      showOverlay($('nextOverlay'));
       return;
     }
     const url = `/api/run/${encodeURIComponent(runId)}/advance` +
@@ -970,9 +982,9 @@
           'again from the start.</p>';
         $('nextBtn').textContent = 'Have this conversation again';
         $('nextBtn').style.display = 'inline-block';
-        $('nextBtn').onclick = () => { $('nextOverlay').style.display = 'none'; };
+        $('nextBtn').onclick = () => { hideOverlay($('nextOverlay')); };
         offerExit('I can’t continue, finish here');
-        $('nextOverlay').style.display = 'flex';
+        showOverlay($('nextOverlay'));
         return;
       }
       // The encounter is recorded to the run ONLY on a successful advance. Never
@@ -993,7 +1005,7 @@
         $('nextBtn').onclick = () => { advancing = false; onEncounterComplete(opts); };
       }
       offerExit(terminal ? 'Finish here' : 'I can’t continue, finish here');
-      $('nextOverlay').style.display = 'flex';
+      showOverlay($('nextOverlay'));
       return;
     }
     run = advanced;
@@ -1044,7 +1056,7 @@
         'uploading, and the study team can see how that ended.</p>' +
         '<p>Please use the contact below to tell the study team how far you ' +
         'got.</p>');
-      $('nextOverlay').style.display = 'flex';
+      showOverlay($('nextOverlay'));
       let outcome = await Promise.race([
         videoUpload.catch(() => ({ ok: false, reason: 'upload_threw' })),
         skipped,
@@ -1127,7 +1139,7 @@
       Promise.race([live.promise.catch(() => null), wait(NEXT_UPLOAD_HOLD_MS)])
         .then(leaveNow);
     };
-    $('nextOverlay').style.display = 'flex';
+    showOverlay($('nextOverlay'));
   }
   const launchId = params.get('launch') || '';   // researcher-configured launch
   const launchParam = launchId ? `&launch=${encodeURIComponent(launchId)}` : '';
@@ -1438,6 +1450,66 @@
     return `${xs.slice(0, -1).join(', ')}, and ${xs[xs.length - 1]}`;
   }
 
+  // ---------- the page's cards (issue #43) ----------
+  // Every card opens and closes through these two. They used to set `display`
+  // and nothing else, so a screen reader stayed on the page behind with
+  // nothing saying a card was up, Tab walked the controls under the scrim, and
+  // closing left focus nowhere. Each card is now a dialog named by its heading
+  // (the markup), takes focus when it opens, gives it back to whatever had it
+  // when it closes, and one that covers the page leaves the page behind it
+  // inert. The drop card is `modal: false`: it sits under the header, shown
+  // with .show, and the page stays usable around it ("Stop and leave the
+  // study" is never locked).
+  const cardOpeners = new Map();   // card -> what had focus before it opened
+  const modalCards = [];           // the full-screen cards up now, the top one last
+  // Where the engine has no inert (Safari before 15.5, Firefox before 112),
+  // aria-hidden takes the page behind out of what a screen reader reads, and
+  // focus that gets out of the top card is sent back into it.
+  const INERT_MISSING = typeof HTMLElement !== 'undefined' && !('inert' in HTMLElement.prototype);
+  function applyInert() {
+    const top = modalCards[modalCards.length - 1] || null;
+    Array.from(document.body.children).forEach(el => {
+      const off = !!top && el !== top;
+      el.inert = off;
+      if (INERT_MISSING) { if (off) el.setAttribute('aria-hidden', 'true'); else el.removeAttribute('aria-hidden'); }
+    });
+  }
+  if (INERT_MISSING) {
+    document.addEventListener('focusin', (e) => {
+      const top = modalCards[modalCards.length - 1];
+      if (top && !top.contains(e.target)) top.focus();
+    });
+  }
+  function showOverlay(card, opts) {
+    // Repainted while it is up (the closing card, a Retry), a card keeps the
+    // opener it had.
+    if (!cardOpeners.has(card)) cardOpeners.set(card, document.activeElement);
+    if (opts && opts.modal === false) {
+      card.classList.add('show');
+    } else {
+      const i = modalCards.indexOf(card);
+      if (i >= 0) modalCards.splice(i, 1);
+      modalCards.push(card);
+      card.style.display = 'flex';
+      applyInert();
+    }
+    // Into the card itself (tabindex=-1), which is announced by its name;
+    // Tab goes on to what is in it.
+    card.focus();
+  }
+  function hideOverlay(card, opts) {
+    if (opts && opts.modal === false) card.classList.remove('show');
+    else card.style.display = 'none';
+    const i = modalCards.indexOf(card);
+    if (i >= 0) { modalCards.splice(i, 1); applyInert(); }
+    if (!cardOpeners.has(card)) return;
+    const opener = cardOpeners.get(card);
+    cardOpeners.delete(card);
+    // An opener hidden since (End, once the conversation is over) takes no
+    // focus, and the browser keeps it where it is.
+    if (opener && opener.focus) opener.focus();
+  }
+
   // Blocking full-screen error card. Prevents the participant from falling
   // through to a wrong/default/unbriefed encounter when a load fails, and
   // offers a Retry that re-runs the failed step.
@@ -1447,7 +1519,12 @@
       ov = document.createElement('div');
       ov.className = 'consent-overlay';
       ov.id = 'errOverlay';
-      ov.innerHTML = '<div class="consent-card"><h2>Something went wrong</h2>' +
+      // A dialog like the markup's cards (#43).
+      ov.setAttribute('role', 'dialog');
+      ov.setAttribute('aria-modal', 'true');
+      ov.setAttribute('aria-labelledby', 'errTitle');
+      ov.setAttribute('tabindex', '-1');
+      ov.innerHTML = '<div class="consent-card"><h2 id="errTitle">Something went wrong</h2>' +
         '<div class="body" id="errBody"></div>' +
         '<div class="actions"><button id="errRetry">Retry</button></div></div>';
       document.body.appendChild(ov);
@@ -1455,8 +1532,8 @@
     ov.querySelector('#errBody').textContent = msg;
     const btn = ov.querySelector('#errRetry');
     btn.style.display = retryFn ? 'inline-block' : 'none';
-    btn.onclick = async () => { ov.style.display = 'none'; if (retryFn) await retryFn(); };
-    ov.style.display = 'flex';
+    btn.onclick = async () => { hideOverlay(ov); if (retryFn) await retryFn(); };
+    showOverlay(ov);
   }
 
   // ---------- situation popup (shown before the meeting begins) ----------
@@ -1509,13 +1586,13 @@
     } else {
       img.style.display = 'none';
     }
-    $('situationOverlay').style.display = 'flex';
+    showOverlay($('situationOverlay'));
     $('situationStart').addEventListener('click', async () => {
       $('situationStart').disabled = true;
       $('situationStart').setAttribute('aria-busy', 'true');
       $('situationStart').textContent = 'Connecting…';
       await ensureParticipant();
-      $('situationOverlay').style.display = 'none';
+      hideOverlay($('situationOverlay'));
       // Start immediately. This click is the user gesture browsers require for
       // microphone capture and audio playback, so it has to be the one that
       // opens the session, a second "Start session" click is friction and
@@ -2166,7 +2243,7 @@
   function clearCaptureFailure() {
     try { dropCaptureNote(); } catch (e) {}
     captureNote = null;
-    try { $('micHelpOverlay').style.display = 'none'; } catch (e) {}
+    try { hideOverlay($('micHelpOverlay')); } catch (e) {}
   }
 
   // ---------- the way out of a capture failure (issue #41) ----------
@@ -2205,15 +2282,15 @@
       '</p>';
     $('micHelpContact').textContent = '';
     $('micHelpLeave').disabled = false;
-    $('micHelpBack').onclick = () => { $('micHelpOverlay').style.display = 'none'; };
+    $('micHelpBack').onclick = () => { hideOverlay($('micHelpOverlay')); };
     $('micHelpCheck').onclick = async () => {
-      $('micHelpOverlay').style.display = 'none';
+      hideOverlay($('micHelpOverlay'));
       // Back on the room page afterwards, with Start offered: a fresh press
       // is the gesture a browser wants before it asks for the microphone.
       await runAudioCheck();
     };
     $('micHelpLeave').onclick = () => leaveOnCaptureFailure(kind);
-    $('micHelpOverlay').style.display = 'flex';
+    showOverlay($('micHelpOverlay'));
     // After the card paints: the contact is a network call, and somebody stuck
     // on a broken microphone should not wait on it to see their options.
     $('micHelpContact').innerHTML = 'If you would like help, contact ' + (await contactWho()) + '.';
@@ -2239,7 +2316,7 @@
         recorded = r.ok;
       } catch (e) { recorded = false; }
     }
-    $('micHelpOverlay').style.display = 'none';
+    hideOverlay($('micHelpOverlay'));
     const what = kind === 'camera' ? 'camera' : 'microphone';
     showClosing(
       'Finishing here',
@@ -4020,7 +4097,7 @@
     lastUserFinal = { text: '', at: 0 };
     setTurnState('Connecting…', '');
     cueOpen = false; cueListening = false;
-    $('dropNote').classList.remove('show');
+    hideOverlay($('dropNote'), { modal: false });
     speechQueue = [];
     if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
     startTimer();
@@ -4208,8 +4285,12 @@
       $('dropReconnect').textContent = 'Reconnect';
       if (repeated) showFailureExit(false);
     }
+    // The card's name (aria-labelledby) is its bold first sentence, which
+    // every branch above has just rewritten.
+    const lead = $('dropText').querySelector('b');
+    if (lead) lead.id = 'dropTitle';
     placeNote($('dropNote'));
-    $('dropNote').classList.add('show');
+    showOverlay($('dropNote'), { modal: false });
   }
 
   function ordinalWord(n) {
@@ -4238,7 +4319,7 @@
   // had (server/app.py flags one with none) rather than vanishing from it —
   // and the screen after says it stopped early.
   async function skipEncounter() {
-    $('dropNote').classList.remove('show');
+    hideOverlay($('dropNote'), { modal: false });
     await onEncounterComplete({ stoppedEarly: true });
   }
 
@@ -4324,7 +4405,7 @@
   }
 
   $('dropReconnect').addEventListener('click', async () => {
-    $('dropNote').classList.remove('show');
+    hideOverlay($('dropNote'), { modal: false });
     await startSession();
   });
 
@@ -4836,7 +4917,7 @@
         $('audioCheckContinue').removeEventListener('click', finish);
         $('audioCheckSkip').removeEventListener('click', finish);
         markAudioCheck();
-        ov.style.display = 'none';
+        hideOverlay(ov);
         resolve();
       };
 
@@ -4847,7 +4928,7 @@
       // Internal testers can skip; study participants see the link too, since
       // a blocked check must never strand someone, but it is deliberately quiet.
       $('audioCheckSkip').addEventListener('click', finish, { once: true });
-      ov.style.display = 'flex';
+      showOverlay(ov);
     });
   }
 
@@ -4866,11 +4947,11 @@
     fetchBrief().then(showTitle, () => {});
     if (needsFictionAck()) {
       describeEncounterLength();
-      $('fictionOverlay').style.display = 'flex';
+      showOverlay($('fictionOverlay'));
       await new Promise(resolve => {
         $('fictionAck').addEventListener('click', () => {
           markFictionAck();
-          $('fictionOverlay').style.display = 'none';
+          hideOverlay($('fictionOverlay'));
           resolve();
         }, { once: true });
       });
