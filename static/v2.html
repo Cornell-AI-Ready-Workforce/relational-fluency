@@ -260,12 +260,15 @@
   /* The next character's tile offers a way in, so the participant can move on
      when the current conversation is done rather than waiting it out. */
   .tile.upnext { opacity: .75; filter: none; outline: 2px dashed var(--accent); }
-  /* Its button sits in room kept for it under the name and role, not on top
-     of them, and the room is there before the button is, so nothing moves
-     when it appears. */
-  .tile.upnext { padding-bottom: 60px; }
+  /* Its button sits in room made for it under the name and role, not on top
+     of them. Made once the button is there, not before: kept from 0:00, the
+     room set S1's up-next character apart from the tile beside it for the
+     whole conversation (a 56px avatar against 108px at 641-900px, the name
+     23-50px higher), in the one condition that has an up-next tile. Where
+     :has() is not supported the button sits over the role, as it used to. */
+  .tile.upnext:has(.talk-btn) { padding-bottom: 60px; }
   @media (min-width: 641px) and (max-width: 900px) {
-    .tile.upnext .avatar { width: 56px; height: 56px; font-size: 21px; }
+    .tile.upnext:has(.talk-btn) .avatar { width: 56px; height: 56px; font-size: 21px; }
   }
   .tile .talk-btn { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
     background: var(--accent); color: #fff; border: 0; border-radius: 999px;
