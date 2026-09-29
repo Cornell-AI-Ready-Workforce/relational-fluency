@@ -38,6 +38,7 @@ for p in (ROOT, ROOT / "tests"):
 from server import encounter_record, llm  # noqa: E402
 from server import realtime_voice_session as rvs  # noqa: E402
 from server.voice import realtime as R  # noqa: E402
+from tools.sim import sequences  # noqa: E402
 
 import test_participant_turn_integrity as T  # noqa: E402
 from test_bridge_correctness import adelta, created, done, tdelta, tdone  # noqa: E402
@@ -584,6 +585,12 @@ def test_the_record_says_when_the_participant_opened(tmp_path):
     assert [c["reason"] for c in rec["opening"]["conversations"]] == ["start", "handoff"]
     assert rec["opening"]["conversations"][1]["waited_s"] == 6.5
     assert rec["provenance"]["opening"]["policy"] == "participant_opens"
+
+
+def test_every_sim_sequence_begins_with_the_participant_speaking():
+    for sid, steps in sequences.DEFAULT_SEQUENCES.items():
+        kind, _ = sequences.parse(steps)[0]
+        assert kind in ("say", "bargeplay", "resume", "burst", "cycle"), (sid, steps[:30])
 
 
 # --------------------------------------------------------------------------

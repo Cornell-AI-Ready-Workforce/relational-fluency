@@ -13,6 +13,10 @@ silence past the S1A timebox; the full 1:1 negotiation to the encounter's own
 end in S2A; talking over a reply (bargeplay), pausing mid-sentence (resume) and
 a quick two-line burst in both group rooms.
 
+Every sequence begins with the participant speaking. Since pipeline
+2026-09-28b nobody else speaks first, in 1:1 or in a room: the room tone that
+used to lead S3A and S4A was the lead's time to open the scene.
+
 Steps, comma-separated, each `kind:argument`:
 
   tone:N          N s of room tone (tools/sim/stim.py)
@@ -37,7 +41,7 @@ DEFAULT_SEQUENCES: Dict[str, str] = {
     # Riley (a colleague) sets the scene, then Sam (the peer who took the
     # credit); i1 has a 120 s timebox, and the until: runs room tone past the
     # end so the last stretch is the server's clock, not the participant's.
-    "S1A": ("tone:3,say:s6,say:s2,"
+    "S1A": ("say:s6,say:s2,"
             "cycle:s1a_long|s5|s2|s1a_long|s5|s2|s1a_long:124,"
             "say:s3,say:s5,tone:14,say:s3,until:215"),
     # The raise conversation, cycled to the encounter's own end (the floor and
@@ -48,14 +52,14 @@ DEFAULT_SEQUENCES: Dict[str, str] = {
     # (encounter_complete, reason ceiling) lands at the give-up mark: a line
     # started just before 720 s may be cut off by it. The S2A baseline was
     # recorded on 24c, when the floor ended it at about 451 s.
-    "S2A": ("tone:3,say:a1,tone:20,say:a2,say:a3,"
+    "S2A": ("say:a1,tone:20,say:a2,say:a3,"
             "cycle:s1|a4|a5|a6|s2a_race|a7|a3|a2|a8:720,tone:3"),
     # A team meeting: talk over Alex's long answer, then pause mid-sentence.
-    "S3A": ("tone:8,say:c1,say:c2,bargeplay:c9+c7:2.0,say:c3,tone:14,"
+    "S3A": ("say:c1,say:c2,bargeplay:c9+c7:2.0,say:c3,tone:14,"
             "say:c4,resume:c5+c6:1.0,say:c8,tone:3"),
     # The planning meeting, where chiming in is hardest (#24): barge, a paused
     # sentence and a burst twice over, then cycled to the end.
-    "S4A": ("tone:8,say:s4,bargeplay:b2+b3:2.0,resume:b4+b5:1.0,burst:b6,say:b7,"
+    "S4A": ("say:s4,bargeplay:b2+b3:2.0,resume:b4+b5:1.0,burst:b6,say:b7,"
             "tone:14,say:b8,bargeplay:b2+b3:2.0,resume:b4+b5:0.95,burst:b6,say:b7,"
             "cycle:b9|b10|b11|s4|b8|b2|b12:780,tone:3"),
 }
