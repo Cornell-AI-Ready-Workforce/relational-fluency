@@ -150,13 +150,17 @@
      locked, which is what keeps the consent promise. It wears the look of any
      control that is not available now (with button:disabled below). */
   .gate-note { display: none; position: fixed; top: 104px; right: 20px; max-width: 340px; z-index: 50;
-    background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px;
+    background: var(--surface); color: var(--fg); border-radius: 10px; padding: 12px 14px;
+    /* The neutral notice: the move-on note, the reply to an early End. The
+       connection-lost card is a fault and keeps the red. */
+    border: 1px solid var(--line); border-left: 4px solid var(--fg);
     font-size: 14px; line-height: 1.5; box-shadow: 0 8px 24px rgba(47,47,47,0.12);
     /* Placed under the header when shown (placeNote), and never taller than
        the screen below that: the repeated-drop card with its doors ran to
        500px, off the bottom of a phone held sideways. */
     max-height: calc(100vh - 124px); overflow-y: auto; }
   .gate-note.show { display: block; }
+  #dropNote { border: 1px solid var(--accent); }
   /* The note fades by itself, but a slow reader can close it sooner. */
   #gateNote { padding-right: 50px; }
   .gate-note .note-close { position: absolute; top: 6px; right: 6px; width: 36px; height: 36px;
@@ -215,8 +219,12 @@
     background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;
     letter-spacing: .02em; }
   .transcript .scene .with { font-weight: 400; opacity: .9; }
-  /* The start cue: who opens the conversation must be unmistakable. */
-  .transcript .scene.start-cue { font-size: 15px; padding: 10px 12px; }
+  /* The start cue: who opens the conversation must be unmistakable. It is an
+     instruction, not a fault, so it is the neutral notice (an ink rule on
+     grey), not the red banner that "The connection dropped" and the camera
+     and video faults keep. */
+  .transcript .scene.start-cue { font-size: 15px; padding: 10px 12px;
+    background: var(--bg); color: var(--fg); border-left: 4px solid var(--fg); }
   /* A message from the app itself, not a line anybody spoke. It has to be
      visually distinct from a turn: a system message rendered as a turn is
      attributed to whoever the turn says spoke it, and this transcript is also
