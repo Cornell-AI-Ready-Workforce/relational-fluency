@@ -230,10 +230,14 @@
   /* A message from the app itself, not a line anybody spoke. It has to be
      visually distinct from a turn: a system message rendered as a turn is
      attributed to whoever the turn says spoke it, and this transcript is also
-     what the participant reads back to check they were understood. */
+     what the participant reads back to check they were understood.
+     Distinct by its grey box, not by being faint: muted italic 12px on that
+     grey was 3.79:1 and the smallest text on the page, for the notices a
+     participant most needs to read (a lost voice, a microphone that stopped,
+     "keep going"). Ink on grey is 9.37:1. */
   .transcript .system-note { margin: 10px 0; padding: 6px 10px; border-radius: 6px;
-    background: var(--surface-2); color: var(--muted);
-    font-size: 12px; font-style: italic; }
+    background: var(--surface-2); color: var(--fg);
+    font-size: 14px; }
   /* The capture-failure notice, under the header (see showCaptureFailure). It
      is a fault, so it has the fault's red edge, and it carries its own way
      out, so its button is a control, not part of the text. */

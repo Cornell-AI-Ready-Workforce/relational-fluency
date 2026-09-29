@@ -868,3 +868,24 @@ LIVE = RUN_VIEW + A11Y_DOM + r"""
 
 def test_the_status_region_says_the_notices_and_the_floor_and_not_the_captions(tmp_path):
     _run(tmp_path, LIVE, "LIVE OK")
+
+
+# =========================================================================== #
+# A11Y-04. The app's notices in the transcript (a lost voice, a microphone that
+# stopped, the gate notes) were muted italic 12px on grey, 3.79:1: the faintest
+# text on the page for the notices a participant most needs. Ink, upright, 14px.
+# =========================================================================== #
+
+def _rule(src: str, selector: str) -> str:
+    m = re.search(r"(?:^|\})\s*" + re.escape(selector) + r"\s*\{([^}]*)\}", src, re.M)
+    assert m, f"no rule for {selector}"
+    return m.group(1)
+
+
+def test_the_page_notices_are_readable():
+    src = V2.read_text(encoding="utf-8")
+    note = _rule(src, ".transcript .system-note")
+    assert re.search(r"(?<!-)color:\s*var\(--fg\)", note), note
+    assert "italic" not in note, note
+    size = float(re.search(r"font-size:\s*([\d.]+)px", note).group(1))
+    assert size >= 14, note
