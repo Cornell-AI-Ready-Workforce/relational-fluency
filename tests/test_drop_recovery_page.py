@@ -445,6 +445,15 @@ async function connected(position, total, opts) {
     assert(/start again from the beginning/.test(c.text), c.text);
     // Nobody greets them: the participant opens every conversation (28b).
     assert(/you speak first/.test(c.text) && !/greet/.test(c.text), c.text);
+    // FLOW-06: what Reconnect does is start the whole conversation over, part
+    // 1 in S2/S4 included, with the timer and End's lock; "this part" read as
+    // one phase of it. "Press", which is what a phone does.
+    assert(/this conversation will start again from the beginning/.test(c.text), c.text);
+    assert(/timer starts again at 00:00/.test(c.text) && /End unlocks again 7 minutes after you start/.test(c.text),
+      'the card does not say the clock and the lock start again: ' + c.text);
+    assert(!/this part|Click/.test(c.text), c.text);
+    const line = b.dom.$('transcript').children.filter(x => x.className === 'scene').pop().textContent;
+    assert.strictEqual(line, 'The connection dropped. Press Reconnect to start this conversation again from the beginning.');
   }
 
   // ---- 6. Captions: one bubble per committed turn while the character is stalled
@@ -530,3 +539,17 @@ def test_the_drop_card_and_the_captions_by_pressing_them(tmp_path):
                           encoding="utf-8", timeout=180)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "DROP RECOVERY OK" in proc.stdout
+
+
+def test_every_reconnect_instruction_says_what_reconnect_does():
+    """FLOW-06: the card, the transcript line and the paused-audio notice said
+    "Click Reconnect to start this part of the conversation again", while
+    Reconnect starts the whole conversation over. One sentence, in all three
+    (the card's is asserted above, by pressing it)."""
+    src = V2.read_text(encoding="utf-8")
+    assert "Click Reconnect" not in src
+    assert "this part of the conversation again" not in src
+    said = "Press Reconnect to start this conversation again from the beginning."
+    assert src.count(said) == 2, "the transcript line and the paused-audio notice differ"
+    pause = src[src.index("function watchAudioContextState("):src.index("function watchMediaTracks(")]
+    assert said in pause.replace("' +\n                     '", "")

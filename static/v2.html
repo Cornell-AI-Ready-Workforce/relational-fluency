@@ -569,7 +569,9 @@
      never locked. Named by its bold first sentence (onConnectionDropped). -->
 <div class="gate-note" id="dropNote" role="dialog" aria-labelledby="dropTitle"
      aria-describedby="dropText" tabindex="-1">
-  <span id="dropText"><b id="dropTitle">Connection lost.</b> Your conversation was interrupted. Click Reconnect to carry on — this part will start again from the beginning, and you speak first. You have not lost your place in the study or anything you have already finished.</span>
+  <!-- Only the name here: every drop writes the rest (onConnectionDropped),
+       and a second copy of the wording went stale beside it. -->
+  <span id="dropText"><b id="dropTitle">Connection lost.</b></span>
   <div style="margin-top:10px"><button id="dropReconnect">Reconnect</button></div>
   <!-- The other doors out of a dropped encounter (the next encounter, the
        completion code, the contact, the survey), after the retry so the card
@@ -2808,7 +2810,7 @@
         ctxWatchdog = null;
         if (!started || ctx !== audioCtx || ctx.state === 'running') return;
         appendNotice('Your browser paused this page’s audio, so nothing was being heard or recorded. ' +
-                     'Click Reconnect to start this part of the conversation again.');
+                     'Press Reconnect to start this conversation again from the beginning.');
         onConnectionDropped();
       }, 2000);
     });
@@ -4270,7 +4272,7 @@
     line.className = 'scene';
     line.textContent = fatal
       ? 'This encounter could not continue. It is not something you did.'
-      : 'The connection dropped. Click Reconnect to start this part of the conversation again.';
+      : 'The connection dropped. Press Reconnect to start this conversation again from the beginning.';
     $('transcript').appendChild(line);
     $('transcript').scrollTop = $('transcript').scrollHeight;
     endSession();
@@ -4330,9 +4332,13 @@
       // but the study being broken.
       //
       // The sentence that replaces it is the one that IS true and the one they
-      // need before they press the button: this part starts over, the rest of
-      // the study does not. Whether the abandoned fragment is usable data is a
-      // separate question and answered elsewhere — server/app.py's
+      // need before they press the button: this conversation starts over, the
+      // rest of the study does not. The whole conversation, not "this part":
+      // in S2/S4 a part is one phase of it, and a drop in part 2 meets part 1
+      // again, with the timer back at 00:00 and End locked again for the
+      // floor, which the card has to say too (FLOW-06). Whether the abandoned
+      // fragment is usable data is a separate question and answered
+      // elsewhere — server/app.py's
       // _rateable_split already withholds any session no run recorded as
       // completed, which is exactly what this fragment is.
       //
@@ -4341,9 +4347,10 @@
       // but somebody whose conversation keeps dropping is told they may go on
       // without it rather than being handed the same button a fourth time.
       $('dropText').innerHTML =
-        '<b>Connection lost.</b> Your conversation was interrupted. Click Reconnect '
-        + 'to carry on — this part will start again from the beginning, and you speak '
-        + 'first. You have not lost your place in the study or '
+        '<b>Connection lost.</b> Your conversation was interrupted. Press Reconnect '
+        + 'to carry on: this conversation will start again from the beginning, and you '
+        + 'speak first. Its timer starts again at 00:00, and End unlocks again '
+        + minutesText(MIN_S) + ' after you start. You have not lost your place in the study or '
         + 'anything you have already finished.'
         + (repeated
             ? ' This is the ' + ordinalWord(encounterDrops) + ' time this conversation '
