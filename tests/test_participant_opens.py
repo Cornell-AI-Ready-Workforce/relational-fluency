@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -42,6 +44,7 @@ from test_bridge_correctness import adelta, created, done, tdelta, tdone  # noqa
 
 GPT = T.GPT
 LOUD = T.LOUD
+V2 = ROOT / "static" / "v2.html"
 
 
 @pytest.fixture(autouse=True)
@@ -581,3 +584,135 @@ def test_the_record_says_when_the_participant_opened(tmp_path):
     assert [c["reason"] for c in rec["opening"]["conversations"]] == ["start", "handoff"]
     assert rec["opening"]["conversations"][1]["waited_s"] == 6.5
     assert rec["provenance"]["opening"]["policy"] == "participant_opens"
+
+
+# --------------------------------------------------------------------------
+# 7. The page: the start cue, the hand-off cue, then the turn cue
+# --------------------------------------------------------------------------
+
+PAGE_HARNESS = r"""'use strict';
+const path = require('path');
+const assert = require('assert');
+const { bootV2, vm } = require(path.join(__dirname, 'stub.js'));
+const PAGE = process.argv[2];
+
+function page(mode, castList) {
+  const b = bootV2(PAGE, '?scenario=X');
+  const set = (code) => vm.runInContext(code, b.ctx);
+  const get = (code) => vm.runInContext(code, b.ctx);
+  const frame = (m) => b.ctx.handleServerFrame({ data: JSON.stringify(m) });
+  set(`
+    __now = 0;
+    const _mk = document.createElement;
+    document.createElement = (t) => { const n = _mk(t); n.remove = function () { this.removed = true; }; return n; };
+    audioCtx = {
+      get currentTime() { return __now; }, sampleRate: 16000, baseLatency: 0.005,
+      outputLatency: 0.02, state: 'running', destination: {},
+      createBuffer(ch, len, rate) { return { duration: len / rate, length: len, sampleRate: rate,
+        copyToChannel() {}, getChannelData: () => new Float32Array(len) }; },
+      createBufferSource() { return { buffer: null, connect() {}, start() {}, stop() {}, onended: null }; },
+      close() {}, addEventListener() {},
+    };
+    playDest = { stream: {} };
+    playEl = { pause() {}, srcObject: {}, paused: false, currentTime: 1 };
+    playElUsable = true; playbackChecked = true; playbackTime = 0; started = true;
+    ws = { readyState: 1, send() {}, close() {} };
+    timerStartMs = Date.now();
+  `);
+  frame({ type: 'session', session_id: 's_1', scenario: { title: 'T', mode: mode }, cast: castList });
+  const lines = () => b.dom.$('transcript').children.filter(c => !c.removed)
+    .map(c => c.textContent || c.innerHTML);
+  const cues = () => b.dom.$('transcript').children.filter(c => !c.removed && /start-cue/.test(c.className));
+  const pill = () => b.dom.$('turnState').textContent;
+  return { b, set, get, frame, lines, cues, pill };
+}
+
+const START = "You start the conversation. Say hello when you're ready.";
+
+(async () => {
+  for (const [mode, castList, names] of [
+      ['single', [{ id: 'morgan', name: 'Morgan' }], ['Morgan']],
+      ['group', [{ id: 'dan', name: 'Dan' }, { id: 'priya', name: 'Priya' }, { id: 'chris', name: 'Chris' }],
+       ['Dan', 'Priya', 'Chris']]]) {
+    const p = page(mode, castList);
+    assert(!p.lines().some(t => /speak first|start the conversation/i.test(t)),
+      mode + ': a cue before the server says who opens: ' + JSON.stringify(p.lines()));
+    p.frame({ type: 'segment_start', index: 0, label: 'Part 1', present: castList });
+    p.frame({ type: 'awaiting_participant', reason: 'start', names: names });
+    assert.deepStrictEqual(p.cues().map(c => c.textContent), [START], mode);
+    p.frame({ type: 'turn_open' });
+    assert.strictEqual(p.pill(), 'You can speak now', mode);
+    // A cough: they were heard speaking, and nothing was accepted. The cue stays.
+    p.frame({ type: 'speech_started' });
+    assert.strictEqual(p.pill(), 'Listening…', mode);
+    assert.strictEqual(p.cues().length, 1, mode + ': the cue went with a noise');
+    p.frame({ type: 'turn_open' });
+    assert.strictEqual(p.cues().length, 1, mode);
+    // Their first accepted line: the cue goes, the turn cue carries on.
+    p.frame({ type: 'speech_started' });
+    p.frame({ type: 'user_transcript', text: 'Hi, thanks for making time.', final: true, utterance: 1 });
+    p.frame({ type: 'participant_opened', reason: 'start', first_of_encounter: true });
+    assert.strictEqual(p.cues().length, 0, mode + ': the cue outlived the first line');
+    assert.strictEqual(p.pill(), 'Listening…', mode);
+    p.frame({ type: 'turn_open' });
+    assert.strictEqual(p.pill(), 'You can speak now', mode);
+  }
+
+  // ---- S1's hand-off: the new person, by name, and the same rule
+  {
+    const p = page('single', [{ id: 'riley', name: 'Riley' }, { id: 'sam', name: 'Sam' }]);
+    p.frame({ type: 'awaiting_participant', reason: 'start', names: ['Riley'] });
+    p.frame({ type: 'participant_opened', reason: 'start', first_of_encounter: true });
+    p.frame({ type: 'segment_start', index: 1, label: 'Part 2', present: [{ id: 'sam', name: 'Sam' }] });
+    p.frame({ type: 'awaiting_participant', reason: 'handoff', names: ['Sam'] });
+    assert.deepStrictEqual(p.cues().map(c => c.textContent), ["You're now with Sam. You start."]);
+    const at = p.lines().indexOf("You're now with Sam. You start.");
+    assert(at > 0 && /Part 2/.test(p.lines()[at - 1]), 'after the banner: ' + JSON.stringify(p.lines()));
+    p.frame({ type: 'participant_opened', reason: 'handoff', first_of_encounter: false });
+    assert.strictEqual(p.cues().length, 0);
+  }
+
+  // ---- The ring and End count from the first line; the stop does not move
+  {
+    const p = page('single', [{ id: 'morgan', name: 'Morgan' }]);
+    const $ = p.b.dom.$;
+    p.frame({ type: 'encounter_clock', min_seconds: 420, wrap_seconds: 660, max_seconds: 720, elapsed_s: 0 });
+    p.frame({ type: 'awaiting_participant', reason: 'start', names: ['Morgan'] });
+    // 7:40 on the timer, and nobody has spoken: the floor has not started.
+    p.set('timerStartMs = Date.now() - 460 * 1000; renderTimer();');
+    assert($('stopBtn').classList.contains('locked'), 'End unlocked with nothing said');
+    assert(/move on in about 7 minutes/.test($('gateLabel').textContent), $('gateLabel').textContent);
+    p.frame({ type: 'participant_opened', reason: 'start', first_of_encounter: true });
+    assert(p.get('Math.abs(Date.now() - floorStartMs)') < 1000, 'the floor did not start at the first line');
+    // 6:40 of conversation (8:40 on the timer): still held.
+    p.set('floorStartMs = Date.now() - 400 * 1000; timerStartMs = Date.now() - 520 * 1000; renderTimer();');
+    assert($('stopBtn').classList.contains('locked'), 'End unlocked before 7:00 of conversation');
+    assert(/move on in about 1 minute/.test($('gateLabel').textContent), $('gateLabel').textContent);
+    // A later participant_opened (a hand-off) does not restart it.
+    p.frame({ type: 'participant_opened', reason: 'handoff', first_of_encounter: false });
+    assert(p.get('(Date.now() - floorStartMs) / 1000') > 399, 'a hand-off restarted the floor');
+    p.set('floorStartMs = Date.now() - 425 * 1000; renderTimer();');
+    assert(!$('stopBtn').classList.contains('locked'), 'End still held past 7:00 of conversation');
+    // The page's own stop is 12:00 on the timer, whenever they first spoke.
+    assert.strictEqual(p.get('ceilingFired'), false);
+    p.set('floorStartMs = Date.now() - 500 * 1000; timerStartMs = Date.now() - 721 * 1000;');
+    p.set('try { renderTimer(); } catch (e) {}');
+    assert.strictEqual(p.get('ceilingFired'), true, 'the 12:00 stop moved');
+  }
+  console.log('PARTICIPANT OPENS PAGE OK');
+})().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
+"""
+
+
+def test_the_page_says_who_starts_in_1to1_rooms_and_at_the_hand_off(tmp_path):
+    from test_client_blockers import DOM_STUB
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed; the page harness needs it")
+    (tmp_path / "stub.js").write_text(DOM_STUB, encoding="utf-8")
+    h = tmp_path / "harness.js"
+    h.write_text(PAGE_HARNESS, encoding="utf-8")
+    proc = subprocess.run([node, str(h), str(V2)], capture_output=True,
+                          text=True, encoding="utf-8", timeout=180)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "PARTICIPANT OPENS PAGE OK" in proc.stdout

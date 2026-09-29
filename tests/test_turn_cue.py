@@ -12,7 +12,9 @@ What it replaces: the pill said "Your turn" at assistant_done (generation
 end), 7-17 s (median 13 s) before the character stopped talking in e80fca and
 more than 1 s early on 24 of 28 turns in 77ee7e; name pills came up to 8.5 s
 before that character's voice; and a room said "You speak first" although the
-lead opens every group scene.
+lead opens every group scene. (Since pipeline 2026-09-28b nobody opens a
+room: the participant does, and the start cue says so in 1:1 and rooms alike;
+tests/test_participant_opens.py.)
 
 The server owns the one part the page cannot know alone (nothing else queued
 or being generated) and says it with a turn_open frame, sent only after the
@@ -382,8 +384,11 @@ function page(mode, castList) {
   // ---- 1:1: the opening, a line, the gap before its end, the open floor
   {
     const p = page('single', [{ id: 'morgan', name: 'Morgan' }]);
+    // Who opens is the start cue's (awaiting_participant; see
+    // tests/test_participant_opens.py), a transcript line and not the pill.
+    p.frame({ type: 'awaiting_participant', reason: 'start', names: ['Morgan'] });
     const lines = p.b.dom.$('transcript').children.map(c => c.textContent);
-    assert(lines.some(t => /You speak first/.test(t)), '1:1 lost its opening line: ' + JSON.stringify(lines));
+    assert(lines.some(t => /You start the conversation/.test(t)), '1:1 lost its opening line: ' + JSON.stringify(lines));
     assert(!/Say hello/.test(p.pill()), 'the old opening pill: ' + p.pill());
     p.frame({ type: 'turn_open' });
     assert.strictEqual(p.pill(), 'You can speak now');
@@ -425,7 +430,7 @@ function page(mode, castList) {
     const lines = p.b.dom.$('transcript').children.map(c => c.textContent);
     assert(!lines.some(t => /You speak first/.test(t)), 'a room still says You speak first');
     assert(!/Say hello|speak first/.test(p.pill()), p.pill());
-    await p.say('dan', 'Dan', 1, 0, 1);                 // the lead's opener, 0.02 .. 1.02
+    await p.say('dan', 'Dan', 1, 0, 1);                 // Dan's line, 0.02 .. 1.02
     await p.at(0.3);
     assert.strictEqual(p.pill(), 'Dan is speaking');
     p.frame({ type: 'assistant_done', agent_id: 'dan' });

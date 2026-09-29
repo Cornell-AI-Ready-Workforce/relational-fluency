@@ -346,7 +346,9 @@ function page(search, runObj) {
        $('stopBtn').style.display = 'inline-block';`);
   const notices = () => b.dom.$('transcript').children
     .filter(c => c.className === 'system-note').map(c => c.textContent);
-  const at = (s) => set(`timerStartMs = Date.now() - ${s} * 1000; renderTimer();`);
+  // The participant spoke as the conversation opened: the ring and End count
+  // from their first line (floorStartMs) since pipeline 2026-09-28b.
+  const at = (s) => set(`timerStartMs = floorStartMs = Date.now() - ${s} * 1000; renderTimer();`);
   return { b, set, get, frame, notices, at };
 }
 
