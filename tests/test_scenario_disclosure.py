@@ -93,6 +93,81 @@ def test_a_participant_listing_carries_no_skill_or_form(keyed):
         assert "(" not in row["title"], row
 
 
+# --- the run a participant is on (issue #38, second half) ---------------------
+#
+# The scenario routes were half of it. GET /api/run/{id} is what the page itself
+# requests on every /v2?run= link (and /advance and /withdraw answer with the
+# same view), and it sent each encounter as the run built it: the construct,
+# the form, its sibling form, and the title and construct of the NEXT
+# encounter, which the page takes care never to preview. The page reads
+# run.current.id and nothing else of either.
+
+@pytest.fixture()
+def a_run(keyed, tmp_path, monkeypatch):
+    from server import runs, storage
+
+    monkeypatch.setattr(runs, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(runs, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(storage, "PARTICIPANTS_DIR", tmp_path / "participants")
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "index.db")
+    storage.init_storage()
+    (tmp_path / "runs").mkdir(parents=True, exist_ok=True)
+    run = runs.create("RF_PROBE_1", seed=7)
+    run["participant_record_id"] = "p_1790365076_2bb22c"
+    runs.save(run)
+    return run
+
+
+def _leaks(view: dict, run: dict) -> list:
+    text = __import__("json").dumps(view)
+    found = [f for f in ("construct", "variant", "parallel_form") if f'"{f}"' in text]
+    for entry in run["scenarios"]:
+        if entry["construct"] in text:
+            found.append(entry["construct"])
+    nxt = run["scenarios"][run["index"] + 1]
+    if nxt["title"] in text:
+        found.append(f"the next encounter's title {nxt['title']!r}")
+    return found
+
+
+def test_a_participant_is_not_told_what_their_run_measures(keyed, a_run):
+    r = keyed.get(f"/api/run/{a_run['run_id']}")
+    assert r.status_code == 200, r.text
+    view = r.json()
+    assert not _leaks(view, a_run), _leaks(view, a_run)
+    first = a_run["scenarios"][0]
+    # What the page reads is still there.
+    assert view["current"] == {"id": first["id"], "title": first["title"]}
+    assert "next" not in view, "a participant is not previewed the next encounter"
+    for field in ("run_id", "position", "total", "done", "completed", "withdrawn",
+                  "timing", "completion_code", "cohort"):
+        assert field in view, f"the participant page lost {field!r}"
+
+
+def test_nor_by_the_other_routes_that_answer_with_the_run(keyed, a_run):
+    rid = a_run["run_id"]
+    r = keyed.post(f"/api/run/{rid}/withdraw",
+                   json={"participant_id": a_run["participant_record_id"]})
+    assert r.status_code == 200, r.text
+    assert not _leaks(r.json(), a_run), _leaks(r.json(), a_run)
+
+
+def test_the_researcher_still_gets_the_run_as_it_was_built(keyed, a_run):
+    view = keyed.get(f"/api/run/{a_run['run_id']}", params={"key": KEY}).json()
+    assert view["current"] == a_run["scenarios"][0]
+    assert view["next"] == a_run["scenarios"][1]
+
+
+def test_every_route_that_returns_a_run_goes_through_the_participant_view():
+    import inspect
+
+    src = inspect.getsource(appmod)
+    assert "return runs.view(" not in src, (
+        "a route returns the raw run view; use _run_view(run, key)")
+
+
 # --- what a researcher is served ---------------------------------------------
 
 def test_the_researcher_still_gets_skill_form_and_persona_dials(keyed):

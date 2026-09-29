@@ -1717,6 +1717,30 @@ def _participant_scenario_view(row: dict, key: Optional[str]) -> dict:
     return {k: v for k, v in row.items() if k not in _RESEARCH_ONLY_SCENARIO_FIELDS}
 
 
+def _run_view(run: dict, key: Optional[str]) -> dict:
+    """runs.view for whoever is asking (issue #38, the run routes' half).
+
+    Every run route but the create is participant-open, and the page asks one
+    on every /v2?run= link. runs.view hands back `current` and `next` as the
+    run built them — id, title, construct, variant, parallel_form — so the
+    scenario routes' fix left the same facts one request over: the skill this
+    encounter measures, the form drawn and its sibling, and the title and
+    skill of the NEXT encounter, which the page takes care never to preview.
+    A participant gets what their page reads, `current` as its id and title
+    (the id's letter is already in every request the page makes), and no
+    `next` at all, rather than a null that would read as "this is the last
+    one". The researcher key still gets the run as it was built."""
+    from . import runs
+
+    view = runs.view(run)
+    if _operator_key(key):
+        return view
+    cur = view.get("current")
+    view["current"] = {"id": cur.get("id"), "title": cur.get("title")} if cur else None
+    view.pop("next", None)
+    return view
+
+
 @app.get("/api/scenarios")
 async def api_scenarios(key: Optional[str] = None):
     check_participant(key)
@@ -2484,7 +2508,7 @@ async def api_run_create(request: Request, key: Optional[str] = None):
         key_status=key_status,
         raw_participant_key=(raw_key if key_status != "ok" else None),
     )
-    return runs.view(run)
+    return _run_view(run, key)
 
 
 @app.get("/api/sessions/{session_id}/video-upload-url")
@@ -3022,7 +3046,7 @@ async def api_run_get(run_id: str, key: Optional[str] = None):
     run = runs.get(run_id)
     if run is None:
         raise HTTPException(404, "no such run")
-    return runs.view(run)
+    return _run_view(run, key)
 
 
 @app.post("/api/run/{run_id}/withdraw")
@@ -3089,7 +3113,7 @@ async def api_run_withdraw(run_id: str, payload: Optional[dict] = None,
     # Through the shared helper, because this is one of three places a
     # withdrawal is recorded and the teardown used to hang off this one alone.
     await _enforce_withdrawal(run, where=f"the stop control on run {run_id}")
-    return runs.view(run)
+    return _run_view(run, key)
 
 
 @app.post("/api/run/{run_id}/exit")
@@ -3169,7 +3193,7 @@ async def api_run_advance(run_id: str, session_id: Optional[str] = None,
     # encounter (the next scenario), so the scenario/owner checks would wrongly
     # 409/403 and permanently strand the participant.
     if any(c.get("session_id") == session_id for c in run.get("completed", [])):
-        return runs.view(run)
+        return _run_view(run, key)
 
     # A withdrawn run does not advance, and until now it said it had. runs.advance
     # no-ops on the stamp, so the encounter was never recorded against the run —
@@ -3246,7 +3270,7 @@ async def api_run_advance(run_id: str, session_id: Optional[str] = None,
     run = runs.advance(run_id, session_id)
     if run is None:
         raise HTTPException(404, "no such run")
-    return runs.view(run)
+    return _run_view(run, key)
 
 
 @app.get("/director", response_class=HTMLResponse)
