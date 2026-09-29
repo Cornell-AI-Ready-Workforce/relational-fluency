@@ -76,18 +76,28 @@ python -m tools.sim.check --write-baseline
 ```
 
 It keeps `tolerances` and replaces the per-scenario values and the `recorded`
-block; each scenario's entry also records the run it came from and a
-fingerprint of its sequence and stimulus, and a test fails in CI when a
-sequence or a stimulus file changes without a re-recorded baseline. The
-baseline names the realtime model it was recorded on, and a report against a
-server running another model fails rather than comparing.
+block; each scenario's entry also records the run it came from (build,
+`pipeline_version`, `room_pacing_version`, session) and a fingerprint of its
+sequence and stimulus, and a test fails in CI when a sequence or a stimulus
+file changes without a re-recorded baseline. The baseline names the realtime
+model it was recorded on, and a report against a server running another model
+fails rather than comparing. The same holds per scenario for the versions: a
+report fails a scenario whose baseline was recorded on another
+`pipeline_version` or `room_pacing_version` than `/health` reports, saying to
+re-record it, and a CI test fails when `server/llm.py`'s versions move past a
+committed baseline. A new version is a different experiment: 28a runs S2A to
+the 720 s ceiling where 24c ended it about 451 s in, and the count limits
+(`phantom_turns`, `voice_error`, `reply_missing`, ...) were calibrated on the
+shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
-check fails for it, saying so, until it is recorded. **S3A and S4A are pending
-as committed**: the gateway refused every realtime connection from about
-22:44 UTC on 2026-09-28, after the S1A and S2A runs the baseline holds, so
-record them with `python -m tools.sim.check --scenarios S3A,S4A
---write-baseline` on the first run that can reach the gateway.
+check fails for it, saying so, until it is recorded. **All four are pending as
+committed.** S1A and S2A were recorded on 24c / 24b (a736d51) and are not
+comparable with 28a; S3A and S4A were never recorded. The gateway refused
+every realtime connection from about 22:44 UTC on 2026-09-28 and still did at
+01:01 UTC on 2026-09-29, so record all four with `python -m tools.sim.check
+--write-baseline` on the first run that can reach the gateway, in the PR that
+ships 28a.
 
 ## The stimulus
 

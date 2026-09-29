@@ -184,6 +184,16 @@ def build_report(build: str, why: str, server: str, health: dict,
     if not model_ok:
         failures.append(f"server runs {model}, the baseline was recorded on {want_model}: "
                         f"the comparison means nothing")
+    # The pipeline and room pacing the server runs, beside those each baseline
+    # was recorded on (the entry's own `recorded`, else the file's). A new
+    # version is a different experiment: 28a runs S2A to the 720 s ceiling
+    # where 24c ended it about 451 s in, and the absolute-count limits below
+    # (phantom_turns <= base+1, voice_error <= base, ...) were calibrated on
+    # the shorter run. The sequence fingerprint cannot see that, so this is
+    # the model check's twin, per scenario (tools/sim/README.md: a new
+    # PIPELINE_VERSION is re-recorded in the same PR).
+    gw = health.get("gateway") or {}
+    running = {k: gw.get(k) for k in ("pipeline_version", "room_pacing_version")}
     scen = {}
     for sid, res in results.items():
         if "error" in res:
@@ -195,6 +205,20 @@ def build_report(build: str, why: str, server: str, health: dict,
         pending = (baseline.get("pending") or {}).get(sid)
         if base is None and pending:
             verdict["checks"][0]["note"] = f"no baseline yet: {pending}"
+        rec = (base or {}).get("recorded") or baseline.get("recorded") or {}
+        moved = {k: (rec.get(k), v) for k, v in running.items()
+                 if base and v and rec.get(k) and rec.get(k) != v}
+        if moved:
+            verdict["passed"] = False
+            verdict["checks"].append({
+                "metric": "versions", "ok": False,
+                "value": {k: now for k, (_, now) in moved.items()},
+                "baseline": {k: then for k, (then, _) in moved.items()},
+                "note": "the baseline was recorded on "
+                        + ", ".join(f"{k} {then}" for k, (then, _) in moved.items())
+                        + "; the server runs "
+                        + ", ".join(f"{now}" for _, now in moved.values())
+                        + ": a different experiment, so re-record it (tools/sim/README.md)"})
         want_seq = (base or {}).get("sequence_sha256")
         if want_seq and res.get("sequence_sha256") and want_seq != res["sequence_sha256"]:
             verdict["passed"] = False
@@ -208,7 +232,7 @@ def build_report(build: str, why: str, server: str, health: dict,
         for c in verdict["checks"]:
             if c["ok"]:
                 continue
-            if c["metric"] in ("baseline", "sequence"):
+            if c["metric"] in ("baseline", "sequence", "versions"):
                 failures.append(f"{sid}: {c['note']}")
             else:
                 failures.append(f"{sid}: {c['metric']} {c.get('value')} against limit "

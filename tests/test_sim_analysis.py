@@ -328,6 +328,17 @@ def test_the_committed_baseline_covers_every_default_sequence():
         assert entry["sequence_sha256"] == check.sequence_fingerprint(steps), (
             f"{sid}'s sequence or stimulus changed since its baseline was recorded; "
             f"re-record it with python -m tools.sim.check --write-baseline")
+        # And offline too: a PIPELINE_VERSION or ROOM_PACING_VERSION bump
+        # without a re-recorded baseline (tools/sim/README.md) compares the
+        # next release with a different experiment.
+        from server import llm
+        rec = entry.get("recorded") or base.get("recorded") or {}
+        assert rec.get("pipeline_version") == llm.PIPELINE_VERSION, (
+            f"{sid}'s baseline was recorded on pipeline {rec.get('pipeline_version')}, "
+            f"this code is {llm.PIPELINE_VERSION}: re-record it, or move it to `pending`")
+        assert rec.get("room_pacing_version") == llm.ROOM_PACING_VERSION, (
+            f"{sid}'s baseline was recorded on room pacing {rec.get('room_pacing_version')}, "
+            f"this code is {llm.ROOM_PACING_VERSION}: re-record it, or move it to `pending`")
     assert set(A.DEFAULT_TOLERANCES) <= set(base["tolerances"])
 
 
@@ -452,6 +463,33 @@ def test_a_changed_sequence_or_stimulus_invalidates_the_baseline():
                                         "sequence_sha256": check.sequence_fingerprint(steps + ",tone:1")}},
                                base)
     assert not moved["passed"] and "re-record" in moved["failures"][0]
+
+
+def test_a_baseline_from_another_pipeline_or_room_pacing_fails_and_says_re_record():
+    """Review of 850b08e: S1A and S2A were recorded on 24c/24b, and 28a makes
+    S2A run to the 720 s ceiling instead of ending about 451 s in. The sequence
+    did not change, so the fingerprint matched and a run under a different end
+    policy was compared with absolute-count limits calibrated on one 60 %
+    shorter. tools/sim/README.md says a new PIPELINE_VERSION is re-recorded."""
+    m = A.summarize(*_encounter())
+    base = _baseline_file()
+    base["scenarios"]["S2A"]["recorded"] = {"pipeline_version": "2026-09-24c",
+                                            "room_pacing_version": "2026-09-24b"}
+    assert check.build_report("abc1234", "", "", HEALTH, {"S2A": {"metrics": m}}, base)["passed"]
+    for moved in ({"pipeline_version": "2026-09-28a"}, {"room_pacing_version": "2026-09-28a"}):
+        health = json.loads(json.dumps(HEALTH))
+        health["gateway"].update(moved)
+        r = check.build_report("abc1234", "", "", health, {"S2A": {"metrics": m}}, base)
+        assert not r["passed"], moved
+        (why,) = [f for f in r["failures"] if f.startswith("S2A:")]
+        assert "re-record" in why and "2026-09-28a" in why, why
+        assert [c for c in r["scenarios"]["S2A"]["checks"] if c["metric"] == "versions"]
+    # A baseline entry without its own versions falls back to the file's.
+    del base["scenarios"]["S2A"]["recorded"]
+    base["recorded"] = {"pipeline_version": "2026-09-24c", "room_pacing_version": "2026-09-24b"}
+    health = json.loads(json.dumps(HEALTH))
+    health["gateway"]["pipeline_version"] = "2026-09-28a"
+    assert not check.build_report("abc1234", "", "", health, {"S2A": {"metrics": m}}, base)["passed"]
 
 
 def test_the_fingerprint_covers_the_stimulus_bytes(monkeypatch):
