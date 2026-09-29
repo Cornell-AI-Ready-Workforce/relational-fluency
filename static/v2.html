@@ -740,8 +740,11 @@
     const code = run?.completion_code || '';
     $('nextTitle').textContent = 'All encounters complete';
 
-    let cfg = { return_url: '', return_label: 'Return to the survey' };
-    try { cfg = await (await fetch('/api/run/config' + keyParamFirst)).json(); } catch {}
+    // The config the page already holds (loadRunCfg, fetched at boot for the
+    // build tag), so the card is painted in one go. A fresh fetch here left
+    // the new title over the previous card's body and its spent "Continue
+    // without waiting" until the server answered.
+    const cfg = (await loadRunCfg()) || { return_url: '', return_label: 'Return to the survey' };
 
     // The completion code is shown whether or not the return link is
     // configured, so a participant is never stranded without proof they
@@ -815,8 +818,9 @@
     $('nextAlt').style.display = 'none';
     $('nextBtn').style.display = 'none';
     $('nextOverlay').style.display = 'flex';
-    let cfg = { return_url: '', return_label: 'Return to the survey' };
-    try { cfg = await (await fetch('/api/run/config' + keyParamFirst)).json(); } catch {}
+    // Held config where there is some, as showRunComplete: the card grew in
+    // steps as the fetch and then the contact landed, moving its button.
+    const cfg = (await loadRunCfg()) || { return_url: '', return_label: 'Return to the survey' };
     if (cfg.return_url) {
       const sep = cfg.return_url.includes('?') ? '&' : '?';
       const back = `${cfg.return_url}${sep}` + new URLSearchParams(Object.assign({
