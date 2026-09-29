@@ -91,6 +91,14 @@ warn() { printf '  WARNING: %s\n' "$*" >&2; WARNINGS=$((WARNINGS + 1)); }
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || refuse "not inside a git checkout"
 cd "$ROOT"
 
+# An old plan file must not survive a failed or refused run: `apply tfplan.bin`
+# would apply whatever it holds. So it goes before the first check, not just
+# before the plan: a run refused below ("BEHIND origin/main", "encounter(s) in
+# progress") says nothing was planned, and a plan an earlier run made and
+# nobody applied would otherwise still be there, applying past every check
+# this run failed. tfplan.bin is gitignored, so check 1 cannot see it either.
+rm -f "$TF_DIR/$PLAN_FILE"
+
 # The interpreter for tools/deploy_guard.py: $PYTHON, else the project venv,
 # else whatever python is on PATH. Standard library only, so any 3.8+ works.
 if [ -z "${PYTHON:-}" ]; then
@@ -234,8 +242,7 @@ esac
 
 # --- the plan ---------------------------------------------------------------------
 step "tofu plan"
-# An old plan file must not survive a failed or refused run: `apply tfplan.bin`
-# would apply whatever it holds.
+# Again, for a plan file anything wrote while the checks ran.
 rm -f "$TF_DIR/$PLAN_FILE"
 PLANNED=1
 set +e

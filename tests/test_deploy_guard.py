@@ -355,6 +355,25 @@ def test_a_plan_that_rolls_the_image_back_is_refused_and_deleted(world):
 
 
 @bash_only
+@pytest.mark.parametrize("refusal", ["active_sessions", "dirty"])
+def test_an_old_plan_does_not_survive_a_refused_run(world, refusal):
+    """Monday's plan, not applied; Tuesday's run is refused and says nothing
+    was planned. `apply tfplan.bin`, still in shell history and the runbook,
+    would then apply Monday's plan past every check Tuesday's run failed."""
+    r = world.run()
+    assert r.returncode == 0, r.out
+    plan = world.work / "infra" / "terraform" / "tfplan.bin"
+    plan.write_text("MONDAY", encoding="utf-8")
+    if refusal == "dirty":
+        (world.work / "README").write_text("edited\n", encoding="utf-8")
+        r = world.run()
+    else:
+        r = world.run(STUB_HEALTH='{"active_sessions": 2, "build": null}')
+    assert r.returncode == 1 and "Nothing was planned" in r.out, r.out
+    assert not plan.exists(), "a refused run left the previous plan ready to apply"
+
+
+@bash_only
 def test_no_sim_report_warns_but_does_not_refuse(world):
     r = world.run()
     assert r.returncode == 0

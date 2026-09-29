@@ -373,7 +373,9 @@ It never applies. When every check passes it runs
 `tofu plan -out tfplan.bin`, prints the plan with the image change set apart
 (before, after, and whether that is forward or a rollback in git history), and
 prints the one command that applies exactly that plan. A saved plan also
-refuses to apply if the state moved after it was made.
+refuses to apply if the state moved after it was made. Every run deletes the
+plan file an earlier run left before its first check, so a refused run leaves
+nothing for that command to apply.
 
 | Check | Refuses when | Override |
 |---|---|---|
