@@ -1,13 +1,110 @@
 {
  "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
- "pending": {
-  "S1A": "not recorded on 2026-09-28a yet: the committed values (build a736d51, session s_1790635266_99bdc2) were recorded on pipeline 2026-09-24c / room pacing 2026-09-24b, and 28a's end policy runs S2A to the 720 s ceiling where 24c ended it about 451 s in, so they are a different experiment. They could not be re-recorded: the gateway refused every realtime connection from about 22:44 UTC on 2026-09-28 and still did at 01:01 UTC on 2026-09-29 (gpt-realtime-2.1 HTTP 403). Record it with: python -m tools.sim.check --scenarios S1A,S2A --write-baseline",
-  "S2A": "not recorded on 2026-09-28a yet: the committed values (build a736d51, session s_1790634754_6e4503) were recorded on pipeline 2026-09-24c / room pacing 2026-09-24b, and 28a's end policy runs S2A to the 720 s ceiling where 24c ended it about 451 s in, so they are a different experiment. They could not be re-recorded: the gateway refused every realtime connection from about 22:44 UTC on 2026-09-28 and still did at 01:01 UTC on 2026-09-29 (gpt-realtime-2.1 HTTP 403). Record it with: python -m tools.sim.check --scenarios S1A,S2A --write-baseline",
-  "S3A": "not recorded yet: from about 22:44 UTC on 2026-09-28 the gateway refused every realtime connection (HTTP 403, all three gpt-realtime models) while /v1/models still answered, so no S3A or S4A run could open; still refused at 01:01 UTC on 2026-09-29. Record it with: python -m tools.sim.check --scenarios S3A,S4A --write-baseline",
-  "S4A": "not recorded yet: from about 22:44 UTC on 2026-09-28 the gateway refused every realtime connection (HTTP 403, all three gpt-realtime models) while /v1/models still answered, so no S3A or S4A run could open; still refused at 01:01 UTC on 2026-09-29. Record it with: python -m tools.sim.check --scenarios S3A,S4A --write-baseline"
- },
  "realtime_model": "gpt-realtime-2.1",
- "scenarios": {},
+ "recorded": {
+  "build": "8c188a6",
+  "date": "2026-09-29",
+  "pipeline_version": "2026-09-28b",
+  "room_pacing_version": "2026-09-29b"
+ },
+ "scenarios": {
+  "S1A": {
+   "error_frames": 0,
+   "lines_answered": 8,
+   "lines_heard": 8,
+   "lines_said": 8,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "8c188a6",
+    "date": "2026-09-29",
+    "pipeline_version": "2026-09-28b",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790701657_de9f10"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "a4b2d90dd4da7ac2",
+   "speech_end_to_first_played_s": {
+    "n": 9,
+    "p50": 1.993,
+    "p90": 2.454
+   },
+   "triggers_fired": 4,
+   "voice_error": 0
+  },
+  "S2A": {
+   "error_frames": 0,
+   "lines_answered": 22,
+   "lines_heard": 27,
+   "lines_said": 27,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "8c188a6",
+    "date": "2026-09-29",
+    "pipeline_version": "2026-09-28b",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790701886_2a49cd"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "4ae8133b9c6e2fef",
+   "speech_end_to_first_played_s": {
+    "n": 22,
+    "p50": 3.553,
+    "p90": 5.579
+   },
+   "triggers_fired": 6,
+   "voice_error": 0
+  },
+  "S3A": {
+   "error_frames": 0,
+   "lines_answered": 7,
+   "lines_heard": 9,
+   "lines_said": 9,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "8c188a6",
+    "date": "2026-09-29",
+    "pipeline_version": "2026-09-28b",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790702608_f13b59"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "b839d60a54bb1537",
+   "speech_end_to_first_played_s": {
+    "n": 8,
+    "p50": 4.023,
+    "p90": 9.346
+   },
+   "triggers_fired": 3,
+   "voice_error": 0
+  },
+  "S4A": {
+   "error_frames": 0,
+   "lines_answered": 25,
+   "lines_heard": 31,
+   "lines_said": 31,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "8c188a6",
+    "date": "2026-09-29",
+    "pipeline_version": "2026-09-28b",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790702824_ebffd3"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "8efdc0004450ad17",
+   "speech_end_to_first_played_s": {
+    "n": 29,
+    "p50": 4.662,
+    "p90": 6.842
+   },
+   "triggers_fired": 4,
+   "voice_error": 0
+  }
+ },
  "tolerances": {
   "answered_rate_drop": 0.2,
   "error_frames_extra": 0,
