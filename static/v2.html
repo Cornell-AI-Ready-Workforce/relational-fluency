@@ -976,28 +976,22 @@
   // always possible, and the card says to tell the study team how far they got,
   // which is how a server-side fault gets resolved rather than through the code.
   //
-  // The default body is written for the failure call sites, where /advance did
-  // not land and this last encounter really may not have been counted. The door
-  // offered during the upload wait sits on the far side of a successful advance
-  // — `run = advanced` has already happened there — so that call site passes its
-  // own body rather than telling the participant something the code knows to be
-  // untrue about their own run. It passes `confirmText` too: see there.
-  function offerExit(label, bodyHtml, confirmText) {
+  // Its body is written for the failure call sites, where /advance did not land
+  // and this last encounter really may not have been counted. The upload wait,
+  // on the far side of a successful advance, has no door of this kind: its door
+  // stops the study (stopTheStudy; FLOW-05).
+  function offerExit(label) {
     const alt = $('nextAlt');
     alt.textContent = label;
     alt.style.display = 'inline-block';
-    alt.onclick = () => {
-      if (confirmText && !confirm(confirmText)) return;
-      showClosing(
-        'Finishing here',
-        bodyHtml ||
-        ('<p>Thank you for the conversations you did have. What you recorded is ' +
-         'stored on our side, though this last one may not have been counted ' +
-         'towards your run.</p>' +
-         '<p>Please use the contact below to tell the study team how far you ' +
-         'got.</p>'),
-        '');
-    };
+    alt.onclick = () => showClosing(
+      'Finishing here',
+      '<p>Thank you for the conversations you did have. What you recorded is ' +
+      'stored on our side, though this last one may not have been counted ' +
+      'towards your run.</p>' +
+      '<p>Please use the contact below to tell the study team how far you ' +
+      'got.</p>',
+      '');
   }
 
   // The lost-recording line, consumed once. Whichever screen comes next after
@@ -1136,19 +1130,22 @@
       $('nextBtn').onclick = skip;
       // The door stays, but not as a one-tap twin of the way on (FLOW-05).
       // This wait follows every conversation, so it is the normal path; both
-      // buttons said "continue", and this one ends the study for them with no
-      // code. It says what it does and asks first. After the last
-      // conversation there is nothing left to stop, and leaving here would
-      // skip the completion code, so it is not offered (nor left over from a
-      // failed advance that a Retry got past).
+      // buttons said "continue", and this one ended the study for them with no
+      // code and no record. It says what it does, asks first, and does it: it
+      // is "Stop and leave the study", which this card covers. A stop that
+      // only showed the closing card left the run open, so the survey link
+      // started the next conversation again, and the export could not tell it
+      // from an abandoned tab. After the last conversation there is nothing
+      // left to stop, and leaving here would skip the completion code, so it
+      // is not offered (nor left over from a failed advance that a Retry got
+      // past).
       if (run.done) $('nextAlt').style.display = 'none';
-      else offerExit('Stop the study here',
-        '<p>Thank you for the conversations you did have. The one you just ' +
-        'finished was counted towards your run, only its video was still ' +
-        'uploading, and the study team can see how that ended.</p>' +
-        '<p>Please use the contact below to tell the study team how far you ' +
-        'got.</p>',
-        'Stop the study here? You will not go on to the remaining conversations.');
+      else {
+        $('nextAlt').textContent = 'Stop the study here';
+        $('nextAlt').style.display = 'inline-block';
+        $('nextAlt').onclick = () => stopTheStudy(
+          'Stop the study here? You will not go on to the remaining conversations.', $('nextAlt'));
+      }
       showOverlay($('nextOverlay'));
       let outcome = await Promise.race([
         videoUpload.catch(() => ({ ok: false, reason: 'upload_threw' })),
@@ -4758,11 +4755,15 @@
   // until now nothing on the page did that: End conversation finishes the
   // current encounter and immediately enrols them in the next of four, so a
   // participant using it as the withdrawal control was told they had stopped
-  // and then handed another conversation. This is the control that stops the
-  // study, and it is the only one that does.
-  $('leaveBtn').addEventListener('click', async () => {
-    if (!confirm('Stop the study and leave? This ends your participation now. You will not be asked to do the remaining conversations.')) return;
-    $('leaveBtn').disabled = true;
+  // and then handed another conversation. This is what stops the study: the
+  // header's control, and the door that stands in for it on the upload wait,
+  // whose card covers the header (FLOW-05). Nothing else does.
+  $('leaveBtn').addEventListener('click', () => stopTheStudy(
+    'Stop the study and leave? This ends your participation now. You will not be asked to do the remaining conversations.',
+    $('leaveBtn')));
+  async function stopTheStudy(question, btn) {
+    if (!confirm(question)) return;
+    btn.disabled = true;
     // Before endSession, which is what stops the recorder and therefore what
     // starts the upload of a recording this server is about to refuse.
     withdrawing = true;
@@ -4799,7 +4800,7 @@
         : '<p>We could not reach the server to note that you stopped, so if you ' +
           'would like that on file, please say so using the contact below.</p>'),
       run?.completion_code || '');
-  });
+  }
 
   // The scenario's brief, one request per participant id and shared (issue
   // #44). The boot sequence asks for it as soon as the run has said which

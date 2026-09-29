@@ -809,19 +809,18 @@ function primed(uploadJs) {
   }
 
   // --- taking the exit mid-wait is not painted over when the wait ends ----
+  // The door stops the study (FLOW-05), so its card is the withdrawal's.
   {
     const b = primed('videoUpload = new Promise(() => {});');
     b.ctx.onEncounterComplete();
     await b.clock.advance(500);
     $(b, 'nextAlt').onclick();
     await b.clock.advance(500);
-    assert(/Finishing here/.test($(b, 'nextTitle').textContent),
+    assert(/You have stopped the study/.test($(b, 'nextTitle').textContent),
       'the exit door did not open: ' + $(b, 'nextTitle').textContent);
     await b.clock.advance(60000);
-    assert(/Finishing here/.test($(b, 'nextTitle').textContent),
+    assert(/You have stopped the study/.test($(b, 'nextTitle').textContent),
       'the upload wait repainted over the goodbye screen: ' + $(b, 'nextTitle').textContent);
-    // No code on this exit since 2026-09-23: it is reached only by finishing the run.
-    assert(!/CODE1/.test($(b, 'nextBody').innerHTML), 'the between-encounter exit handed out the completion code');
   }
 
   // --- leaving the study holds briefly for an in-flight upload ------------
@@ -1049,15 +1048,32 @@ function primed(putAtMs, advanceDelayMs, advanced) {
       'a cancelled exit still left the study: ' + $(b, 'nextTitle').textContent);
     assert.deepStrictEqual(asked, ['Stop the study here? You will not go on to the remaining conversations.']);
     b.sandbox.confirm = () => true;
+    const sent = [];
+    const fetched = b.sandbox.fetch;
+    b.sandbox.fetch = (url, o) => {
+      sent.push({ url: String(url), method: (o && o.method) || 'GET', body: o && o.body });
+      return fetched(url, o);
+    };
     $(b, 'nextAlt').onclick();
     await b.clock.advance(500);
-    assert(/Finishing here/.test($(b, 'nextTitle').textContent), 'the exit door did not open');
+    // And it does what it says: the run is withdrawn, as "Stop and leave the
+    // study" (which this card covers) would have done. It only showed a
+    // closing card, so the run stayed open and the survey link started
+    // conversation 2 of 4 again, and the export could not tell this stop
+    // from an abandoned tab.
+    const stops = sent.filter(c => c.method === 'POST' && c.url.includes('/api/run/r_1/withdraw'));
+    assert.strictEqual(stops.length, 1, 'the stop door did not withdraw the run');
+    assert.strictEqual(JSON.parse(stops[0].body).reason, 'participant_withdrew');
+    assert(/You have stopped the study/.test($(b, 'nextTitle').textContent),
+      'the exit door did not open: ' + $(b, 'nextTitle').textContent);
     const body = $(b, 'nextBody').innerHTML;
     assert(!/may not have been counted/.test(body),
       'the exit door denied an encounter the run had already recorded: ' + body);
-    assert(/counted towards your run/.test(body), 'the door did not say what did happen: ' + body);
-    assert(!/CODE1/.test(body), 'the between-encounter exit handed out the completion code');
-    assert(/contact below/.test(body), 'the exit does not say who to tell: ' + body);
+    assert(/noted that you chose to stop/.test(body), 'the card does not say the stop was noted: ' + body);
+    // The run's code, as the header's stop hands back: part-way through a run
+    // that is its RF-PARTIAL- code (runs.survey_code), never the finished one.
+    assert(/CODE1/.test(body), 'the stop lost the code the run hands back: ' + body);
+    assert(/recorded about you removed, contact /.test(body), 'the exit does not say who to tell: ' + body);
   }
 
   // --- after the last conversation the wait has no door to stop by ---------
