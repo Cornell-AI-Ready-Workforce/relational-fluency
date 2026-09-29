@@ -8098,10 +8098,10 @@ class RealtimeVoiceSessionRunner:
                     # turn before the participant spoke again; played after
                     # their words it has the room carry on past them, which
                     # is what #24 is about. What they said is routed afresh as
-                    # the next turn. A barge-in that stopped the line before
-                    # is this case too: the participant is talking when the
-                    # loop comes round, and that line's cut is the barge-in's
-                    # to write.
+                    # the next turn: only a line the director will route
+                    # yields (29b). A barge-in that stopped the line before
+                    # is this case too once their line lands, and that line's
+                    # cut is the barge-in's to write.
                     self.session.store.event(
                         "followup_yielded", agent_id=aid, reason=yielded,
                     )
@@ -8169,7 +8169,7 @@ class RealtimeVoiceSessionRunner:
 
     async def _await_followup_gap(self, room) -> Optional[str]:
         """THE FOLLOW-UP GAP (issues #24 and #48; the researchers' decision of
-        2026-09-29, room pacing 2026-09-29a). The next character of a room
+        2026-09-29, room pacing 2026-09-29a and b). The next character of a room
         turn waits until the line before it has finished playing on the page
         and FOLLOWUP_GAP_S (1.0 s) of silence has followed. None when it may
         take the floor; otherwise why the participant has it instead.
@@ -8189,31 +8189,46 @@ class RealtimeVoiceSessionRunner:
         holding a live reply's audio back in the runner, which nothing here
         does. The turn cue stays shut throughout, as the floor is held.
 
-        The participant takes the floor with a line accepted (a user_turn,
-        past every gate) during the wait, or earlier and still unrouted (it
-        came after this turn was routed and is queued as the next one), or
-        with the VAD open in the gap or as the previous reply ends (the check
-        this loop always made). Not with the VAD alone while the line before
-        is still playing: the participant's speakers can open it on the
-        character's own voice, and a real interjection over a line is the
+        The participant takes the floor with a line the director will route
+        on: one accepted during the wait, or earlier and still unrouted (it
+        came after this turn was routed and is queued as the next one). Their
+        voice in the gap, a turn of theirs being closed, or its transcript
+        still owed by the scribe (a commit of the last ROUTE_TRANSCRIPT_WAIT
+        with no transcript yet, on the route whose scribe commits its own
+        buffer) holds the follow-up rather than dropping it (29b): until that
+        line lands, and then it yields; or until nothing is held any more,
+        and then the gap is waited for again, counted from the end of their
+        sound too. 29a yielded to the VAD at once, and to any accepted line,
+        so a cough or a laugh in the gap (suppressed as no_speech), or a
+        "Yeah." too short for the director, dropped the rest of the director's
+        sequence and left the room silent; and it granted the follow-up while
+        a line that ended in the gap was still being transcribed, so the
+        character talked past it (#24). Not the VAD alone while the line
+        before is still playing: the participant's speakers can open it on
+        the character's own voice, and a real interjection over a line is the
         barge-in's, which stops the line and so opens the gap at once. Below
         0, FOLLOWUP_GAP_S grants as soon as the previous reply ends, as
         before 29a."""
-        if self.vad.speaking:
-            return "participant_speaking"
         gap = _realtime.followup_gap_s()
         if gap < 0:
-            return None
-        utterances = self._user_utterances
+            return "participant_speaking" if self.vad.speaking else None
+        wait_s = float(os.getenv("ROUTE_TRANSCRIPT_WAIT", "6"))
+        why, sound_at = "user_turn", 0.0   # sound_at: the participant's, heard
         while not self._closed and self.room is room:
-            if self._user_utterances != utterances or self._unrouted_user_texts:
-                return "user_turn"
+            if self._unrouted_user_texts:
+                return why
             now = time.time()
-            if self._heard_to_end(now):
-                if self.vad.speaking:
-                    return "participant_speaking"
-                if now - max(self._play_cursor, self._heard_end_at) >= gap:
-                    return None
+            heard = self._heard_to_end(now)
+            scribe = room.scribe
+            if heard and self.vad.speaking:
+                why, sound_at = "participant_speaking", now
+            elif self._participant_turn_closing:
+                sound_at = now
+            elif heard and not (getattr(scribe, "owns_input_buffer", False)
+                                and scribe.awaiting_transcript(wait_s)) and (
+                    now - max(self._play_cursor, self._heard_end_at, sound_at)
+                    >= gap):
+                return None
             await asyncio.sleep(0.05)
         return None
 

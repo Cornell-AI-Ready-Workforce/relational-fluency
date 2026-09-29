@@ -13,7 +13,9 @@ Now the loop waits for the page to finish the line (its play_end ack, the
 signal the turn cue waits for) and then FOLLOWUP_GAP_S of silence, and a
 participant who speaks in that gap, or whose line is accepted while it runs,
 has the floor: the follow-up yields (followup_yielded) and is not kept for
-later. Every group form paces the same way; nothing here is per scenario.
+later. Since 29b it yields only to a line the director will route; a sound
+in the gap, or a turn still being transcribed, holds it until that is known.
+Every group form paces the same way; nothing here is per scenario.
 """
 from __future__ import annotations
 
@@ -129,6 +131,8 @@ def test_a_follow_up_waits_until_the_line_before_it_has_been_heard(scenario_id):
 
 @pytest.mark.parametrize("scenario_id", ["S3A", "S4A"])
 def test_the_participant_speaking_in_the_gap_has_the_floor(scenario_id):
+    """Held while they speak, never granted over them, and given up to
+    their line once it is accepted."""
     runner, session, cast, grants, acks, _ = _paced_room(scenario_id)
 
     async def go():
@@ -137,6 +141,11 @@ def test_the_participant_speaking_in_the_gap_has_the_floor(scenario_id):
                 await asyncio.sleep(0.01)
             await asyncio.sleep(GAP_S / 3)
             runner.vad.speaking = True
+            await asyncio.sleep(GAP_S * 3)   # talking well past the gap
+            assert len(grants) == 1, "the follow-up was granted over the participant"
+            runner.vad.speaking = False
+            await runner._record_user_turn("Sorry, can I say something?",
+                                           voiced_ms=900)
         helper = asyncio.ensure_future(speaks_in_the_gap())
         await asyncio.wait_for(runner._run_group_turn(), timeout=10)
         await helper
@@ -146,6 +155,158 @@ def test_the_participant_speaking_in_the_gap_has_the_floor(scenario_id):
         "the follow-up was granted over the participant")
     (ev,) = session.store.of("followup_yielded")
     assert ev["agent_id"] == cast[2] and ev["reason"] == "participant_speaking"
+
+
+class _Scribe:
+    """The gpt route's scribe as the gap reads it: it commits its own buffer,
+    so it can say whether a commit's transcript is still owed."""
+    owns_input_buffer = True
+
+    def __init__(self):
+        self.committed_at = None
+
+    def awaiting_transcript(self, within_s):
+        return (self.committed_at is not None
+                and time.time() - self.committed_at <= within_s)
+
+
+def _arm_scribe(monkeypatch, wait_s):
+    """Once this turn has routed (so its own routing wait is the fixture's):
+    a scribe that can say what it owes, and the study's kind of transcript
+    wait."""
+    async def arm(runner):
+        monkeypatch.setenv("ROUTE_TRANSCRIPT_WAIT", wait_s)
+        runner.room.scribe = _Scribe()
+    return arm
+
+
+def _low_confidence_session(monkeypatch):
+    # The real append_user takes the low_confidence keywords; the double does not.
+    monkeypatch.setattr(FakeSession, "append_user", lambda self, text, **kw:
+                        self.shared_history.append({"speaker": "user", "text": text, **kw}))
+
+
+@pytest.mark.parametrize("scenario_id", ["S3A", "S4A"])
+def test_a_cough_in_the_gap_holds_the_follow_up_and_does_not_drop_it(scenario_id, monkeypatch):
+    """29a: the VAD opening in the gap on a cough or a laugh dropped the rest
+    of the director's sequence for good; the turn the sound spawned was then
+    skipped (its transcript is suppressed as no_speech), so nobody spoke and
+    the room stayed silent. Now the follow-up waits for what the sound was,
+    and plays once it is known to be nothing."""
+    runner, session, cast, grants, acks, _ = _paced_room(
+        scenario_id, while_generating=_arm_scribe(monkeypatch, "2"))
+    marks = {}
+
+    async def go():
+        async def cough():
+            while not acks:
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(GAP_S / 3)
+            runner.vad.speaking = True
+            await asyncio.sleep(0.1)
+            runner.vad.speaking = False                  # turn_ended: committed
+            runner.room.scribe.committed_at = time.time()
+            await asyncio.sleep(GAP_S * 2)               # its transcript is owed
+            assert len(grants) == 1, "granted while the cough's transcript was owed"
+            await runner._record_user_turn("...", voiced_ms=300)
+            runner.room.scribe.committed_at = None
+            marks["heard"] = time.time()
+        helper = asyncio.ensure_future(cough())
+        await asyncio.wait_for(runner._run_group_turn(), timeout=10)
+        await helper
+    asyncio.run(go())
+
+    assert [aid for aid, _ in grants] == [cast[1], cast[2]], (
+        "a cough in the gap dropped the follow-up")
+    assert not session.store.of("followup_yielded")
+    assert session.store.of("user_turn_suppressed")[0]["reason"] == "no_speech"
+    assert marks["heard"] <= grants[1][1] <= marks["heard"] + 0.25
+
+
+def test_a_short_line_the_director_does_not_read_is_not_a_yield(monkeypatch):
+    """29a yielded on every accepted line, including a low_confidence
+    backchannel ("Yeah." over 300 ms) that the director is never shown, so
+    the queued turn had nothing to route on and the sequence was lost. A
+    short line that names somebody is routing information, and still has the
+    floor."""
+    _low_confidence_session(monkeypatch)
+    for line, yields in (("Yeah.", False), ("Chris?", True)):
+        runner, session, cast, grants, acks, _ = _paced_room("S4A")
+
+        async def go():
+            async def says_it():
+                while not grants:
+                    await asyncio.sleep(0.01)
+                await asyncio.sleep(LINE_S / 2)
+                await runner._record_user_turn(line, voiced_ms=300)
+            helper = asyncio.ensure_future(says_it())
+            await asyncio.wait_for(runner._run_group_turn(), timeout=10)
+            await helper
+        asyncio.run(go())
+
+        (turn,) = session.store.of("user_turn")
+        assert turn["low_confidence"] is True, line
+        if yields:
+            assert [aid for aid, _ in grants] == [cast[1]], line
+            (ev,) = session.store.of("followup_yielded")
+            assert ev["reason"] == "user_turn"
+        else:
+            assert [aid for aid, _ in grants] == [cast[1], cast[2]], (
+                f"{line!r}, which the director never reads, dropped the follow-up")
+            assert not session.store.of("followup_yielded")
+
+
+def test_a_line_whose_transcript_is_owed_holds_the_follow_up(monkeypatch):
+    """#24 on the gpt route. A participant under the barge-in bar says
+    "Hang on, who owns the date?" as the line ends: the turn is committed
+    before the gap, and its transcript lands 0.6-1.6 s later. 29a looked only
+    at the VAD, which had closed, so the follow-up was granted, carried on
+    past the question, and the question was answered after it."""
+    runner, session, cast, grants, acks, _ = _paced_room(
+        "S4A", while_generating=_arm_scribe(monkeypatch, "2"))
+
+    async def go():
+        async def asks_as_the_line_ends():
+            while not grants:
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(LINE_S - 0.1)
+            runner._participant_turn_closing = True      # turn_ended, committing
+            await asyncio.sleep(0.05)
+            runner.room.scribe.committed_at = time.time()
+            runner._participant_turn_closing = False
+            while not acks:
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(GAP_S + 0.2)             # after the gap would end
+            await runner._record_user_turn("Hang on, who owns the date?", voiced_ms=900)
+        helper = asyncio.ensure_future(asks_as_the_line_ends())
+        await asyncio.wait_for(runner._run_group_turn(), timeout=10)
+        await helper
+    asyncio.run(go())
+
+    assert [aid for aid, _ in grants] == [cast[1]], (
+        "the follow-up was granted while the participant's line was being transcribed")
+    (ev,) = session.store.of("followup_yielded")
+    assert ev["agent_id"] == cast[2] and ev["reason"] == "user_turn"
+
+
+def test_a_transcript_that_never_comes_holds_the_follow_up_for_a_bounded_time(monkeypatch):
+    runner, session, cast, grants, acks, _ = _paced_room(
+        "S4A", while_generating=_arm_scribe(monkeypatch, "0.8"))
+    marks = {}
+
+    async def go():
+        async def commits_and_is_never_transcribed():
+            while not acks:
+                await asyncio.sleep(0.01)
+            runner.room.scribe.committed_at = marks["commit"] = time.time()
+        helper = asyncio.ensure_future(commits_and_is_never_transcribed())
+        await asyncio.wait_for(runner._run_group_turn(), timeout=10)
+        await helper
+    asyncio.run(go())
+
+    assert [aid for aid, _ in grants] == [cast[1], cast[2]]
+    assert marks["commit"] + 0.8 <= grants[1][1] <= marks["commit"] + 1.05
+    assert not session.store.of("followup_yielded")
 
 
 @pytest.mark.parametrize("scenario_id", ["S3A", "S4A"])
@@ -221,6 +382,7 @@ def test_the_old_pacing_is_one_knob_away(monkeypatch):
 
 def test_the_gap_and_its_version_are_on_the_record():
     assert llm.provenance(GPT)["pacing"]["followup_gap_s"] == GAP_S
-    assert llm.ROOM_PACING_VERSION == "2026-09-29a"
+    assert llm.ROOM_PACING_VERSION == "2026-09-29b"
     src = (ROOT / "server" / "llm.py").read_text(encoding="utf-8")
-    assert src.count("#   2026-09-29a") == 1, "a history line for the version"
+    for version in ("2026-09-29a", "2026-09-29b"):
+        assert src.count("#   " + version) == 1, "a history line for " + version

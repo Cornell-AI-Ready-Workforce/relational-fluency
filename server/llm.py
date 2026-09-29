@@ -539,6 +539,17 @@ def text_client() -> AsyncAnthropic:
 #                0 restores 28b. Record: a barge-in's playback_cut names the
 #                line playing on the page, not a reply queued behind it (it
 #                was written for that reply, heard 0.0, #48 (c)).
+#   2026-09-29b  review of 29a: a follow-up yields only to a participant line
+#                the director will route. Their voice in the gap, a turn of
+#                theirs being closed, or its transcript still owed by the
+#                scribe (gpt, within ROUTE_TRANSCRIPT_WAIT) holds it instead,
+#                and it plays once that settles with no such line, the gap
+#                counted from the end of their sound as well. 29a dropped the
+#                sequence on a cough or a laugh in the gap (whose turn was then
+#                skipped as no_speech, so nobody spoke) and on a
+#                low_confidence "Yeah." the director never reads, and granted
+#                the follow-up while a line that ended in the gap was still
+#                being transcribed.
 #
 # PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
@@ -576,7 +587,7 @@ def text_client() -> AsyncAnthropic:
 #                encounter's clock. The page shows a start cue until then.
 #                Provenance `opening`.
 PIPELINE_VERSION = "2026-09-28b"
-ROOM_PACING_VERSION = "2026-09-29a"
+ROOM_PACING_VERSION = "2026-09-29b"
 
 
 def _voice_style_provenance():
