@@ -536,7 +536,9 @@ def text_client() -> AsyncAnthropic:
 #                still unrouted, or their voice in the gap, gives them the
 #                floor instead: followup_yielded, with a reason, and the rest
 #                of the director's sequence is dropped. FOLLOWUP_GAP_S below
-#                0 restores 28b.
+#                0 restores 28b. Record: a barge-in's playback_cut names the
+#                line playing on the page, not a reply queued behind it (it
+#                was written for that reply, heard 0.0, #48 (c)).
 #
 # PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")

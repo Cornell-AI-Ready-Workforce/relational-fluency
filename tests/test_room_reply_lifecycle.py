@@ -415,6 +415,40 @@ async def test_the_floor_holders_own_cut_is_its_current_turn():
     assert cut["heard_seconds"] <= cut["total_seconds"]
 
 
+@in_a_loop
+async def test_a_cut_names_the_line_playing_not_the_one_queued_behind_it():
+    """Issue #48 (c): Chris holds the floor and his reply has gone to the
+    page, but it is queued behind Dan's line, which the participant is still
+    hearing. The cut was written for Chris, heard 0.0, and Dan's line, the
+    one actually cut off, had none (s_1790278989_77ee7e at 182 s and 214 s)."""
+    runner, session = cut_runner(holder_announced=True)
+    chris = runner._member_states["chris"]
+    chris.new_turn()                                   # as the pump does
+    runner._advance_play_cursor("chris", chris, b"\x00" * 32000 * 3)
+    assert chris.play_start > time.time(), "the test needs Chris queued"
+    await runner._client_to_model()
+    (cut,) = session.store.of("playback_cut")
+    assert cut["agent_id"] == "dan", (
+        "the line queued behind the one playing was written as the cut")
+    assert cut["total_seconds"] == 6.0
+    assert 1.9 <= cut["heard_seconds"] <= cut["total_seconds"]
+
+
+@in_a_loop
+async def test_with_nobody_on_the_floor_the_cut_is_still_the_line_playing():
+    """The same queue after Chris's reply has finished generating and the
+    floor is free: the barge-in with no holder cuts what is playing."""
+    runner, session = cut_runner(holder_announced=False)
+    runner.room.speaking = None
+    chris = runner._member_states["chris"]
+    chris.new_turn()
+    runner._advance_play_cursor("chris", chris, b"\x00" * 32000 * 3)
+    await runner._client_to_model()
+    (cut,) = session.store.of("playback_cut")
+    assert cut["agent_id"] == "dan"
+    assert cut["heard_text"].startswith("one two")
+
+
 # --------------------------------------------------------------------------
 # 4. The split turn
 # --------------------------------------------------------------------------

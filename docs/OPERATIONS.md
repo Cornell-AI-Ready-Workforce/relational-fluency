@@ -544,6 +544,7 @@ followed.
 | Version | Change | Knob (default) / to reverse |
 |---|---|---|
 | room 29a | A follow-up speaker (the second or third of a room turn) is given the floor once the line before it has finished playing on the page (its `play_end` ack, or 2 s past its modelled end for a page that never acks, as the turn cue reads it) and `FOLLOWUP_GAP_S` of silence has followed. It was granted at the previous line's generation end, so it was queued behind that line and began 0.0-0.2 s after it. On the page the gap is `FOLLOWUP_GAP_S` plus the follow-up's own time to first audio (`turn_timing`); the turn cue stays empty through it. If the participant speaks in the gap, or a line of theirs is accepted while the previous line plays (or after the turn was routed), the follow-up yields: `followup_yielded` with `reason` `participant_speaking` or `user_turn`. The rest of the director's sequence is dropped, not replayed later; what they said is routed as the next turn. | `FOLLOWUP_GAP_S` (1.0); below 0 restores `28b` |
+| room 29a | A barge-in's `playback_cut` is written for the line the participant was hearing. A reply sent to the page but queued behind that line was written as the cut instead, heard 0.0, and the line actually cut had none (#48). | no knob (record fix) |
 
 Caveats for analysis: from `29a` the handoffs between characters within one
 room turn are at least 1 s apart on the page, and more follow-ups yield to

@@ -1050,6 +1050,10 @@ class RealtimeVoiceSessionRunner:
         # output latency, so a gap counted from it is silence actually heard.
         self._heard_end_at = 0.0
         self._last_played: Optional[dict] = None   # {agent_id, start, end, text}
+        # The few lines before _last_played, in the same shape: a room's reply
+        # can be queued on the page behind a line that is still playing, and a
+        # barge-in then cuts the one in front (see _note_played).
+        self._played_lines: List[dict] = []
         # Rooms: when the participant's last turn was committed on the scribe,
         # and when the floor was last granted through _grant. A barge-in inside
         # ROOM_SPLIT_TURN_S of the first, on a reply granted after it, is the
@@ -3121,13 +3125,25 @@ class RealtimeVoiceSessionRunner:
         self._play_cursor = start + len(pcm) / 32000.0
         if st is not None:
             st.play_end = self._play_cursor
-        self._last_played = {
+        self._note_played({
             "agent_id": agent_id,
             "start": st.play_start if st is not None else start,
             "end": self._play_cursor,
             "text": "".join(st.text) if st is not None and st.text else
                     (self._last_played or {}).get("text", ""),
-        }
+        })
+
+    def _note_played(self, line: dict) -> None:
+        """Make `line` the playback clock's latest (_last_played), keeping the
+        few lines before it. A room reply can be queued on the page behind a
+        line still playing there (a routed turn's first reply behind the last
+        turn's last line), and a barge-in then has to name the line the
+        participant was hearing, not the one waiting behind it (issue #48;
+        see _cut_last_played)."""
+        old = self._last_played
+        if old is not None and old.get("start") != line.get("start"):
+            self._played_lines = (self._played_lines + [old])[-3:]
+        self._last_played = line
 
     async def _announce(self, agent, st) -> None:
         st.announced = True
@@ -3241,9 +3257,9 @@ class RealtimeVoiceSessionRunner:
         text = "".join(st.text).strip()
         st.text = []
         st.announced = False
-        self._last_played = {
+        self._note_played({
             "agent_id": agent.id, "start": st.play_start, "end": st.play_end, "text": text,
-        }
+        })
         # The audio that was relayed for it (_flush_held counted it on the
         # same clock). Omitted, this path wrote audio_ms 0 for every adopted
         # completed reply, however much of it the participant heard.
@@ -3253,11 +3269,21 @@ class RealtimeVoiceSessionRunner:
         """Write a playback_cut for the line still playing on the page
         (_last_played, on the playback clock): heard_seconds / total_seconds
         of that turn, and roughly the words that fit in what was heard, BESIDE
-        the full line, never instead of it."""
+        the full line, never instead of it.
+
+        The latest line is not always the one playing: one not yet begun is
+        queued behind an earlier line, and that earlier line is the one the
+        participant cut off (issue #48 (c): it was written as the queued
+        line, heard 0.0, and the line actually cut had no cut at all)."""
+        now = time.time()
         lp = self._last_played or {}
+        if (lp.get("start") or 0.0) > now:
+            lp = next((line for line in reversed(self._played_lines)
+                       if (line.get("start") or 0.0) <= now
+                       < (line.get("end") or 0.0)), lp)
         heard = 0.0
         if lp.get("start") is not None:
-            heard = max(0.0, time.time() - lp["start"])
+            heard = max(0.0, now - lp["start"])
         total = (lp.get("end") or 0) - (lp.get("start") or 0)
         words = (lp.get("text") or "").split()
         heard_words = (len(words) if total <= 0
@@ -5002,12 +5028,20 @@ class RealtimeVoiceSessionRunner:
                         # "heard 1.9 of 1.9" from his line 16 s earlier).
                         # What the participant was talking over then is the
                         # line still playing, which may be another member's
-                        # (a follow-up is granted before the previous line
-                        # has finished playing, fix plan #24 (a) 1), and that
-                        # is the cut written.
+                        # (a routed turn's first reply is still granted
+                        # before the last turn's line has finished playing),
+                        # and that is the cut written.
+                        #
+                        # And only once that reply has begun to PLAY: sent,
+                        # it can still be queued behind the line in front,
+                        # and it was written as the cut, heard 0.0, while the
+                        # line the participant actually cut had none (issue
+                        # #48 (c), s_1790278989_77ee7e at 182 s and 214 s).
+                        # _cut_last_played names the line playing.
                         cut_st = self._member_states.get(speaking_id)
                         if (holder_heard and cut_st is not None
-                                and cut_st.play_start is not None):
+                                and cut_st.play_start is not None
+                                and cut_st.play_start <= time.time()):
                             self.session.store.event(
                                 "playback_cut", agent_id=speaking_id,
                                 segment=self.segment,
@@ -5019,7 +5053,7 @@ class RealtimeVoiceSessionRunner:
                             )
                         elif (time.time() < self._play_cursor
                                 and (self._last_played or {}).get("agent_id")
-                                not in (None, speaking_id)):
+                                is not None):
                             self._cut_last_played()
                         if cut_st is not None:
                             # This turn is closed now; see the pump's
