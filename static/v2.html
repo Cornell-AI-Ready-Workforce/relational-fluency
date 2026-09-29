@@ -587,7 +587,10 @@
       well as yours: the characters hear them as if you had said them. Please move to a
       quiet room, away from anyone talking, before you go on. If you cannot, noise-cancelling
       headphones also work.</div>
-      <p>You will be talking out loud with AI characters for about 10 minutes at a time. Please use <b>headphones</b> if you have them.</p>
+      <!-- From the page's clock, as the first screen's is (describeEncounterLength):
+           "about 10 minutes" was neither the 7:00 floor nor the 12:00 stop. -->
+      <p>You will be talking out loud with AI characters for <span id="checkMin">7</span> to
+      <span id="checkMax">12</span> minutes at a time. Please use <b>headphones</b> if you have them.</p>
       <!-- Each verdict is live (role=status) and describes its button. The
            help under a row is not in that description: a description is read
            even while its paragraph is hidden, and "We can't hear anything
@@ -671,7 +674,8 @@
   </div>
   <div class="controls" id="controls">
     <span class="turn-state" id="turnState"></span>
-    <span class="gate" id="gate" title="Each conversation runs at least 7 minutes; End unlocks then. You can stop taking part at any time with “Stop and leave the study”.">
+    <!-- Its title is renderGate's, from the clock. -->
+    <span class="gate" id="gate">
       <svg viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="fill" id="gateFill" cx="12" cy="12" r="9" stroke-dasharray="56.5" stroke-dashoffset="56.5"/></svg>
       <span id="gateLabel"></span>
     </span>
@@ -2020,11 +2024,14 @@
       ? 'move on to the next conversation' : 'end this conversation';
     return `you can ${what} in about ${left} minute${left === 1 ? '' : 's'}`;
   }
-  // The first screen's account of the clock, from the same three numbers.
+  // The intro cards' account of the clock, from the same three numbers: the
+  // first screen and the audio check.
   function describeEncounterLength() {
     const mins = (s) => String(Math.round(s / 60));
     $('fictionMin').textContent = mins(MIN_S);
     $('fictionMax').textContent = mins(MAX_S);
+    $('checkMin').textContent = mins(MIN_S);
+    $('checkMax').textContent = mins(MAX_S);
     // The study's own stop control exists only on a run link.
     $('fictionLeave').style.display = runId ? 'inline' : 'none';
   }
@@ -2053,6 +2060,10 @@
     const g = $('gate');
     if (!g || !started) return;
     g.classList.add('show');
+    // From the clock, which the runner's encounter_clock can reset mid-page;
+    // the markup's "7 minutes" would not follow it.
+    g.title = `Each conversation runs at least ${minutesText(MIN_S)}; End unlocks then. ` +
+      'You can stop taking part at any time with “Stop and leave the study”.';
     const pct = Math.min(1, floorElapsedS() / MIN_S);
     $('gateFill').style.strokeDashoffset = String(RING * (1 - pct));
     if (pct >= 1) {
@@ -4771,6 +4782,9 @@
     return new Promise(resolve => {
       const ov = $('audioCheckOverlay');
       resetAudioCheck();
+      // Its minutes too: this card is also shown without the first screen (a
+      // refresh after it, "Check my audio again").
+      describeEncounterLength();
       const micOk = { v: false }, spkOk = { v: false }, camOk = { v: false };
       let spkPlays = 0;
       let testStream = null, testCtx = null, meterInt = null, micTimer = null, camStream = null;

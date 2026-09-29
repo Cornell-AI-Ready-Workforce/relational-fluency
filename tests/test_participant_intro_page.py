@@ -1001,3 +1001,55 @@ def test_the_remaining_small_print_is_readable():
     fill = value(colour(_rule(src, ".meter > i"), "background"))
     track = value(colour(_rule(src, ".meter"), "background"))
     assert _contrast(fill, track) >= 3, (fill, track)
+
+
+# =========================================================================== #
+# FLOW-09 (UX audit, 2026-09-28). The audio check said "about 10 minutes at a
+# time" and the ring's tooltip "at least 7 minutes", both typed in, while the
+# first screen was filled from the clock (7 and 12). Both are the clock's now,
+# so a run whose timing is changed says the new numbers everywhere.
+# =========================================================================== #
+
+CLOCK_COPY = RUN_VIEW + r"""
+  // RUN_VIEW's stop is 13:00, so only copy that reads the clock gets it right.
+  const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+  const text = (id) => b.dom.$(id).textContent;
+  await b.clock.advance(50);
+  assert.deepStrictEqual([text('fictionMin'), text('fictionMax')], ['7', '13']);
+  b.dom.$('fictionAck').click(); await b.clock.advance(50);
+  assert(shown(b, 'audioCheckOverlay'));
+  assert.deepStrictEqual([text('checkMin'), text('checkMax')], ['7', '13'],
+    'the audio check does not say what the first screen says');
+
+  // Shown again without the first screen ("Check my audio again"), after the
+  // clock has moved: its own numbers follow.
+  b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+  b.set('MIN_S = 480; MAX_S = 900;');
+  b.ctx.runAudioCheck(); await b.clock.advance(10);
+  assert.deepStrictEqual([text('checkMin'), text('checkMax')], ['8', '15']);
+  b.dom.$('audioCheckSkip').click(); await b.clock.advance(10);
+  b.set('MIN_S = 420; MAX_S = 780;');
+
+  // The ring's tooltip, from the floor, and again when the runner resets it.
+  b.dom.$('situationStart').click(); await b.clock.advance(1000);
+  assert.strictEqual(b.set('started'), true);
+  assert(/^Each conversation runs at least 7 minutes; End unlocks then\./.test(b.dom.$('gate').title),
+    b.dom.$('gate').title);
+  b.ctx.handleServerFrame({ data: JSON.stringify(
+    { type: 'encounter_clock', min_seconds: 540, wrap_seconds: 720, max_seconds: 780 }) });
+  await b.clock.advance(1000);
+  assert(/at least 9 minutes/.test(b.dom.$('gate').title), b.dom.$('gate').title);
+"""
+
+
+def test_the_audio_check_and_the_ring_say_the_clock_s_minutes(tmp_path):
+    _run(tmp_path, CLOCK_COPY, "CLOCK COPY OK")
+
+
+def test_no_duration_is_typed_into_the_audio_check_or_the_ring():
+    src = V2.read_text(encoding="utf-8")
+    check = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", _overlay(src, "audioCheckOverlay")))
+    assert "about 10 minutes" not in check, check
+    assert "7 to 12 minutes at a time" in check, check
+    assert "title" not in _attrs(_open_tag(src[:src.index("<script>")], "gate")), (
+        "the ring's tooltip is typed into the markup again")
