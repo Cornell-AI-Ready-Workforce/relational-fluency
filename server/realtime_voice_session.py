@@ -518,7 +518,8 @@ def _turn_meta(ev: dict) -> dict:
             "probe": bool(ev.get("probe")), "replay": bool(ev.get("replay")),
             "voiced_ms": ev.get("voiced_ms"),
             "voiced_span_ms": ev.get("voiced_span_ms"),
-            "committed_at": ev.get("committed_at")}
+            "committed_at": ev.get("committed_at"),
+            "spoken_at": ev.get("spoken_at")}
 
 
 async def _await_transcript(buf: List[str], grace: float,
@@ -1343,6 +1344,8 @@ class RealtimeVoiceSessionRunner:
         # From the first frame, not only once its pump starts (see
         # _pump_events): the transcript gate counts voiced audio per commit.
         rt.voiced_bar = self.vad.effective_threshold
+        # And each commit is dated by the VAD's speech start (issue #50).
+        rt.speech_began = lambda: self._speech_started_at
         window = _realtime.end_of_turn_for(getattr(rt, "model", realtime_model()))
         if window is not None:
             rt.turn_detection = window
@@ -3335,8 +3338,10 @@ class RealtimeVoiceSessionRunner:
         # response_done. See the cancel branch below.
         stopping = False
         # The scribe hears only the participant, so it counts their voiced
-        # audio per commit for the transcript gate (see _record_user_turn).
+        # audio per commit for the transcript gate (see _record_user_turn),
+        # and dates each commit by the VAD's speech start (issue #50).
         rt.voiced_bar = self.vad.effective_threshold
+        rt.speech_began = lambda: self._speech_started_at
         try:
             async for ev in rt.events():
                 etype = ev.get("type")
@@ -3615,6 +3620,13 @@ class RealtimeVoiceSessionRunner:
             # The line above was too short-voiced to trust (see
             # _record_user_turn); the steering review never read it.
             participant_low_confidence=self._last_user_low_confidence,
+            # The page turn this line played as, the `turn` its play_start
+            # ack and turn_timing name (not direction.turn, the director's
+            # count): encounter_record dates the line by when it was heard,
+            # which for a follow-up held behind a colleague can be seconds
+            # after this is written (issue #50). None when it never reached
+            # the page.
+            page_turn=_timer(self).turn_of(agent.id),
         )
         # Only the slot this turn actually consumed is cleared: a direction
         # belonging to a character who has not spoken yet keeps waiting for them.
@@ -3705,7 +3717,8 @@ class RealtimeVoiceSessionRunner:
                                 probe: bool = False, replay: bool = False,
                                 voiced_ms: Optional[int] = None,
                                 voiced_span_ms: Optional[int] = None,
-                                committed_at: Optional[float] = None) -> None:
+                                committed_at: Optional[float] = None,
+                                spoken_at: Optional[float] = None) -> None:
         """Record one participant utterance, once, as said.
 
         `garbled` is the bridge saying the transcriber dropped part of this
@@ -3724,6 +3737,8 @@ class RealtimeVoiceSessionRunner:
         where that voice sat (first voiced frame to last), which the rate gate
         divides by. `committed_at` is when that commit went out, which is how
         a 1:1 reply to it is told from an older one (see _withdraw_reply).
+        `spoken_at` is when the participant began saying it (wall clock; see
+        _tag_commit), which is where the record and the page put the line.
         """
         def unreliable(reason: str) -> None:
             # For the room: an arrival that will not reach the director.
@@ -3971,12 +3986,23 @@ class RealtimeVoiceSessionRunner:
             unrouted.append(text)
             self._last_unrouted_at = now
         unclear = _script_mismatch(text)
+        # When they began saying it, on the events' own clock (issue #50).
+        # `t` is when the transcript arrived, which is often after a
+        # character's line that began while they were still talking, so
+        # ordering by `t` put their line under one they had not heard yet.
+        # encounter_record orders by this; None where the bridge could not
+        # date the line, and such a line keeps its `t` place.
+        started = getattr(self.session.store, "started_at", None)
+        said_at = (round(spoken_at - started, 3)
+                   if isinstance(spoken_at, (int, float))
+                   and isinstance(started, (int, float)) else None)
         self.session.store.event(
             "user_turn", text=text, channel="voice", script_mismatch=unclear,
             utterance=self._user_utterances, garbled=garbled,
             item_id=item_id, voiced_ms=voiced_ms,
             voiced_span_ms=voiced_span_ms,
             low_confidence=low_confidence, replay=replay,
+            spoken_at=said_at,
         )
         # The research record keeps the raw text (retranscribe repairs it
         # offline); the participant only sees a neutral caption, since a line
@@ -5212,8 +5238,10 @@ class RealtimeVoiceSessionRunner:
         # talking (see voice/realtime.py AUDIO_ABSENT_S); this is how it knows.
         rt.participant_speaking = lambda: bool(self.vad.active_within())
         # And this is how it counts voiced audio per commit for the
-        # transcript gate (see _record_user_turn and _tag_commit).
+        # transcript gate (see _record_user_turn and _tag_commit), and dates
+        # each commit (issue #50).
         rt.voiced_bar = self.vad.effective_threshold
+        rt.speech_began = lambda: self._speech_started_at
         # Until the participant has opened, a reply is held back rather than
         # relayed (pipeline 2026-09-28b; see _hold_first_reply).
         async for ev in self._hold_first_reply(rt, rt.events()):
@@ -6535,6 +6563,7 @@ class RealtimeVoiceSessionRunner:
                 participant=self._last_user_text,
                 # See _finalize_member_inner.
                 participant_low_confidence=self._last_user_low_confidence,
+                page_turn=_timer(self).turn_of(agent_id),
             )
 
             latency = (

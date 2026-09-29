@@ -108,6 +108,10 @@ class TurnTimer:
         # grant_sent, and understated speech-end-to-first-audio by the length
         # of the later utterance.
         self._grants: dict = {}
+        # agent_id -> the page turn its next assistant_done closes, so the
+        # runner can name on a character's line the turn whose play_start ack
+        # dates it (turn_of; issue #50).
+        self._by_agent: dict = {}
 
     def _t(self, when: Optional[float] = None) -> float:
         return round((time.time() if when is None else when) - self._t0, 3)
@@ -173,6 +177,7 @@ class TurnTimer:
             pt.replies += 1
         self._current = rec
         self._open[self._seq] = rec
+        self._by_agent[agent_id] = self._seq
         while len(self._open) > MAX_OPEN:
             oldest = next(iter(self._open))
             self._write(self._open.pop(oldest), reason="evicted")
@@ -193,7 +198,17 @@ class TurnTimer:
             if rec["agent_id"] == agent_id and rec["assistant_done"] is None:
                 rec["assistant_done"] = self._t()
                 break
+        self._by_agent.pop(agent_id, None)
         self._current = None
+
+    @_guard
+    def turn_of(self, agent_id: Optional[str]) -> Optional[int]:
+        """The page turn of `agent_id`'s line being closed now: the latest one
+        announced for it and not yet done, or None when this line was never
+        announced (nothing of it reached the page). What the runner writes on
+        steering_pair (page_turn) so encounter_record can date the line by
+        when it was heard (issue #50)."""
+        return self._by_agent.get(agent_id)
 
     @_guard
     def interrupted(self) -> None:
