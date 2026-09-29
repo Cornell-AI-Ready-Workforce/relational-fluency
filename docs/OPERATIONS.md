@@ -479,28 +479,103 @@ The invented text came from the old pipeline: 16 kHz audio read as 24 kHz,
 whisper-1, and buffers of up to 44 s. Earlier live transcripts should be
 read with that in mind. The offline re-transcription is the analysis copy.
 
-## The seven-minute floor, and the thirteen-minute stop
+## What changed on 2026-09-28 (pipeline_version 2026-09-28a, room_pacing_version 2026-09-28a)
 
-Every study encounter runs **at least 7:00** and **at most 13:00**, measured
-from the moment the voice socket opens (the page's timer). Three environment
-variables carry it — `ENCOUNTER_MIN_SECONDS` (420), `ENCOUNTER_WRAP_SECONDS`
-(720) and `ENCOUNTER_MAX_SECONDS` (780) — read by `storage.encounter_timing()`
-and served to the page on the run (`timing`), so the ring that fills next to
-the timer and the server's refusals agree to the second.
+The researchers' decisions of 2026-09-28 on the end of an encounter (#34) and
+the turn cue (#49), with two issue #21 follow-ups and one room latency fix
+(#25). The end policy is described in full in the next section.
 
-- **Floor.** The runner will not complete an encounter before it: the actor's
-  `end_conversation`, the auto-advance after the last planted beat and the
-  participant's *move on* are all held (event `floor_held`, with the reason),
-  and `POST /api/run/{id}/advance` answers **409** if a page asks anyway. The
-  page's **End conversation** is locked until then and says why. Moving from
-  one interaction to the next inside an encounter is never held.
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 28a | End policy: from 7:00 the participant may move on (End unlocks on every link type, with a notice; `move_on_open`); nothing ends the encounter by itself before 12:00. In the last interaction the auto-advance and the actor's `end_conversation` are held (`auto_end_held`); a held call is answered with a `function_call_output` (`tool_call_answered`), and on gpt the 1:1 character is asked to carry on (`held_call_reply`). The warning is at 11:00 and the stop at 12:00, on the runner's own clock as well as at a finished turn. | `ENCOUNTER_MIN_SECONDS` (420), `ENCOUNTER_WRAP_SECONDS` (660), `ENCOUNTER_MAX_SECONDS` (720); `REALTIME_TOOL_CALL_CONTINUES` (the output's wording) |
+| 28a | Turn cue: the header pill says "<Name> is speaking" while that character's audio plays, "Listening…" once the participant starts speaking, and "You can speak now" when the runner sends `turn_open` (the page has acked the end of the last line's audio and nothing is queued or being generated), in 1:1 and in rooms alike; in between (a line generating, nobody playing) it is empty. "Your turn" at generation end, its 4-second switch and "You speak first" in rooms are gone. Each `turn_open` is an event, to read against `turn_timing`. The page acks only the line it closed; an ack covers every earlier line (one queue), and a line nothing acks is taken as played 2 s after its own modelled end. | none |
+| 28a | A participant transcript made only of sound tags ("(laughter)", "[background noise]", "[Music]", "(inaudible)") is `user_turn_suppressed{no_speech}` with `annotation_only: true`, at any voiced level; in a room the turn is skipped. A word outside the tags keeps the line ("Yeah (laughs)"). | `PARTICIPANT_DROP_ANNOTATIONS` (1; 0 restores `24c`) |
+| 28a | 1:1: a `no_speech` suppression withdraws the reply its commit started, as the rate gate does (`suppressed_turn_reply_cancelled` / `reply_to_suppressed_turn` with reason `no_speech`), and gives back the beat that commit fired. | follows the no_speech rules |
+| room 28a | The post-turn steering review runs after the room's floor is released, as a tracked task, one review at a time; the next routed turn no longer waits for it (0.8-1.2 s on `24c`). `knob_set` rows are unchanged (`delivered: false`); a shift may reach a member one brief later than before. An interaction change does not cancel a review in flight: the closing turn's review finishes and the next member brief carries it. Only teardown cancels one, written as `auto_steer_cancelled` (`reason: teardown`, `started`: in the review or queued), so a dropped review never reads as "no change". A review that raises is `voice_error` with `where: room_steer`. | none |
+
+Caveats for analysis:
+
+- Before `28a` the last interaction could end at the first finished turn past
+  7:00 (`interaction_complete` just after 420 s, with no participant
+  move-on); from `28a` a last interaction ends by the participant's move-on
+  or `ceiling_reached` at 12:00. Encounter durations from the two sides of
+  `28a` are not comparable.
+- A held gpt call's reply (`held_call_reply` requested) is a character line
+  that follows the character's own previous line with no participant turn
+  between them.
+
+## What changed on 2026-09-28, the participant opens (pipeline_version 2026-09-28b, room_pacing_version 2026-09-28b)
+
+The researchers' rule of 2026-09-28 (confirmed 2026-09-29): **no character
+says anything first.** At the start of every encounter, 1:1 and rooms, and at
+S1's hand-off to Sam (S1A) or Drew (S1B), the characters stay silent until the
+participant's first **accepted** line: a `user_turn`, not a line a gate
+suppressed (`no_speech`, a sound tag, a probe pad, an echo, an empty line).
+The runner writes `awaiting_participant` (reason `start` or `handoff`) and
+`participant_opened` (with `waited_s`); the page shows "You start the
+conversation. Say hello when you're ready." (at the hand-off "You're now with
+Sam. You start.") until then, and the turn cue after. It does not apply to
+later interactions with the same character (S2 i1 to i2).
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 28b | Nothing makes a character speak before that line: no room opener (`_open_group_scene` and `REALTIME_SCENE_OPEN_PROMPT` are gone), no silence probe or hand-off line, no `reply_missing` re-ask (`reply_retry` why `awaiting_participant`), no reconnect replay (`replay_withheld`), no room turn routed on nothing (`group_turn_skipped` reason `awaiting_participant`). In 1:1 a reply the gateway starts is held until its line is accepted (`first_reply_released`) and dropped if it is not (`first_reply_withheld`, the beat given back as `trigger_undelivered`); a commit with no transcript at all counts as not (`why` `transcript_empty` / `transcript_failed`), and a reply still in flight when their next turn ends is cancelled so that turn commits. `left_in_conversation` marks a dropped reply the gateway finished, which stays in the model's history. | none |
+| 28b | A beat written as the opener is the reply to the first line: in 1:1 the next beat is briefed at the participant's turn end as always (S2A `t1_the_opening`); in a room the `opening:` rides on the lead's brief as a first-reply note on every family (`opening_framing` via `first_reply_note`), and unnamed turns go to the lead until it has spoken under it (`director_route` `first_by` `opening_lead`: the director was not asked). A room line whose transcript lands after its turn stopped waiting is routed when it is accepted. | none |
+| 28b | Clocks: the 7:00 move-on floor counts from the participant's first accepted line of the encounter, and the S1 2:00 timebox from their first line to Riley or Mel. The 11:00 warning and the 12:00 ceiling stay a hard cap from encounter start, so a participant who waits long enough meets the ceiling first. The page's ring and End follow the same floor. | none |
+
+Caveats for analysis: before `28b` a room's lead opened the scene
+(`group_scene_opened`) and the floor counted from the socket opening; the
+record's `opening` block (`first_participant_line_s`, per conversation
+`waited_s`) and provenance `opening` say which rule an encounter ran under.
+Since `28b` the `on_silence` line of a conversation's opening beat (S1
+`t1_retaliation_fork` and `t2_the_opening`, S2 `t1_the_opening`, a room's
+`t1` unless the first line names somebody else) is never spoken: nothing
+probes before the first line, and that line's reply spends the beat on its
+cue. A participant who never opens produces an empty encounter until the
+12:00 stop: no `trigger_fired`, no `assistant_turn`, a silent assistant WAV.
+
+## The seven-minute floor, and the twelve-minute stop
+
+Every encounter runs **at least 7:00** and **at most 12:00**. Since `28b` the
+floor counts from the participant's first accepted line and the stop from the
+moment the voice socket opens (see above). Three environment variables carry it —
+`ENCOUNTER_MIN_SECONDS` (420), `ENCOUNTER_WRAP_SECONDS` (660) and
+`ENCOUNTER_MAX_SECONDS` (720) — read by `storage.encounter_timing()`, served to
+the page on the run (`timing`) and again by the runner itself on every link
+type (the `encounter_clock` frame, which also lines the page's timer up with
+the server's clock), so the ring that fills next to the timer and the server's
+refusals agree to the second. The end policy is the researchers' of
+2026-09-28 (issue #34); before it the wrap was 12:00, the stop 13:00, and the
+last interaction ended by itself at the first turn past 7:00 once its beats
+were spent or the character had called `end_conversation`.
+
+- **Floor.** From 7:00 the participant may move on whenever they are ready:
+  **End conversation** unlocks, the ring is full, and a neutral notice says so
+  (the runner sends `move_on_open` and records it). Before it End is locked and
+  says why, the participant's *move on* is held (event `floor_held`), and
+  `POST /api/run/{id}/advance` answers **409** if a page asks anyway (counted
+  from the socket opening, so it never refuses later than the floor). The gate
+  holds on **every link type**: study runs, internal `/test` runs and direct
+  researcher links.
+- **Nothing ends it by itself before 12:00.** In the last interaction the
+  auto-advance after the last planted beat and the actor's `end_conversation`
+  are held until the stop (event `auto_end_held`, once per reason). A held
+  call is answered with a `function_call_output` saying the conversation goes
+  on and not to call the tool again yet (`REALTIME_TOOL_CALL_CONTINUES`); on
+  the gpt route the character is then asked to carry on
+  (`tool_call_answered`, `held_call_reply`), so a goodbye is not followed by
+  silence. Moving from one interaction to the next inside an encounter (S1's
+  hand-off, S2's i1 to i2, room interactions) is unchanged.
 - **Withdrawal is never gated.** *Stop and leave the study* works at any second;
   that is the consent promise, and it is a different control from End.
-- **Wrap and stop.** At 12:00 the runner records `ceiling_wrap` and tells the
-  page; at 13:00 it completes the encounter on the next turn (`ceiling_reached`),
-  and the page ends it on its own clock if the participant has gone quiet.
+- **Warning and stop.** At 11:00 the runner records `ceiling_wrap` and the page
+  shows that the conversation ends automatically in about a minute; at 12:00
+  the encounter completes (`ceiling_reached`), from the runner's own clock
+  (its watchdog tick, not only at a finished turn) and from the page's,
+  whichever comes first.
 - **Internal runs** (`cohort=internal`, the `/test` door) are exempt from the
-  floor so the team can walk the study quickly. The ceiling still applies.
+  409 at `/advance`, but the page holds End until 7:00 for them too. Lower
+  `ENCOUNTER_MIN_SECONDS` on a test deployment to walk the study quickly.
 
 ## The base URL also forwards participants (second route in)
 
@@ -565,14 +640,16 @@ timeout at 120 s, so no drain setting can save it). Twice now a team member's
 test conversation "stopped after a few turns" because it began during a
 rollout. Two rules:
 
-1. Do not apply while anyone is in an encounter. Check first, and wait until
-   it reports zero:
+1. Do not apply while anyone is in an encounter. `tools/deploy.sh` checks
+   this itself and refuses to plan while it is non-zero; by hand, check first
+   and wait until it reports zero:
 
 ```bash
 curl -s https://rf.ai-ready-workforce.ai.cornell.edu/health | python -c "import json,sys; print('active sessions:', json.load(sys.stdin).get('active_sessions'))"
 ```
 
-2. After `tofu apply`, wait for the rollout to finish before anyone tests:
+2. After the apply (`tofu -chdir=infra/terraform apply tfplan.bin`), wait
+   for the rollout to finish before anyone tests:
 
 ```bash
 aws ecs describe-services --cluster relational-fluency --services platform --query 'services[0].deployments[0].rolloutState' --output text
@@ -610,6 +687,18 @@ curl -s $RF/health | python -m json.tool
 `status: ok` means the process is serving. `gateway.ok: true` means it can reach
 the model gateway — if that is `false`, pages load but **no encounter will
 work**, and `gateway.detail` says why.
+
+`build` is the commit the serving image was built from (`BUILD_SHA`, baked in
+at `docker build`), and after a deploy it must equal the tag pinned on `main`.
+`null` means the image was built without `--build-arg BUILD_SHA`, or before it
+existed (every image up to `0066b10`). The same value is on the participant
+page as a small build tag, in `/api/run/config`, and in every encounter's
+`provenance.build`; the `prod-build-drift` workflow compares it with `main`'s
+pin every morning.
+
+```powershell
+(Invoke-RestMethod "$RF/health").build
+```
 
 ```bash
 # What is actually deployed, and did the rollout finish?
@@ -865,26 +954,79 @@ Shows each encounter labelled by construct and variant, scene headings from the
 research note, every stage direction above the reply it produced, and coverage
 (triggers reached out of planned, ESCI items exercised).
 
-## Deploying
+## Releasing a build
 
-**The runbook and the practice diverged, so read this before you copy
-anything.** This page used to end with `tofu apply`. At the 12 September
-inspection, revisions 35, 36, 37 and 38 of `relational-fluency-agent` had been
-registered by hand with the AWS CLI, and the stack's Terraform state was not
-in the account's state bucket. `infra/terraform/versions.tf` now configures a
-shared S3 backend with locking; [Adding a second deployer](#adding-a-second-deployer)
-describes the setup and state migration. That configuration does not prove the
-existing state has been migrated: verify it before applying. Run from empty
-state, `tofu apply` does not update the service: it proposes to *create* the
-bucket, the ECR repositories, the IAM roles and the certificate that already
-exist. Compare `container_image` in `infra/terraform/terraform.tfvars` with the
-running task definition before applying; the repository pin has been **behind**
-before, and using a stale pin rolls production back. A pin change in Git does
-not itself deploy that image. The earlier inspection and the work needed to
-reopen the Terraform path are recorded in
+**The runbook, in order.** Every step is a separate, visible action, and the
+only one that changes production is step 6:
+
+1. **Merge** the change to `main` by PR, CI green.
+2. **Build** the image from that commit with `BUILD_SHA`: the
+   `build-platform-image` workflow (Actions tab, Run workflow, on `main`), or
+   the commands below. The tag and `BUILD_SHA` are the same short SHA.
+3. **Pin it by PR**: set `container_image` in
+   `infra/terraform/terraform.tfvars` to the new tag and update its
+   `deployed:` line, in a PR of its own. Merge it.
+4. **Sim check** on the updated `main`: `python -m tools.sim.check` (about 35
+   minutes, needs the gateway; [`tools/sim/README.md`](../tools/sim/README.md)).
+   Commit the report it writes to `tools/sim/reports/<tag>.json`.
+5. **Plan through the guard**, from an up-to-date `main`:
+   `git switch main`, `git pull --ff-only`, `tools/deploy.sh`.
+6. **Apply** the saved plan, between collection sessions:
+   `tofu -chdir=infra/terraform apply tfplan.bin`.
+7. **Verify**: the rollout reads `COMPLETED` and `/health` reports `"build"`
+   equal to the tag (see [Is the server up?](#is-the-server-up)).
+
+`tools/deploy.sh` (bash; on Windows, Git Bash or WSL) refuses to plan unless
+the working tree is clean, `origin` is the GitHub repository and `HEAD` is
+exactly `origin/main` after a fetch, the
+pinned tag is a commit on `main`'s history and exists in ECR, and production
+runs one task and reports `active_sessions` 0 and no build newer than the pin
+(nor one this checkout does not know); it warns when the
+tag has no passing sim report, checks the plan's own before and after images,
+and prints the apply command rather than running it. What each refusal means,
+and the two overrides (`--allow-active-sessions`, `--allow-rollback`), are in
+[`DEPLOY-AWS.md`](DEPLOY-AWS.md#4a-what-toolsdeploysh-checks-and-its-two-overrides).
+
+**Why there is a guard.** On 24 September 2026 a `tofu apply` ran from a
+branch behind `main` whose `terraform.tfvars` still pinned `ca77c2f`, and
+replaced `4798e64` in production. It said "Apply complete!", went healthy, and
+stayed that way for four days, while testers reported bugs against a build
+nobody believed was running. The Terraform state has been in the shared state
+bucket since 17 September, so `tofu apply` does what the checkout it runs from
+says; the only question is whether that checkout is `main`. The history before
+that, when the state was not in the account's state bucket and every revision
+was registered by hand, is in
 [`DEPLOY-AWS.md`](DEPLOY-AWS.md#read-this-first-the-runbook-and-the-practice-have-diverged).
 
-Build and push is unchanged and is the same on either path:
+### A change to `terraform.tfvars` is a release
+
+Not only a new image: every setting in `infra/terraform/terraform.tfvars`
+(`survey_return_url`, `survey_completion_code_enabled`,
+`analysis_db_allowed_cidrs`, ...) reaches production the same way, through the
+guard, and never by editing the file locally and running a plain `tofu apply`
+from whatever checkout is at hand. That skips every check above, and the plan
+it makes also carries whatever image *that* checkout pins: a branch behind
+`main` rolls production back while applying an unrelated setting, which is the
+24 September incident. The guard also refuses a dirty tree, so an edit that has
+not been merged cannot be applied through it.
+
+1. Change `terraform.tfvars` in a PR of its own, and merge it.
+2. From an up-to-date `main`, plan through the guard and apply that plan:
+
+   ```bash
+   git switch main && git pull --ff-only && tools/deploy.sh
+   tofu -chdir=infra/terraform apply tfplan.bin
+   ```
+
+3. Between those two commands, read the plan summary `tools/deploy.sh`
+   prints: a settings change should say `IMAGE: unchanged`. A change that touches only resources the task does not
+   run on (a security group rule, say) and lists no `aws_ecs_*` change does not
+   restart anything, so `--allow-active-sessions` is safe for it; anything
+   that changes the task definition is a rollout and waits for
+   `active_sessions` 0 like a new image.
+
+Build and push by hand, when the workflow is unavailable (from a clean
+checkout of the commit being released):
 
 ```bash
 set -euo pipefail
@@ -894,7 +1036,7 @@ ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 REGISTRY=$ACCOUNT.dkr.ecr.$REGION.amazonaws.com
 REPO=$REGISTRY/relational-fluency/platform
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin "$REGISTRY"
-docker build --platform linux/amd64 -t $REPO:$SHA .        # amd64 matters on Apple Silicon
+docker build --platform linux/amd64 --build-arg BUILD_SHA=$SHA -t $REPO:$SHA .        # amd64 matters on Apple Silicon
 docker push $REPO:$SHA
 ```
 
@@ -909,7 +1051,7 @@ $ACCOUNT = aws sts get-caller-identity --query Account --output text
 $REGISTRY = "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 $REPO = "$REGISTRY/relational-fluency/platform"
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
-docker build --platform linux/amd64 -t "${REPO}:${SHA}" .
+docker build --platform linux/amd64 --build-arg "BUILD_SHA=${SHA}" -t "${REPO}:${SHA}" .
 docker push "${REPO}:${SHA}"
 ```
 
@@ -923,14 +1065,16 @@ nothing for, and expands to the empty string with no error at all, so
 `docker login --password-stdin ""` fails with a message about a missing registry
 that sends the operator after AWS credentials which are fine.
 
-**Then release.** The sequence that actually ships a build —
-`describe-task-definition` into a file, strip the read-only keys, change the
-image, `register-task-definition`, `update-service` — is written out step by
-step in
-[`DEPLOY-AWS.md`](DEPLOY-AWS.md#4a-the-path-in-use-register-a-task-definition-point-the-service-at-it),
-along with which IAM permission each step needs. It is not duplicated here,
-because two copies of a release procedure diverge and this is a page about
-checking things rather than about changing them.
+`--build-arg BUILD_SHA=$SHA`, with the same `$SHA` as the tag, is what lets
+the running image say which build it is. Without it `/health` reports
+`"build": null`, the page shows no build tag, the drift check fails, and the
+tag cannot be fixed afterwards, because ECR tags are immutable.
+
+If Terraform itself cannot run, the break-glass CLI release
+(`register-task-definition`, `update-service`) is written out step by step in
+[`DEPLOY-AWS.md`](DEPLOY-AWS.md#4b-break-glass-register-a-task-definition-by-hand),
+with the IAM permission each step needs. It is not duplicated here, because two
+copies of a release procedure diverge.
 
 *No `sed -i ''`, on either path.* That is the macOS/BSD spelling. On GNU sed —
 every Linux box, and Git Bash on Windows — `-i` takes its suffix attached, so
@@ -941,24 +1085,26 @@ ran anyway and re-applied the tag that was already pinned: the operator builds a
 new image, pushes it, watches a deploy succeed — and participants keep hitting
 the previous build. Because tags are immutable and deploys are manual and
 scheduled between collection sessions, that is discovered, if at all, during the
-next wave. If the committed pin in `infra/terraform/terraform.tfvars` has to
-move — it is committed on purpose, per that file's own header — edit it by hand
-and commit it as a separate, visible step; if a scripted edit is genuinely
-wanted, use `python -c`, which is a prerequisite on all three platforms.
+next wave. The committed pin in `infra/terraform/terraform.tfvars` moves by
+hand, in its own PR (step 3 above); if a scripted edit is genuinely wanted, use
+`python -c`, which is a prerequisite on all three platforms.
 
 Rollout waits for the new task to pass health checks before draining the old
-one, so an encounter in progress is not cut off at the switch — but the old task
-is stopped 120 s later regardless, and **anything recorded on it is gone**,
-because nothing is mounted at `/data`. Pull first.
+one, so an encounter in progress is not cut off at the switch, but the old task
+is stopped 120 s later regardless and the conversation on it ends there. What
+it had already recorded is on the EFS volume at `/data` and survives; the rest
+of that encounter does not. That is what `active_sessions` 0 is for.
 
 ## When something is wrong
 
 | Symptom | First check |
 |---|---|
 | Page loads, mic "does not work" | `curl -s $RF/health` — if `gateway.ok` is false, no encounter can run |
+| A run in `/api/runs` has `exits` (`status: "mic_failed"` or `"camera_failed"`) and `withdrawn: null` | The participant's microphone or camera would not start and they left through "I can't get my microphone working". Not a withdrawal: the run is still open to them, nothing was stamped on their record, and the survey link they were offered carried `status=mic_failed` (or `camera_failed`). `capture_kind` is the browser's reason (`denied`, `missing`, `unanswered`, ...) |
 | WebSocket opens then closes instantly | Application logs — a server-side exception during session creation looks exactly like a dead mic (4403 specifically means the participant record is missing or withdrawn) |
 | 503 from the domain | Target health, then service events: usually no healthy task |
 | `No scenario: SxX` | Deployed image predates the scenario bank — check the running image tag |
+| A tester reports something a merged fix should have changed | `/health` `build` against the tag pinned on `main`; the `prod-build-drift` workflow says the same every morning. On 2026-09-24 production silently ran a rolled-back image for four days |
 | Agent replies but no transcript | `verify_record` — look for `transcript_missing` |
 | Encounter ends after ~3 turns | `INTERACTION_MIN_TURNS` / `INTERACTION_MIN_SECONDS` on the task |
 | Every run is `cohort=unattributed` | The Qualtrics embedded field name. It is `participantId`; an unknown field pipes as the empty string and reports nothing — see [The participant URL](#the-participant-url-qualtrics--app--qualtrics) |
@@ -1308,7 +1454,9 @@ Set the Qualtrics continuation link so the app can return them:
 survey_return_url = "https://cornell.qualtrics.com/jfe/form/SV_xxxxx?..."
 ```
 
-then `tofu apply`. After the fourth encounter the participant sees their
+in a PR, and release it like any other settings change ([A change to
+`terraform.tfvars` is a release](#a-change-to-terraformtfvars-is-a-release)).
+After the fourth encounter the participant sees their
 completion code and a **Return to the survey** button, which appends:
 
 ```
@@ -1350,14 +1498,21 @@ code anyone can type without doing the study. Order matters, because ECS will
 not start a task whose secret has no value:
 
 ```bash
-# 1. Create the (empty) secret: the normal plan/apply, with
-#    survey_completion_code_enabled = false in terraform.tfvars
-tofu plan -out tfplan.bin && tofu apply tfplan.bin
+# 1. Create the (empty) secret: release the stack with
+#    survey_completion_code_enabled = false in terraform.tfvars, through the
+#    guard, from an up-to-date main
+git switch main && git pull --ff-only && tools/deploy.sh
+tofu -chdir=infra/terraform apply tfplan.bin
 # 2. Put the code (never in git)
 aws secretsmanager put-secret-value --region us-east-1 \
   --secret-id relational-fluency/survey-completion-code --secret-string 'THE-CODE'
-# 3. terraform.tfvars: survey_completion_code_enabled = true, then plan/apply again
+# 3. A PR setting survey_completion_code_enabled = true in terraform.tfvars;
+#    merge it, then the same two commands as step 1 again
 ```
+
+Both applies are [settings releases](#a-change-to-terraformtfvars-is-a-release):
+the second changes the task definition, so it is a rollout and waits for
+`active_sessions` 0.
 
 The task reads the secret when it starts, so a later change to the value needs
 a new deployment (`aws ecs update-service ... --force-new-deployment`).
@@ -1374,28 +1529,35 @@ record, and the instance can be dropped and rebuilt from the bucket.
 
 ### First-time setup (administrator)
 
+From the repository root, on an up-to-date `main`:
+
 ```bash
-# 1. Create it (part of the normal tofu plan/apply; takes ~10 minutes)
-cd infra/terraform && tofu apply
+# 1. Create it: it is part of the stack, so the release that first carries
+#    analysis_db.tf creates it (takes ~10 minutes), through the guard
+git switch main && git pull --ff-only && tools/deploy.sh
+tofu -chdir=infra/terraform apply tfplan.bin
 
 # 2. Where it is, and the master password RDS generated (never in git)
-tofu output -raw analysis_db_endpoint
-SECRET=$(tofu output -raw analysis_db_master_secret_arn)
+tofu -chdir=infra/terraform output -raw analysis_db_endpoint
+SECRET=$(tofu -chdir=infra/terraform output -raw analysis_db_master_secret_arn)
 aws secretsmanager get-secret-value --secret-id "$SECRET" --region us-east-1 --query SecretString --output text
 #    -> {"username":"rf_admin","password":"..."}  (paste the password when psql asks)
 
-# 3. Let your own address in, then re-apply. Find it with: curl -s https://checkip.amazonaws.com
-#    infra/terraform/terraform.tfvars:
+# 3. Let your own address in (find it with: curl -s https://checkip.amazonaws.com):
+#    a PR adding it to infra/terraform/terraform.tfvars,
 #      analysis_db_allowed_cidrs = ["203.0.113.7/32"]
-tofu apply
+#    merged, then the same two commands as step 1
 
 # 4. Schema and roles (TLS is required; psql negotiates it by default)
-HOST=$(tofu output -raw analysis_db_endpoint)
-psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -f ../../docs/db-schema.sql
-psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -f ../../docs/db-roles.sql
+HOST=$(tofu -chdir=infra/terraform output -raw analysis_db_endpoint)
+psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -f docs/db-schema.sql
+psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -f docs/db-roles.sql
 psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -c '\password rf_loader'
 psql "host=${HOST%:*} dbname=rf user=rf_admin sslmode=require" -c '\password rf_analyst'
 ```
+
+Steps 1 and 3 are [settings releases](#a-change-to-terraformtfvars-is-a-release);
+step 3's plan should change only the security group.
 
 ### Loading (whoever runs the refresh)
 
@@ -1415,8 +1577,11 @@ avoids the prompt.
 ### Giving an analyst access
 
 1. Add their address to `analysis_db_allowed_cidrs` in `terraform.tfvars`
-   and `tofu apply` (the security group is the only door; nothing else
-   changes).
+   in a PR, merge it, and release it through the guard
+   ([A change to `terraform.tfvars` is a release](#a-change-to-terraformtfvars-is-a-release)).
+   The security group is the only door, and the plan should change nothing
+   else: if it also shows an image change, stop, because the pin on `main` is
+   not what production runs, and applying would release that image too.
 2. Give them the `rf_analyst` password. That role reads every table and view
    except `participant_identity`, and may write ratings. Connection string:
    `postgresql://rf_analyst@<endpoint>/rf?sslmode=require`, schema `rf`.

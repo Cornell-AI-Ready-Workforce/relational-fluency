@@ -1,0 +1,56 @@
+# Is production running the build main pins? Once a day, and on demand.
+#
+# WHY. On 2026-09-24 a `tofu apply` from a stale branch rolled production back
+# from 4798e64 to ca77c2f, reported success, and stayed that way for four days
+# while testers filed issues against a build nobody believed was running. Every
+# guard at the time (the `deployed:` line in terraform.tfvars, the runbook's
+# describe-services check) was something a person had to remember. This one
+# runs by itself and goes red with both commits named.
+#
+# It compares GET /health "build" (server/build_info.py, baked into the image
+# with --build-arg BUILD_SHA) with the container_image tag pinned in main's
+# infra/terraform/terraform.tfvars; tools/check_prod_build.py is the logic and
+# tests/test_check_prod_build.py holds it.
+#
+# EXPECTED RED until the first deploy after BUILD_SHA landed: every image
+# built from 0066b10 or earlier predates it and reports no build (production
+# ran 4798e64 when this was written, and 0066b10 from 2026-09-28 18:35 ET), and
+# the failure message says so rather than leaving a reader to guess.
+#
+# No secrets and read-only permissions on purpose: /health is public, so there
+# is nothing to authenticate, and a workflow that holds no credential cannot
+# leak one. Checks out main explicitly, because a manual run from another branch
+# would otherwise compare production with that branch's pin, which is the
+# stale-branch mistake this exists to catch.
+#
+# GitHub disables scheduled workflows in a repository with no activity for 60
+# days; if this stops appearing in the Actions tab during a quiet stretch,
+# re-enable it there.
+
+name: prod-build-drift
+
+on:
+  schedule:
+    # 11:17 UTC: 07:17 US Eastern (06:17 in winter), before a collection day
+    # starts. Off the hour, where GitHub's scheduler is least congested.
+    - cron: "17 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # Standard library only: nothing to install, so nothing to go wrong
+      # between the checkout and the answer.
+      - name: Production build matches main's pin
+        run: python tools/check_prod_build.py

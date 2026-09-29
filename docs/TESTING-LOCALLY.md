@@ -174,9 +174,10 @@ closed sessions for the same scenario — in one measured case 25.3 s / 4 turns
 and 20.1 s / 3 turns — and `run.completed` stays empty.
 
 That is the real cost of reconnecting, and the page is honest about it: the drop
-card says the part will start again from the beginning and the other person will
-greet you afresh. (It used to say "Nothing is lost on your side", which was
-false.) The orphan fragments are not part of any run's completed encounters.
+card says the part will start again from the beginning and that they speak
+first, as at every start since pipeline 2026-09-28b. (It used to say "Nothing
+is lost on your side", which was false.) The orphan fragments are not part of
+any run's completed encounters.
 
 One residue remains: a recording lost because the server was unreachable is
 filed as `video_upload: {state: "absent", attempts: 0}` — the same record a

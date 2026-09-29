@@ -443,6 +443,8 @@ async function connected(position, total, opts) {
     const c = card(b);
     assert.strictEqual(c.reconnect, 'Reconnect');
     assert(/start again from the beginning/.test(c.text), c.text);
+    // Nobody greets them: the participant opens every conversation (28b).
+    assert(/you speak first/.test(c.text) && !/greet/.test(c.text), c.text);
   }
 
   // ---- 6. Captions: one bubble per committed turn while the character is stalled

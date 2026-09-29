@@ -392,6 +392,10 @@ def build(session_dir: Path) -> Dict[str, Any]:
             "input_resampler": realtime.get("input_resampler"),
             "pipeline_version": realtime.get("pipeline_version"),
             "room_pacing_version": realtime.get("room_pacing_version"),
+            # The commit the serving image was built from (BUILD_SHA, see
+            # server/build_info.py). None for a local checkout, for images
+            # built before it existed, and for encounters recorded before it.
+            "build": realtime.get("build"),
             # A listening-test accent/tone file, when one was in force
             # (server/voice_style.py); None for every study session.
             "voice_style": realtime.get("voice_style"),
@@ -409,6 +413,22 @@ def build(session_dir: Path) -> Dict[str, Any]:
             "cancelled_output": realtime.get("cancelled_output"),
             "agent_transcript_items": realtime.get("agent_transcript_items"),
             "record": realtime.get("record"),
+            # Who opens a conversation and which clock each limit counts on
+            # (pipeline 2026-09-28b: the participant); None before it.
+            "opening": realtime.get("opening"),
+        },
+        # When the participant opened each conversation (participant_opened,
+        # on the events' own `t`) and how long the characters waited for
+        # them. `first_participant_line_s` is what the 7:00 floor counts from;
+        # None when they never spoke, or on an encounter from before 28b.
+        "opening": {
+            "first_participant_line_s": next(
+                (e.get("t") for e in events if e.get("type") == "participant_opened"
+                 and e.get("first_of_encounter")), None),
+            "conversations": [
+                {k: e.get(k) for k in ("t", "reason", "interaction", "agent_id",
+                                       "waited_s")}
+                for e in events if e.get("type") == "participant_opened"],
         },
         # The participant's microphone as the browser reported it
         # (track.getSettings() and the user agent; see the

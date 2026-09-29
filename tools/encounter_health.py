@@ -336,9 +336,10 @@ def duration_line(session_dir: Path, events: List[dict], counts: Counter) -> str
     """Study 1 plan 4.4: how long the encounter ran against its floor and stop.
 
     Duration from the manifest's started_at/ended_at; turns from the events;
-    the encounter clock's own marks (floor_held, ceiling_wrap, ceiling_reached)
-    so the pilot review can see which encounters the floor actually held and
-    which the ceiling ended.
+    the encounter clock's own marks (floor_held, auto_end_held, ceiling_wrap,
+    ceiling_reached) so the pilot review can see which encounters the floor
+    actually held, which automatic ends were held to the ceiling (the end
+    policy of 2026-09-28), and which the ceiling ended.
     """
     dur = None
     try:
@@ -354,6 +355,8 @@ def duration_line(session_dir: Path, events: List[dict], counts: Counter) -> str
     marks = []
     if counts.get("floor_held"):
         marks.append(f"floor held {counts['floor_held']}x")
+    if counts.get("auto_end_held"):
+        marks.append(f"auto end held {counts['auto_end_held']}x")
     if counts.get("ceiling_wrap"):
         marks.append("wrap called")
     if counts.get("ceiling_reached"):

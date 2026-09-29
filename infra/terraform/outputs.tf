@@ -14,7 +14,7 @@ output "api_url" {
 }
 
 output "ecr_repository" {
-  description = "Push the platform image here, then apply with -var container_image=<uri>:<tag>"
+  description = "Push the platform image here, pin <uri>:<tag> as container_image in terraform.tfvars by PR, and release it through tools/deploy.sh"
   value       = aws_ecr_repository.platform.repository_url
 }
 

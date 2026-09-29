@@ -1,0 +1,25 @@
+{
+ "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
+ "pending": {
+  "S1A": "not recorded on 2026-09-28a yet: the committed values (build a736d51, session s_1790635266_99bdc2) were recorded on pipeline 2026-09-24c / room pacing 2026-09-24b, and 28a's end policy runs S2A to the 720 s ceiling where 24c ended it about 451 s in, so they are a different experiment. They could not be re-recorded: the gateway refused every realtime connection from about 22:44 UTC on 2026-09-28 and still did at 01:01 UTC on 2026-09-29 (gpt-realtime-2.1 HTTP 403). Record it with: python -m tools.sim.check --scenarios S1A,S2A --write-baseline",
+  "S2A": "not recorded on 2026-09-28a yet: the committed values (build a736d51, session s_1790634754_6e4503) were recorded on pipeline 2026-09-24c / room pacing 2026-09-24b, and 28a's end policy runs S2A to the 720 s ceiling where 24c ended it about 451 s in, so they are a different experiment. They could not be re-recorded: the gateway refused every realtime connection from about 22:44 UTC on 2026-09-28 and still did at 01:01 UTC on 2026-09-29 (gpt-realtime-2.1 HTTP 403). Record it with: python -m tools.sim.check --scenarios S1A,S2A --write-baseline",
+  "S3A": "not recorded yet: from about 22:44 UTC on 2026-09-28 the gateway refused every realtime connection (HTTP 403, all three gpt-realtime models) while /v1/models still answered, so no S3A or S4A run could open; still refused at 01:01 UTC on 2026-09-29. Record it with: python -m tools.sim.check --scenarios S3A,S4A --write-baseline",
+  "S4A": "not recorded yet: from about 22:44 UTC on 2026-09-28 the gateway refused every realtime connection (HTTP 403, all three gpt-realtime models) while /v1/models still answered, so no S3A or S4A run could open; still refused at 01:01 UTC on 2026-09-29. Record it with: python -m tools.sim.check --scenarios S3A,S4A --write-baseline"
+ },
+ "realtime_model": "gpt-realtime-2.1",
+ "scenarios": {},
+ "tolerances": {
+  "answered_rate_drop": 0.2,
+  "error_frames_extra": 0,
+  "heard_rate_drop": 0.15,
+  "latency_p50_ratio": 1.5,
+  "latency_p50_slack_s": 0.5,
+  "latency_p90_ratio": 1.5,
+  "latency_p90_slack_s": 1.0,
+  "phantom_turns_extra": 1,
+  "refused_creates_extra": 3,
+  "reply_missing_extra": 1,
+  "triggers_fired_drop": 1,
+  "voice_error_extra": 0
+ }
+}

@@ -1,0 +1,5 @@
+# Blank issues stay available: the team files design and planning issues that
+# are not bug reports, and a form they have to fight is a form they route
+# around. Bugs get the form (bug_report.yml), which asks for the build and
+# the session id.
+blank_issues_enabled: true

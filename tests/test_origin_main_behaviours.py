@@ -451,6 +451,9 @@ class _Recorder:
     async def _send(self, msg):
         self.sent.append(msg)
 
+    async def _note_participant_opened(self):
+        return None
+
     def _second_transcript_source(self):
         return rvs.RealtimeVoiceSessionRunner._second_transcript_source(self)
 

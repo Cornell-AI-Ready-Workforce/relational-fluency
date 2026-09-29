@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from .build_info import build_sha
 from .engine import DEFAULT_MODEL
 from .scenarios import list_scenarios, load_scenario
 from .session import registry
@@ -696,7 +697,15 @@ async def health(key: Optional[str] = Query(None)) -> dict:
             # False here says nothing an unauthenticated GET of any researcher
             # route would not already prove.
             "session_key_configured": bool(SESSION_KEY),
-            "active_sessions": len(registry.list_ids())}
+            "active_sessions": len(registry.list_ids()),
+            # The commit this image was built from (server/build_info.py), or
+            # null for a local checkout and for images built before BUILD_SHA
+            # existed. Top level, beside active_sessions, because both are
+            # what an operator reads around a deploy: tools/deploy.sh refuses
+            # to plan while active_sessions is non-zero, and
+            # tools/check_prod_build.py fails when this disagrees with the tag
+            # pinned in main's terraform.tfvars.
+            "build": build_sha()}
 
 
 def check_key(key: Optional[str]) -> None:
@@ -897,6 +906,11 @@ async def api_runs_export(key: Optional[str] = None, cohort: Optional[str] = Non
                 # difference between a participant who left and one whose
                 # browser died, and an IRB report needs the first number.
                 "withdrawn": run.get("withdrawn"),
+                # Every time the participant left because their microphone or
+                # camera would not start (status mic_failed / camera_failed),
+                # which is NOT a withdrawal: the run stays open to them. Empty
+                # for everybody whose capture worked. See runs.note_exit.
+                "exits": run.get("exits", []),
                 # Which forms were steered by the cross-construct exclusion
                 # rather than drawn, so an analyst who sees one variant
                 # over-represented can tell design from chance.
@@ -1684,10 +1698,53 @@ async def v2_page(scenario: Optional[str] = None, key: Optional[str] = None):
 
 # --- REST helpers ---
 
+# What only the researcher's pages are told about a scenario (issue #38).
+#
+# Both scenario routes are participant-open (check_participant), because the
+# participant page fetches its own brief, and they used to answer everybody the
+# same: the skill being measured, the parallel form, and every character's
+# persona dials — the manipulation itself — one network-tab away from the
+# participant it is being applied to, on a study that keeps its RATERS blind to
+# the same facts. The researcher pages (the launch card, the landing picker)
+# send the researcher key and still get all of it; a participant gets what their
+# own page reads, which is none of these.
+_RESEARCH_ONLY_SCENARIO_FIELDS = ("skill", "variant", "parallel_form", "personas")
+
+
+def _participant_scenario_view(row: dict, key: Optional[str]) -> dict:
+    if _operator_key(key):
+        return row
+    return {k: v for k, v in row.items() if k not in _RESEARCH_ONLY_SCENARIO_FIELDS}
+
+
+def _run_view(run: dict, key: Optional[str]) -> dict:
+    """runs.view for whoever is asking (issue #38, the run routes' half).
+
+    Every run route but the create is participant-open, and the page asks one
+    on every /v2?run= link. runs.view hands back `current` and `next` as the
+    run built them — id, title, construct, variant, parallel_form — so the
+    scenario routes' fix left the same facts one request over: the skill this
+    encounter measures, the form drawn and its sibling, and the title and
+    skill of the NEXT encounter, which the page takes care never to preview.
+    A participant gets what their page reads, `current` as its id and title
+    (the id's letter is already in every request the page makes), and no
+    `next` at all, rather than a null that would read as "this is the last
+    one". The researcher key still gets the run as it was built."""
+    from . import runs
+
+    view = runs.view(run)
+    if _operator_key(key):
+        return view
+    cur = view.get("current")
+    view["current"] = {"id": cur.get("id"), "title": cur.get("title")} if cur else None
+    view.pop("next", None)
+    return view
+
+
 @app.get("/api/scenarios")
 async def api_scenarios(key: Optional[str] = None):
     check_participant(key)
-    return list_scenarios()
+    return [_participant_scenario_view(r, key) for r in list_scenarios()]
 
 
 @app.get("/api/scenarios/{scenario_id}")
@@ -1698,14 +1755,34 @@ async def api_scenario_detail(scenario_id: str, key: Optional[str] = Query(None)
         sc = load_scenario(scenario_id, participant_id or "")
     except FileNotFoundError:
         raise HTTPException(404, "scenario not found")
-    return {
+    # Which model plays the characters, and which one works behind them, named
+    # as two fields (issue #46). This route used to say only `model`, and that
+    # was the TEXT model (director, steering, and what a launch's ?model=
+    # overrides) — so anybody reading the scenario data to find out what the
+    # participant talked to, including for a write-up, was told
+    # nto.gemini-3.1-flash-lite about an encounter voiced by the realtime
+    # model. `model` stays, with the value it always had, because the
+    # researcher's launch card preselects its ?model= picker from it.
+    from .realtime_voice_session import realtime_model
+    text_model = sc.model or DEFAULT_MODEL
+    return _participant_scenario_view({
         "id": sc.id,
         "title": sc.title,
         "intro": sc.intro,
         "briefing": getattr(sc, "briefing", None),
         "skill": sc.skill,
+        "variant": getattr(sc, "variant", None),
         "mode": sc.mode,
-        "model": sc.model or DEFAULT_MODEL,  # effective default for the pre-start picker
+        # The model the participant speaks with: every voice encounter's
+        # characters are played on it (session.realtime_model reads the same
+        # bridge setting). Null only where no bridge is configured.
+        "realtime_model": realtime_model() or None,
+        # The text model behind the voices: the director, steering, and the
+        # engines a text encounter runs on.
+        "text_model": text_model,
+        # DEPRECATED alias of text_model, kept for the readers that predate
+        # the split. It never named the voice model.
+        "model": text_model,
         "intro_image": sc.intro_image,
         "cast": [
             {"id": a.id, "name": a.name, "role": a.role, "photo": a.photo}
@@ -1714,7 +1791,7 @@ async def api_scenario_detail(scenario_id: str, key: Optional[str] = Query(None)
         # Default persona values per agent, so the launch card can preselect
         # the current bands and stage only the gears the researcher changes.
         "personas": {aid: p.snapshot() for aid, p in sc.initial_personas().items()},
-    }
+    }, key)
 
 
 # --- Researcher-initiated launch: configure gears first, then start ---
@@ -2431,7 +2508,7 @@ async def api_run_create(request: Request, key: Optional[str] = None):
         key_status=key_status,
         raw_participant_key=(raw_key if key_status != "ok" else None),
     )
-    return runs.view(run)
+    return _run_view(run, key)
 
 
 @app.get("/api/sessions/{session_id}/video-upload-url")
@@ -2934,6 +3011,10 @@ async def api_run_config(key: Optional[str] = None):
         # team" when they are blank.
         "contact_name": os.getenv("STUDY_CONTACT_NAME", "").strip(),
         "contact_email": os.getenv("STUDY_CONTACT_EMAIL", "").strip(),
+        # The build the page shows as a small tag, so a tester's bug report
+        # (.github/ISSUE_TEMPLATE/bug_report.yml asks for it) names the build
+        # it was filed against. Null when unknown; the page then shows none.
+        "build": build_sha(),
     }
 
 
@@ -2965,7 +3046,7 @@ async def api_run_get(run_id: str, key: Optional[str] = None):
     run = runs.get(run_id)
     if run is None:
         raise HTTPException(404, "no such run")
-    return runs.view(run)
+    return _run_view(run, key)
 
 
 @app.post("/api/run/{run_id}/withdraw")
@@ -3032,7 +3113,56 @@ async def api_run_withdraw(run_id: str, payload: Optional[dict] = None,
     # Through the shared helper, because this is one of three places a
     # withdrawal is recorded and the teardown used to hang off this one alone.
     await _enforce_withdrawal(run, where=f"the stop control on run {run_id}")
-    return runs.view(run)
+    return _run_view(run, key)
+
+
+@app.post("/api/run/{run_id}/exit")
+async def api_run_exit(run_id: str, payload: Optional[dict] = None,
+                       key: Optional[str] = None,
+                       participant_id: Optional[str] = None):
+    """The participant left because their microphone or camera would not start.
+
+    The other door out of a capture failure (issue #41). Until this existed the
+    only control on that screen that led anywhere was "Stop and leave the
+    study", so somebody whose headset would not work had to withdraw to get out,
+    and the export then said they had refused to continue. This records a
+    different fact — `mic_failed` or `camera_failed`, with the browser's own
+    name for the failure — and changes nothing else: the run is not withdrawn,
+    no record is stamped, and the link still works on a machine that can take
+    part.
+
+    Owned the way a stop is (_may_stop_run): the record id the page was handed,
+    or the researcher key. It cannot end anything, but it writes onto a run
+    whose id travels in an address bar, and a line in somebody else's run saying
+    their microphone failed is a false statement about them.
+    """
+    check_participant(key)
+    from . import runs
+
+    body = payload or {}
+    status = str(body.get("status") or "").strip()
+    if status not in runs.EXIT_STATUSES:
+        raise HTTPException(400, f"status must be one of {', '.join(runs.EXIT_STATUSES)}")
+    existing = runs.get(run_id)
+    if existing is None:
+        raise HTTPException(404, "no such run")
+    pid = (participant_id or body.get("participant_id") or "").strip()
+    if not _may_stop_run(existing, pid, key):
+        raise HTTPException(403, "not your run")
+    # The browser's DOMException-derived kind ("denied", "missing", ...), kept
+    # only when it is the short token the page sends: this field is written
+    # verbatim into a document an analyst reads.
+    kind = str(body.get("capture_kind") or "").strip()
+    kind = kind if re.fullmatch(r"[a-z_]{1,32}", kind) else None
+    # The encounter they were reconnecting to, when a Reconnect is what met the
+    # failure; only in the shape storage mints, for the same reason.
+    sid = str(body.get("session_id") or "").strip()
+    sid = sid if valid_session_id(sid) else None
+    run = await anyio.to_thread.run_sync(functools.partial(
+        runs.note_exit, run_id, status, capture_kind=kind, session_id=sid))
+    if run is None:
+        raise HTTPException(404, "no such run")
+    return {"recorded": True, "status": status, "withdrawn": run.get("withdrawn")}
 
 
 @app.post("/api/run/{run_id}/advance")
@@ -3063,7 +3193,7 @@ async def api_run_advance(run_id: str, session_id: Optional[str] = None,
     # encounter (the next scenario), so the scenario/owner checks would wrongly
     # 409/403 and permanently strand the participant.
     if any(c.get("session_id") == session_id for c in run.get("completed", [])):
-        return runs.view(run)
+        return _run_view(run, key)
 
     # A withdrawn run does not advance, and until now it said it had. runs.advance
     # no-ops on the stamp, so the encounter was never recorded against the run —
@@ -3140,7 +3270,7 @@ async def api_run_advance(run_id: str, session_id: Optional[str] = None,
     run = runs.advance(run_id, session_id)
     if run is None:
         raise HTTPException(404, "no such run")
-    return runs.view(run)
+    return _run_view(run, key)
 
 
 @app.get("/director", response_class=HTMLResponse)
@@ -3557,6 +3687,10 @@ async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None,
             "id": s.id,
             "scenario": s.scenario.id,
             "title": s.scenario.title,
+            # The title is the participant's and names neither (issue #38);
+            # this console tells encounters apart by these two.
+            "skill": getattr(s.scenario, "skill", None),
+            "variant": getattr(s.scenario, "variant", None),
             "mode": s.scenario.mode,
             "model": s.model,
             "cast_size": len(s.scenario.cast),
@@ -3606,7 +3740,7 @@ async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None,
                     # A pre-migration index cannot answer a cohort question, and
                     # no row in it matches one. Same answer as before, reached
                     # without pretending to page.
-                    return [], {s["id"]: s["title"] for s in list_scenarios()}
+                    return [], {s["id"]: s for s in list_scenarios()}
                 where.append("cohort = ?")
                 params.append(cohort)
             if active_ids:
@@ -3630,23 +3764,27 @@ async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None,
         # Plain dicts, so nothing sqlite-owned outlives the worker thread.
         # Missing columns read back as None rather than raising, which is what
         # the pre-migration database needs.
-        # Map scenario id → title without re-reading every YAML each call.
-        titles = {s["id"]: s["title"] for s in list_scenarios()}
-        return [dict(r) for r in rows], titles
+        # Map scenario id → its listing row (title, skill, variant) without
+        # re-reading every YAML each call.
+        scenarios = {s["id"]: s for s in list_scenarios()}
+        return [dict(r) for r in rows], scenarios
 
     try:
-        rows, titles = await run_in_threadpool(_read_closed)
+        rows, scenarios = await run_in_threadpool(_read_closed)
     except Exception:  # noqa: BLE001, a missing index must not empty the listing
-        rows, titles = [], {}
+        rows, scenarios = [], {}
     # No filtering here: the query above already excluded the live ids and the
     # other cohorts, so every row it returned is a row this page returns and the
     # page length means what a pager thinks it means.
     for r in rows:
         row_cohort = r.get("cohort")
+        listed = scenarios.get(r["scenario"]) or {}
         out.append({
             "id": r["id"],
             "scenario": r["scenario"],
-            "title": titles.get(r["scenario"], r["scenario"]),
+            "title": listed.get("title", r["scenario"]),
+            "skill": listed.get("skill"),
+            "variant": listed.get("variant"),
             "model": r["model"],
             "turn_count": r["n_turns"] or 0,
             "status": r["status"] or "closed",
