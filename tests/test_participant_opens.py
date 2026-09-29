@@ -708,7 +708,8 @@ def test_the_policy_and_the_versions_are_on_the_record():
         "timebox": "first_participant_line_in_conversation",
         "wrap": "encounter_start", "ceiling": "encounter_start"}
     assert llm.PIPELINE_VERSION == "2026-09-28b"
-    assert llm.ROOM_PACING_VERSION == "2026-09-28b"
+    # Room pacing has moved on since (29a, the follow-up gap) and keeps 28b.
+    assert llm.ROOM_PACING_VERSION >= "2026-09-28b"
     src = (ROOT / "server" / "llm.py").read_text(encoding="utf-8")
     assert src.count("#   2026-09-28b") == 2, "a history line for each version"
 

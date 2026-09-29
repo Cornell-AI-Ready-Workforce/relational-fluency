@@ -544,6 +544,7 @@ class _Turn:
         self._speech_started_at = 0.0
         self._play_cursor = 0.0
         self._last_played = None
+        self._played_lines: list = []
         self._sessions: dict = {}
         self.room = types.SimpleNamespace(
             speaking=speaking, session_for=self._session_for)
@@ -593,6 +594,10 @@ class _Turn:
         return rvs.RealtimeVoiceSessionRunner._heard_seconds(self, st)
 
     heard = _heard_seconds
+
+    # The real one: _advance_play_cursor records each line through it.
+    def _note_played(self, line):
+        rvs.RealtimeVoiceSessionRunner._note_played(self, line)
 
     def advance(self, agent_id, st, pcm):
         rvs.RealtimeVoiceSessionRunner._advance_play_cursor(

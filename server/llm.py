@@ -525,6 +525,31 @@ def text_client() -> AsyncAnthropic:
 #                spoken under it (director_route first_by opening_lead). A
 #                first line whose transcript lands after its turn stopped
 #                waiting is routed once it is accepted.
+#   2026-09-29a  the follow-up gap (#24, #48; the researchers' decision of
+#                2026-09-29, S3 and S4 alike): the second or third character
+#                of a room turn is given the floor only once the line before
+#                it has finished playing on the page (its play_end ack, or 2 s
+#                past its modelled end, as the turn cue reads it) and
+#                FOLLOWUP_GAP_S (1.0 s) of silence has followed. It was
+#                granted at that line's generation end and began 0.0-0.2 s
+#                after it. A participant line accepted during that wait or
+#                still unrouted, or their voice in the gap, gives them the
+#                floor instead: followup_yielded, with a reason, and the rest
+#                of the director's sequence is dropped. FOLLOWUP_GAP_S below
+#                0 restores 28b. Record: a barge-in's playback_cut names the
+#                line playing on the page, not a reply queued behind it (it
+#                was written for that reply, heard 0.0, #48 (c)).
+#   2026-09-29b  review of 29a: a follow-up yields only to a participant line
+#                the director will route. Their voice in the gap, a turn of
+#                theirs being closed, or its transcript still owed by the
+#                scribe (gpt, within ROUTE_TRANSCRIPT_WAIT) holds it instead,
+#                and it plays once that settles with no such line, the gap
+#                counted from the end of their sound as well. 29a dropped the
+#                sequence on a cough or a laugh in the gap (whose turn was then
+#                skipped as no_speech, so nobody spoke) and on a
+#                low_confidence "Yeah." the director never reads, and granted
+#                the follow-up while a line that ended in the gap was still
+#                being transcribed.
 #
 # PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
@@ -562,7 +587,7 @@ def text_client() -> AsyncAnthropic:
 #                encounter's clock. The page shows a start cue until then.
 #                Provenance `opening`.
 PIPELINE_VERSION = "2026-09-28b"
-ROOM_PACING_VERSION = "2026-09-28b"
+ROOM_PACING_VERSION = "2026-09-29b"
 
 
 def _voice_style_provenance():

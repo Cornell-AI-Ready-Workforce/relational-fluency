@@ -518,7 +518,8 @@ def _turn_meta(ev: dict) -> dict:
             "probe": bool(ev.get("probe")), "replay": bool(ev.get("replay")),
             "voiced_ms": ev.get("voiced_ms"),
             "voiced_span_ms": ev.get("voiced_span_ms"),
-            "committed_at": ev.get("committed_at")}
+            "committed_at": ev.get("committed_at"),
+            "spoken_at": ev.get("spoken_at")}
 
 
 async def _await_transcript(buf: List[str], grace: float,
@@ -1044,7 +1045,16 @@ class RealtimeVoiceSessionRunner:
         # it. This clock tracks when audio already sent will finish playing,
         # which is what "heard" has to mean for interruptions.
         self._play_cursor = 0.0
+        # When the page's last play_end ack arrived: the page's own word that
+        # a line has stopped playing, which the follow-up gap counts from
+        # (_await_followup_gap). Later than the clock above by the page's
+        # output latency, so a gap counted from it is silence actually heard.
+        self._heard_end_at = 0.0
         self._last_played: Optional[dict] = None   # {agent_id, start, end, text}
+        # The few lines before _last_played, in the same shape: a room's reply
+        # can be queued on the page behind a line that is still playing, and a
+        # barge-in then cuts the one in front (see _note_played).
+        self._played_lines: List[dict] = []
         # Rooms: when the participant's last turn was committed on the scribe,
         # and when the floor was last granted through _grant. A barge-in inside
         # ROOM_SPLIT_TURN_S of the first, on a reply granted after it, is the
@@ -1343,6 +1353,8 @@ class RealtimeVoiceSessionRunner:
         # From the first frame, not only once its pump starts (see
         # _pump_events): the transcript gate counts voiced audio per commit.
         rt.voiced_bar = self.vad.effective_threshold
+        # And each commit is dated by the VAD's speech start (issue #50).
+        rt.speech_began = lambda: self._speech_started_at
         window = _realtime.end_of_turn_for(getattr(rt, "model", realtime_model()))
         if window is not None:
             rt.turn_detection = window
@@ -3116,13 +3128,25 @@ class RealtimeVoiceSessionRunner:
         self._play_cursor = start + len(pcm) / 32000.0
         if st is not None:
             st.play_end = self._play_cursor
-        self._last_played = {
+        self._note_played({
             "agent_id": agent_id,
             "start": st.play_start if st is not None else start,
             "end": self._play_cursor,
             "text": "".join(st.text) if st is not None and st.text else
                     (self._last_played or {}).get("text", ""),
-        }
+        })
+
+    def _note_played(self, line: dict) -> None:
+        """Make `line` the playback clock's latest (_last_played), keeping the
+        few lines before it. A room reply can be queued on the page behind a
+        line still playing there (a routed turn's first reply behind the last
+        turn's last line), and a barge-in then has to name the line the
+        participant was hearing, not the one waiting behind it (issue #48;
+        see _cut_last_played)."""
+        old = self._last_played
+        if old is not None and old.get("start") != line.get("start"):
+            self._played_lines = (self._played_lines + [old])[-3:]
+        self._last_played = line
 
     async def _announce(self, agent, st) -> None:
         st.announced = True
@@ -3236,9 +3260,9 @@ class RealtimeVoiceSessionRunner:
         text = "".join(st.text).strip()
         st.text = []
         st.announced = False
-        self._last_played = {
+        self._note_played({
             "agent_id": agent.id, "start": st.play_start, "end": st.play_end, "text": text,
-        }
+        })
         # The audio that was relayed for it (_flush_held counted it on the
         # same clock). Omitted, this path wrote audio_ms 0 for every adopted
         # completed reply, however much of it the participant heard.
@@ -3248,11 +3272,21 @@ class RealtimeVoiceSessionRunner:
         """Write a playback_cut for the line still playing on the page
         (_last_played, on the playback clock): heard_seconds / total_seconds
         of that turn, and roughly the words that fit in what was heard, BESIDE
-        the full line, never instead of it."""
+        the full line, never instead of it.
+
+        The latest line is not always the one playing: one not yet begun is
+        queued behind an earlier line, and that earlier line is the one the
+        participant cut off (issue #48 (c): it was written as the queued
+        line, heard 0.0, and the line actually cut had no cut at all)."""
+        now = time.time()
         lp = self._last_played or {}
+        if (lp.get("start") or 0.0) > now:
+            lp = next((line for line in reversed(self._played_lines)
+                       if (line.get("start") or 0.0) <= now
+                       < (line.get("end") or 0.0)), lp)
         heard = 0.0
         if lp.get("start") is not None:
-            heard = max(0.0, time.time() - lp["start"])
+            heard = max(0.0, now - lp["start"])
         total = (lp.get("end") or 0) - (lp.get("start") or 0)
         words = (lp.get("text") or "").split()
         heard_words = (len(words) if total <= 0
@@ -3335,8 +3369,10 @@ class RealtimeVoiceSessionRunner:
         # response_done. See the cancel branch below.
         stopping = False
         # The scribe hears only the participant, so it counts their voiced
-        # audio per commit for the transcript gate (see _record_user_turn).
+        # audio per commit for the transcript gate (see _record_user_turn),
+        # and dates each commit by the VAD's speech start (issue #50).
         rt.voiced_bar = self.vad.effective_threshold
+        rt.speech_began = lambda: self._speech_started_at
         try:
             async for ev in rt.events():
                 etype = ev.get("type")
@@ -3615,6 +3651,13 @@ class RealtimeVoiceSessionRunner:
             # The line above was too short-voiced to trust (see
             # _record_user_turn); the steering review never read it.
             participant_low_confidence=self._last_user_low_confidence,
+            # The page turn this line played as, the `turn` its play_start
+            # ack and turn_timing name (not direction.turn, the director's
+            # count): encounter_record dates the line by when it was heard,
+            # which for a follow-up held behind a colleague can be seconds
+            # after this is written (issue #50). None when it never reached
+            # the page.
+            page_turn=_timer(self).turn_of(agent.id),
         )
         # Only the slot this turn actually consumed is cleared: a direction
         # belonging to a character who has not spoken yet keeps waiting for them.
@@ -3705,7 +3748,8 @@ class RealtimeVoiceSessionRunner:
                                 probe: bool = False, replay: bool = False,
                                 voiced_ms: Optional[int] = None,
                                 voiced_span_ms: Optional[int] = None,
-                                committed_at: Optional[float] = None) -> None:
+                                committed_at: Optional[float] = None,
+                                spoken_at: Optional[float] = None) -> None:
         """Record one participant utterance, once, as said.
 
         `garbled` is the bridge saying the transcriber dropped part of this
@@ -3724,6 +3768,8 @@ class RealtimeVoiceSessionRunner:
         where that voice sat (first voiced frame to last), which the rate gate
         divides by. `committed_at` is when that commit went out, which is how
         a 1:1 reply to it is told from an older one (see _withdraw_reply).
+        `spoken_at` is when the participant began saying it (wall clock; see
+        _tag_commit), which is where the record and the page put the line.
         """
         def unreliable(reason: str) -> None:
             # For the room: an arrival that will not reach the director.
@@ -3971,21 +4017,37 @@ class RealtimeVoiceSessionRunner:
             unrouted.append(text)
             self._last_unrouted_at = now
         unclear = _script_mismatch(text)
+        # When they began saying it, on the events' own clock (issue #50).
+        # `t` is when the transcript arrived, which is often after a
+        # character's line that began while they were still talking, so
+        # ordering by `t` put their line under one they had not heard yet.
+        # encounter_record orders by this; None where the bridge could not
+        # date the line, and such a line keeps its `t` place.
+        started = getattr(self.session.store, "started_at", None)
+        said_at = (round(spoken_at - started, 3)
+                   if isinstance(spoken_at, (int, float))
+                   and isinstance(started, (int, float)) else None)
         self.session.store.event(
             "user_turn", text=text, channel="voice", script_mismatch=unclear,
             utterance=self._user_utterances, garbled=garbled,
             item_id=item_id, voiced_ms=voiced_ms,
             voiced_span_ms=voiced_span_ms,
             low_confidence=low_confidence, replay=replay,
+            spoken_at=said_at,
         )
         # The research record keeps the raw text (retranscribe repairs it
         # offline); the participant only sees a neutral caption, since a line
         # of foreign script reads as "the app is broken". `utterance` numbers
         # the line, so a page that consolidates captions can tell a second
-        # utterance from the continuation of one.
+        # utterance from the continuation of one. `spoken_ago_s` is how long
+        # before this frame they began it, so the page can date the line on
+        # its own audio clock and put it above a character line that began
+        # after it (issue #50).
         await self._send({
             "type": "user_transcript", "text": text, "final": True, "unclear": unclear,
             "utterance": self._user_utterances, "garbled": garbled,
+            **({"spoken_ago_s": round(max(0.0, time.time() - spoken_at), 3)}
+               if said_at is not None else {}),
         })
         await self.session.broadcast(
             {"type": "transcript", "role": "user", "text": text}
@@ -4997,12 +5059,20 @@ class RealtimeVoiceSessionRunner:
                         # "heard 1.9 of 1.9" from his line 16 s earlier).
                         # What the participant was talking over then is the
                         # line still playing, which may be another member's
-                        # (a follow-up is granted before the previous line
-                        # has finished playing, fix plan #24 (a) 1), and that
-                        # is the cut written.
+                        # (a routed turn's first reply is still granted
+                        # before the last turn's line has finished playing),
+                        # and that is the cut written.
+                        #
+                        # And only once that reply has begun to PLAY: sent,
+                        # it can still be queued behind the line in front,
+                        # and it was written as the cut, heard 0.0, while the
+                        # line the participant actually cut had none (issue
+                        # #48 (c), s_1790278989_77ee7e at 182 s and 214 s).
+                        # _cut_last_played names the line playing.
                         cut_st = self._member_states.get(speaking_id)
                         if (holder_heard and cut_st is not None
-                                and cut_st.play_start is not None):
+                                and cut_st.play_start is not None
+                                and cut_st.play_start <= time.time()):
                             self.session.store.event(
                                 "playback_cut", agent_id=speaking_id,
                                 segment=self.segment,
@@ -5014,7 +5084,7 @@ class RealtimeVoiceSessionRunner:
                             )
                         elif (time.time() < self._play_cursor
                                 and (self._last_played or {}).get("agent_id")
-                                not in (None, speaking_id)):
+                                is not None):
                             self._cut_last_played()
                         if cut_st is not None:
                             # This turn is closed now; see the pump's
@@ -5212,8 +5282,10 @@ class RealtimeVoiceSessionRunner:
         # talking (see voice/realtime.py AUDIO_ABSENT_S); this is how it knows.
         rt.participant_speaking = lambda: bool(self.vad.active_within())
         # And this is how it counts voiced audio per commit for the
-        # transcript gate (see _record_user_turn and _tag_commit).
+        # transcript gate (see _record_user_turn and _tag_commit), and dates
+        # each commit (issue #50).
         rt.voiced_bar = self.vad.effective_threshold
+        rt.speech_began = lambda: self._speech_started_at
         # Until the participant has opened, a reply is held back rather than
         # relayed (pipeline 2026-09-28b; see _hold_first_reply).
         async for ev in self._hold_first_reply(rt, rt.events()):
@@ -5687,7 +5759,8 @@ class RealtimeVoiceSessionRunner:
             _timer(self).ack(msg)
             if msg.get("phase") == "end":
                 # The real end of that line's audio, which is what the turn
-                # cue waits for (issue #49).
+                # cue waits for (issue #49), and the follow-up gap too.
+                self._heard_end_at = time.time()
                 turn = msg.get("turn")
                 if isinstance(turn, int) and not isinstance(turn, bool):
                     # And the end of every line before it: the page plays all
@@ -6535,6 +6608,7 @@ class RealtimeVoiceSessionRunner:
                 participant=self._last_user_text,
                 # See _finalize_member_inner.
                 participant_low_confidence=self._last_user_low_confidence,
+                page_turn=_timer(self).turn_of(agent_id),
             )
 
             latency = (
@@ -8010,11 +8084,27 @@ class RealtimeVoiceSessionRunner:
                     severity="error",
                 )
             for aid, intent in zip(followups, followup_intents):
-                if self._closed or self.room is not room or self.vad.speaking:
-                    if self.vad.speaking:
-                        self.session.store.event(
-                            "followup_yielded", agent_id=aid,
-                        )
+                if self._closed or self.room is not room:
+                    break
+                # Not before the line before it has been heard out, plus the
+                # gap (_await_followup_gap). Waited for ahead of the direction
+                # below, so a follow-up that yields was never told anything.
+                yielded = await self._await_followup_gap(room)
+                if self._closed or self.room is not room:
+                    break
+                if yielded:
+                    # Dropped, with every speaker after it, not kept for
+                    # later. The sequence was the director's answer to the
+                    # turn before the participant spoke again; played after
+                    # their words it has the room carry on past them, which
+                    # is what #24 is about. What they said is routed afresh as
+                    # the next turn: only a line the director will route
+                    # yields (29b). A barge-in that stopped the line before
+                    # is this case too once their line lands, and that line's
+                    # cut is the barge-in's to write.
+                    self.session.store.event(
+                        "followup_yielded", agent_id=aid, reason=yielded,
+                    )
                     break
                 # Directed immediately before the grant and never mid-reply:
                 # the previous speaker's response_done is what this loop has
@@ -8076,6 +8166,84 @@ class RealtimeVoiceSessionRunner:
                 "voice_error", detail=f"group_maybe_advance: {exc}",
                 severity="error",
             )
+
+    async def _await_followup_gap(self, room) -> Optional[str]:
+        """THE FOLLOW-UP GAP (issues #24 and #48; the researchers' decision of
+        2026-09-29, room pacing 2026-09-29a and b). The next character of a room
+        turn waits until the line before it has finished playing on the page
+        and FOLLOWUP_GAP_S (1.0 s) of silence has followed. None when it may
+        take the floor; otherwise why the participant has it instead.
+
+        It used to be granted at the previous reply's response_done, which is
+        generation end, about 8 s before that line finished playing: the next
+        line was generated and queued behind it and began 0.0-0.2 s after it
+        on the page (26 handoffs at 0.0 s in s_1790278989_77ee7e). That reads
+        as characters talking over each other (#48), and it left the
+        participant no opening (#24).
+
+        "Finished playing" is the turn cue's reading (_heard_to_end), and the
+        silence counts from the later of the page's play_end ack and the
+        playback clock, so it is silence the participant heard. The grant
+        comes only then, so on the page the gap is FOLLOWUP_GAP_S plus that
+        reply's own time to first audio: starting it sooner would mean
+        holding a live reply's audio back in the runner, which nothing here
+        does. The turn cue stays shut throughout, as the floor is held.
+
+        The participant takes the floor with a line the director will route
+        on: one accepted during the wait, or earlier and still unrouted (it
+        came after this turn was routed and is queued as the next one). Their
+        voice in the gap, a turn of theirs being closed, or its transcript
+        still owed by the scribe (a commit of the last ROUTE_TRANSCRIPT_WAIT
+        with no transcript yet, on the route whose scribe commits its own
+        buffer) holds the follow-up rather than dropping it (29b): until that
+        line lands, and then it yields; or until nothing is held any more,
+        and then the gap is waited for again, counted from the end of their
+        sound too. 29a yielded to the VAD at once, and to any accepted line,
+        so a cough or a laugh in the gap (suppressed as no_speech), or a
+        "Yeah." too short for the director, dropped the rest of the director's
+        sequence and left the room silent; and it granted the follow-up while
+        a line that ended in the gap was still being transcribed, so the
+        character talked past it (#24). Not the VAD alone while the line
+        before is still playing: the participant's speakers can open it on
+        the character's own voice, and a real interjection over a line is the
+        barge-in's, which stops the line and so opens the gap at once. Below
+        0, FOLLOWUP_GAP_S grants as soon as the previous reply ends, as
+        before 29a."""
+        gap = _realtime.followup_gap_s()
+        if gap < 0:
+            return "participant_speaking" if self.vad.speaking else None
+        wait_s = float(os.getenv("ROUTE_TRANSCRIPT_WAIT", "6"))
+        why, sound_at = "user_turn", 0.0   # sound_at: the participant's, heard
+        while not self._closed and self.room is room:
+            if self._unrouted_user_texts:
+                return why
+            now = time.time()
+            heard = self._heard_to_end(now)
+            scribe = room.scribe
+            if heard and self.vad.speaking:
+                why, sound_at = "participant_speaking", now
+            elif self._participant_turn_closing:
+                sound_at = now
+            elif heard and not (getattr(scribe, "owns_input_buffer", False)
+                                and scribe.awaiting_transcript(wait_s)) and (
+                    now - max(self._play_cursor, self._heard_end_at, sound_at)
+                    >= gap):
+                return None
+            await asyncio.sleep(0.05)
+        return None
+
+    def _heard_to_end(self, now: float) -> bool:
+        """Whether every line sent to the page has finished playing there, as
+        the turn cue reads it (_turn_cue_blocker's "playing"): past the
+        playback clock, and each line that sent audio either acked by the
+        page's play_end (which takes it out of _cue_turns) or CUE_ACK_GRACE_S
+        past its own modelled end, for a page that never acks."""
+        cursor = self._play_cursor or 0.0
+        if now < cursor:
+            return False
+        return not any(
+            t["audio"] and now < (t.get("end") or cursor) + self.CUE_ACK_GRACE_S
+            for t in (getattr(self, "_cue_turns", None) or {}).values())
 
     def _take_unrouted(self) -> str:
         """The participant's words for this room turn to route on: every

@@ -534,6 +534,27 @@ probes before the first line, and that line's reply spends the beat on its
 cue. A participant who never opens produces an empty encounter until the
 12:00 stop: no `trigger_fired`, no `assistant_turn`, a silent assistant WAV.
 
+## What changed on 2026-09-29, the follow-up gap (room_pacing_version 2026-09-29a, 29b)
+
+The researchers' decision of 2026-09-29 on #24 and #48, the same in S3 and
+S4: when a room turn has a second or third speaker, that character starts
+only after the line before it has been heard out and a second of silence has
+followed.
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| room 29a | A follow-up speaker (the second or third of a room turn) is given the floor once the line before it has finished playing on the page (its `play_end` ack, or 2 s past its modelled end for a page that never acks, as the turn cue reads it) and `FOLLOWUP_GAP_S` of silence has followed. It was granted at the previous line's generation end, so it was queued behind that line and began 0.0-0.2 s after it. On the page the gap is `FOLLOWUP_GAP_S` plus the follow-up's own time to first audio (`turn_timing`); the turn cue stays empty through it. If the participant speaks in the gap, or a line of theirs is accepted while the previous line plays (or after the turn was routed), the follow-up yields: `followup_yielded` with `reason` `participant_speaking` or `user_turn`. The rest of the director's sequence is dropped, not replayed later; what they said is routed as the next turn. | `FOLLOWUP_GAP_S` (1.0); below 0 restores `28b` |
+| room 29a | A barge-in's `playback_cut` is written for the line the participant was hearing. A reply sent to the page but queued behind that line was written as the cut instead, heard 0.0, and the line actually cut had none (#48). | no knob (record fix) |
+| room 29b | A follow-up yields only to a line of the participant's that the director will route (reason `participant_speaking` when their voice was in the gap, else `user_turn`). Their voice in the gap, a turn of theirs being closed, or its transcript still owed by the scribe (gpt route, within `ROUTE_TRANSCRIPT_WAIT`) holds the follow-up instead of dropping it; once that settles with no such line (a cough or a laugh suppressed as `no_speech`, a `low_confidence` "Yeah." that names nobody, a turn under the voice floor, no transcript at all) the follow-up plays, `FOLLOWUP_GAP_S` after the end of their sound as well. In 29a those dropped the sequence and the room went quiet, and a line whose transcript was still on its way when the gap ended was talked past. | as 29a |
+
+Caveats for analysis: from `29a` the handoffs between characters within one
+room turn are at least 1 s apart on the page, and more follow-ups yield to
+the participant. `director_route` still lists the whole sequence the director
+asked for; `followup_yielded` says where it stopped (before `29a` it had no
+`reason`, and fired only when the participant was speaking as the previous
+reply finished generating; from `29b` it fires only once a line of theirs
+that the director routes has landed).
+
 ## The seven-minute floor, and the twelve-minute stop
 
 Every encounter runs **at least 7:00** and **at most 12:00**. Since `28b` the
