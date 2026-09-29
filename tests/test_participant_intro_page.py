@@ -87,7 +87,10 @@ function boot(search, routes, opts) {
 const shown = (b, id) => b.dom.$(id).style.display === 'flex';
 const posts = (b, sub) => b.net.calls.filter(c => c.method === 'POST' && c.url.includes(sub));
 const gets = (b, sub) => b.net.calls.filter(c => c.method === 'GET' && c.url.includes(sub));
-const notes = (b) => b.dom.$('transcript').children.filter(c => /system-note/.test(c.className || ''));
+// The page's notices: the capture failure's in its slot under the header, the
+// rest in the transcript.
+const notes = (b) => ['captureSlot', 'transcript'].flatMap(id => b.dom.$(id).children)
+  .filter(c => /system-note/.test(c.className || ''));
 
 const BRIEF = {
   id: 'S4A', title: 'Planning an internal rollout', intro: 'You are in a room.', mode: 'group',
@@ -194,6 +197,9 @@ ONE_NOTICE = r"""
   assert.strictEqual(n.length, 1,
     'three presses left ' + n.length + ' notices: ' + JSON.stringify(n.map(x => x.textContent)));
   assert(/allow microphone access/i.test(n[0].textContent), n[0].textContent);
+  // Under the header, next to Start: at the end of the transcript it was
+  // 800 px below Start on a phone, and nothing on screen changed.
+  assert.strictEqual(b.dom.$('captureSlot').children.length, 1, 'the notice is not next to Start');
   assert.strictEqual(b.dom.$('startBtn').disabled, false, 'Start was not offered again');
 
   // A different failure on the next press replaces the text, not the count.

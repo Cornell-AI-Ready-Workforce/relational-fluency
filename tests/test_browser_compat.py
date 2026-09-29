@@ -911,7 +911,8 @@ async function attempt(cfg) {
   b.run("participantId = 'p_test'; consentPending = false;");
   await b.ctx.startSession();
   await b.clock.advance(10);
-  return b.dom.document.getElementById('transcript').children.map(c => c.textContent).join(' | ');
+  // The notice sits under the header, next to Start (#captureSlot).
+  return b.dom.document.getElementById('captureSlot').children.map(c => c.textContent).join(' | ');
 }
 
 (async () => {

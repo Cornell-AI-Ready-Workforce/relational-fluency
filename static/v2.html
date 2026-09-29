@@ -73,6 +73,11 @@
     .lower-row { flex-direction: column; }
     .lower-row > *:first-child, .lower-row > *:last-child { flex: 1 1 auto; }
     .brief { max-height: none; }
+    /* Stacked, the captions and the page's notices come right under the
+       tiles and the setup card after them. The other way round, everything
+       the transcript says (the captions, the move-on notice) started 900 px
+       and more down a phone, below a card the participant had already read. */
+    .lower-row > .transcript { order: -1; }
   }
   main { flex: 1; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
   /* Photos in a single row across the top, large for immersion. */
@@ -192,9 +197,12 @@
   .transcript .system-note { margin: 10px 0; padding: 6px 10px; border-radius: 6px;
     background: var(--surface-2); color: var(--muted);
     font-size: 12px; font-style: italic; }
-  /* The capture-failure notice carries its own way out (see showCaptureFailure),
-     so its button is a control, not part of the italic aside. */
-  .transcript .capture-note button { display: inline-block; margin: 6px 0 0 8px; padding: 5px 12px;
+  /* The capture-failure notice, under the header (see showCaptureFailure). It
+     is a fault, so it has the fault's red edge, and it carries its own way
+     out, so its button is a control, not part of the text. */
+  .capture-slot .capture-note { margin: 12px 20px 0; padding: 10px 14px; border: 1px solid var(--accent);
+    border-radius: 10px; background: var(--surface); color: var(--fg); font-size: 14px; line-height: 1.5; }
+  .capture-slot .capture-note button { display: inline-block; margin: 6px 0 0 8px; padding: 5px 12px;
     font-size: 12.5px; font-style: normal; }
   .tile.absent { opacity: .3; filter: grayscale(1); }
   /* The next character's tile offers a way in, so the participant can move on
@@ -206,6 +214,10 @@
     white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
   .tile .talk-btn:hover { filter: brightness(1.08); }
   .tile .talk-btn[disabled] { opacity: .6; cursor: default; }
+  /* The banner and the header. No box of its own on a wide screen, so the
+     banner stays sticky against the page as it always was; on a phone the
+     two stick together (see the small-screen rules). */
+  .topbar { display: contents; }
   .ai-banner { position: sticky; top: 0; z-index: 40; text-align: center;
     background: #2f2f2f; color: #fff; font-size: 12.5px; letter-spacing: .01em;
     padding: 6px 12px; }
@@ -352,7 +364,15 @@
     .speaking-indicator { top: 8px; right: 8px; font-size: 10px; padding: 2px 7px; }
     .mic-icon { bottom: 9px; left: 9px; }
     .mic-level { bottom: 9px; right: 9px; width: 46px; }
-    .transcript { max-height: 220px; padding: 12px 14px; border-radius: 10px; }
+    /* The compact height this asked for: the base min-height of 340px beat
+       it, so the box was never shorter than that. */
+    .transcript { min-height: 0; max-height: 45vh; max-height: 45svh; padding: 12px 14px; border-radius: 10px; }
+    /* The turn cue, the ring and timer, End and "Stop and leave the study"
+       stay on screen while the participant scrolls to the captions. The
+       header alone runs to 200 px and more here, and it used to scroll away,
+       so whose turn it was and what was said were never on screen together. */
+    .topbar { display: block; position: sticky; top: 0; z-index: 40; }
+    .capture-slot .capture-note { margin: 10px 14px 0; }
     .consent-card { padding: 20px 18px; }
     .consent-card h2 { font-size: 16px; }
     /* The audio check's rows. A fixed 120px verdict and a nowrap button left
@@ -520,6 +540,7 @@
   </div>
 </div>
 
+<div class="topbar">
 <div class="ai-banner" id="aiBanner">
   You are speaking with an AI character. This is a fictional scenario.
 </div>
@@ -553,6 +574,11 @@
     <button id="leaveBtn" class="secondary" style="display:none">Stop and leave the study</button>
   </div>
 </header>
+</div>
+<!-- The notice for a microphone or camera that would not start
+     (showCaptureFailure): under the header, next to the Start button whose
+     press it answers. -->
+<div class="capture-slot" id="captureSlot" aria-live="polite"></div>
 
 <main>
   <div class="grid" id="grid"></div>
@@ -1980,13 +2006,15 @@
   // identical copy per press — four presses, four paragraphs — on the screen
   // they were already stuck on, and the transcript is an aria-live region, so
   // a screen reader read the whole pile back. Replaced rather than edited in
-  // place: moving it to the bottom keeps it next to the Start button's result
-  // and lets a screen reader announce this attempt once. Removed through the
-  // transcript, which is the one parent it can have.
+  // place, which lets a screen reader announce this attempt once. It lives in
+  // #captureSlot, under the header and next to the Start button whose press
+  // it answers, not at the end of the transcript: on a phone that was below
+  // the setup card, 800 px under Start, and nothing on screen changed when
+  // Start failed. Removed through the slot, the one parent it can have.
   let captureNote = null;   // { el, kind } while a capture failure is on screen
   function dropCaptureNote() {
     if (!captureNote) return;
-    try { $('transcript').removeChild(captureNote.el); } catch (e) { /* already gone */ }
+    try { $('captureSlot').removeChild(captureNote.el); } catch (e) { /* already gone */ }
   }
   function showCaptureFailure(kind) {
     dropCaptureNote();
@@ -1997,7 +2025,7 @@
     }
     captureNote.kind = kind;
     // The message is the element's own text, so the note reads as one
-    // sentence wherever the transcript is read back from.
+    // sentence wherever it is read back from.
     captureNote.el.textContent = CAPTURE_MESSAGES[kind] || CAPTURE_MESSAGES.denied;
     // And the way out, which is not a withdrawal (issue #41): the only other
     // control on this screen was Start, and on a run link "Stop and leave the
@@ -2012,8 +2040,10 @@
     help.addEventListener('click', () => openCaptureHelp(kind));
     captureNote.el.appendChild(help);
     captureNote.help = help;
-    $('transcript').appendChild(captureNote.el);
-    $('transcript').scrollTop = $('transcript').scrollHeight;
+    $('captureSlot').appendChild(captureNote.el);
+    // Focus goes to the way out, so the failure is where the participant is,
+    // keyboard and screen reader included, not somewhere they have to find.
+    help.focus();
     return captureNote.el;
   }
   // Capture works now, so the failure the notice describes is over. Never
