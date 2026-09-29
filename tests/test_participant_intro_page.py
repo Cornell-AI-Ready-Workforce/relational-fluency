@@ -780,3 +780,11 @@ DIALOGS = RUN_VIEW + A11Y_DOM + r"""
 
 def test_every_card_takes_focus_gives_it_back_and_leaves_the_page_behind_inert(tmp_path):
     _run(tmp_path, DIALOGS, "DIALOGS OK")
+
+
+def test_the_page_has_one_top_level_heading_and_it_is_the_scenario():
+    """#43: 'the page has no top-level heading'. The header's title is it."""
+    src = V2.read_text(encoding="utf-8")
+    assert len(re.findall(r"<h1\b", src)) == 1, re.findall(r"<h1\b[^>]*>", src)
+    assert re.search(r'<h1 class="title"><span id="title">', src), "the h1 is not the scenario title"
+    assert "createElement('h1')" not in src

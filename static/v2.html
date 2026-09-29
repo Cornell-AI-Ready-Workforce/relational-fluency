@@ -29,7 +29,9 @@
          min-height: 100vh; min-height: 100svh; display: flex; flex-direction: column; }
   header { padding: 14px 20px 10px; border-bottom: 1px solid var(--line-soft); background: var(--surface);
            display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-  header .title { font-size: 16px; font-weight: 600; }
+  /* The page's one h1 (#43): what the page is about, for a screen reader's
+     list of headings. It looks as the plain line it was. */
+  header .title { font-size: 16px; font-weight: 600; margin: 0; }
   header .meta { font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
   /* Lower area: description (left) and live transcript (right), side by side. */
   .lower-row { display: flex; gap: 16px; width: 100%; max-width: 1600px; align-items: stretch; }
@@ -635,7 +637,7 @@
     <!-- A neutral name until the scenario's own title lands, which the boot
          sequence asks for before the intro overlays (issue #44): the header
          used to read "Loading…" for the whole of them and looked stuck. -->
-    <div class="title"><span id="title">Conversation</span><span id="runChip" class="run-chip" style="display:none"></span></div>
+    <h1 class="title"><span id="title">Conversation</span><span id="runChip" class="run-chip" style="display:none"></span></h1>
   </div>
   <div class="controls" id="controls">
     <span class="turn-state" id="turnState"></span>
