@@ -412,6 +412,10 @@
        right touched the left edge at 360px and below. */
     .gate-note { left: 16px; right: 16px; max-width: none; }
     .gate-note .note-close { top: 3px; right: 3px; width: 44px; height: 44px; }
+    /* The header's Move on wraps here rather than being clipped: 38vw at 375
+       cut "Move on: The close, who owns what" to "Move on: The cl…", and
+       where it goes was only readable in the confirm dialog. */
+    button#advanceBtn { max-width: none; white-space: normal; }
     .capture-slot .capture-note button { margin: 8px 0 0; padding: 10px 16px; font-size: 15px; }
     /* One pattern for every card's actions on a phone: full-width buttons,
        one to a row, the primary on top. Side by side they squeezed into two-
