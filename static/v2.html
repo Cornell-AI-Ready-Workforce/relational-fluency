@@ -1808,10 +1808,14 @@
   //   "You can speak now"   when the server says so (turn_open): the last
   //                         queued line has finished playing on this page
   //                         and nothing else is queued or being generated.
-  // Between those the pill keeps what it said. It used to say "Your turn" at
-  // generation end, which was 7-17 s before the character stopped talking
-  // in e80fca, and switch to "Listening…" 4 s later on a timer; and a room
-  // said "You speak first" although its lead opens every scene.
+  // Between those the pill is empty. It used to keep what it last said, so
+  // it read "Dan is speaking" over the silence while Chris's follow-up was
+  // generated, and "You can speak now" after a line (the silence probe, a
+  // held call's reply) had started generating (review of 850b08e). It used
+  // to say "Your turn" at generation end, which was 7-17 s before the
+  // character stopped talking in e80fca, and switch to "Listening…" 4 s
+  // later on a timer; and a room said "You speak first" although its lead
+  // opens every scene.
   function speakerName(id) {
     return cueNames[id] || (cast.find(a => a.id === id) || {}).name || 'Your partner';
   }
@@ -1823,6 +1827,8 @@
       setTurnState('Listening…', 'listen');
     } else if (cueOpen) {
       setTurnState('You can speak now', 'you');
+    } else {
+      setTurnState('');
     }
   }
   function startTimer() {
@@ -3490,10 +3496,12 @@
         finalizeUserCaption();
         agentTurns++;
         assistantSpeaking = true;
-        // A line is on its way, so the floor is not open; the pill names the
-        // speaker when their audio starts (setActiveSpeaker), not now.
+        // A line is on its way, so the floor is not open, and the pill stops
+        // saying it is; it names the speaker when their audio starts
+        // (setActiveSpeaker), not now.
         cueOpen = false;
         if (m.agent_id && m.agent_name) cueNames[m.agent_id] = m.agent_name;
+        renderTurnCue();
         // The mic stays open in EVERY mode, group and 1:1 alike, so the
         // participant can interject exactly as they could in a real room; the
         // server stops the current speaker when it hears them.

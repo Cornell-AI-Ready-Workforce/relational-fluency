@@ -429,17 +429,36 @@ function page(mode, castList) {
     p.frame({ type: 'assistant_done', agent_id: 'dan' });
     await p.at(1.4);
     // Dan has stopped; Chris's follow-up is still being generated, so the
-    // floor is not offered (no turn_open) and the pill does not say it is.
-    assert.notStrictEqual(p.pill(), 'You can speak now');
-    await p.say('chris', 'Chris', 2, 1.4, 1);
-    await p.at(1.8);
+    // floor is not offered (no turn_open) and the pill does not say it is,
+    // nor that Dan is still talking: nobody is (review of 850b08e).
+    assert.strictEqual(p.pill(), '', 'the gap before a follow-up: ' + p.pill());
+    await p.at(4.0);
+    assert.strictEqual(p.pill(), '', 'a long follow-up generation: ' + p.pill());
+    await p.say('chris', 'Chris', 2, 4.0, 1);
+    await p.at(4.4);
     assert.strictEqual(p.pill(), 'Chris is speaking');
     p.frame({ type: 'assistant_done', agent_id: 'chris' });
-    await p.at(2.6);
+    await p.at(5.2);
     p.frame({ type: 'turn_open' });
     assert.strictEqual(p.pill(), 'You can speak now');
     p.frame({ type: 'speech_started' });
     assert.strictEqual(p.pill(), 'Listening…');
+  }
+
+  // ---- 1:1: the floor was offered, and then a line starts generating (the
+  //      silence probe, or a held call's reply) before the participant spoke
+  {
+    const p = page('single', [{ id: 'morgan', name: 'Morgan' }]);
+    p.frame({ type: 'turn_open' });
+    assert.strictEqual(p.pill(), 'You can speak now');
+    await p.at(12.0);
+    p.frame({ type: 'assistant_started', agent_id: 'morgan', agent_name: 'Morgan', turn: 1 });
+    assert.notStrictEqual(p.pill(), 'You can speak now',
+      'the floor is closed, and the pill still offers it');
+    assert.strictEqual(p.pill(), '');
+    p.set('for (let i = 0; i < 10; i++) playPcmChunk(new Int16Array(1600).buffer);');
+    await p.at(12.3);
+    assert.strictEqual(p.pill(), 'Morgan is speaking');
   }
   console.log('TURN CUE PAGE OK');
 })().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
