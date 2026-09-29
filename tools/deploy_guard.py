@@ -5,6 +5,7 @@ hands every question that needs parsing to this file, so the answers are
 testable in Python and identical on macOS and Linux bash:
 
     python tools/deploy_guard.py pin                   # the pinned image, tab-separated
+    python tools/deploy_guard.py origin URL            # exit 0 when URL is the canonical repository
     python tools/deploy_guard.py health FILE|-         # active_sessions and build from /health
     python tools/deploy_guard.py relation OLD NEW      # forward / rollback / same / sideways / unknown
     python tools/deploy_guard.py sim-report TAG        # pass / missing / fail: why
@@ -14,15 +15,18 @@ plan-summary reads `tofu show -json tfplan.bin` and prints the plan's resource
 changes with the IMAGE change set apart, because the image is the line that
 decides what participants talk to and it is otherwise one attribute among
 forty inside a replaced task definition. It exits 3 when the plan would
-deploy something other than the pinned image, and 4 when it would move
+deploy something other than the pinned image, 4 when it would move
 production to an OLDER commit than it runs now: the 2026-09-24 incident, a
-stale checkout's pin replacing 4798e64 with ca77c2f.
+stale checkout's pin replacing 4798e64 with ca77c2f, and 5 when the image it
+replaces is a commit this checkout does not have, which is what a stale remote
+looks like from inside it (4 and 5 both yield to --allow-rollback).
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -36,7 +40,38 @@ from tools import pinned_image  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REPORTS = REPO_ROOT / "tools" / "sim" / "reports"
 
-WRONG_IMAGE, ROLLBACK = 3, 4
+WRONG_IMAGE, ROLLBACK, UNKNOWN = 3, 4, 5
+
+# The repository production is released from. deploy.sh's check 2 compares HEAD
+# with origin/main, which proves nothing about main when `origin` is a fork, a
+# mirror or a clone of a local copy: any of those can be behind GitHub's main
+# and still pin an older image, and then the rollback check cannot see the
+# newer commit production runs either (review of 850b08e). The repository is
+# public, so such checkouts exist. RF_DEPLOY_CANONICAL_REMOTE replaces it for
+# tools/deploy.sh's own tests, whose origin is a throwaway bare repository.
+CANONICAL_REPO = "github.com/Cornell-AI-Ready-Workforce/relational-fluency"
+
+
+def _normalize_remote(url: str) -> str:
+    """host/owner/repo, lower case, for the spellings git accepts: https,
+    ssh:// and scp-style git@host:owner/repo, with or without .git or a
+    user; any other string (a local path) as itself, less .git."""
+    u = (url or "").strip()
+    m = re.match(r"^[a-z][a-z0-9+.-]*://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.*)$", u, re.I)
+    if m:
+        u = f"{m.group(1)}/{m.group(2)}"
+    else:
+        m = re.match(r"^(?:[^@/]+@)?([^/:]+):(?!/)(.*)$", u)
+        if m and "/" not in m.group(1):
+            u = f"{m.group(1)}/{m.group(2)}"
+    u = u.rstrip("/")
+    if u.endswith(".git"):
+        u = u[:-4]
+    return u.lower()
+
+
+def remote_names_repo(url: str, repo: str) -> bool:
+    return bool(url) and bool(repo) and _normalize_remote(url) == _normalize_remote(repo)
 
 
 def _read(src: str) -> str:
@@ -204,10 +239,17 @@ def render_plan(summary: dict, pinned: str, *, allow_rollback: bool = False,
                 "same": "same commit",
                 "sideways": "production runs a commit that is not on the pinned "
                             "commit's history (a branch build?); this replaces it",
-                "unknown": "cannot tell how these relate: one is not in this "
-                           "repository's history",
                 "create": "no image runs now",
             }.get(rel)
+            if rel == "unknown":
+                # Treated as a rollback: production running a commit this
+                # checkout cannot place is exactly what a stale remote looks
+                # like, and the apply would then replace a newer build.
+                verdict = paint(f"CANNOT PLACE {old}: it is not in this checkout's "
+                                f"history, so this may replace a NEWER build "
+                                f"(git fetch?)", "1;31")
+                if not allow_rollback:
+                    code = max(code, UNKNOWN)
             if rel == "rollback":
                 verdict = paint(f"ROLLBACK: {new} is {n} commit(s) OLDER than {old}, "
                                 f"which production runs now", "1;31")
@@ -227,6 +269,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("pin")
+    o = sub.add_parser("origin")
+    o.add_argument("url")
     h = sub.add_parser("health")
     h.add_argument("src")
     r = sub.add_parser("relation")
@@ -248,6 +292,10 @@ def main(argv=None) -> int:
             return 2
         print("\t".join((pin.image, pin.registry, pin.region, pin.repository, pin.tag)))
         return 0
+    if args.cmd == "origin":
+        canonical = os.environ.get("RF_DEPLOY_CANONICAL_REMOTE") or CANONICAL_REPO
+        print(canonical)
+        return 0 if remote_names_repo(args.url, canonical) else 1
     if args.cmd == "health":
         try:
             active, build = parse_health(_read(args.src))

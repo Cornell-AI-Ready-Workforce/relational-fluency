@@ -20,7 +20,9 @@
 #   1. the working tree is clean: what is planned is what is committed
 #      (untracked sim reports under tools/sim/reports/ excepted, see below),
 #      and no *.auto.tfvars or TF_CLI_ARGS can override the committed pin;
-#   2. after `git fetch`, HEAD is exactly origin/main: not behind it (the
+#   2. `origin` is the canonical GitHub repository (not a fork, a mirror or a
+#      clone of a local copy, any of which can be behind it), and after
+#      `git fetch`, HEAD is exactly origin/main: not behind it (the
 #      2026-09-24 case), not ahead of it (unreviewed), not beside it;
 #   3. the container_image tag pinned in infra/terraform/terraform.tfvars is a
 #      commit reachable from origin/main, and exists in ECR (read-only
@@ -31,7 +33,8 @@
 #      /health says active_sessions is 0, because a rollout cuts every
 #      encounter on the old task about two minutes in (docs/OPERATIONS.md,
 #      "Before every deploy"); and, where /health reports the running build,
-#      the pin is not OLDER than it;
+#      the pin is not OLDER than it and it is a commit this checkout knows
+#      (one it cannot place is refused like a rollback);
 #   5. and it WARNS, without refusing, when tools/sim/reports/<tag>.json is
 #      missing or did not pass (tools/sim/check.py, the pre-deploy sim check).
 #
@@ -138,6 +141,20 @@ ok "clean"
 
 # --- 2. HEAD is origin/main --------------------------------------------------
 step "Is this checkout main, as it is on GitHub?"
+# "HEAD is origin/main" is only worth something when origin is the repository
+# production is released from. The repository is public: a fork, a mirror or a
+# clone of somebody's local copy passes against its own main, which can be
+# behind GitHub's and pin an older image, and then the rollback check below
+# cannot see the newer commit production runs either.
+origin_url=$(git remote get-url origin 2>/dev/null) \
+  || refuse "this checkout has no remote named origin" \
+       "Clone https://github.com/Cornell-AI-Ready-Workforce/relational-fluency.git and run this from there."
+canonical=$(guard origin "$origin_url") \
+  || refuse "origin is $origin_url, not the canonical repository ($canonical)" \
+       "Production is released from that repository's main. A fork, a mirror or a clone of" \
+       "a local copy can be behind it, and then HEAD matching its main proves nothing." \
+       "git remote set-url origin https://$canonical.git (or work from a clone of it)."
+ok "origin is $origin_url"
 git fetch --quiet origin main || refuse "git fetch origin main failed" \
   "Without it there is no way to know whether this checkout is behind main."
 head=$(git rev-parse HEAD)
@@ -265,7 +282,19 @@ if [ -n "$PROD_BUILD" ]; then
           "rollback, pinned on main by PR), pass --allow-rollback."
       fi ;;
     sideways) warn "production runs $PROD_BUILD, which is not on the pinned commit's history (a branch build?)" ;;
-    *) warn "production runs $PROD_BUILD, which this repository does not know; git fetch --all?" ;;
+    *)
+      # Treated as a rollback. Production running a commit this checkout
+      # cannot place is what a stale remote looks like from inside it: the
+      # pin may well be OLDER than what runs.
+      if [ "$ALLOW_ROLLBACK" = 1 ]; then
+        warn "production runs $PROD_BUILD, which this repository does not know (--allow-rollback)"
+      else
+        refuse "production runs $PROD_BUILD, which this repository does not know" \
+          "So whether the pin $TAG is newer or older than it cannot be told, and a checkout" \
+          "that has never seen a newer build is exactly how a rollback looks from inside it." \
+          "git fetch origin, and check origin is the canonical repository; if production" \
+          "really runs a build this repository will never have, pass --allow-rollback."
+      fi ;;
   esac
 else
   warn "production /health names no build (the image predates BUILD_SHA); the plan's image diff below is the only record of what runs"
@@ -319,6 +348,11 @@ case "$src" in
      refuse "the plan moves production to an OLDER build than it runs" \
        "The plan file has been deleted. If this rollback is intended, pin it on main by" \
        "PR and run again with --allow-rollback." ;;
+  5) rm -f "$TF_DIR/$PLAN_FILE"
+     refuse "the plan replaces an image whose commit this checkout cannot place" \
+       "It may be NEWER than the pin (a stale remote looks exactly like this). The plan" \
+       "file has been deleted. git fetch origin and run again; if production really runs" \
+       "a build this repository will never have, pass --allow-rollback." ;;
   *) rm -f "$TF_DIR/$PLAN_FILE"; refuse "could not summarize the plan (exit $src)" ;;
 esac
 

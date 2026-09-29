@@ -380,13 +380,14 @@ nothing for that command to apply.
 | Check | Refuses when | Override |
 |---|---|---|
 | Working tree | any uncommitted or untracked file (a new sim report under `tools/sim/reports/` excepted), a `*.auto.tfvars`, or `TF_CLI_ARGS`/`TF_CLI_ARGS_plan` set | none |
+| `origin` | it is not `github.com/Cornell-AI-Ready-Workforce/relational-fluency` (https, ssh or `git@` spelling): a fork, a mirror or a clone of a local copy can be behind it, and then matching its `main` proves nothing | none |
 | `HEAD` against `origin/main`, after `git fetch` | behind (the 24 September case), ahead (unreviewed) or diverged | none |
 | The pinned tag | not a commit reachable from `origin/main`, or not in ECR (read-only `aws ecr describe-images`) | none |
 | Production's task count (read-only `aws ecs describe-services`) | more than one task running or desired (left at 2 after a collection burst, or mid-rollout), or ECS will not say: `/health` answers for one task, picked at random, so its `active_sessions` cannot speak for the others | `--allow-active-sessions` |
 | Production `/health` | `active_sessions` above 0, or `/health` unreachable | `--allow-active-sessions` |
-| Production's build | the pin is older than the `"build"` production reports | `--allow-rollback` |
+| Production's build | the pin is older than the `"build"` production reports, or that build is a commit this checkout does not have (what a stale remote looks like from inside it) | `--allow-rollback` |
 | The sim report | missing or failed: a **warning**, not a refusal | none needed |
-| The plan itself | it deploys any image but the pin, or moves the image to an older commit than the one running (the plan file is deleted) | `--allow-rollback`, for the second only |
+| The plan itself | it deploys any image but the pin, or moves the image to an older commit than the one running, or replaces an image whose commit this checkout cannot place (the plan file is deleted) | `--allow-rollback`, for the second and third only |
 
 The plan's before-image is checked as well as `/health` because images built
 before `BUILD_SHA` (every one up to `0066b10`, which production runs since

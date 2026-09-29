@@ -92,6 +92,40 @@ def test_colour_only_when_asked():
     assert "\033[1;33m" in G.render_plan(s, f"{IMG}:4798e64", color=True)[1]
 
 
+@pytest.mark.parametrize("url", [
+    "https://github.com/Cornell-AI-Ready-Workforce/relational-fluency.git",
+    "https://github.com/Cornell-AI-Ready-Workforce/relational-fluency",
+    "https://github.com/cornell-ai-ready-workforce/Relational-Fluency/",
+    "git@github.com:Cornell-AI-Ready-Workforce/relational-fluency.git",
+    "ssh://git@github.com/Cornell-AI-Ready-Workforce/relational-fluency.git",
+    "https://jl3369@github.com/Cornell-AI-Ready-Workforce/relational-fluency.git",
+])
+def test_the_canonical_repository_in_any_spelling(url):
+    assert G.remote_names_repo(url, G.CANONICAL_REPO)
+
+
+@pytest.mark.parametrize("url", [
+    "https://github.com/jl3369/relational-fluency.git",                    # a fork
+    "https://github.com/Cornell-AI-Ready-Workforce/relational-fluency-old",
+    "https://gitlab.com/Cornell-AI-Ready-Workforce/relational-fluency.git",
+    "/Users/someone/relational_fluency",                                   # a clone of a clone
+    "",
+])
+def test_anything_else_is_not_it(url):
+    assert not G.remote_names_repo(url, G.CANONICAL_REPO)
+
+
+def test_a_plan_replacing_an_image_this_checkout_cannot_place_is_refused():
+    """Review of 850b08e: 'unknown' printed 'cannot tell how these relate' and
+    exited 0, and "production runs a commit I cannot place" is what a stale
+    remote looks like."""
+    s = G.summarize_plan(_plan("fedcba9", "4798e64"))
+    code, text = G.render_plan(s, f"{IMG}:4798e64")
+    assert code == G.UNKNOWN and "CANNOT PLACE fedcba9" in text and "NEWER" in text
+    code, _ = G.render_plan(s, f"{IMG}:4798e64", allow_rollback=True)
+    assert code == 0
+
+
 @pytest.mark.parametrize("body,want", [
     ('{"active_sessions": 0, "build": "4798e64"}', (0, "4798e64")),
     ('{"active_sessions": 2, "build": null}', (2, "")),
@@ -214,7 +248,9 @@ def world(tmp_path, monkeypatch):
     log = tmp_path / "stub.log"
     log.write_text("", encoding="utf-8")
     env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}",
-               PYTHON=sys.executable, STUB_LOG=str(log), STUB_PLAN_JSON=str(plan), NO_COLOR="1")
+               PYTHON=sys.executable, STUB_LOG=str(log), STUB_PLAN_JSON=str(plan), NO_COLOR="1",
+               # The bare origin stands in for the canonical GitHub repository.
+               RF_DEPLOY_CANONICAL_REMOTE=str(origin))
     for k in ("TF_CLI_ARGS", "TF_CLI_ARGS_plan", "STUB_ECR", "STUB_ECS", "STUB_HEALTH",
               "STUB_PLAN_RC"):
         env.pop(k, None)
@@ -295,6 +331,38 @@ def test_a_checkout_ahead_of_main_is_refused(world):
     _git(world.work, "commit", "-q", "-am", "local only")
     r = world.run()
     assert r.returncode == 1 and "AHEAD of origin/main" in r.out
+
+
+@bash_only
+def test_a_checkout_whose_origin_is_not_the_canonical_repository_is_refused(world):
+    """A fork, a mirror or a clone of a local copy passes "HEAD is
+    origin/main" against its own main, which can be behind GitHub's."""
+    r = world.run(RF_DEPLOY_CANONICAL_REMOTE="")
+    assert r.returncode == 1 and "not the canonical repository" in r.out, r.out
+    assert "github.com/Cornell-AI-Ready-Workforce/relational-fluency" in r.out
+    assert "tofu" not in r.calls and "aws" not in r.calls
+
+
+@bash_only
+def test_a_production_build_this_checkout_cannot_place_is_refused(world):
+    """Production runs a newer main build a stale remote never fetched."""
+    unknown = '{"active_sessions": 0, "build": "fedcba9"}'
+    r = world.run(STUB_HEALTH=unknown)
+    assert r.returncode == 1 and "does not know" in r.out, r.out
+    assert "tofu" not in r.calls
+    r = world.run("--allow-rollback", STUB_HEALTH=unknown)
+    assert r.returncode == 0 and "WARNING: production runs fedcba9" in r.out, r.out
+
+
+@bash_only
+def test_a_plan_replacing_an_image_this_checkout_cannot_place_is_refused_and_deleted(world):
+    world.plan.write_text(json.dumps(_plan("fedcba9", world.c1)), encoding="utf-8")
+    r = world.run()
+    assert r.returncode == 1 and "cannot place" in r.out, r.out
+    assert not (world.work / "infra" / "terraform" / "tfplan.bin").exists()
+    assert "apply tfplan.bin" not in r.stdout
+    r = world.run("--allow-rollback")
+    assert r.returncode == 0, r.out
 
 
 @bash_only
