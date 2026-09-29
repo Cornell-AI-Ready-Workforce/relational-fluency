@@ -346,10 +346,13 @@ function page(search, runObj) {
        $('stopBtn').style.display = 'inline-block';`);
   const notices = () => b.dom.$('transcript').children
     .filter(c => c.className === 'system-note').map(c => c.textContent);
+  // Every note the page floats is copied into the transcript too, so the
+  // move-on notice is counted by its words.
+  const moveOns = () => notices().filter(t => /whenever you are ready/.test(t));
   // The participant spoke as the conversation opened: the ring and End count
   // from their first line (floorStartMs) since pipeline 2026-09-28b.
   const at = (s) => set(`timerStartMs = floorStartMs = Date.now() - ${s} * 1000; renderTimer();`);
-  return { b, set, get, frame, notices, at };
+  return { b, set, get, frame, notices, moveOns, at };
 }
 
 (async () => {
@@ -378,6 +381,8 @@ function page(search, runObj) {
     assert(/can (move on to the next conversation|end this conversation) in about 6 minutes/.test(early),
       label + ': ' + early);
     assert(!/more minutes|runs about/.test(early), label + ': counts down to an end: ' + early);
+    $('stopBtn').click();
+    assert.strictEqual(p.notices().length, 1, label + ': a second press stacked the same reply');
     assert(/can move on in about 6 minutes/.test($('gateLabel').textContent),
       label + ': ' + $('gateLabel').textContent);
     // The character saying goodbye early: the conversation carries on.
@@ -385,18 +390,20 @@ function page(search, runObj) {
     const held = $('gateNote').textContent;
     assert(/^Keep going — you can (move on to the next conversation|end this conversation) in about 3 minutes\.$/.test(held),
       label + ': ' + held);
-    assert.strictEqual(p.notices().length, 0, label + ': a notice before the floor');
+    assert.strictEqual(p.moveOns().length, 0, label + ': a move-on notice before the floor');
+    // Both replies stay readable after they fade, once each.
+    assert.deepStrictEqual(p.notices(), [early, held], label + ': ' + JSON.stringify(p.notices()));
 
     // At the floor: unlocked, and told once, neutrally.
     p.at(421);
     p.at(430);
     assert(!$('stopBtn').classList.contains('locked'), label + ': End still held after 7:00');
-    const said = p.notices();
+    const said = p.moveOns();
     assert.strictEqual(said.length, 1, label + ': move-on notice ' + JSON.stringify(said));
     assert(/whenever you are ready/.test(said[0]), said[0]);
     assert(/ready/.test($('gateLabel').textContent), $('gateLabel').textContent);
     p.frame({ type: 'move_on_open' });
-    assert.strictEqual(p.notices().length, 1, label + ': the server frame repeated the notice');
+    assert.strictEqual(p.moveOns().length, 1, label + ': the server frame repeated the notice');
 
     // Shortly before the stop: a visible warning, once.
     p.frame({ type: 'wrap_up', seconds_left: 60 });

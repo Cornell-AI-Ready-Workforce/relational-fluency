@@ -208,9 +208,12 @@ microphone found"*, with help that says what to plug in and that skipping will
 not get past it. Everything except a live conversation works on such a machine
 — the consoles and the demo replay lane.
 
-An explicit **Block** is handled properly: *"Mic blocked"* with help text in the
-check, and *"We couldn't turn on your microphone. Please allow microphone access
-and try again."* in the room, with Start re-enabled.
+An explicit **Block** is handled properly: *"Mic blocked"* in the check, and the
+same instruction in the check's help and in the room: *"Your browser has blocked
+the microphone for this page. Click the mic or camera icon at the end of the
+address bar, choose Allow, then reload this page"*, ending *"and try again"* in
+the check and *"and press Start conversation again"* in the room, with Start
+re-enabled.
 
 ### The character pauses for about eight seconds and then says the line again
 

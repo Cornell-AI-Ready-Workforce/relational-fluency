@@ -87,7 +87,10 @@ function boot(search, routes, opts) {
 const shown = (b, id) => b.dom.$(id).style.display === 'flex';
 const posts = (b, sub) => b.net.calls.filter(c => c.method === 'POST' && c.url.includes(sub));
 const gets = (b, sub) => b.net.calls.filter(c => c.method === 'GET' && c.url.includes(sub));
-const notes = (b) => b.dom.$('transcript').children.filter(c => /system-note/.test(c.className || ''));
+// The page's notices: the capture failure's in its slot under the header, the
+// rest in the transcript.
+const notes = (b) => ['captureSlot', 'transcript'].flatMap(id => b.dom.$(id).children)
+  .filter(c => /system-note/.test(c.className || ''));
 
 const BRIEF = {
   id: 'S4A', title: 'Planning an internal rollout', intro: 'You are in a room.', mode: 'group',
@@ -154,8 +157,14 @@ WORDING = r"""
   assert.strictEqual(b.dom.$('castLine').innerHTML,
     'You will be talking with <strong>Dan</strong>, <strong>Priya</strong>, and <strong>Chris</strong>.');
 
-  // The blocked-microphone help, as the audio check shows it.
+  // The blocked-microphone help, as the audio check shows it, and the room's:
+  // one instruction, each ending on its own button (FLOW-08).
+  const room = vm.runInContext('CAPTURE_MESSAGES.denied', b.ctx);
+  assert.strictEqual(room, 'Your browser has blocked the microphone for this page. Click the mic or '
+    + 'camera icon at the end of the address bar, choose Allow, then reload this page and press '
+    + 'Start conversation again.');
   const denied = vm.runInContext('MIC_CHECK_HELP.denied', b.ctx);
+  assert.strictEqual(denied, room.replace(' and press Start conversation again.', ' and try again.'));
   assert(/Your browser has blocked the microphone for this page\./.test(denied), denied);
   assert(!/refusing this page/.test(denied), denied);
   b.sandbox.navigator.mediaDevices = {
@@ -193,7 +202,10 @@ ONE_NOTICE = r"""
   let n = notes(b);
   assert.strictEqual(n.length, 1,
     'three presses left ' + n.length + ' notices: ' + JSON.stringify(n.map(x => x.textContent)));
-  assert(/allow microphone access/i.test(n[0].textContent), n[0].textContent);
+  assert(/blocked the microphone for this page/.test(n[0].textContent), n[0].textContent);
+  // Under the header, next to Start: at the end of the transcript it was
+  // 800 px below Start on a phone, and nothing on screen changed.
+  assert.strictEqual(b.dom.$('captureSlot').children.length, 1, 'the notice is not next to Start');
   assert.strictEqual(b.dom.$('startBtn').disabled, false, 'Start was not offered again');
 
   // A different failure on the next press replaces the text, not the count.
@@ -202,7 +214,7 @@ ONE_NOTICE = r"""
   n = notes(b);
   assert.strictEqual(n.length, 1, 'a second kind of failure added a second notice');
   assert(/find a working microphone/i.test(n[0].textContent), n[0].textContent);
-  assert(!/allow microphone access/i.test(n[0].textContent), 'the old reason stayed on screen');
+  assert(!/blocked the microphone/.test(n[0].textContent), 'the old reason stayed on screen');
 
   // Other notices are not the capture notice's to remove.
   b.ctx.appendNotice('The other person’s line broke up for a moment.');
@@ -286,11 +298,16 @@ MIC_EXIT = r"""
     await b.clock.advance(10);
     assert(!shown(b, 'audioCheckOverlay'));
     assert.strictEqual(b.dom.$('startBtn').disabled, false, 'Start is not offered after the check');
+    // FLOW-08: the old failure is not left on screen, and what to do next is.
+    assert.strictEqual(b.dom.$('captureSlot').children.length, 0, 'the old failure stayed up after the check');
+    assert(b.dom.$('gateNote').classList.contains('show')
+      && /Press Start conversation when you are ready/.test(b.dom.$('gateNote').textContent),
+      'nothing says to press Start: ' + b.dom.$('gateNote').textContent);
 
     // Still blocked; this time they finish.
     b.dom.$('startBtn').click();
     await b.clock.advance(50);
-    assert.strictEqual(notes(b).length, 1);
+    assert.strictEqual(b.dom.$('captureSlot').children.length, 1);
     button(notes(b)[0]).click();
     await b.clock.advance(50);
     b.dom.$('micHelpLeave').onclick();
@@ -540,7 +557,7 @@ def test_the_quiet_room_requirement_is_first_on_the_first_screen_and_again_at_th
     assert said_first == said_again, "the audio check says something different:\n" \
         f"  first screen: {said_first}\n  audio check:  {said_again}"
     # Prominent: before the fiction notice's own heading, not under it.
-    assert first.index('class="quiet-notice"') < first.index("<h2>"), \
+    assert first.index('class="quiet-notice"') < first.index("<h2"), \
         "the requirement sits below the fiction notice on the first screen"
     # And styled as a requirement, not as the muted small print around it.
     assert re.search(r"\.quiet-notice\s*\{[^}]*border", src), "the notice has no box"
@@ -584,3 +601,560 @@ BUILD_TAG = r"""
 
 def test_the_page_shows_which_build_served_it(tmp_path):
     _run(tmp_path, BUILD_TAG, "BUILD TAG OK")
+
+
+# =========================================================================== #
+# #43. The intro screens are not usable with a screen reader.
+#
+# Seen on production (2026-09-25, /v2?scenario=S4A): the pop-up screens were
+# not announced as dialogs, focus never moved into them, and Tab walked the
+# page behind the scrim. Every card is now a dialog named by its heading, takes
+# focus when it opens and hands it back when it closes, and a card that covers
+# the page leaves the page behind it inert (aria-hidden and a focus guard where
+# the engine has no inert). The drop card is a dialog but not a modal one: the
+# page around it, "Stop and leave the study" included, stays in reach.
+# =========================================================================== #
+
+def _open_tag(markup: str, element_id: str) -> str:
+    m = re.search(r'<[a-z0-9]+\b[^>]*\bid="%s"[^>]*>' % re.escape(element_id), markup)
+    assert m, f"no element with id {element_id}"
+    return m.group(0)
+
+
+def _attrs(tag: str) -> dict:
+    return dict(re.findall(r'([\w-]+)="([^"]*)"', tag))
+
+
+def test_every_card_is_a_dialog_named_by_its_own_heading():
+    src = V2.read_text(encoding="utf-8")
+    markup = src[:src.index("<script>")]
+    cards = re.findall(r'<div class="consent-overlay" id="(\w+)"', markup)
+    assert set(cards) == {"situationOverlay", "fictionOverlay", "audioCheckOverlay",
+                          "micHelpOverlay", "nextOverlay"}, cards
+    for card in cards:
+        a = _attrs(_open_tag(markup, card))
+        assert (a.get("role"), a.get("aria-modal"), a.get("tabindex")) == ("dialog", "true", "-1"), (
+            f"{card} is not a modal dialog that can take focus: {a}")
+        block = _overlay(markup, card)
+        assert re.search(r'<h2 id="%s">' % re.escape(a.get("aria-labelledby", "")), block), (
+            f"{card} is not named by a heading of its own")
+        # A scroll region in a card is a named tab stop, so a keyboard can
+        # scroll it: Safari does not make a scroller focusable, and Chrome
+        # made this one an unnamed stop.
+        for tag in re.findall(r'<div class="[^"]*card-scroll[^"]*"[^>]*>', block):
+            t = _attrs(tag)
+            assert (t.get("tabindex"), t.get("role"), t.get("aria-labelledby")) == (
+                "0", "region", a["aria-labelledby"]), f"{card}: {tag}"
+
+    drop = _attrs(_open_tag(markup, "dropNote"))
+    assert drop.get("role") == "dialog" and drop.get("aria-labelledby") == "dropTitle", drop
+    assert drop.get("aria-modal") != "true", "the drop card would lock the page, and the way to leave the study"
+    assert '<b id="dropTitle">' in markup
+
+    # The one card built in script.
+    fn = src[src.index("function showBlockingError("):src.index("// ---------- situation popup")]
+    for needle in ("setAttribute('role', 'dialog')", "setAttribute('aria-modal', 'true')",
+                   "setAttribute('aria-labelledby', 'errTitle')", '<h2 id="errTitle">'):
+        assert needle in fn, needle
+
+    # And no card is shown or hidden except through the helper, which is what
+    # moves focus and sets the page behind it inert.
+    script = src[src.index("<script>"):]
+    assert not re.search(r"Overlay'\)\.style\.display\s*=", script)
+    assert "$('dropNote').classList" not in script
+
+
+# Focus goes where the page puts it, and a card knows what is in it: the stub's
+# elements do neither, so these harnesses give them both, and stand one element
+# in for the page behind the cards among the body's children.
+A11Y_DOM = r"""
+function a11y(b) {
+  const doc = b.dom.document;
+  const track = (e) => {
+    if (e && !e.__a11y) {
+      e.__a11y = true;
+      e.attrs = {};
+      e.focus = function () { doc.activeElement = this; };
+      e.setAttribute = function (k, v) { this.attrs[k] = String(v); };
+      e.removeAttribute = function (k) { delete this.attrs[k]; };
+      e.contains = function (x) { return x === this || this.children.includes(x); };
+    }
+    return e;
+  };
+  const byId = doc.getElementById.bind(doc);
+  doc.getElementById = (id) => track(byId(id));
+  const make = doc.createElement.bind(doc);
+  doc.createElement = (t) => track(make(t));
+  const page = b.dom.$('pageBehind');
+  doc.body.children.push(page, ...['fictionOverlay', 'audioCheckOverlay', 'situationOverlay',
+    'micHelpOverlay', 'nextOverlay', 'dropNote', 'errOverlay'].map(id => b.dom.$(id)));
+  doc.activeElement = doc.body;
+  return { doc, page };
+}
+const button = (el) => (el.children || []).find(c => c.tagName === 'BUTTON');
+"""
+
+DIALOGS = RUN_VIEW + A11Y_DOM + r"""
+  // --- the intro, card by card ----------------------------------------------
+  {
+    const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+    const { doc, page } = a11y(b);
+    await b.clock.advance(50);
+    for (const [id, next] of [['fictionOverlay', 'fictionAck'], ['audioCheckOverlay', 'audioCheckSkip'],
+                              ['situationOverlay', 'situationStart']]) {
+      assert(shown(b, id), id + ' did not open');
+      assert.strictEqual(doc.activeElement, b.dom.$(id), 'focus did not move into ' + id);
+      assert.strictEqual(page.inert, true, 'the page behind ' + id + ' can still be reached');
+      assert.strictEqual(b.dom.$(id).inert, false, id + ' is inert itself');
+      b.dom.$(next).click();
+      await b.clock.advance(50);
+    }
+    assert(!shown(b, 'situationOverlay'));
+    assert.strictEqual(b.set('started'), true, 'the conversation did not start');
+    assert.strictEqual(page.inert, false, 'the page stayed inert after the last card closed');
+
+    // The drop card: focus moves to it, and the page stays in reach.
+    const end = b.dom.$('stopBtn');
+    end.focus();
+    b.ctx.onConnectionDropped();
+    const drop = b.dom.$('dropNote');
+    assert(drop.classList.contains('show'), 'no drop card');
+    assert.strictEqual(doc.activeElement, drop, 'focus did not move to the drop card');
+    assert.strictEqual(page.inert, false, 'the drop card locked the page, "Stop and leave the study" with it');
+    b.dom.$('dropReconnect').click();
+    await b.clock.advance(50);
+    assert(!drop.classList.contains('show'));
+    assert.strictEqual(doc.activeElement, end, 'focus was not handed back when the drop card closed');
+  }
+
+  // --- a card's focus goes back to what opened it --------------------------
+  {
+    const b = boot('?scenario=S4A&participant_id=p_rec', studyRoutes, { cfg: { micError: 'NotAllowedError' } });
+    const { doc, page } = a11y(b);
+    await b.clock.advance(50);
+    b.dom.$('fictionAck').click(); await b.clock.advance(50);
+    b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+    b.dom.$('situationStart').click(); await b.clock.advance(50);
+    const door = button(notes(b)[0]);
+    assert.strictEqual(doc.activeElement, door, 'the capture failure did not take focus to its way out');
+
+    door.click(); await b.clock.advance(50);
+    assert.strictEqual(doc.activeElement, b.dom.$('micHelpOverlay'), 'focus did not move into the help card');
+    assert.strictEqual(page.inert, true);
+    b.dom.$('micHelpBack').onclick();
+    assert(!shown(b, 'micHelpOverlay'));
+    assert.strictEqual(doc.activeElement, door, 'closing the card did not give focus back to its button');
+    assert.strictEqual(page.inert, false, 'the page stayed inert behind a closed card');
+
+    // One card after another: the audio check, opened from the help card,
+    // hands focus back to the same button.
+    door.click(); await b.clock.advance(50);
+    b.dom.$('micHelpCheck').onclick(); await b.clock.advance(10);
+    assert.strictEqual(doc.activeElement, b.dom.$('audioCheckOverlay'));
+    assert.strictEqual(page.inert, true);
+    b.dom.$('audioCheckSkip').click(); await b.clock.advance(10);
+    // To Start: the button that opened the cards went with its notice
+    // (FLOW-08), and Start is what the note after the check names.
+    assert.strictEqual(doc.activeElement, b.dom.$('startBtn'), 'focus was left on a removed button');
+    assert.strictEqual(page.inert, false);
+  }
+
+  // --- the blocking error is a card like the others ------------------------
+  {
+    const b = boot('?run=r_1', (b) => [{ match: '/api/run/', fn: () => b.net.res(503, {}) },
+                                        { match: '/api/run/config', fn: () => b.net.res(200, {}) }]);
+    const { doc, page } = a11y(b);
+    await b.clock.advance(50);
+    assert(shown(b, 'errOverlay'));
+    assert.strictEqual(doc.activeElement, b.dom.$('errOverlay'), 'focus did not move into the error card');
+    assert.strictEqual(page.inert, true);
+  }
+
+  // --- an engine without inert: aria-hidden, and focus sent back -----------
+  {
+    const b = boot('?run=r_1&participant_id=p_rec', studyRoutes,
+                   { extra: { HTMLElement: function HTMLElement() {} } });
+    const { doc, page } = a11y(b);
+    await b.clock.advance(50);
+    const card = b.dom.$('fictionOverlay');
+    assert.strictEqual(page.attrs['aria-hidden'], 'true', 'the page behind is still read out');
+    assert(!('aria-hidden' in card.attrs), 'the card itself was hidden');
+    const guard = (b.dom.docListeners.focusin || [])[0];
+    assert(guard, 'nothing keeps focus in the card');
+    page.focus(); guard({ target: page });
+    assert.strictEqual(doc.activeElement, card, 'focus that left the card was not sent back');
+    b.dom.$('fictionAck').click(); await b.clock.advance(50);
+    b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+    b.dom.$('situationStart').click(); await b.clock.advance(50);
+    assert(!('aria-hidden' in page.attrs), 'the page stayed hidden after the last card closed');
+  }
+"""
+
+
+def test_every_card_takes_focus_gives_it_back_and_leaves_the_page_behind_inert(tmp_path):
+    _run(tmp_path, DIALOGS, "DIALOGS OK")
+
+
+def test_the_page_has_one_top_level_heading_and_it_is_the_scenario():
+    """#43: 'the page has no top-level heading'. The header's title is it."""
+    src = V2.read_text(encoding="utf-8")
+    assert len(re.findall(r"<h1\b", src)) == 1, re.findall(r"<h1\b[^>]*>", src)
+    assert re.search(r'<h1 class="title"><span id="title">', src), "the h1 is not the scenario title"
+    assert "createElement('h1')" not in src
+
+
+# =========================================================================== #
+# A11Y-02 (UX audit, 2026-09-28). The transcript was aria-live, so a screen
+# reader read every caption as it was rewritten: a character's line sentence by
+# sentence over the character's own voice, and the participant's words back to
+# them on every interim result while they spoke; on speakers the microphone can
+# hear that. And the one cue a screen-reader user needs, "You can speak now",
+# was never announced. The transcript is now a named log that is not read out,
+# and one visually hidden status region says what the app itself says, the
+# start cue and "You can speak now", and never "<Name> is speaking".
+# =========================================================================== #
+
+def test_the_transcript_is_a_quiet_log_and_the_page_has_one_status_region():
+    src = V2.read_text(encoding="utf-8")
+    markup = src[:src.index("<script>")]
+    t = _attrs(_open_tag(markup, "transcript"))
+    assert (t.get("role"), t.get("aria-live"), t.get("tabindex")) == ("log", "off", "0"), t
+    assert t.get("aria-label"), "the transcript has no name"
+    s = _attrs(_open_tag(markup, "srStatus"))
+    assert (s.get("role"), s.get("class")) == ("status", "sr-only"), s
+    assert re.search(r"\.sr-only\s*\{[^}]*clip", src), "the status region is not visually hidden"
+    # The gate note is said through the status region, not a second one.
+    assert "role" not in _attrs(_open_tag(markup, "gateNote"))
+
+
+LIVE = RUN_VIEW + A11Y_DOM + r"""
+  const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+  a11y(b);
+  await b.clock.advance(50);
+  b.dom.$('fictionAck').click(); await b.clock.advance(50);
+  b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+  b.dom.$('situationStart').click(); await b.clock.advance(50);
+  assert.strictEqual(b.set('started'), true);
+  const said = () => b.dom.$('srStatus').textContent;
+  const frame = (m) => b.ctx.handleServerFrame({ data: JSON.stringify(m) });
+  frame({ type: 'session', session_id: 's_1', scenario: { title: 'T', mode: 'group' }, cast: BRIEF.cast });
+
+  frame({ type: 'awaiting_participant', reason: 'start', names: ['Dan'] });
+  assert.strictEqual(said(), "You start the conversation. Say hello when you're ready.",
+    'the start cue was not said: ' + JSON.stringify(said()));
+
+  frame({ type: 'turn_open' });
+  assert.strictEqual(said(), 'You can speak now');
+  b.dom.$('srStatus').textContent = '';
+  frame({ type: 'turn_open' });
+  assert.strictEqual(said(), '', 'a floor that was already open was said again');
+
+  // A character talking is the voice's to say, not the status region's.
+  b.ctx.setActiveSpeaker('dan');
+  assert.strictEqual(b.dom.$('turnState').textContent, 'Dan is speaking');
+  assert.strictEqual(said(), '', '"Dan is speaking" was announced: ' + JSON.stringify(said()));
+  b.ctx.setActiveSpeaker(null);
+  frame({ type: 'turn_open' });
+  assert.strictEqual(said(), 'You can speak now', 'the floor opening again was not said');
+
+  // A caption is not said at all: the transcript is not the live region.
+  frame({ type: 'user_transcript', text: 'I think we should', final: false });
+  assert.strictEqual(said(), 'You can speak now', 'a caption reached the status region');
+
+  // What the app itself says is said, and the same words twice are said twice.
+  b.ctx.appendNotice('The other person’s line broke up for a moment.');
+  assert.strictEqual(said(), 'The other person’s line broke up for a moment.');
+  b.ctx.showGateNote('Keep going.');
+  const first = said();
+  b.ctx.showGateNote('Keep going.');
+  assert.strictEqual(first.trim(), 'Keep going.');
+  assert.notStrictEqual(said(), first, 'a second press of End was not said again');
+  assert.strictEqual(said().trim(), 'Keep going.');
+
+  // And the status region is not hidden with the page behind a card.
+  b.dom.document.body.children.push(b.dom.$('srStatus'));
+  b.ctx.showOverlay(b.dom.$('nextOverlay'));
+  assert.strictEqual(b.dom.$('pageBehind').inert, true);
+  assert.strictEqual(b.dom.$('srStatus').inert, false, 'the status region went inert behind a card');
+"""
+
+
+def test_the_status_region_says_the_notices_and_the_floor_and_not_the_captions(tmp_path):
+    _run(tmp_path, LIVE, "LIVE OK")
+
+
+# =========================================================================== #
+# A11Y-04. The app's notices in the transcript (a lost voice, a microphone that
+# stopped, the gate notes) were muted italic 12px on grey, 3.79:1: the faintest
+# text on the page for the notices a participant most needs. Ink, upright, 14px.
+# =========================================================================== #
+
+def _rule(src: str, selector: str) -> str:
+    m = re.search(r"(?:^|\})\s*" + re.escape(selector) + r"\s*\{([^}]*)\}", src, re.M)
+    assert m, f"no rule for {selector}"
+    return m.group(1)
+
+
+def test_the_page_notices_are_readable():
+    src = V2.read_text(encoding="utf-8")
+    note = _rule(src, ".transcript .system-note")
+    assert re.search(r"(?<!-)color:\s*var\(--fg\)", note), note
+    assert "italic" not in note, note
+    size = float(re.search(r"font-size:\s*([\d.]+)px", note).group(1))
+    assert size >= 14, note
+
+
+# =========================================================================== #
+# A11Y-06 and FLOW-13. The audio check's verdicts changed with nothing said,
+# "I heard it" appeared in the status column without focus, the card never
+# said why Continue stayed disabled, and "Didn't hear it?" opened with the
+# first play, before the participant had answered, reading as a fault.
+# =========================================================================== #
+
+def test_the_audio_check_says_its_verdicts_and_why_continue_waits():
+    src = V2.read_text(encoding="utf-8")
+    markup = src[:src.index("<script>")]
+    for row in ("mic", "spk", "cam"):
+        assert _attrs(_open_tag(markup, f"{row}Status")).get("role") == "status", row
+        assert _attrs(_open_tag(markup, f"{row}TestBtn")).get("aria-describedby") == f"{row}Status", row
+    cont = _attrs(_open_tag(markup, "audioCheckContinue"))
+    note = re.search(r'<p class="check-note" id="(\w+)">([^<]*)</p>', markup)
+    assert note and cont.get("aria-describedby") == note.group(1), cont
+    assert note.group(2) == "Continue unlocks when all three checks have passed.", note.group(2)
+
+
+SPEAKER_CHECK = A11Y_DOM + r"""
+  const b = boot('?run=r_1', (b) => [{ match: '/api/run/', fn: () => b.net.res(503, {}) }]);
+  const { doc } = a11y(b);
+  await b.clock.flush();
+  // The stub's audio graph has no oscillator; the chime needs three.
+  b.sandbox.AudioContext.prototype.createOscillator = () =>
+    ({ type: '', frequency: {}, connect() {}, start() {}, stop() {} });
+  b.ctx.runAudioCheck();
+  await b.clock.advance(10);
+  const help = b.dom.$('spkHelp');
+
+  b.dom.$('spkTestBtn').click();
+  await b.clock.advance(10);
+  const heard = () => b.dom.$('spkStatus').children.filter(c => c.tagName === 'BUTTON').pop();
+  assert(heard() && heard().textContent === 'I heard it', 'no "I heard it" after the chime');
+  assert.strictEqual(doc.activeElement, heard(), 'focus did not move to "I heard it"');
+  assert(!help.classList.contains('show'), '"Didn\'t hear it?" opened before they had answered');
+
+  // Played again without answering: now the help.
+  b.dom.$('spkTestBtn').click();
+  await b.clock.advance(10);
+  assert(help.classList.contains('show'), 'a second play did not bring up the help');
+  assert.strictEqual(doc.activeElement, heard());
+
+  heard().click();
+  assert.strictEqual(b.dom.$('spkStatus').textContent, 'Sound works');
+  assert(!help.classList.contains('show'));
+  assert.strictEqual(doc.activeElement, b.dom.$('spkTestBtn'),
+    'focus went with the button that was pressed and removed');
+"""
+
+
+def test_i_heard_it_takes_focus_and_the_help_waits_for_a_second_play(tmp_path):
+    _run(tmp_path, SPEAKER_CHECK, "SPEAKER CHECK OK")
+
+
+# =========================================================================== #
+# A11Y-07. "SPEAKING" was hidden with opacity alone, so it stayed in the
+# accessibility tree on every tile: a screen reader read "YOU | You | SPEAKING"
+# and "M | Morgan | your manager | SPEAKING" with only Morgan talking. The badge
+# is out of the tree unless its tile is speaking, and the initials, which only
+# repeat the name under them, are hidden from it.
+# =========================================================================== #
+
+def test_the_speaking_badge_is_only_there_for_the_tile_that_is_speaking():
+    src = V2.read_text(encoding="utf-8")
+    assert "visibility: hidden" in _rule(src, ".speaking-indicator")
+    assert "visibility: visible" in _rule(src, ".tile.speaking .speaking-indicator")
+    assert '<div class="avatar self" aria-hidden="true">YOU</div>' in src
+    make = src[src.index("function makeInitials("):src.index("// Characters in the current interaction")]
+    grid = src[src.index("function renderGrid("):src.index("// Bind the captured webcam stream")]
+    for body in (make, grid):
+        assert "setAttribute('aria-hidden', 'true')" in body, body[:80]
+
+
+# =========================================================================== #
+# A11Y-12. The rest of the low-contrast text: the between-encounter step list's
+# "To come" (2.82:1), the build tag faded to 2.91:1, the one disabled look's
+# muted label on grey (3.79:1; the locked End is the control people look for
+# at 7:00), and the audio check's mic meter against its track (2.30:1).
+# =========================================================================== #
+
+def _contrast(a: str, b: str) -> float:
+    def lum(h):
+        rgb = [int(h.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        rgb = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+        return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_the_remaining_small_print_is_readable():
+    src = V2.read_text(encoding="utf-8")
+    token = lambda name: re.search(r"--%s:\s*(#[0-9a-f]{6})" % name, src).group(1)
+    colour = lambda rule, prop="color": re.search(
+        r"(?<![-\w])%s:\s*(#[0-9a-f]{6}|var\(--[\w-]+\))" % prop, rule).group(1)
+    value = lambda c: token(c[6:-1]) if c.startswith("var(") else c
+
+    todo = value(colour(_rule(src, "#nextBody .run-steps li.todo")))
+    assert _contrast(todo, "#ffffff") >= 4.5, todo
+
+    tag = _rule(src, ".build-tag")
+    assert "opacity" not in tag, tag
+    assert _contrast(value(colour(tag)), token("bg")) >= 4.5
+
+    disabled = _rule(src, "button:disabled, button#stopBtn.locked, .tile .talk-btn[disabled]")
+    assert _contrast(value(colour(disabled)), value(colour(disabled, "background"))) >= 4.5, disabled
+
+    fill = value(colour(_rule(src, ".meter > i"), "background"))
+    track = value(colour(_rule(src, ".meter"), "background"))
+    assert _contrast(fill, track) >= 3, (fill, track)
+
+
+# =========================================================================== #
+# FLOW-09 (UX audit, 2026-09-28). The audio check said "about 10 minutes at a
+# time" and the ring's tooltip "at least 7 minutes", both typed in, while the
+# first screen was filled from the clock (7 and 12). Both are the clock's now,
+# so a run whose timing is changed says the new numbers everywhere.
+# =========================================================================== #
+
+CLOCK_COPY = RUN_VIEW + r"""
+  // RUN_VIEW's stop is 13:00, so only copy that reads the clock gets it right.
+  const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+  const text = (id) => b.dom.$(id).textContent;
+  await b.clock.advance(50);
+  assert.deepStrictEqual([text('fictionMin'), text('fictionMax')], ['7', '13']);
+  b.dom.$('fictionAck').click(); await b.clock.advance(50);
+  assert(shown(b, 'audioCheckOverlay'));
+  assert.deepStrictEqual([text('checkMin'), text('checkMax')], ['7', '13'],
+    'the audio check does not say what the first screen says');
+
+  // Shown again without the first screen ("Check my audio again"), after the
+  // clock has moved: its own numbers follow.
+  b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+  b.set('MIN_S = 480; MAX_S = 900;');
+  b.ctx.runAudioCheck(); await b.clock.advance(10);
+  assert.deepStrictEqual([text('checkMin'), text('checkMax')], ['8', '15']);
+  b.dom.$('audioCheckSkip').click(); await b.clock.advance(10);
+  b.set('MIN_S = 420; MAX_S = 780;');
+
+  // The ring's tooltip, from the floor, and again when the runner resets it.
+  b.dom.$('situationStart').click(); await b.clock.advance(1000);
+  assert.strictEqual(b.set('started'), true);
+  assert(/^Each conversation runs at least 7 minutes; End unlocks then\./.test(b.dom.$('gate').title),
+    b.dom.$('gate').title);
+  b.ctx.handleServerFrame({ data: JSON.stringify(
+    { type: 'encounter_clock', min_seconds: 540, wrap_seconds: 720, max_seconds: 780 }) });
+  await b.clock.advance(1000);
+  assert(/at least 9 minutes/.test(b.dom.$('gate').title), b.dom.$('gate').title);
+"""
+
+
+def test_the_audio_check_and_the_ring_say_the_clock_s_minutes(tmp_path):
+    _run(tmp_path, CLOCK_COPY, "CLOCK COPY OK")
+
+
+def test_no_duration_is_typed_into_the_audio_check_or_the_ring():
+    src = V2.read_text(encoding="utf-8")
+    check = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", _overlay(src, "audioCheckOverlay")))
+    assert "about 10 minutes" not in check, check
+    assert "7 to 12 minutes at a time" in check, check
+    assert "title" not in _attrs(_open_tag(src[:src.index("<script>")], "gate")), (
+        "the ring's tooltip is typed into the markup again")
+
+
+# =========================================================================== #
+# FLOW-07. Three messages pointed at things that are not there: "Something
+# went wrong. Please try again." with nothing to retry, "If you stop hearing
+# the other people, click Reconnect." with no Reconnect on screen (and nobody
+# but one other person in 1:1), and a card that said "use the contact below"
+# with no contact on it.
+# =========================================================================== #
+
+ERROR_COPY = RUN_VIEW + r"""
+  const lastNote = (b) => notes(b).pop().textContent;
+  {
+    const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+    await b.clock.advance(50);
+    b.dom.$('fictionAck').click(); await b.clock.advance(50);
+    b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+    b.dom.$('situationStart').click(); await b.clock.advance(50);
+    assert.strictEqual(b.set('started'), true);
+
+    b.ctx.handleServerFrame({ data: JSON.stringify({ type: 'error', message: 'The transcription channel was lost.' }) });
+    assert.strictEqual(lastNote(b), 'There was a problem on our side. You can keep talking; if nobody '
+      + 'answers you, reload this page to start this conversation again.');
+
+    // A frame the page cannot handle, through the socket's own listener.
+    b.set('ws').listeners.message[0]({ data: '{not json' });
+    assert.strictEqual(lastNote(b), 'Something went wrong on this page. If you stop hearing anyone, '
+      + 'reload the page to start this conversation again.');
+    assert(!notes(b).some(n => /Reconnect|other people|try again\./.test(n.textContent)),
+      JSON.stringify(notes(b).map(n => n.textContent)));
+  }
+
+  // The participant record cannot be made: the card says to use the contact
+  // below, so the contact is below.
+  {
+    const b = boot('?run=r_1', (b) => [
+      { match: '/api/run/config', fn: () => b.net.res(200, { return_url: '', contact_name: 'Dr Rivera',
+                                                              contact_email: 'rf@example.edu' }) },
+      { match: '/api/run/r_1', fn: () => b.net.res(200, RUN_VIEW) },
+      { match: '/api/scenarios/S4A', fn: () => b.net.res(200, BRIEF) },
+      { match: '/api/participant', fn: () => b.net.res(503, {}) },
+    ]);
+    await b.clock.advance(50);
+    b.dom.$('fictionAck').click(); await b.clock.advance(50);
+    assert(shown(b, 'errOverlay'), 'no blocking card for a record that could not be made');
+    const body = b.dom.$('errOverlay').querySelector('#errBody');
+    assert(/use the contact below/.test(body.textContent), body.textContent);
+    const contact = body.children.map(c => c.innerHTML).join(' ');
+    assert(/Contact Dr Rivera at .*rf@example\.edu/.test(contact), 'no contact below: ' + contact);
+  }
+"""
+
+
+def test_error_messages_point_at_what_is_there(tmp_path):
+    _run(tmp_path, ERROR_COPY, "ERROR COPY OK")
+
+
+# =========================================================================== #
+# FLOW-11. One unit had four names on the participant's screens: "encounter"
+# (the chip, End, the cards between), "conversation" (the first screen, Start,
+# the last card), "part" (the drop card) and "scene" (the scenario's howto,
+# which is scenario content and not the page's). The page says "conversation"
+# for the unit, and "part" only for a phase inside one.
+# =========================================================================== #
+
+UNIT_NAME = RUN_VIEW + r"""
+  const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+  await b.clock.advance(50);
+  assert.strictEqual(b.dom.$('runChip').textContent, 'Conversation 1 of 4');
+  b.dom.$('fictionAck').click(); await b.clock.advance(50);
+  b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+  b.dom.$('situationStart').click(); await b.clock.advance(50);
+  assert.strictEqual(b.dom.$('stopBtn').textContent, 'End conversation (go to conversation 2 of 4)');
+  assert.strictEqual(b.ctx.skipDoorLabel(), 'Go on to conversation 2 of 4 without this one');
+"""
+
+
+def test_the_unit_is_a_conversation_on_every_screen(tmp_path):
+    _run(tmp_path, UNIT_NAME, "UNIT NAME OK")
+
+
+def test_no_participant_string_calls_the_unit_an_encounter():
+    src = V2.read_text(encoding="utf-8")
+    markup = re.sub(r"<!--.*?-->", "", src[:src.index("<script>")], flags=re.S)
+    text = re.sub(r"<[^>]+>", " ", markup[markup.index("<body>"):])
+    assert not re.search(r"\b[Ee]ncounters?\b", text), re.findall(r".{30}[Ee]ncounter.{30}", text)
+    code = [ln for ln in src[src.index("<script>"):].splitlines()
+            if not ln.lstrip().startswith(("//", "*", "/*"))]
+    said = [s for ln in code for s in re.findall(r"""(['"`])((?:(?!\1).)*)\1""", ln)]
+    bad = [s for _, s in said if re.search(r"\b[Ee]ncounters?\b", s)]
+    assert not bad, bad
+    assert "next part of the study" not in src and "go on to the next part" not in src
