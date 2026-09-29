@@ -99,11 +99,15 @@
   .avatar.self { background: var(--surface-2); color: var(--fg); }
   .name { font-size: 15px; font-weight: 500; }
   .role { font-size: 12px; opacity: 0.7; margin-top: -8px; }
+  /* Hidden with visibility as well as opacity: opacity alone left
+     "SPEAKING" in the accessibility tree on every tile all the time, so a
+     screen reader was told everyone was speaking. The fade is kept. */
   .speaking-indicator { position: absolute; top: 12px; right: 12px; font-size: 11px;
                         background: var(--accent); color: #fff; padding: 3px 9px;
-                        border-radius: 999px; opacity: 0; transition: opacity 0.2s;
+                        border-radius: 999px; opacity: 0; visibility: hidden;
+                        transition: opacity 0.2s, visibility 0.2s;
                         font-weight: 600; letter-spacing: 0.04em; }
-  .tile.speaking .speaking-indicator { opacity: 1; }
+  .tile.speaking .speaking-indicator { opacity: 1; visibility: visible; }
   .mic-icon { width: 18px; height: 18px; border-radius: 50%; background: var(--line);
               position: absolute; bottom: 12px; left: 12px; }
   .tile.self .mic-icon.live { background: var(--accent);
@@ -1641,6 +1645,7 @@
     d.className = 'avatar';
     d.style.background = colorFor(name);
     d.textContent = initialsOf(name);
+    d.setAttribute('aria-hidden', 'true');   // the name is on the tile; initials only repeat it
     return d;
   }
 
@@ -1779,7 +1784,7 @@
     self.className = 'tile self'; self.id = 'tile-self';
     self.innerHTML = `
       <video id="selfCam" autoplay muted playsinline></video>
-      <div class="avatar self">YOU</div>
+      <div class="avatar self" aria-hidden="true">YOU</div>
       <div class="name">You</div>
       <div class="name cam">You</div>
       <div class="speaking-indicator">SPEAKING</div>
@@ -1814,6 +1819,7 @@
         av.className = 'avatar';
         av.style.background = colorFor(a.name);
         av.textContent = initialsOf(a.name);
+        av.setAttribute('aria-hidden', 'true');   // as makeInitials
         t.appendChild(av);
       }
       const nameEl = document.createElement('div');

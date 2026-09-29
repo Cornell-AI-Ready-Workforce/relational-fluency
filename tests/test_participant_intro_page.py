@@ -944,3 +944,22 @@ SPEAKER_CHECK = A11Y_DOM + r"""
 
 def test_i_heard_it_takes_focus_and_the_help_waits_for_a_second_play(tmp_path):
     _run(tmp_path, SPEAKER_CHECK, "SPEAKER CHECK OK")
+
+
+# =========================================================================== #
+# A11Y-07. "SPEAKING" was hidden with opacity alone, so it stayed in the
+# accessibility tree on every tile: a screen reader read "YOU | You | SPEAKING"
+# and "M | Morgan | your manager | SPEAKING" with only Morgan talking. The badge
+# is out of the tree unless its tile is speaking, and the initials, which only
+# repeat the name under them, are hidden from it.
+# =========================================================================== #
+
+def test_the_speaking_badge_is_only_there_for_the_tile_that_is_speaking():
+    src = V2.read_text(encoding="utf-8")
+    assert "visibility: hidden" in _rule(src, ".speaking-indicator")
+    assert "visibility: visible" in _rule(src, ".tile.speaking .speaking-indicator")
+    assert '<div class="avatar self" aria-hidden="true">YOU</div>' in src
+    make = src[src.index("function makeInitials("):src.index("// Characters in the current interaction")]
+    grid = src[src.index("function renderGrid("):src.index("// Bind the captured webcam stream")]
+    for body in (make, grid):
+        assert "setAttribute('aria-hidden', 'true')" in body, body[:80]
