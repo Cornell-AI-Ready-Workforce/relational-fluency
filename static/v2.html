@@ -394,8 +394,16 @@
       <p>If something personal slips out by accident, that's okay, just keep
       going. We remove personal details from transcripts before we analyze or
       share anything, and the AI partner is instructed not to ask follow-up
-      questions about personal disclosures. You can end a conversation at any
-      time.</p>
+      questions about personal disclosures.</p>
+      <!-- How long a conversation runs, filled from the page's clock before
+           this is shown (describeEncounterLength). It said "You can end a
+           conversation at any time", which the 7:00 hold on End has made
+           untrue on every link type (#34). -->
+      <p>Each conversation lasts at least <span id="fictionMin">7</span> minutes.
+      After that you can move on whenever you are ready, or keep talking until it
+      ends by itself at <span id="fictionMax">12</span> minutes.<span id="fictionLeave"
+      style="display:none"> You can stop taking part in the study at any time with
+      “Stop and leave the study”.</span></p>
     </div>
     <div class="actions"><button id="fictionAck">I understand, continue</button></div>
   </div>
@@ -1720,6 +1728,24 @@
   function encounterElapsedS() {
     return started && timerStartMs ? Math.max(0, (Date.now() - timerStartMs) / 1000) : 0;
   }
+  // Before the floor, when the participant CAN move on, in the words
+  // moveOnText uses at it. Never as the conversation ending: it runs to MAX_S
+  // unless they choose to move on, and "about 3 more minutes in this
+  // conversation" was a countdown to an end that does not come (review of
+  // 850b08e).
+  function canMoveOnIn(left) {
+    const what = (runId && run && !run.done && run.position < run.total)
+      ? 'move on to the next conversation' : 'end this conversation';
+    return `you can ${what} in about ${left} minute${left === 1 ? '' : 's'}`;
+  }
+  // The first screen's account of the clock, from the same three numbers.
+  function describeEncounterLength() {
+    const mins = (s) => String(Math.round(s / 60));
+    $('fictionMin').textContent = mins(MIN_S);
+    $('fictionMax').textContent = mins(MAX_S);
+    // The study's own stop control exists only on a run link.
+    $('fictionLeave').style.display = runId ? 'inline' : 'none';
+  }
   function moveOnText() {
     return (runId && run && !run.done && run.position < run.total)
       ? 'You can move on to the next conversation whenever you are ready, or keep talking.'
@@ -1759,7 +1785,7 @@
       if (s >= WRAP_S) noteWrap(MAX_S - s);
     } else {
       const left = Math.ceil((MIN_S - s) / 60);
-      $('gateLabel').textContent = `about ${left} more minute${left === 1 ? '' : 's'}`;
+      $('gateLabel').textContent = `You can move on in about ${left} minute${left === 1 ? '' : 's'}`;
       // Held until the floor. Not `disabled`, so the click can still explain
       // itself (see the handler); aria-disabled says what the styling shows.
       $('stopBtn').classList.add('locked');
@@ -3602,7 +3628,7 @@
         // participant's move-on, or the character saying goodbye early).
         // Nothing to do but say so; the conversation carries on.
         const left = Math.max(1, Math.ceil((m.seconds_left || 0) / 60));
-        showGateNote(`Keep going — about ${left} more minute${left === 1 ? '' : 's'} in this conversation.`);
+        showGateNote(`Keep going — ${canMoveOnIn(left)}.`);
       } else if (m.type === 'encounter_clock') {
         // The runner's own floor, wrap and stop, on every link type (a direct
         // link has no run to read them from), and where its clock stands: the
@@ -4200,8 +4226,9 @@
     // with its own floor.
     const elapsed = encounterElapsedS();
     if (started && elapsed < MIN_S) {
-      const left = Math.ceil((MIN_S - elapsed) / 60);
-      showGateNote(`This conversation runs about ${left} more minute${left === 1 ? '' : 's'} — the ring next to the timer fills when you can end it.` +
+      const left = Math.max(1, Math.ceil((MIN_S - elapsed) / 60));
+      const when = canMoveOnIn(left);
+      showGateNote(`${when[0].toUpperCase()}${when.slice(1)} — the ring next to the timer fills when you can.` +
         (runId ? ' If you want to stop taking part in the study, use “Stop and leave the study”.' : ''));
       return;
     }
@@ -4611,6 +4638,7 @@
     // failure here is loadBrief's to report.
     fetchBrief().then(showTitle, () => {});
     if (needsFictionAck()) {
+      describeEncounterLength();
       $('fictionOverlay').style.display = 'flex';
       await new Promise(resolve => {
         $('fictionAck').addEventListener('click', () => {

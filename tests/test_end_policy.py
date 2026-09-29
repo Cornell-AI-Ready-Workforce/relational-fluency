@@ -367,7 +367,19 @@ function page(search, runObj) {
     assert($('stopBtn').classList.contains('locked'), label + ': End is not held before 7:00');
     $('stopBtn').click();
     assert.strictEqual(p.get('__ended'), 0, label + ': End finished the conversation before 7:00');
-    assert(/runs about 6 more minutes/.test($('gateNote').textContent), label + ': ' + $('gateNote').textContent);
+    // Worded as when they CAN move on, never as the conversation ending: it
+    // runs to 12:00 unless they choose to (review of 850b08e).
+    const early = $('gateNote').textContent;
+    assert(/can (move on to the next conversation|end this conversation) in about 6 minutes/.test(early),
+      label + ': ' + early);
+    assert(!/more minutes|runs about/.test(early), label + ': counts down to an end: ' + early);
+    assert(/can move on in about 6 minutes/.test($('gateLabel').textContent),
+      label + ': ' + $('gateLabel').textContent);
+    // The character saying goodbye early: the conversation carries on.
+    p.frame({ type: 'floor_held', seconds_left: 180 });
+    const held = $('gateNote').textContent;
+    assert(/^Keep going — you can (move on to the next conversation|end this conversation) in about 3 minutes\.$/.test(held),
+      label + ': ' + held);
     assert.strictEqual(p.notices().length, 0, label + ': a notice before the floor');
 
     // At the floor: unlocked, and told once, neutrally.
@@ -408,6 +420,21 @@ function page(search, runObj) {
     assert(!p.b.dom.$('stopBtn').classList.contains('locked'), 'End held after the server floor');
     assert.strictEqual(p.notices().length, 1);
   }
+  // The first screen (its text: test_the_first_screen_says_how_long_...):
+  // the page's own numbers, and the study's stop control named only where
+  // there is one.
+  for (const [label, search, runObj] of [
+    ['direct link', '?scenario=S2A', null],
+    ['study run', '?run=r_1&participant_id=P1',
+      { run_id: 'r_1', cohort: 'study', position: 1, total: 4, done: false }],
+  ]) {
+    const p = page(search, runObj);
+    p.set('MIN_S = 5 * 60; MAX_S = 10 * 60; describeEncounterLength();');
+    assert.strictEqual(p.b.dom.$('fictionMin').textContent, '5', label);
+    assert.strictEqual(p.b.dom.$('fictionMax').textContent, '10', label);
+    const leave = p.b.dom.$('fictionLeave').style.display;
+    assert.strictEqual(leave, runObj ? 'inline' : 'none', label + ': the stop sentence ' + leave);
+  }
   console.log('END POLICY PAGE OK');
 })().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
 """
@@ -430,6 +457,25 @@ def test_the_page_gate_notice_and_warning_on_every_link_type(tmp_path):
                           text=True, encoding="utf-8", timeout=180)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "END POLICY PAGE OK" in proc.stdout
+
+
+def test_the_first_screen_says_how_long_a_conversation_runs():
+    """The fiction card, the screen the #37 quiet-room notice opens, said "You
+    can end a conversation at any time", while End is held until 7:00 on
+    every link type (review of 850b08e). It says what is true now, and it is
+    filled from the page's clock before it is shown."""
+    import re
+
+    src = V2.read_text(encoding="utf-8")
+    card = src[src.index('id="fictionOverlay"'):src.index('id="fictionAck"')]
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", card))
+    assert "end a conversation at any" not in text and "at any time." not in text.replace(
+        "stop taking part in the study at any time", ""), text
+    assert "at least 7 minutes" in text and "at 12 minutes" in text, text
+    for span in ('id="fictionMin"', 'id="fictionMax"', 'id="fictionLeave"'):
+        assert span in card
+    boot = src[src.index("if (needsFictionAck()) {"):][:200]
+    assert "describeEncounterLength();" in boot
 
 
 def test_the_page_defaults_are_the_new_numbers():
