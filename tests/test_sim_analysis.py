@@ -176,6 +176,25 @@ def test_error_frames_the_page_would_show_are_counted_and_held():
     assert failed == ["error_frames"]
 
 
+def test_a_reply_played_before_the_participant_opened_fails_whatever_the_baseline():
+    """Pipeline 2026-09-28b: no character speaks first, at the start or at
+    S1's hand-off. A reply the page played between awaiting_participant and
+    participant_opened is counted, and one is a failure against any baseline:
+    the room tone every default sequence begins with is where it would show."""
+    events, tl = _encounter()
+    # In the record's own order, as events.jsonl is written.
+    events[2:2] = [ev("awaiting_participant", 0.2, reason="start"),
+                   ev("play_start", 1.5),                            # before the first line
+                   ev("participant_opened", 7.2, reason="start")]
+    events += [ev("awaiting_participant", 71.0, reason="handoff"),
+               ev("play_start", 72.0)]                               # before the hand-off's
+    m = A.summarize(events, tl)
+    assert m["spoke_first"] == 2
+    failed = [c for c in A.compare(m, _base())["checks"] if not c["ok"]]
+    assert [c["metric"] for c in failed] == ["spoke_first"]
+    assert A.summarize(*_encounter())["spoke_first"] == 0
+
+
 def test_the_last_line_has_a_grace_window_to_be_answered():
     tl = {"lines": [line("a8", "Okay. Thank you, Morgan.", 0, 2)]}
     ok = A.summarize([ev("user_turn", 4.0, text="Okay, thank you Morgan."),

@@ -2351,6 +2351,11 @@ class RealtimeVoiceSessionRunner:
                         # transcript, which was part of what was dropped.
                         state["settled"].set()
                     continue
+                if etype == "transcript_missing":
+                    # The 1:1 hold's signal (_hold_first_reply), nothing a
+                    # member reads; below, a frame that is not output would
+                    # read as the end of a held reply and drop its head.
+                    continue
                 has_floor = self.room is not None and self.room.speaking == agent.id
 
                 # The bridge fires its own response after speech-plus-silence,
@@ -4217,6 +4222,13 @@ class RealtimeVoiceSessionRunner:
         # boundary before the two continuation branches below decide whether
         # this one deserves a fresh one.
         self._scene_note = ""
+        # Nor the last interaction's first-reply framing (_fold_opening), set
+        # on every room lead since 28b: a lead that never spoke under it would
+        # carry it, and the unnamed turns routed to it (_run_group_turn), into
+        # a kept room's next interaction. Sessions built afresh below
+        # (_open_room, _switch_character) fold their own.
+        prev_opening = (self._opening_note, self._opening_agent)
+        self._opening_note, self._opening_agent = "", None
         # Whether the participant is now with somebody they have not been
         # talking to (S1's hand-off, a room of other people or a new scene):
         # that conversation starts with them too (_await_participant). Not a
@@ -4380,6 +4392,7 @@ class RealtimeVoiceSessionRunner:
             # segment_start_aborted so the record shows an announced boundary
             # that never happened rather than a boundary that silently did.
             self._scene_note = prev_scene_note
+            self._opening_note, self._opening_agent = prev_opening
             self.agent, self.agent_id = prev_agent, prev_id
             self.session.store.event(
                 "voice_error", where="enter",
@@ -4677,6 +4690,21 @@ class RealtimeVoiceSessionRunner:
             # record of that is a beat marked as applying late,
             # which _brief_next_beat writes, rather than no beat at
             # all.
+            if self._awaiting_participant and (self.rt.responding
+                                               or self.rt.autofire_active):
+                # Nothing of theirs is accepted yet, so the reply in flight
+                # has not been heard (_hold_first_reply holds it), and it
+                # answers only what came before this turn: a line whose
+                # transcript is late, or never comes. Left running, it
+                # turns the commit below down as "reply in flight" and
+                # this turn stays in the buffer with nothing to commit it
+                # (before 28b the reply played and the barge-in cancelled
+                # it). Cancelled, the reply to this commit answers all of
+                # it; its beat is given back so the brief below briefs it
+                # again, and what was held of it began before this commit,
+                # so it is dropped (pipeline 2026-09-28b).
+                if await self.rt.cancel_unheard_reply() is not None:
+                    self._retract_withdrawn_beat()
             await self._brief_next_beat(probing=False)
             # Per family, not one number. This line read the raw env with a
             # 1.5 s default until 2026-09-15, which was the right bar for the
@@ -5812,6 +5840,15 @@ class RealtimeVoiceSessionRunner:
         self.session.store.event("participant_opened", **fields)
         await self._send({"type": "participant_opened", "reason": fields["reason"],
                           "first_of_encounter": first})
+        if (self.is_group() and self.room is not None
+                and getattr(self, "_unrouted_user_texts", None)
+                and not self._group_turn_waiting):
+            # A room line whose transcript landed after its turn stopped
+            # waiting for it (ROUTE_TRANSCRIPT_WAIT): that turn was skipped
+            # as awaiting_participant, and no turn is left to route the line
+            # now accepted, so the next character to speak would be the
+            # silence probe's. Routed now, as it would have been in time.
+            self._spawn_group_turn(self._run_group_turn())
 
     async def _hold_first_reply(self, rt, source):
         """The 1:1 bridge stream, with any reply held back while the
@@ -5828,52 +5865,73 @@ class RealtimeVoiceSessionRunner:
         cancelled where the route can cancel it (and the rest of it dropped as
         it arrives where it cannot), and the beat briefed for it is given back
         (_retract_withdrawn_beat). A later commit than the rejected line's is
-        the participant speaking again, and what answers it is kept."""
+        the participant speaking again, and what answers it is kept. A commit
+        no transcript will come for (an empty or failed transcription, the
+        bridge's transcript_missing) is a line nobody accepted too, decided
+        while its reply is still in flight rather than left held. Whatever is
+        still held when the stream ends (teardown, a dropped socket) is
+        written as first_reply_withheld, why stream_ended."""
         held: list = []          # (arrived_at, event)
         dropping = False
-        async for ev in source:
-            etype = ev.get("type")
-            if etype in self._REPLY_EVENTS and rt is self.rt:
-                if dropping:
-                    dropping = etype != "response_done"
+        try:
+            async for ev in source:
+                etype = ev.get("type")
+                if etype in self._REPLY_EVENTS and rt is self.rt:
+                    if dropping:
+                        dropping = etype != "response_done"
+                        continue
+                    if self._awaiting_participant:
+                        held.append((time.time(), ev))
+                        continue
+                yield ev
+                if (etype not in ("user_transcript", "transcript_missing")
+                        or ev.get("probe") or rt is not self.rt):
                     continue
-                if self._awaiting_participant:
-                    held.append((time.time(), ev))
+                latest = getattr(rt, "last_commit_at", None)
+                if not self._awaiting_participant:
+                    if held:
+                        # From the latest commit, where it is later than this
+                        # line's: what began before it was cut at that turn
+                        # end (_end_participant_turn), or answers only the
+                        # part before it, and the reply to it answers both.
+                        since = ev.get("committed_at") or 0.0
+                        if isinstance(latest, (int, float)):
+                            since = max(since, latest)
+                        keep = [h for at, h in held if at >= since]
+                        self._note_first_reply("first_reply_released", held, len(keep))
+                        held = []
+                        for h in keep:
+                            yield h
                     continue
-            yield ev
-            if etype != "user_transcript" or ev.get("probe") or rt is not self.rt:
-                continue
-            if not self._awaiting_participant:
-                if held:
-                    since = ev.get("committed_at") or 0.0
-                    keep = [h for at, h in held if at >= since]
-                    self._note_first_reply("first_reply_released", held, len(keep))
-                    held = []
-                    for h in keep:
-                        yield h
-                continue
-            latest = getattr(rt, "last_commit_at", None)
-            committed_at = ev.get("committed_at")
-            later = (isinstance(latest, (int, float)) and committed_at is not None
-                     and latest > committed_at)
-            gone = [(at, h) for at, h in held if not later or at < latest]
-            held = [(at, h) for at, h in held if later and at >= latest]
-            cancel = None
-            if not later and (getattr(rt, "responding", False)
-                              or getattr(rt, "autofire_active", False)):
-                fn = getattr(rt, "cancel_unheard_reply", None)
-                rid = await fn() if fn is not None else None
-                cancel = "not_on_this_route" if rid is None else "cancelled"
-                dropping = rid is None
-            if gone or cancel:
-                self._note_first_reply("first_reply_withheld", gone, 0,
-                                       cancel=cancel, dropping=dropping)
-            if not later:
-                self._retract_withdrawn_beat()
+                committed_at = ev.get("committed_at")
+                later = (isinstance(latest, (int, float)) and committed_at is not None
+                         and latest > committed_at)
+                gone = [(at, h) for at, h in held if not later or at < latest]
+                held = [(at, h) for at, h in held if later and at >= latest]
+                cancel = None
+                if not later and (getattr(rt, "responding", False)
+                                  or getattr(rt, "autofire_active", False)):
+                    fn = getattr(rt, "cancel_unheard_reply", None)
+                    rid = await fn() if fn is not None else None
+                    cancel = "not_on_this_route" if rid is None else "cancelled"
+                    dropping = rid is None
+                if gone or cancel:
+                    self._note_first_reply("first_reply_withheld", gone, 0,
+                                           cancel=cancel, dropping=dropping,
+                                           why=ev.get("why", "not_accepted"))
+                if not later:
+                    self._retract_withdrawn_beat()
+        finally:
+            if held:
+                self._note_first_reply("first_reply_withheld", held, 0,
+                                       why="stream_ended")
 
     def _note_first_reply(self, kind: str, held: list, released: int, **extra) -> None:
         """first_reply_released / first_reply_withheld, with what the model
-        produced, so the record keeps every frame it did not relay."""
+        produced, so the record keeps every frame it did not relay.
+        `left_in_conversation`: a dropped reply the gateway finished without
+        a cancel stays in its conversation, so the model's next reply follows
+        a line the participant never heard."""
         dropped = held[:len(held) - released] if kind == "first_reply_released" else held
         self.session.store.event(
             kind, agent_id=self.agent_id, segment=self.segment,
@@ -5883,6 +5941,9 @@ class RealtimeVoiceSessionRunner:
                                  if h.get("type") == "agent_audio") // 32,
             dropped_text="".join(h.get("text") or "" for _, h in dropped
                                  if h.get("type") == "agent_transcript_delta") or None,
+            left_in_conversation=any(
+                h.get("type") == "response_done" and not h.get("stale")
+                and not h.get("cancelled") for _, h in dropped),
             **extra)
 
     # ── the encounter clock ──────────────────────────────────────────────
@@ -5940,7 +6001,12 @@ class RealtimeVoiceSessionRunner:
         if not self._is_last_segment() or self._floor_open():
             return False
         from .storage import encounter_timing
-        left = max(0.0, encounter_timing()["min_seconds"] - self._floor_elapsed())
+        t = encounter_timing()
+        # The floor counts from the participant's first line and the ceiling
+        # from the start (28b), so a late opener meets the ceiling first: the
+        # nearer of the two is when this conversation can be left at all.
+        left = max(0.0, min(t["min_seconds"] - self._floor_elapsed(),
+                            t["max_seconds"] - self._encounter_elapsed()))
         if not self._floor_held_noted:
             self._floor_held_noted = True
             self.session.store.event(
@@ -5987,10 +6053,12 @@ class RealtimeVoiceSessionRunner:
                 interaction=self._interaction_id(), segment=self.segment,
             )
         if reason == "end_conversation" and not self._floor_open():
+            # The nearer of the floor and the ceiling, as _hold_at_floor.
             await self._send({
                 "type": "floor_held", "reason": reason,
-                "seconds_left": round(max(0.0, t["min_seconds"]
-                                          - self._floor_elapsed())),
+                "seconds_left": round(max(0.0, min(t["min_seconds"]
+                                                   - self._floor_elapsed(),
+                                                   t["max_seconds"] - elapsed))),
             })
         return True
 
@@ -7528,7 +7596,8 @@ class RealtimeVoiceSessionRunner:
             # the participant now (_first_room_reply_note): an unnamed turn
             # goes to the lead until it has spoken under that framing.
             lead = self._opening_agent
-            if first is None and self.is_group() and lead in room.sessions:
+            lead_first = first is None and self.is_group() and lead in room.sessions
+            if lead_first:
                 first = lead
             # The director may return an ORDERED multi-speaker sequence (e.g.
             # [A, B, A]); capture it so the follow-up beats play it in order
@@ -7922,6 +7991,10 @@ class RealtimeVoiceSessionRunner:
             # this; carry the tag rather than dropping it.
             self.session.store.event(
                 "director_route", speakers=[first] + followups, addressed=named,
+                # The lead taking an unnamed first line under its FIRST REPLY
+                # note: the director was not asked who speaks first, so this
+                # is no more routing judgement than a fallback is.
+                first_by="opening_lead" if lead_first else None,
                 fallback=route_fallback is not None,
                 fallback_reason=(route_fallback or {}).get("reason"),
                 fallback_detail=redact_key(

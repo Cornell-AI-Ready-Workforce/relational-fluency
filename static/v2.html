@@ -413,7 +413,7 @@
 
 <div class="gate-note" id="gateNote" role="status"></div>
 <div class="gate-note" id="dropNote" role="alert">
-  <span id="dropText"><b>Connection lost.</b> Your conversation was interrupted. Click Reconnect to carry on — this part will start again from the beginning, so the other person will greet you afresh. You have not lost your place in the study or anything you have already finished.</span>
+  <span id="dropText"><b>Connection lost.</b> Your conversation was interrupted. Click Reconnect to carry on — this part will start again from the beginning, and you speak first. You have not lost your place in the study or anything you have already finished.</span>
   <div style="margin-top:10px"><button id="dropReconnect">Reconnect</button></div>
   <!-- The other doors out of a dropped encounter (the next encounter, the
        completion code, the contact, the survey), after the retry so the card
@@ -1740,6 +1740,18 @@
   function floorElapsedS() {
     return started && floorStartMs ? Math.max(0, (Date.now() - floorStartMs) / 1000) : 0;
   }
+  // Whether the stop comes before the floor: from the warning on, or when a
+  // late first line leaves the floor further off than the stop. The ceiling
+  // wins then (docs/OPERATIONS.md), so the page says the conversation ends,
+  // never a move-on that will not come.
+  function stopBeforeFloor(s) {
+    return s >= WRAP_S || MAX_S - s <= MIN_S - floorElapsedS();
+  }
+  // "N minute(s)", rounded up, for the gate's wording.
+  function minutesText(seconds) {
+    const n = Math.max(1, Math.ceil(seconds / 60));
+    return `${n} minute${n === 1 ? '' : 's'}`;
+  }
   // Before the floor, when the participant CAN move on, in the words
   // moveOnText uses at it. Never as the conversation ending: it runs to MAX_S
   // unless they choose to move on, and "about 3 more minutes in this
@@ -1796,14 +1808,25 @@
       noteMoveOn();
       if (s >= WRAP_S) noteWrap(MAX_S - s);
     } else {
-      const left = Math.ceil((MIN_S - floorElapsedS()) / 60);
-      $('gateLabel').textContent = `You can move on in about ${left} minute${left === 1 ? '' : 's'}`;
+      // On the floor's clock, which the timer does not show (it starts at the
+      // participant's first line), unless the stop comes first; then the stop,
+      // and 'Wrapping up' stays up once noteWrap has said so.
+      const stopFirst = stopBeforeFloor(s);
+      const left = minutesText(stopFirst ? MAX_S - s : MIN_S - floorElapsedS());
+      $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up'
+        : stopFirst ? `Ends automatically in about ${left}`
+        : floorStartMs ? `You can move on in about ${left}`
+        : `You can move on ${minutesText(MIN_S)} after you start`;
       // Held until the floor. Not `disabled`, so the click can still explain
       // itself (see the handler); aria-disabled says what the styling shows.
       $('stopBtn').classList.add('locked');
       $('stopBtn').setAttribute('aria-disabled', 'true');
-      $('stopBtn').title = `End unlocks at ${pad2(Math.floor(MIN_S / 60))}:${pad2(MIN_S % 60)}.` +
+      $('stopBtn').title = (stopFirst ? `This conversation ends automatically in about ${left}.`
+        : floorStartMs ? `End unlocks in about ${left}.`
+        : `End unlocks ${minutesText(MIN_S)} after you start.`) +
         (runId ? ' To stop taking part, use “Stop and leave the study”.' : '');
+      // The warning is the page's own here too, as past the floor above.
+      if (s >= WRAP_S) noteWrap(MAX_S - s);
     }
     // The hard stop, from the page's side. The server completes the encounter
     // on its own clock too (the watchdog's tick); whichever comes first. Once.
@@ -3488,6 +3511,9 @@
         // so the page says so plainly and keeps saying it until the server
         // has accepted a line of theirs (participant_opened). A noise or a
         // sound tag is not one, so speech_started does not take it down.
+        // One cue at a time: a hand-off before any accepted line would leave
+        // the first one on screen for good.
+        if (startCueEl) startCueEl.remove();
         startCueEl = document.createElement('div');
         startCueEl.className = 'scene start-cue';
         startCueEl.textContent = m.reason === 'handoff'
@@ -3643,8 +3669,12 @@
         // The server declined to finish the encounter before the floor (the
         // participant's move-on, or the character saying goodbye early).
         // Nothing to do but say so; the conversation carries on.
+        // seconds_left is the nearer of the floor and the stop; when the stop
+        // is nearer, that is what the note says.
         const left = Math.max(1, Math.ceil((m.seconds_left || 0) / 60));
-        showGateNote(`Keep going — ${canMoveOnIn(left)}.`);
+        showGateNote(stopBeforeFloor(encounterElapsedS())
+          ? `Keep going — this conversation ends automatically in about ${minutesText(m.seconds_left || 0)}.`
+          : `Keep going — ${canMoveOnIn(left)}.`);
       } else if (m.type === 'encounter_clock') {
         // The runner's own floor, wrap and stop, on every link type (a direct
         // link has no run to read them from), and where its clock stands: the
@@ -3993,8 +4023,8 @@
       // without it rather than being handed the same button a fourth time.
       $('dropText').innerHTML =
         '<b>Connection lost.</b> Your conversation was interrupted. Click Reconnect '
-        + 'to carry on — this part will start again from the beginning, so the other '
-        + 'person will greet you afresh. You have not lost your place in the study or '
+        + 'to carry on — this part will start again from the beginning, and you speak '
+        + 'first. You have not lost your place in the study or '
         + 'anything you have already finished.'
         + (repeated
             ? ' This is the ' + ordinalWord(encounterDrops) + ' time this conversation '
@@ -4246,7 +4276,12 @@
     if (started && elapsed < MIN_S) {
       const left = Math.max(1, Math.ceil((MIN_S - elapsed) / 60));
       const when = canMoveOnIn(left);
-      showGateNote(`${when[0].toUpperCase()}${when.slice(1)} — the ring next to the timer fills when you can.` +
+      // When the stop comes first End never unlocks, so the note says the
+      // stop instead (the gate's own rule, stopBeforeFloor).
+      const s = encounterElapsedS();
+      showGateNote((stopBeforeFloor(s)
+        ? `This conversation ends automatically in about ${minutesText(MAX_S - s)}.`
+        : `${when[0].toUpperCase()}${when.slice(1)} — the ring next to the timer fills when you can.`) +
         (runId ? ' If you want to stop taking part in the study, use “Stop and leave the study”.' : ''));
       return;
     }

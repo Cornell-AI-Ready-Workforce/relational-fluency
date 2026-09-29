@@ -3954,11 +3954,26 @@ class RealtimeVoiceSession:
                         # none of it was transcribed. Said as such.
                         yield {"type": "user_transcript", "text": "",
                                "garbled": True, **meta}
+                    else:
+                        # No line at all for this commit. Not a user_transcript
+                        # (nothing arrived to record or route on); said only so
+                        # a reply held until the participant's first line is
+                        # decided now, while it can still be cancelled
+                        # (pipeline 2026-09-28b; the runner's
+                        # _hold_first_reply). No other pump reads it, and a
+                        # room member's skips it (_pump_member).
+                        yield {"type": "transcript_missing",
+                               "why": "transcript_empty", **meta}
 
                 elif etype == "conversation.item.input_audio_transcription.failed":
                     # No transcript is coming for this commit; its tag must not
-                    # be left to be paired with the next one's.
-                    self._tag_for(ev.get("item_id"))
+                    # be left to be paired with the next one's. Said as
+                    # transcript_missing, as an empty one is.
+                    tag = self._tag_for(ev.get("item_id")) or {}
+                    yield {"type": "transcript_missing", "why": "transcript_failed",
+                           "item_id": ev.get("item_id"),
+                           "probe": bool(tag.get("probe")),
+                           "committed_at": tag.get("committed_at")}
 
                 elif etype in ("response.output_audio.done",
                                "response.audio.done"):

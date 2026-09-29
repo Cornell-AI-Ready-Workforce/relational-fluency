@@ -50,11 +50,13 @@ Per scenario, from the session's `events.jsonl` and the driver's own timeline
 | voice_error | voice errors other than the two known benign kinds |
 | reply_missing | turns the gateway never answered and the runner re-asked |
 | triggers fired | planted triggers that fired |
+| spoke first | character replies played before the participant opened the conversation (the room tone each sequence begins with, and S1's hand-off) |
 | speech end to first played, p50 / p90 | the wait a participant actually hears |
 
 `baseline.json` holds the accepted values per scenario and the tolerances
 (`tolerances`, overridable per scenario). Only regressions fail; a run that
-does better than the baseline passes.
+does better than the baseline passes. Spoke first is the exception: since
+pipeline 2026-09-28b any at all fails, whatever the baseline.
 
 ## When it fails
 

@@ -238,6 +238,99 @@ async def test_a_reply_to_a_line_nobody_transcribed_is_not_played_after_the_next
     assert "Stale" not in turn["text"]
     (released,) = session.store.of("first_reply_released")
     assert released["dropped_frames"] > 0 and released["released_frames"] > 0
+    # It finished uncancelled, so the gateway's conversation still holds it.
+    assert released["left_in_conversation"] is True
+
+
+@T.in_a_loop
+async def test_a_reply_in_flight_when_their_next_turn_ends_is_cancelled_so_that_turn_commits():
+    """Review of 28b (major): a held reply kept `responding` up while
+    `_speaking` stayed down, so no barge-in cancelled it, and commit_turn
+    turned the participant's next turn down as "reply in flight": their real
+    first line stayed in the buffer with nothing to commit it. The turn end
+    now cancels the unheard reply and commits; the opener beat is briefed
+    again for the reply to that commit, and nothing of the cancelled reply is
+    played, even when the first fragment's late transcript is accepted."""
+    runner, session, page, tl, rt, pump = await one_to_one("S2A")
+    opener = runner._triggers()[0]["id"]
+    await participant_says(runner, rt)                  # its transcript is late
+    rt.ws.feed(type="input_audio_buffer.committed", item_id="u1")
+    for f in reply_head("r1", ("Well,", "hello", "there.")):
+        rt.ws.feed(**f)
+    await asyncio.sleep(0.3)
+    await participant_says(runner, rt, ms=1200)         # they carry on
+    assert rt.ws.types().count("input_audio_buffer.commit") == 2, (
+        "the second turn was left uncommitted")
+    assert "response.cancel" in rt.ws.types()
+    assert [e["trigger_id"] for e in session.store.of("trigger_undelivered")] == [opener]
+    assert [e["trigger_id"] for e in session.store.of("trigger_fired")] == [opener, opener]
+    for f in reply_tail("r1", "Well, hello there."):     # the cancelled tail
+        rt.ws.feed(**f)
+    rt.ws.feed(type="input_audio_buffer.committed", item_id="u2")
+    for f in reply_head("r2"):
+        rt.ws.feed(**f)
+    await asyncio.sleep(0.2)
+    rt.ws.feed(**transcribed("u1", "Hi Morgan,"))
+    rt.ws.feed(**transcribed("u2", "thanks for making time."))
+    for f in reply_tail("r2"):
+        rt.ws.feed(**f)
+    assert await until(lambda: session.store.of("steering_pair"), timeout=4)
+    pump.cancel()
+    shown = "".join(f["text"] for f in page.frames("assistant_text_delta"))
+    assert "hello" not in shown and "go on" in shown, shown
+    assert first(tl, "event", "participant_opened") < first(tl, "page", "audio")
+    (released,) = session.store.of("first_reply_released")
+    assert "hello" in released["dropped_text"]
+    (pair,) = session.store.of("steering_pair")
+    assert pair["direction"]["trigger_id"] == opener
+
+
+@pytest.mark.parametrize("frame", ["empty", "failed"])
+@T.in_a_loop
+async def test_a_commit_no_transcript_will_come_for_is_decided_while_its_reply_runs(frame):
+    """Review of 28b: an empty or failed transcription yielded no event, so
+    the reply to a cough stayed held to its end, generated in full into the
+    gateway's conversation, with its beat (S2A t1_the_opening) spent on a
+    line nobody heard. The bridge says so now (transcript_missing), and the
+    hold decides at once: the reply is cancelled and the beat given back."""
+    runner, session, page, tl, rt, pump = await one_to_one("S2A")
+    opener = runner._triggers()[0]["id"]
+    await participant_says(runner, rt)
+    rt.ws.feed(type="input_audio_buffer.committed", item_id="u1")
+    for f in reply_head("r1"):
+        rt.ws.feed(**f)
+    await asyncio.sleep(0.2)
+    rt.ws.feed(**(transcribed("u1", "") if frame == "empty" else {
+        "type": "conversation.item.input_audio_transcription.failed",
+        "item_id": "u1", "error": {"message": "transcription failed"}}))
+    assert await until(lambda: session.store.of("first_reply_withheld"))
+    pump.cancel()
+    (withheld,) = session.store.of("first_reply_withheld")
+    assert withheld["why"] == f"transcript_{frame}" and withheld["cancel"] == "cancelled"
+    assert withheld["left_in_conversation"] is False
+    assert "response.cancel" in rt.ws.types()
+    assert [e["trigger_id"] for e in session.store.of("trigger_undelivered")] == [opener]
+    assert runner._awaiting_participant and first(tl, "page", "audio") is None
+    assert not session.store.of("user_turn_suppressed"), "no line arrived to suppress"
+
+
+@T.in_a_loop
+async def test_a_reply_still_held_when_the_stream_ends_is_on_the_record():
+    """Review of 28b: frames held when the pump ended (teardown, a dropped
+    socket) left no trace, against _note_first_reply's promise that the
+    record keeps every frame it did not relay."""
+    runner, session, page, tl, rt, pump = await one_to_one("S2A")
+    await participant_says(runner, rt)
+    rt.ws.feed(type="input_audio_buffer.committed", item_id="u1")
+    for f in reply_head("r1", ("Hello", "there.")) + reply_tail("r1", "Hello there."):
+        rt.ws.feed(**f)
+    assert await until(lambda: not rt.responding)
+    await asyncio.sleep(0.1)
+    pump.cancel()
+    await asyncio.sleep(0.1)
+    (withheld,) = session.store.of("first_reply_withheld")
+    assert withheld["why"] == "stream_ended" and "Hello" in withheld["dropped_text"]
+    assert withheld["left_in_conversation"] is True
 
 
 @T.in_a_loop
@@ -437,6 +530,7 @@ async def test_the_rooms_first_reply_is_the_leads_and_carries_the_opening(monkey
     assert "already convened" not in runner._instructions_for(other)
 
     await runner._await_participant("start")
+    runner._group_turn_waiting = True           # as the turn end sets it
     runner._turn_end_arrivals = runner._transcripts_arrived
     await runner._record_user_turn("Hi everyone, thanks for coming.", voiced_ms=1500)
     assert not runner._awaiting_participant
@@ -444,6 +538,54 @@ async def test_the_rooms_first_reply_is_the_leads_and_carries_the_opening(monkey
     assert session.director.calls == [], "the lead answers; the director is not asked"
     (failed,) = session.store.of("floor_grant_failed")
     assert failed["agent_id"] == lead.id
+
+
+@T.in_a_loop
+async def test_a_first_line_transcribed_after_its_turn_stopped_waiting_is_routed(monkeypatch):
+    """Review of 28b: the routing wait ran out before the scribe's
+    transcript, so the turn was skipped as awaiting_participant, and the line
+    accepted a moment later was never routed; the next character to speak
+    was the silence probe's. It is routed once accepted, to the lead, and
+    the record says the director was not asked who speaks first."""
+    from test_final_voice import _room_with_fake_members
+    monkeypatch.setenv("ROUTE_TRANSCRIPT_WAIT", "0.3")
+    runner, session, page, tl = make("S3A")
+    runner.director = session.director
+    _room_with_fake_members(runner)
+    lead = runner._resolve_agents()[0]
+    runner._fold_opening(lead, group=True)
+    await runner._await_participant("start")
+    runner._group_turn_waiting = True
+    runner._turn_end_arrivals = runner._transcripts_arrived
+    await asyncio.wait_for(runner._run_group_turn(), 5)
+    (skip,) = session.store.of("group_turn_skipped")
+    assert skip["reason"] == "awaiting_participant"
+    await runner._record_user_turn("Thanks for coming, everyone.", voiced_ms=1500)
+    assert await until(lambda: session.store.of("director_route"), timeout=5)
+    (route,) = session.store.of("director_route")
+    assert route["speakers"][0] == lead.id and route["first_by"] == "opening_lead"
+    assert route["fallback"] is False and runner._unrouted_user_texts == []
+
+
+@T.in_a_loop
+async def test_the_first_reply_note_does_not_outlive_its_interaction():
+    """Review of 28b: in S4A a lead that never spoke in i1 (the participant
+    named only Priya and Chris, then moved on) still carried i1's FIRST REPLY
+    note into the kept room's i2, which has no `opening:`, and its unnamed
+    turns were still sent to him."""
+    from test_final_voice import _room_with_fake_members
+    runner, session, page, tl = make("S4A")
+    runner.director = session.director
+    _room_with_fake_members(runner)
+    lead = runner._resolve_agents()[0]
+    runner._fold_opening(lead, group=True)
+    assert "FIRST REPLY" in runner._instructions_for(lead)
+    runner.segment = 1
+    assert not runner._interaction().get("opening")
+    assert await runner._enter(lead, new_interaction=True)
+    assert session.store.of("group_room_kept")
+    assert "FIRST REPLY" not in runner._instructions_for(lead)
+    assert runner._opening_note == "" and runner._opening_agent is None
 
 
 # --------------------------------------------------------------------------
@@ -534,7 +676,11 @@ async def test_the_floor_counts_from_the_first_line_and_the_ceiling_does_not_mov
     runner._awaiting_participant = False
     runner._first_line_at = now - 100                   # they opened at 6:40
     assert await runner._hold_at_floor("participant") is True
-    assert page.frames("floor_held")[-1]["seconds_left"] == pytest.approx(320, abs=2)
+    # The floor is 320 s off and the ceiling 220 s: the ceiling comes first.
+    assert page.frames("floor_held")[-1]["seconds_left"] == pytest.approx(220, abs=2)
+    runner._first_line_at = now - 400
+    assert await runner._hold_at_floor("participant") is True
+    assert page.frames("floor_held")[-1]["seconds_left"] == pytest.approx(20, abs=2)
     await runner._encounter_clock_tick()
     assert not session.store.of("move_on_open")
     runner._first_line_at = now - 421
@@ -587,10 +733,13 @@ def test_the_record_says_when_the_participant_opened(tmp_path):
     assert rec["provenance"]["opening"]["policy"] == "participant_opens"
 
 
-def test_every_sim_sequence_begins_with_the_participant_speaking():
+def test_every_sim_sequence_begins_with_room_tone_before_the_first_line():
+    """Review of 28b: the stretch before the participant's first line is
+    where no character may speak, and the sim check's only look at it
+    (analyze's spoke_first counts a reply played there)."""
     for sid, steps in sequences.DEFAULT_SEQUENCES.items():
         kind, _ = sequences.parse(steps)[0]
-        assert kind in ("say", "bargeplay", "resume", "burst", "cycle"), (sid, steps[:30])
+        assert kind == "tone", (sid, steps[:30])
 
 
 # --------------------------------------------------------------------------
@@ -685,16 +834,23 @@ const START = "You start the conversation. Say hello when you're ready.";
     const $ = p.b.dom.$;
     p.frame({ type: 'encounter_clock', min_seconds: 420, wrap_seconds: 660, max_seconds: 720, elapsed_s: 0 });
     p.frame({ type: 'awaiting_participant', reason: 'start', names: ['Morgan'] });
-    // 7:40 on the timer, and nobody has spoken: the floor has not started.
+    // 1:00 on the timer, nothing said: worded on the floor's clock, not the
+    // timer's (review of 28b: "End unlocks at 07:00.").
+    p.set('timerStartMs = Date.now() - 60 * 1000; renderTimer();');
+    assert.strictEqual($('gateLabel').textContent, 'You can move on 7 minutes after you start');
+    assert.strictEqual($('stopBtn').title, 'End unlocks 7 minutes after you start.');
+    // 7:40 on the timer, and nobody has spoken: the floor has not started,
+    // and could no longer come before the 12:00 stop, so the stop is said.
     p.set('timerStartMs = Date.now() - 460 * 1000; renderTimer();');
     assert($('stopBtn').classList.contains('locked'), 'End unlocked with nothing said');
-    assert(/move on in about 7 minutes/.test($('gateLabel').textContent), $('gateLabel').textContent);
+    assert(/^Ends automatically in about 5 minutes$/.test($('gateLabel').textContent), $('gateLabel').textContent);
     p.frame({ type: 'participant_opened', reason: 'start', first_of_encounter: true });
     assert(p.get('Math.abs(Date.now() - floorStartMs)') < 1000, 'the floor did not start at the first line');
     // 6:40 of conversation (8:40 on the timer): still held.
     p.set('floorStartMs = Date.now() - 400 * 1000; timerStartMs = Date.now() - 520 * 1000; renderTimer();');
     assert($('stopBtn').classList.contains('locked'), 'End unlocked before 7:00 of conversation');
     assert(/move on in about 1 minute/.test($('gateLabel').textContent), $('gateLabel').textContent);
+    assert.strictEqual($('stopBtn').title, 'End unlocks in about 1 minute.');
     // A later participant_opened (a hand-off) does not restart it.
     p.frame({ type: 'participant_opened', reason: 'handoff', first_of_encounter: false });
     assert(p.get('(Date.now() - floorStartMs) / 1000') > 399, 'a hand-off restarted the floor');
@@ -705,6 +861,44 @@ const START = "You start the conversation. Say hello when you're ready.";
     p.set('floorStartMs = Date.now() - 500 * 1000; timerStartMs = Date.now() - 721 * 1000;');
     p.set('try { renderTimer(); } catch (e) {}');
     assert.strictEqual(p.get('ceilingFired'), true, 'the 12:00 stop moved');
+  }
+
+  // ---- A late first line: the stop comes before the floor, and says so
+  // (review of 28b: "You can move on in about 3 minutes" at 11:10, End never
+  // unlocked, and the page stopped at 12:00).
+  {
+    const p = page('single', [{ id: 'morgan', name: 'Morgan' }]);
+    const $ = p.b.dom.$;
+    p.frame({ type: 'encounter_clock', min_seconds: 420, wrap_seconds: 660, max_seconds: 720, elapsed_s: 0 });
+    p.frame({ type: 'awaiting_participant', reason: 'start', names: ['Morgan'] });
+    p.frame({ type: 'participant_opened', reason: 'start', first_of_encounter: true });
+    // First line at 6:00, timer at 8:00: the floor is 5 minutes off, the stop 4.
+    p.set('floorStartMs = Date.now() - 120 * 1000; timerStartMs = Date.now() - 480 * 1000; renderTimer();');
+    assert.strictEqual($('gateLabel').textContent, 'Ends automatically in about 4 minutes');
+    assert.strictEqual($('stopBtn').title, 'This conversation ends automatically in about 4 minutes.');
+    // First line at 7:10, timer at 11:10: the warning, and it stays up.
+    p.set('floorStartMs = Date.now() - 240 * 1000; timerStartMs = Date.now() - 670 * 1000;');
+    p.frame({ type: 'wrap_up', seconds_left: 50 });
+    assert.strictEqual($('gateLabel').textContent, 'Wrapping up');
+    p.set('renderTimer();');
+    assert.strictEqual($('gateLabel').textContent, 'Wrapping up', 'the next tick overwrote the warning');
+    assert($('stopBtn').classList.contains('locked'));
+    $('stopBtn').click();
+    assert(/^This conversation ends automatically in about 1 minute\./.test($('gateNote').textContent),
+      $('gateNote').textContent);
+    p.frame({ type: 'floor_held', seconds_left: 50 });
+    assert.strictEqual($('gateNote').textContent,
+      'Keep going — this conversation ends automatically in about 1 minute.');
+  }
+
+  // ---- A hand-off before any accepted line leaves one cue, not two
+  {
+    const p = page('single', [{ id: 'riley', name: 'Riley' }, { id: 'sam', name: 'Sam' }]);
+    p.frame({ type: 'awaiting_participant', reason: 'start', names: ['Riley'] });
+    p.frame({ type: 'awaiting_participant', reason: 'handoff', names: ['Sam'] });
+    assert.deepStrictEqual(p.cues().map(c => c.textContent), ["You're now with Sam. You start."]);
+    p.frame({ type: 'participant_opened', reason: 'handoff', first_of_encounter: true });
+    assert.strictEqual(p.cues().length, 0, 'a start cue outlived the first line');
   }
   console.log('PARTICIPANT OPENS PAGE OK');
 })().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
@@ -723,3 +917,5 @@ def test_the_page_says_who_starts_in_1to1_rooms_and_at_the_hand_off(tmp_path):
                           text=True, encoding="utf-8", timeout=180)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "PARTICIPANT OPENS PAGE OK" in proc.stdout
+    # Nor does the drop card promise a greeting nobody will give (review of 28b).
+    assert "greet you afresh" not in V2.read_text(encoding="utf-8")

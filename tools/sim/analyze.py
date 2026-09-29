@@ -24,6 +24,10 @@ returns the metrics the pre-deploy check compares:
   error_frames      `error` frames sent to the page, each one a "Something went
                     wrong" the participant would have read
   triggers_fired    planted triggers that fired (trigger_fired events)
+  spoke_first       character replies that started playing while the
+                    participant had not yet opened the conversation (between
+                    awaiting_participant and participant_opened): none is
+                    allowed since pipeline 2026-09-28b, whatever the baseline
   speech_end_to_first_played_s   p50 / p90 from the end of the participant's
                     speech to the first sample of the FIRST reply to it
                     playing, the delay a participant actually waits. One value
@@ -150,6 +154,15 @@ def summarize(events: List[dict], timeline: dict) -> dict:
             first_played[a] = min(b, first_played.get(a, b))
     latencies = [b - a for a, b in first_played.items()]
 
+    spoke_first, waiting = 0, False
+    for e in events:
+        if e.get("type") == "awaiting_participant":
+            waiting = True
+        elif e.get("type") == "participant_opened":
+            waiting = False
+        elif e.get("type") == "play_start" and waiting:
+            spoke_first += 1
+
     types = Counter(e.get("type") for e in events)
     started = next((e for e in events if e.get("type") == "realtime_session_started"), {})
     return {
@@ -171,6 +184,7 @@ def summarize(events: List[dict], timeline: dict) -> dict:
         "reply_missing": types.get("reply_missing", 0),
         "error_frames": len(timeline.get("error_frames") or []),
         "triggers_fired": types.get("trigger_fired", 0),
+        "spoke_first": spoke_first,
         "trigger_ids": [e.get("trigger_id") for e in events if e.get("type") == "trigger_fired"],
         "assistant_turns": types.get("assistant_turn", 0),
         "speech_end_to_first_played_s": {
@@ -243,6 +257,9 @@ def compare(metrics: dict, base: Optional[dict], tolerances: Optional[dict] = No
             continue
         lim = base[metric] + tol[key]
         check(metric, metrics[metric], base[metric], lim, metrics[metric] <= lim)
+
+    # Not against the baseline: the rule allows none (pipeline 2026-09-28b).
+    check("spoke_first", metrics.get("spoke_first", 0), 0, 0, not metrics.get("spoke_first"))
 
     lim = base["triggers_fired"] - tol["triggers_fired_drop"]
     check("triggers_fired", metrics["triggers_fired"], base["triggers_fired"], lim,

@@ -522,7 +522,9 @@ def text_client() -> AsyncAnthropic:
 #                (group_turn_skipped awaiting_participant). The room's
 #                `opening:` rides on the lead's brief as a first-reply note on
 #                every family, and unnamed turns go to the lead until it has
-#                spoken under it.
+#                spoken under it (director_route first_by opening_lead). A
+#                first line whose transcript lands after its turn stopped
+#                waiting is routed once it is accepted.
 #
 # PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
@@ -551,7 +553,9 @@ def text_client() -> AsyncAnthropic:
 #                no silence or hand-off probe, no re-ask or reconnect replay,
 #                and in 1:1 a reply is held until its line is accepted
 #                (first_reply_released) and dropped if it is not
-#                (first_reply_withheld, the beat given back). Clocks: the
+#                (first_reply_withheld, the beat given back; a commit with no
+#                transcript is not, and a reply in flight at their next turn
+#                end is cancelled so that turn commits). Clocks: the
 #                7:00 move-on floor counts from the participant's first line,
 #                the S1 2:00 timebox from their first line to Riley or Mel;
 #                the 11:00 warning and the 12:00 ceiling stay on the

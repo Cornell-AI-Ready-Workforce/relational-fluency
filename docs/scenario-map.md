@@ -22,6 +22,12 @@ Triggers fire in order within their interaction. **probe** means the trigger
 carries an `on_silence` line, so a participant who says nothing still
 produces scoreable behaviour. **scored** means the spec carries the
 high/low sample answers from the research note, used as judge anchors.
+Since pipeline 2026-09-28b the participant opens every conversation and
+nothing probes before their first line, so the `on_silence` of an opening
+beat (S1 `t1_retaliation_fork` and `t2_the_opening`, S2 `t1_the_opening`, a
+room's `t1` unless the first line names somebody else) is never spoken, and a
+participant who never opens produces an empty encounter until the 12:00 stop
+(docs/OPERATIONS.md).
 
 | Scenario | Interaction | Trigger | ESCI items | |
 |---|---|---|---|---|

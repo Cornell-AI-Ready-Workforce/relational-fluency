@@ -70,7 +70,11 @@ ordered set of planted triggers, each tied to specific ESCI items. *If the
 participant stays silent at an opening, the agent probes* — so avoidance becomes
 scoreable behavior rather than missing data. The runner therefore needs a
 no-speech timeout that prompts the agent to probe, not just a silence detector
-that closes turns.
+that closes turns. Not before the conversation's first line: since pipeline
+2026-09-28b the participant opens every conversation and no character speaks
+first, so an opening beat's `on_silence` is never spoken and a participant who
+never opens produces an empty encounter until the 12:00 stop
+(docs/OPERATIONS.md).
 
 ## The eight encounters
 
