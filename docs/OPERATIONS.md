@@ -504,10 +504,35 @@ Caveats for analysis:
   that follows the character's own previous line with no participant turn
   between them.
 
+## What changed on 2026-09-28, the participant opens (pipeline_version 2026-09-28b, room_pacing_version 2026-09-28b)
+
+The researchers' rule of 2026-09-28 (confirmed 2026-09-29): **no character
+says anything first.** At the start of every encounter, 1:1 and rooms, and at
+S1's hand-off to Sam (S1A) or Drew (S1B), the characters stay silent until the
+participant's first **accepted** line: a `user_turn`, not a line a gate
+suppressed (`no_speech`, a sound tag, a probe pad, an echo, an empty line).
+The runner writes `awaiting_participant` (reason `start` or `handoff`) and
+`participant_opened` (with `waited_s`); the page shows "You start the
+conversation. Say hello when you're ready." (at the hand-off "You're now with
+Sam. You start.") until then, and the turn cue after. It does not apply to
+later interactions with the same character (S2 i1 to i2).
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 28b | Nothing makes a character speak before that line: no room opener (`_open_group_scene` and `REALTIME_SCENE_OPEN_PROMPT` are gone), no silence probe or hand-off line, no `reply_missing` re-ask (`reply_retry` why `awaiting_participant`), no reconnect replay (`replay_withheld`), no room turn routed on nothing (`group_turn_skipped` reason `awaiting_participant`). In 1:1 a reply the gateway starts is held until its line is accepted (`first_reply_released`) and dropped if it is not (`first_reply_withheld`, the beat given back as `trigger_undelivered`). | none |
+| 28b | A beat written as the opener is the reply to the first line: in 1:1 the next beat is briefed at the participant's turn end as always (S2A `t1_the_opening`); in a room the `opening:` rides on the lead's brief as a first-reply note on every family (`opening_framing` via `first_reply_note`), and unnamed turns go to the lead until it has spoken under it. | none |
+| 28b | Clocks: the 7:00 move-on floor counts from the participant's first accepted line of the encounter, and the S1 2:00 timebox from their first line to Riley or Mel. The 11:00 warning and the 12:00 ceiling stay a hard cap from encounter start, so a participant who waits long enough meets the ceiling first. The page's ring and End follow the same floor. | none |
+
+Caveats for analysis: before `28b` a room's lead opened the scene
+(`group_scene_opened`) and the floor counted from the socket opening; the
+record's `opening` block (`first_participant_line_s`, per conversation
+`waited_s`) and provenance `opening` say which rule an encounter ran under.
+
 ## The seven-minute floor, and the twelve-minute stop
 
-Every encounter runs **at least 7:00** and **at most 12:00**, measured from the
-moment the voice socket opens. Three environment variables carry it —
+Every encounter runs **at least 7:00** and **at most 12:00**. Since `28b` the
+floor counts from the participant's first accepted line and the stop from the
+moment the voice socket opens (see above). Three environment variables carry it —
 `ENCOUNTER_MIN_SECONDS` (420), `ENCOUNTER_WRAP_SECONDS` (660) and
 `ENCOUNTER_MAX_SECONDS` (720) — read by `storage.encounter_timing()`, served to
 the page on the run (`timing`) and again by the runner itself on every link
@@ -522,7 +547,8 @@ were spent or the character had called `end_conversation`.
   **End conversation** unlocks, the ring is full, and a neutral notice says so
   (the runner sends `move_on_open` and records it). Before it End is locked and
   says why, the participant's *move on* is held (event `floor_held`), and
-  `POST /api/run/{id}/advance` answers **409** if a page asks anyway. The gate
+  `POST /api/run/{id}/advance` answers **409** if a page asks anyway (counted
+  from the socket opening, so it never refuses later than the floor). The gate
   holds on **every link type**: study runs, internal `/test` runs and direct
   researcher links.
 - **Nothing ends it by itself before 12:00.** In the last interaction the
