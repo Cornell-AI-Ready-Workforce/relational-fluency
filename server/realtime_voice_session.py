@@ -4008,10 +4008,15 @@ class RealtimeVoiceSessionRunner:
         # offline); the participant only sees a neutral caption, since a line
         # of foreign script reads as "the app is broken". `utterance` numbers
         # the line, so a page that consolidates captions can tell a second
-        # utterance from the continuation of one.
+        # utterance from the continuation of one. `spoken_ago_s` is how long
+        # before this frame they began it, so the page can date the line on
+        # its own audio clock and put it above a character line that began
+        # after it (issue #50).
         await self._send({
             "type": "user_transcript", "text": text, "final": True, "unclear": unclear,
             "utterance": self._user_utterances, "garbled": garbled,
+            **({"spoken_ago_s": round(max(0.0, time.time() - spoken_at), 3)}
+               if said_at is not None else {}),
         })
         await self.session.broadcast(
             {"type": "transcript", "role": "user", "text": text}

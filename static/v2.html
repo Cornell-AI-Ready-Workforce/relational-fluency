@@ -1636,7 +1636,11 @@
   // Reveal the turn up to the end of whichever sentence the audio is currently
   // in, so the caption advances sentence by sentence in time with the voice.
   function revealTurn(turn, charN) {
-    if (!turn.el) turn.el = appendTranscript('assistant', turn.agent_id, '');
+    if (!turn.el) {
+      turn.el = appendTranscript('assistant', turn.agent_id, '');
+      // When this line began to play, on the audio clock (see placeUserCaption).
+      turn.el.audioAt = turn.startCtx;
+    }
     const cut = sentenceCut(turn.fullText, charN);
     const shown = turn.fullText.slice(0, cut).trim();
     if (shown !== turn.shown) {
@@ -2098,6 +2102,23 @@
     if (userLiveEl) userLiveEl.classList.remove('live');
     userLiveEl = null;
     userFinals = [];
+  }
+  // A participant line goes above every character line that began to play
+  // after they began speaking (issue #50). Their transcript lands a second or
+  // more after they stop, and a line granted for their previous turn can start
+  // in that gap, so appended it sat under a line they had not heard yet.
+  // `spokenAgoS` is the server's "they began this line that long before the
+  // frame"; without it, or an audio clock, the line stays where it landed.
+  // Only character lines are stepped over, never another line of theirs or a
+  // note.
+  function placeUserCaption(el, spokenAgoS) {
+    if (!el || typeof spokenAgoS !== 'number' || !audioCtx) return;
+    const began = audioCtx.currentTime - spokenAgoS;
+    const tr = $('transcript');
+    const kids = tr.children;
+    let i = Array.prototype.indexOf.call(kids, el), ref = null;
+    while (i > 0 && typeof kids[i - 1].audioAt === 'number' && kids[i - 1].audioAt > began) ref = kids[--i];
+    if (ref) tr.insertBefore(el, ref);
   }
 
   // The participant's words, compared the way a listener would: letters and
@@ -3546,6 +3567,7 @@
           if (m.unclear || !repeatsLastUserFinal(shown, now)) {
             userFinals.push(shown);
             renderUserCaption('');
+            placeUserCaption(userLiveEl, m.spoken_ago_s);
           }
           lastUserFinal = { text: m.unclear ? '' : speechKey(shown), at: now };
           // A committed turn is a line of its own. This used to wait for

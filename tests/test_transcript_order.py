@@ -17,15 +17,19 @@ s_1790278989_77ee7e (pipeline 2026-09-24c):
 
 Now the bridge dates each commit by the runner VAD's speech start for the
 turn it closes (else by its first voiced frame), the runner writes that on
-user_turn (`spoken_at`), steering_pair names the page turn its line played as
+user_turn (`spoken_at`) and sends the page how long ago it was
+(`spoken_ago_s`), steering_pair names the page turn its line played as
 (`page_turn`), and encounter_record sorts by `spoken_at` / `heard_at`,
-keeping `t`. The timings below are the 77ee7e and 09bcbb ones; the words are
-made up.
+keeping `t`. The page puts a participant line above any character line whose
+audio began after they began. The timings below are the 77ee7e and 09bcbb
+ones; the words are made up.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -49,6 +53,8 @@ from test_participant_turn_integrity import (  # noqa: E402
 from test_turn_instrumentation import (  # noqa: E402
     CL_AUDIO, FakeRoom, FakeRT, FakeSession, FakeWS, Store, one_to_one, settle,
 )
+
+V2 = ROOT / "static" / "v2.html"
 
 
 # --------------------------------------------------------------------------
@@ -137,7 +143,7 @@ async def test_the_runners_own_bridge_is_dated_by_its_vad(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# 2. The runner: user_turn.spoken_at, page_turn
+# 2. The runner: user_turn.spoken_at, the page's spoken_ago_s, page_turn
 # --------------------------------------------------------------------------
 
 def test_the_participant_line_carries_when_it_was_begun():
@@ -149,6 +155,8 @@ def test_the_participant_line_carries_when_it_was_begun():
         spoken_at=began))
     (turn,) = session.store.of("user_turn")
     assert turn["spoken_at"] == 12.5
+    (frame,) = ws.frames("user_transcript")
+    assert frame["spoken_ago_s"] == pytest.approx(7.5, abs=0.5)
 
 
 def test_a_line_the_bridge_could_not_date_keeps_the_old_shape():
@@ -156,6 +164,7 @@ def test_a_line_the_bridge_could_not_date_keeps_the_old_shape():
     asyncio.run(runner._record_user_turn("Well, I think it does.",
                                          voiced_ms=1500, voiced_span_ms=1600))
     assert session.store.of("user_turn")[0]["spoken_at"] is None
+    assert "spoken_ago_s" not in ws.frames("user_transcript")[0]
 
 
 def test_turn_of_names_the_turn_the_next_done_closes():
@@ -327,3 +336,141 @@ def test_an_older_record_keeps_the_order_it_always_had(tmp_path):
     assert [t["t"] for t in rec["transcript"]] == [197.15, 202.226, 203.388]
     assert all(t.get("spoken_at") is None and t.get("heard_at") is None
                for t in rec["transcript"])
+
+
+# --------------------------------------------------------------------------
+# 4. The page: the participant's caption above a line begun after them
+# --------------------------------------------------------------------------
+
+PAGE_HARNESS = r"""'use strict';
+const path = require('path');
+const assert = require('assert');
+const { bootV2, vm } = require(path.join(__dirname, 'stub.js'));
+const PAGE = process.argv[2];
+
+function page(mode, castList) {
+  const b = bootV2(PAGE, '?scenario=X');
+  const set = (code) => vm.runInContext(code, b.ctx);
+  const frame = (m) => b.ctx.handleServerFrame({ data: JSON.stringify(m) });
+  set(`
+    __now = 0; __sent = [];
+    audioCtx = {
+      get currentTime() { return __now; },
+      sampleRate: 16000, baseLatency: 0.005, outputLatency: 0.02,
+      state: 'running', destination: {},
+      createBuffer(ch, len, rate) {
+        return { duration: len / rate, length: len, sampleRate: rate,
+                 copyToChannel() {}, getChannelData: () => new Float32Array(len) };
+      },
+      createBufferSource() {
+        return { buffer: null, connect() {}, start(t) { this.at = t; }, stop() {}, onended: null };
+      },
+      close() {}, addEventListener() {},
+    };
+    playDest = { stream: {} };
+    playEl = { pause() {}, srcObject: {}, paused: false, currentTime: 1 };
+    playElUsable = true; playbackChecked = true;
+    playbackTime = 0; started = true;
+    ws = { readyState: 1, send(m) { __sent.push(JSON.parse(m)); }, close() {} };
+  `);
+  // The thin DOM has no insertBefore; this is the browser's, for one parent.
+  const tr = b.dom.$('transcript');
+  tr.insertBefore = function (c, ref) {
+    const at = this.children.indexOf(c);
+    if (at >= 0) this.children.splice(at, 1);
+    const i = this.children.indexOf(ref);
+    this.children.splice(i < 0 ? this.children.length : i, 0, c);
+    return c;
+  };
+  frame({ type: 'session', session_id: 's_1', scenario: { title: 'T', mode: mode },
+          cast: castList });
+  // Let the audio clock run: tickSpeech is on requestAnimationFrame.
+  const at = async (t) => { set(`__now = ${t}`); await b.clock.advance(50); };
+  const say = (id, name, seq, secs, text) => {
+    frame({ type: 'assistant_started', agent_id: id, agent_name: name, turn: seq });
+    frame({ type: 'assistant_text_delta', agent_id: id, text: text });
+    set(`for (let i = 0; i < ${secs * 10}; i++) playPcmChunk(new Int16Array(1600).buffer);`);
+    frame({ type: 'assistant_done', agent_id: id });
+  };
+  const heard = (text, ago) => frame(Object.assign(
+    { type: 'user_transcript', final: true, text: text },
+    ago == null ? {} : { spoken_ago_s: ago }));
+  const lines = () => tr.children.filter(c => /class="speaker/.test(c.innerHTML || ''))
+    .map(c => /speaker self/.test(c.innerHTML) ? 'You: ' + c.querySelector('.text').textContent
+                                              : c.innerHTML.match(/>([^<]+):<\/span>/)[1]);
+  return { b, set, frame, at, say, heard, lines };
+}
+
+(async () => {
+  // ---- a room: the 77ee7e shapes
+  {
+    const p = page('group', [{ id: 'priya', name: 'Priya' }, { id: 'dan', name: 'Dan' },
+                             { id: 'chris', name: 'Chris' }]);
+    p.say('priya', 'Priya', 1, 3, 'Last year it all went at once.');   // plays 0.02 .. 3.02
+    await p.at(0.3);
+    // Dan's follow-up, granted for their previous turn, queued behind her.
+    await p.at(1.0);
+    p.say('dan', 'Dan', 2, 2, 'That is the model, not the date.');     // plays 3.02 .. 5.02
+    // They begin at 2.0, under Priya; Dan's audio starts at 3.02, and their
+    // transcript lands at 3.6.
+    await p.at(3.5);
+    assert.deepStrictEqual(p.lines(), ['Priya', 'Dan']);
+    p.heard('I wonder if you could...', 1.6);
+    assert.deepStrictEqual(p.lines(), ['Priya', 'You: I wonder if you could...', 'Dan'],
+      'drawn under a line begun after they began: ' + JSON.stringify(p.lines()));
+
+    // A frame with no date (an older server) is appended, as it always was.
+    await p.at(6.0);
+    p.heard('Okay.');
+    // A line begun after the character's audio started stays under it.
+    await p.at(7.0);
+    p.say('chris', 'Chris', 3, 1, 'Let us keep this tight.');          // plays 7.02 .. 8.02
+    await p.at(8.5);
+    p.heard('Fine by me.', 1.0);                                        // began 7.5
+    // Never above another line of theirs: began at 1.0, it steps over Dan's
+    // newest line and stops at their own.
+    await p.at(9.0);
+    p.say('dan', 'Dan', 4, 1, 'So the date stands.');                   // plays 9.02 .. 10.02
+    await p.at(10.5);
+    p.heard('Wait, one more thing.', 9.5);
+    assert.deepStrictEqual(p.lines(), [
+      'Priya', 'You: I wonder if you could...', 'Dan', 'You: Okay.', 'Chris',
+      'You: Fine by me.', 'You: Wait, one more thing.', 'Dan'], JSON.stringify(p.lines()));
+  }
+
+  // ---- 1:1: the same rule
+  {
+    const p = page('single', [{ id: 'morgan', name: 'Morgan' }]);
+    p.say('morgan', 'Morgan', 1, 2, 'What are you asking for?');        // plays 0.02 .. 2.02
+    await p.at(0.5);
+    p.heard('A raise.', 0.4);                                           // began 0.1
+    assert.deepStrictEqual(p.lines(), ['Morgan', 'You: A raise.'], JSON.stringify(p.lines()));
+    await p.at(3.0);
+    p.say('morgan', 'Morgan', 2, 2, 'Tell me more.');                   // plays 3.02 .. 5.02
+    await p.at(3.4);
+    p.heard('Or more leave.', 1.4);                                     // began 2.0
+    assert.deepStrictEqual(p.lines(), ['Morgan', 'You: A raise.', 'You: Or more leave.', 'Morgan'],
+      JSON.stringify(p.lines()));
+  }
+  console.log('TRANSCRIPT ORDER PAGE OK');
+})().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
+"""
+
+
+def _node():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed; the page harness needs it")
+    return node
+
+
+def test_the_page_puts_a_line_above_one_begun_after_it(tmp_path):
+    from test_client_blockers import DOM_STUB      # the shared thin browser
+
+    (tmp_path / "stub.js").write_text(DOM_STUB, encoding="utf-8")
+    h = tmp_path / "harness.js"
+    h.write_text(PAGE_HARNESS, encoding="utf-8")
+    proc = subprocess.run([_node(), str(h), str(V2)], capture_output=True,
+                          text=True, encoding="utf-8", timeout=180)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "TRANSCRIPT ORDER PAGE OK" in proc.stdout
