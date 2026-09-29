@@ -1986,6 +1986,10 @@ class RealtimeVoiceSession:
         # `commits` counts commits sent; `_restart_mark` is its value at the
         # last restart_input, so a restart happens at most once per commit.
         self.voiced_bar: Optional[Callable[[], int]] = None
+        # When the runner's VAD last marked the participant's speech starting
+        # (wall clock), set by the runner beside voiced_bar; what a commit's
+        # tag dates the participant's line by (issue #50; _tag_commit).
+        self.speech_began: Optional[Callable[[], float]] = None
         self._voiced_ms = 0.0
         # Where in the buffer the voice sits (P6 review, pipeline
         # 2026-09-24b): ms of audio appended since the last commit or clear,
@@ -2580,16 +2584,44 @@ class RealtimeVoiceSession:
         """Note a commit about to be sent, and start the next one's count."""
         self.commits += 1
         voiced, span = self._voiced_ms, self._voiced_span_ms()
+        # Read before the reset below: how much of the buffer follows its
+        # first voiced frame (see spoken_at).
+        after_first = (self._appended_ms - self._voiced_first_ms
+                       if self._voiced_first_ms is not None else None)
+        previous = self._last_commit_at
         self._reset_voice_count()
         self._last_commit_at = time.time()
         if not self.owns_input_buffer:
             return
         counted = self.voiced_bar is not None
+        try:
+            began = self.speech_began() if self.speech_began is not None else None
+        except Exception:  # noqa: BLE001 - a date is never worth a commit
+            began = None
+        if not isinstance(began, float) or began <= previous:
+            # No speech the VAD confirmed since the last commit: the first
+            # voiced frame, counted back from now on the buffer's own audio
+            # (the page streams without gaps; the worklet sends zeros while
+            # muted), which also dates a restart's pre-roll where it was said
+            # rather than when it was re-sent.
+            began = (self._last_commit_at - after_first / 1000.0
+                     if counted and after_first is not None else None)
         self._commit_tags.append({
             "voiced_ms": int(round(voiced)) if counted else None,
             "voiced_span_ms": int(round(span)) if counted else None,
             "probe": probe, "replay": replay,
             "committed_at": self._last_commit_at,
+            # When the participant began saying what this commit holds (wall
+            # clock; issue #50): the runner VAD's speech_started for the turn
+            # this commit closes. Its transcript can land after a character's
+            # line has begun, and the record and the page order the line by
+            # this instead. Not the buffer's first voiced frame where the VAD
+            # has one: a buffer can open on voice from before a reply the
+            # participant then sat through (S2A 09bcbb at 60-89 s: voice 0.4 s
+            # after one commit, then Morgan's 14 s reply, then their next
+            # line, committed as one 27.7 s span). None where nothing in it
+            # was voiced.
+            "spoken_at": began,
         })
         # A gateway that never answers a commit must not grow this forever.
         del self._commit_tags[:-16]
@@ -3957,7 +3989,9 @@ class RealtimeVoiceSession:
                             # When the commit went out, so the runner can
                             # tell a reply to THIS turn from an older one
                             # (pipeline 2026-09-24a; see _withdraw_reply).
-                            "committed_at": tag.get("committed_at")}
+                            "committed_at": tag.get("committed_at"),
+                            # When they began saying it (issue #50).
+                            "spoken_at": tag.get("spoken_at")}
                     if text:
                         yield {"type": "user_transcript", "text": text,
                                "garbled": garbled, **meta}
