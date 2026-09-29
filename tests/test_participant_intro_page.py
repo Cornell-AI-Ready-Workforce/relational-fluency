@@ -788,3 +788,83 @@ def test_the_page_has_one_top_level_heading_and_it_is_the_scenario():
     assert len(re.findall(r"<h1\b", src)) == 1, re.findall(r"<h1\b[^>]*>", src)
     assert re.search(r'<h1 class="title"><span id="title">', src), "the h1 is not the scenario title"
     assert "createElement('h1')" not in src
+
+
+# =========================================================================== #
+# A11Y-02 (UX audit, 2026-09-28). The transcript was aria-live, so a screen
+# reader read every caption as it was rewritten: a character's line sentence by
+# sentence over the character's own voice, and the participant's words back to
+# them on every interim result while they spoke; on speakers the microphone can
+# hear that. And the one cue a screen-reader user needs, "You can speak now",
+# was never announced. The transcript is now a named log that is not read out,
+# and one visually hidden status region says what the app itself says, the
+# start cue and "You can speak now", and never "<Name> is speaking".
+# =========================================================================== #
+
+def test_the_transcript_is_a_quiet_log_and_the_page_has_one_status_region():
+    src = V2.read_text(encoding="utf-8")
+    markup = src[:src.index("<script>")]
+    t = _attrs(_open_tag(markup, "transcript"))
+    assert (t.get("role"), t.get("aria-live"), t.get("tabindex")) == ("log", "off", "0"), t
+    assert t.get("aria-label"), "the transcript has no name"
+    s = _attrs(_open_tag(markup, "srStatus"))
+    assert (s.get("role"), s.get("class")) == ("status", "sr-only"), s
+    assert re.search(r"\.sr-only\s*\{[^}]*clip", src), "the status region is not visually hidden"
+    # The gate note is said through the status region, not a second one.
+    assert "role" not in _attrs(_open_tag(markup, "gateNote"))
+
+
+LIVE = RUN_VIEW + A11Y_DOM + r"""
+  const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+  a11y(b);
+  await b.clock.advance(50);
+  b.dom.$('fictionAck').click(); await b.clock.advance(50);
+  b.dom.$('audioCheckSkip').click(); await b.clock.advance(50);
+  b.dom.$('situationStart').click(); await b.clock.advance(50);
+  assert.strictEqual(b.set('started'), true);
+  const said = () => b.dom.$('srStatus').textContent;
+  const frame = (m) => b.ctx.handleServerFrame({ data: JSON.stringify(m) });
+  frame({ type: 'session', session_id: 's_1', scenario: { title: 'T', mode: 'group' }, cast: BRIEF.cast });
+
+  frame({ type: 'awaiting_participant', reason: 'start', names: ['Dan'] });
+  assert.strictEqual(said(), "You start the conversation. Say hello when you're ready.",
+    'the start cue was not said: ' + JSON.stringify(said()));
+
+  frame({ type: 'turn_open' });
+  assert.strictEqual(said(), 'You can speak now');
+  b.dom.$('srStatus').textContent = '';
+  frame({ type: 'turn_open' });
+  assert.strictEqual(said(), '', 'a floor that was already open was said again');
+
+  // A character talking is the voice's to say, not the status region's.
+  b.ctx.setActiveSpeaker('dan');
+  assert.strictEqual(b.dom.$('turnState').textContent, 'Dan is speaking');
+  assert.strictEqual(said(), '', '"Dan is speaking" was announced: ' + JSON.stringify(said()));
+  b.ctx.setActiveSpeaker(null);
+  frame({ type: 'turn_open' });
+  assert.strictEqual(said(), 'You can speak now', 'the floor opening again was not said');
+
+  // A caption is not said at all: the transcript is not the live region.
+  frame({ type: 'user_transcript', text: 'I think we should', final: false });
+  assert.strictEqual(said(), 'You can speak now', 'a caption reached the status region');
+
+  // What the app itself says is said, and the same words twice are said twice.
+  b.ctx.appendNotice('The other person’s line broke up for a moment.');
+  assert.strictEqual(said(), 'The other person’s line broke up for a moment.');
+  b.ctx.showGateNote('Keep going.');
+  const first = said();
+  b.ctx.showGateNote('Keep going.');
+  assert.strictEqual(first.trim(), 'Keep going.');
+  assert.notStrictEqual(said(), first, 'a second press of End was not said again');
+  assert.strictEqual(said().trim(), 'Keep going.');
+
+  // And the status region is not hidden with the page behind a card.
+  b.dom.document.body.children.push(b.dom.$('srStatus'));
+  b.ctx.showOverlay(b.dom.$('nextOverlay'));
+  assert.strictEqual(b.dom.$('pageBehind').inert, true);
+  assert.strictEqual(b.dom.$('srStatus').inert, false, 'the status region went inert behind a card');
+"""
+
+
+def test_the_status_region_says_the_notices_and_the_floor_and_not_the_captions(tmp_path):
+    _run(tmp_path, LIVE, "LIVE OK")

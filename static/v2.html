@@ -367,6 +367,9 @@
   /* A card takes focus itself when it opens (showOverlay), so a screen reader
      names it; it is where focus starts, not a control, so it has no ring. */
   .consent-overlay:focus, #dropNote:focus { outline: none; }
+  /* Read by a screen reader and not shown: the page's status region. */
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+    overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
   .consent-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 14px;
                   max-width: 620px; width: 100%; padding: 26px 28px; overflow-y: auto;
                   /* svh where there is one: iOS counts vh against the viewport
@@ -538,7 +541,13 @@
   </div>
 </div>
 
-<div class="gate-note" id="gateNote" role="status"></div>
+<!-- Not a live region itself: its words are said once, by #srStatus
+     (showGateNote). It is given them while display:none, where a live region
+     is not read, and two live regions would say them twice. -->
+<div class="gate-note" id="gateNote"></div>
+<!-- The page's one live region (A11Y-02): what the app itself says, and the
+     start cue and "You can speak now" (announce). -->
+<div id="srStatus" class="sr-only" role="status"></div>
 <!-- A dialog, but not a modal one: it sits under the header and the page
      stays usable around it, "Stop and leave the study" above all, which is
      never locked. Named by its bold first sentence (onConnectionDropped). -->
@@ -676,7 +685,14 @@
       <div class="body" id="briefBody"></div>
       <div class="cast-line" id="castLine"></div>
     </div>
-    <div class="transcript" id="transcript" aria-live="polite"></div>
+    <!-- A log, and not read out as it changes (A11Y-02): a character's line
+         is rewritten sentence by sentence while the voice says it, and the
+         participant's own words on every interim result while they talk, so
+         a screen reader spoke over the character and read the participant
+         back to themselves, and on speakers the microphone can hear it.
+         Named and a tab stop, so it can be read and scrolled at will. -->
+    <div class="transcript" id="transcript" role="log" aria-live="off"
+         aria-label="Conversation transcript" tabindex="0"></div>
   </div>
 </main>
 <!-- Which build served this page (see showBuild). Empty and hidden when the
@@ -1471,7 +1487,9 @@
   function applyInert() {
     const top = modalCards[modalCards.length - 1] || null;
     Array.from(document.body.children).forEach(el => {
-      const off = !!top && el !== top;
+      // The status region stays live: what the page says while a card is up
+      // is still heard.
+      const off = !!top && el !== top && el.id !== 'srStatus';
       el.inert = off;
       if (INERT_MISSING) { if (off) el.setAttribute('aria-hidden', 'true'); else el.removeAttribute('aria-hidden'); }
     });
@@ -2072,12 +2090,13 @@
     // Long enough to read: 6 s was too short for the 40-word reply to an
     // early End, and it can be closed sooner.
     gateNoteTimer = setTimeout(() => n.classList.remove('show'), 10000 + 60 * text.length);
-    // And in the transcript, where it is still there after it fades and a
-    // screen reader hears it (the transcript is the live region). A second
-    // press of End says the same again; that is not stacked under itself.
+    // And in the transcript, where it is still there after it fades, and to
+    // a screen reader (appendNotice announces it). A second press of End says
+    // the same again; that is not stacked under itself, only said again.
     const t = $('transcript');
     if (!(gateNoteCopy && gateNoteCopy.textContent === text
           && t.children[t.children.length - 1] === gateNoteCopy)) gateNoteCopy = appendNotice(text);
+    else announce(text);
   }
   // Just under the header, wherever the header is. A fixed 104px fitted the
   // desktop header only: on a phone the header runs to 250px and more, so a
@@ -2133,6 +2152,9 @@
     } else if (cueListening) {
       setTurnState('Listening…', 'listen');
     } else if (cueOpen) {
+      // Said once each time the floor opens (A11Y-02), for somebody who
+      // cannot see the pill. "<Name> is speaking" is not: the voice says it.
+      if ($('turnState').textContent !== 'You can speak now') announce('You can speak now');
       setTurnState('You can speak now', 'you');
     } else {
       setTurnState('');
@@ -2189,7 +2211,18 @@
     el.textContent = text;
     $('transcript').appendChild(el);
     $('transcript').scrollTop = $('transcript').scrollHeight;
+    announce(text);
     return el;
+  }
+
+  // Said to a screen reader through the page's one status region (#srStatus).
+  // The transcript is not live, so what the app itself has to say, and the
+  // cues that it is the participant's turn, are said here and nothing else.
+  function announce(text) {
+    const s = $('srStatus');
+    // The same words again (a second press of End) have to be a change, or
+    // they are not read: a trailing no-break space makes them one.
+    if (s) s.textContent = s.textContent === text ? text + '\u00a0' : text;
   }
 
   // ---------- the notice for a capture that would not start ----------
@@ -2197,7 +2230,7 @@
   // works (issue #42). startSession used to appendNotice on every failure, so
   // a participant pressing Start with the microphone blocked piled up one
   // identical copy per press — four presses, four paragraphs — on the screen
-  // they were already stuck on, and the transcript is an aria-live region, so
+  // they were already stuck on, and the transcript was an aria-live region, so
   // a screen reader read the whole pile back. Replaced rather than edited in
   // place, which lets a screen reader announce this attempt once. It lives in
   // #captureSlot, under the header and next to the Start button whose press
@@ -3771,6 +3804,7 @@
           : "You start the conversation. Say hello when you're ready.";
         $('transcript').appendChild(startCueEl);
         $('transcript').scrollTop = $('transcript').scrollHeight;
+        announce(startCueEl.textContent);
       } else if (m.type === 'participant_opened') {
         // Their first accepted line: the turn cue takes over. The first of
         // the encounter also starts the floor's clock (floorElapsedS).
@@ -3914,6 +3948,7 @@
         el.innerHTML = `${label}<span class="with">, you are now with ${names}</span>`;
         $('transcript').appendChild(el);
         $('transcript').scrollTop = $('transcript').scrollHeight;
+        announce(el.textContent);
         applyPresence();
       } else if (m.type === 'floor_held') {
         // The server declined to finish the encounter before the floor (the
