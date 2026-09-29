@@ -42,7 +42,7 @@
 #   replace the 0 with the real running revision and today's date, and commit
 #   that in the same change. Applying against an unverified pin is exactly the
 #   rollback-with-a-success-message this block exists to prevent.
-container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:4798e64"
+container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:0066b10"
 
 # Live voice model. gpt-realtime-2.1 since 2026-09-18: the Gemini live routes
 # are being deprecated and the native-audio one is losing sessions to a gateway-side Vertex credentials error.
@@ -86,4 +86,4 @@ analysis_db_allowed_cidrs = ["128.84.125.179/32"]
 # encounters. Its VALUE lives in Secrets Manager (relational-fluency/survey-
 # completion-code), never here: this repo is public. Put the value first, then
 # set this to true (docs/OPERATIONS.md, "The survey completion code").
-survey_completion_code_enabled = false
+survey_completion_code_enabled = true
