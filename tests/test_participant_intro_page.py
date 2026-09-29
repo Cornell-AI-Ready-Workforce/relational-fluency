@@ -837,6 +837,59 @@ def test_a_note_follows_the_header_when_the_page_scrolls_or_turns(tmp_path):
     _run(tmp_path, PLACED, "PLACED OK")
 
 
+# L7, and the review of it. On a phone the whole header was pinned: 261-375px,
+# half a 667px screen and more for the whole conversation, and 40-70px taller
+# in S2/S4 (Move on) than in S1/S3. What is pinned now is the banner and one
+# status row under it, whose turn it is, the ring and the timer, which is the
+# same row in every condition; the title and every button scroll with the
+# page. Measured in headless Chrome: 119px at 320-390 wide in S1A-S4A alike.
+
+def _css_block(src: str, opener: str) -> str:
+    start = src.index(opener)
+    at, depth = src.index("{", start), 0
+    for i in range(at, len(src)):
+        depth += {"{": 1, "}": -1}.get(src[i], 0)
+        if depth == 0:
+            return src[at + 1:i]
+    raise AssertionError(f"unclosed {opener}")
+
+
+def test_on_a_phone_only_the_banner_and_the_status_row_are_pinned():
+    src = V2.read_text(encoding="utf-8")
+    markup = src[:src.index("<script>")]
+    status = markup[markup.index('id="statusGroup"'):markup.index('id="actionGroup"')]
+    actions = markup[markup.index('id="actionGroup"'):markup.index("</header>")]
+    assert re.findall(r'\bid="(\w+)"', status) == ["statusGroup", "turnState", "gate", "gateFill",
+                                                   "gateLabel", "timer"], status
+    assert "<button" not in status
+    assert re.findall(r'<button id="(\w+)"', actions) == ["startBtn", "advanceBtn", "stopBtn", "leaveBtn"]
+
+    css = src[src.index("<style>"):src.index("</style>")]
+    sticky = sorted(sel.strip().split("\n")[-1].strip()
+                    for sel in re.findall(r"([^{}]+?)\s*\{[^}]*position:\s*sticky", css))
+    assert sticky == [".ai-banner", ".status-group"], sticky
+    phone = _css_block(css, "/* ---------- Mobile / small screens ---------- */")
+    assert re.search(r"header, \.controls \{ display: contents; \}", phone)
+    # Above a phone the groups have no box: the header row is as it was.
+    assert re.search(r"\.status-group, \.action-group \{ display: contents; \}",
+                     css[:css.index("/* ---------- Mobile / small screens")])
+
+
+BANNER = RUN_VIEW + r"""
+  const b = boot('?run=r_1&participant_id=p_rec', studyRoutes);
+  await b.clock.advance(50);
+  const set = {};
+  b.dom.document.documentElement = { style: { setProperty: (k, v) => { set[k] = v; } } };
+  b.dom.$('aiBanner').offsetHeight = 46;   // two lines, on a narrow phone
+  b.fire('resize');
+  assert.strictEqual(set['--banner-h'], '46px', 'the status row does not know where the banner ends');
+"""
+
+
+def test_the_pinned_status_row_sits_under_the_banner_however_tall_it_is(tmp_path):
+    _run(tmp_path, BANNER, "BANNER OK")
+
+
 def test_the_page_has_one_top_level_heading_and_it_is_the_scenario():
     """#43: 'the page has no top-level heading'. The header's title is it."""
     src = V2.read_text(encoding="utf-8")

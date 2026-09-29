@@ -122,6 +122,10 @@
                background: var(--surface-2); border-radius: 3px; overflow: hidden; }
   .mic-level > div { height: 100%; width: 0%; background: var(--accent); transition: width 80ms linear; }
   .controls { display: flex; gap: 10px; align-items: center; padding: 8px 0; flex-wrap: wrap; }
+  /* The status and the buttons are grouped for the phone's pinned row (see
+     the small-screen rules). Here the groups have no box, so the row is laid
+     out as it always was. */
+  .status-group, .action-group { display: contents; }
   /* Header control that moves the encounter to the next beat. The per-tile
      "Talk to X" button cannot cover a handover to someone already in the room,
      so this one appears whenever a next beat exists and the current interaction
@@ -417,10 +421,8 @@
 
   /* ---------- Mobile / small screens ---------- */
   @media (max-width: 640px) {
-    header { padding: 11px 14px 9px; gap: 10px; flex-wrap: wrap; }
     header .title { font-size: 15px; }
     header .meta { font-size: 11px; }
-    .controls { gap: 8px; padding: 0; }
     /* 44px touch targets, and no smaller than on a desktop: this rule used
        to shrink every button to 35-37px on the one kind of screen people tap. */
     button { padding: 10px 16px; font-size: 15px; min-height: 44px; }
@@ -437,11 +439,27 @@
     /* The compact height this asked for: the base min-height of 340px beat
        it, so the box was never shorter than that. */
     .transcript { min-height: 0; max-height: 45vh; max-height: 45svh; padding: 12px 14px; border-radius: 10px; }
-    /* The turn cue, the ring and timer, End and "Stop and leave the study"
-       stay on screen while the participant scrolls to the captions. The
-       header alone runs to 200 px and more here, and it used to scroll away,
-       so whose turn it was and what was said were never on screen together. */
-    .topbar { display: block; position: sticky; top: 0; z-index: 40; }
+    /* Whose turn it is stays on screen while the participant scrolls to the
+       captions: the banner, as on every screen, and under it one status row,
+       the turn cue, the ring and the timer, the same row in every condition.
+       The whole header was pinned here, 261-375px (half a 667px screen and
+       more, for the whole conversation, and 40-70px taller in S2/S4 than in
+       S1/S3); the title and the buttons (Start, End, Move on, "Stop and
+       leave the study") scroll with the page, as they always did. The header
+       and its controls have no box of their own here, so the status row can
+       stick against the page, and the three rows wear the header's look. It
+       sticks under the banner, whose height is measured (measureBanner):
+       the banner wraps on a narrow phone. */
+    header, .controls { display: contents; }
+    header > div:first-child, .status-group, .action-group { display: flex; flex-wrap: wrap;
+      align-items: center; gap: 8px; padding: 0 14px; background: var(--surface); }
+    header > div:first-child { padding-top: 11px; }
+    .status-group { position: sticky; top: var(--banner-h, 0px); z-index: 39;
+      padding-top: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
+    /* The ring's line is the long one, so it goes under the cue and the
+       timer rather than between them: two lines pinned, not three. */
+    .status-group .gate { order: 1; }
+    .action-group { padding-top: 8px; padding-bottom: 9px; border-bottom: 1px solid var(--line-soft); }
     .capture-slot .capture-note { margin: 10px 14px 0; }
     /* The page's notes span the screen, with a gutter: a 340px card pinned
        right touched the left edge at 360px and below. */
@@ -674,26 +692,33 @@
     <h1 class="title"><span id="title">Conversation</span><span id="runChip" class="run-chip" style="display:none"></span></h1>
   </div>
   <div class="controls" id="controls">
-    <span class="turn-state" id="turnState"></span>
-    <!-- Its title is renderGate's, from the clock. -->
-    <span class="gate" id="gate">
-      <svg viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="fill" id="gateFill" cx="12" cy="12" r="9" stroke-dasharray="56.5" stroke-dashoffset="56.5"/></svg>
-      <span id="gateLabel"></span>
+    <!-- Whose turn it is, the ring and the timer; then the buttons. One row
+         on a wide screen; on a phone only this first group is pinned (see
+         the small-screen rules). -->
+    <span class="status-group" id="statusGroup">
+      <span class="turn-state" id="turnState"></span>
+      <!-- Its title is renderGate's, from the clock. -->
+      <span class="gate" id="gate">
+        <svg viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="fill" id="gateFill" cx="12" cy="12" r="9" stroke-dasharray="56.5" stroke-dashoffset="56.5"/></svg>
+        <span id="gateLabel"></span>
+      </span>
+      <span class="timer" id="timer" title="Time in this conversation">00:00</span>
     </span>
-    <span class="timer" id="timer" title="Time in this conversation">00:00</span>
-    <!-- Ships disabled on purpose. This button is painted with the header, but
-         consent is only shown after two awaited round trips (loadRun, then the
-         consent form), and a click inside that window went straight through to
-         startCapture, which turns on the microphone and the webcam. It is armed
-         at the end of loadBrief, i.e. only once consent is on record and there
-         is a briefed scenario to start. startSession re-checks anyway. -->
-    <button id="startBtn" disabled>Start conversation</button>
-    <button id="advanceBtn" style="display:none"></button>
-    <button id="stopBtn" class="secondary" style="display:none">End conversation</button>
-    <!-- "End conversation" ends the encounter and enrols them in the next one,
-         so it is not the control the consent form promises ("You may stop at
-         any time by clicking Stop"). This one stops the study itself. -->
-    <button id="leaveBtn" class="secondary" style="display:none">Stop and leave the study</button>
+    <span class="action-group" id="actionGroup">
+      <!-- Ships disabled on purpose. This button is painted with the header, but
+           consent is only shown after two awaited round trips (loadRun, then the
+           consent form), and a click inside that window went straight through to
+           startCapture, which turns on the microphone and the webcam. It is armed
+           at the end of loadBrief, i.e. only once consent is on record and there
+           is a briefed scenario to start. startSession re-checks anyway. -->
+      <button id="startBtn" disabled>Start conversation</button>
+      <button id="advanceBtn" style="display:none"></button>
+      <button id="stopBtn" class="secondary" style="display:none">End conversation</button>
+      <!-- "End conversation" ends the encounter and enrols them in the next one,
+           so it is not the control the consent form promises ("You may stop at
+           any time by clicking Stop"). This one stops the study itself. -->
+      <button id="leaveBtn" class="secondary" style="display:none">Stop and leave the study</button>
+    </span>
   </div>
 </header>
 </div>
@@ -2159,9 +2184,12 @@
   // note there covered the very controls it was about (End, the ring, Move
   // on), and the connection-lost card covered Start and "Stop and leave the
   // study". Never above the banner, which stays when the header scrolls away.
+  // On a phone the header has no box of its own (only its status row is
+  // pinned there), so its rows are measured instead.
   function placeNote(n) {
-    const bottom = (el) => (el ? el.getBoundingClientRect().bottom : 0);
-    const top = Math.round(Math.max(bottom($('aiBanner')), bottom(document.querySelector('header')))) + 8;
+    const bottom = (el) => (el ? el.getBoundingClientRect().bottom || 0 : 0);
+    const top = Math.round(Math.max(bottom(document.querySelector('header')),
+      ...['aiBanner', 'statusGroup', 'actionGroup'].map(id => bottom($(id))))) + 8;
     n.style.top = top + 'px';
     if (window.innerHeight) n.style.maxHeight = (window.innerHeight - top - 12) + 'px';
   }
@@ -2175,6 +2203,15 @@
     document.querySelectorAll('.gate-note.show').forEach(placeNote));
   window.addEventListener('scroll', placeShownNotes, { passive: true });
   window.addEventListener('resize', placeShownNotes, { passive: true });
+  // The banner's height, which the phone's pinned status row sticks under
+  // (.status-group): it is one line on a wide phone, two on a narrow one,
+  // and more at a large text size.
+  function measureBanner() {
+    const b = $('aiBanner'), root = document.documentElement;
+    if (b && root) root.style.setProperty('--banner-h', b.offsetHeight + 'px');
+  }
+  measureBanner();
+  window.addEventListener('resize', measureBanner, { passive: true });
 
   // ---------- turn state ----------
   // First-time voice users mostly stall on one question: is it my turn? The
