@@ -146,8 +146,16 @@
   button#stopBtn.locked { opacity: .55; cursor: not-allowed; }
   .gate-note { display: none; position: fixed; top: 104px; right: 20px; max-width: 340px; z-index: 50;
     background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px;
-    font-size: 14px; line-height: 1.5; box-shadow: 0 8px 24px rgba(47,47,47,0.12); }
+    font-size: 14px; line-height: 1.5; box-shadow: 0 8px 24px rgba(47,47,47,0.12);
+    /* Placed under the header when shown (placeNote), and never taller than
+       the screen below that: the repeated-drop card with its doors ran to
+       500px, off the bottom of a phone held sideways. */
+    max-height: calc(100vh - 124px); overflow-y: auto; }
   .gate-note.show { display: block; }
+  /* The note fades by itself, but a slow reader can close it sooner. */
+  #gateNote { padding-right: 50px; }
+  .gate-note .note-close { position: absolute; top: 6px; right: 6px; width: 36px; height: 36px;
+    padding: 0; font-size: 20px; line-height: 1; }
   /* Audio check card */
   .check-row { display: flex; gap: 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line-soft); }
   .check-row:first-of-type { border-top: none; }
@@ -373,6 +381,10 @@
        so whose turn it was and what was said were never on screen together. */
     .topbar { display: block; position: sticky; top: 0; z-index: 40; }
     .capture-slot .capture-note { margin: 10px 14px 0; }
+    /* The page's notes span the screen, with a gutter: a 340px card pinned
+       right touched the left edge at 360px and below. */
+    .gate-note { left: 16px; right: 16px; max-width: none; }
+    .gate-note .note-close { top: 3px; right: 3px; width: 44px; height: 44px; }
     .consent-card { padding: 20px 18px; }
     .consent-card h2 { font-size: 16px; }
     /* The audio check's rows. A fixed 120px verdict and a nowrap button left
@@ -1834,7 +1846,6 @@
     if (moveOnNoted || !started) return;
     moveOnNoted = true;
     showGateNote(moveOnText());
-    appendNotice(moveOnText());
   }
   // Shortly before the stop: the one automatic end the conversation has.
   function noteWrap(secondsLeft) {
@@ -1844,7 +1855,6 @@
     const text = `This conversation ends automatically in about ${left} minute${left === 1 ? '' : 's'}.`;
     $('gateLabel').textContent = 'Wrapping up';
     showGateNote(text);
-    appendNotice(text);
   }
   function renderGate(s) {
     const g = $('gate');
@@ -1890,13 +1900,43 @@
       onEncounterComplete();
     }
   }
-  let gateNoteTimer = null;
+  let gateNoteTimer = null, gateNoteClose = null, gateNoteCopy = null;
   function showGateNote(text) {
     const n = $('gateNote');
     n.textContent = text;
+    // Setting the text took the close control away; put it back.
+    if (!gateNoteClose) {
+      gateNoteClose = document.createElement('button');
+      gateNoteClose.type = 'button';
+      gateNoteClose.className = 'secondary note-close';
+      gateNoteClose.setAttribute('aria-label', 'Close');
+      gateNoteClose.textContent = '×';
+      gateNoteClose.addEventListener('click', () => n.classList.remove('show'));
+    }
+    n.appendChild(gateNoteClose);
+    placeNote(n);
     n.classList.add('show');
     if (gateNoteTimer) clearTimeout(gateNoteTimer);
-    gateNoteTimer = setTimeout(() => n.classList.remove('show'), 6000);
+    // Long enough to read: 6 s was too short for the 40-word reply to an
+    // early End, and it can be closed sooner.
+    gateNoteTimer = setTimeout(() => n.classList.remove('show'), 10000 + 60 * text.length);
+    // And in the transcript, where it is still there after it fades and a
+    // screen reader hears it (the transcript is the live region). A second
+    // press of End says the same again; that is not stacked under itself.
+    const t = $('transcript');
+    if (!(gateNoteCopy && gateNoteCopy.textContent === text
+          && t.children[t.children.length - 1] === gateNoteCopy)) gateNoteCopy = appendNotice(text);
+  }
+  // Just under the header, wherever the header is. A fixed 104px fitted the
+  // desktop header only: on a phone the header runs to 250px and more, so a
+  // note there covered the very controls it was about (End, the ring, Move
+  // on), and the connection-lost card covered Start and "Stop and leave the
+  // study". Never above the banner, which stays when the header scrolls away.
+  function placeNote(n) {
+    const bottom = (el) => (el ? el.getBoundingClientRect().bottom : 0);
+    const top = Math.round(Math.max(bottom($('aiBanner')), bottom(document.querySelector('header')))) + 8;
+    n.style.top = top + 'px';
+    if (window.innerHeight) n.style.maxHeight = (window.innerHeight - top - 12) + 'px';
   }
 
   // ---------- turn state ----------
@@ -4094,6 +4134,7 @@
       $('dropReconnect').textContent = 'Reconnect';
       if (repeated) showFailureExit(false);
     }
+    placeNote($('dropNote'));
     $('dropNote').classList.add('show');
   }
 
