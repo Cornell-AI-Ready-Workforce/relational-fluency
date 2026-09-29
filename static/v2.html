@@ -3290,6 +3290,9 @@
     el.textContent = text;
     $('transcript').appendChild(el);
     $('transcript').scrollTop = $('transcript').scrollHeight;
+    // And said: the transcript is not a live region (A11Y-02), so without
+    // this a screen reader was never told the filming had stopped.
+    announce(text);
   }
 
   // The client's own reason for a failure, as a short bare token. server/app.py

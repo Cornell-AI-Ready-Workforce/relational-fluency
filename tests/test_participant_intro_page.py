@@ -995,6 +995,14 @@ LIVE = RUN_VIEW + A11Y_DOM + r"""
   assert.notStrictEqual(said(), first, 'a second press of End was not said again');
   assert.strictEqual(said().trim(), 'Keep going.');
 
+  // The recording disclosure is said too: a camera that stops part way
+  // through is something the participant is entitled to be told.
+  await b.clock.advance(1000);
+  const stopped = 'The camera stopped part way through, so the rest of this conversation '
+    + 'was not captured on camera.';
+  b.ctx.noteNoCamera(stopped);
+  assert.strictEqual(said(), stopped, 'the camera stopping was not said: ' + JSON.stringify(said()));
+
   // S1's hand-off: the cue for the new person is said, and the floor opening
   // 0.4 s later does not cut it off.
   b.ctx.setActiveSpeaker('dan');
