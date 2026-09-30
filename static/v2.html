@@ -1574,6 +1574,7 @@
   // the consent promise, and it is a different control from End.
   let MIN_S = 7 * 60, WRAP_S = 11 * 60, MAX_S = 12 * 60;
   let ceilingFired = false;
+  let wrapWarningFired = false;
   function applyTiming(t) {
     if (!t) return;
     if (t.min_seconds > 0) MIN_S = t.min_seconds;
@@ -1602,6 +1603,14 @@
       $('stopBtn').classList.add('locked');
       $('stopBtn').setAttribute('aria-disabled', 'true');
       $('stopBtn').title = `End unlocks at ${pad2(Math.floor(MIN_S / 60))}:${pad2(MIN_S % 60)}. To stop taking part, use “Stop and leave the study”.`;
+    }
+    // Warning that session will automatically conclude.
+    if (s >= WRAP_S && WRAP_S < MAX_S && !wrapWarningFired) {
+      wrapWarningFired = true;
+      const remaining = Math.max(0, Math.ceil(MAX_S - WRAP_S));
+      const left = remaining === 60 ? '1 minute' : `${Math.ceil(remaining / 60)} minutes`;
+      const endAt = `${pad2(Math.floor(MAX_S / 60))}:${pad2(MAX_S % 60)}`;
+      showGateNote(`${left} left. This conversation will end automatically at ${endAt}.`);
     }
     // The hard stop, from the page's side. The server completes the encounter
     // on the next turn past MAX_S; a participant who has gone quiet has no next
@@ -1640,6 +1649,7 @@
   }
   function startTimer() {
     timerStartMs = Date.now();
+    wrapWarningFired = false;
     renderTimer();
     $('timer').classList.add('running');
     if (timerInt) clearInterval(timerInt);

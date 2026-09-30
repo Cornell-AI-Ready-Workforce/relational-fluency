@@ -333,6 +333,9 @@ def test_the_page_takes_its_clock_from_the_run_and_holds_end_until_the_floor():
     src = (ROOT / "static" / "v2.html").read_text(encoding="utf-8")
     assert "applyTiming(run.timing)" in src
     assert "let MIN_S = 7 * 60, WRAP_S = 11 * 60, MAX_S = 12 * 60;" in src
+    assert "s >= WRAP_S && WRAP_S < MAX_S && !wrapWarningFired" in src
+    assert "remaining === 60 ? '1 minute'" in src
+    assert "${left} left. This conversation will end automatically at ${endAt}." in src
     early = src[src.index("$('stopBtn').addEventListener('click'"):]
     early = early[:early.index("if (!confirm('Finish this conversation and move on?'))")]
     assert "return;" in early and "endSession()" not in early, \
