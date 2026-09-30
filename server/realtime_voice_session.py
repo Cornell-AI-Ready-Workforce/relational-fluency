@@ -3084,8 +3084,6 @@ class RealtimeVoiceSessionRunner:
                     await self._answer_held_call(rt, ev, agent_id=agent_id,
                                                  ask_reply=False)
                 return
-            if self._is_last_segment():
-                return
             if not await self._advance_segment():
                 await self._send({"type": "encounter_complete"})
         except Exception as exc:  # noqa: BLE001
@@ -5532,17 +5530,7 @@ class RealtimeVoiceSessionRunner:
                 ))
 
             elif etype == "tool_call":
-                self.session.store.event(
-                    "tool_call", name=ev.get("name"), segment=self.segment
-                )
-                if await self._at_ceiling():
-                    return
-                if await self._hold_at_floor("end_conversation"):
-                    continue
-                if self._is_last_segment():
-                    continue
-                if not await self._advance_segment():
-                    await self._send({"type": "encounter_complete"})
+                if await self._on_tool_call(rt, ev):
                     return
 
             elif etype == "error":
@@ -5799,13 +5787,13 @@ class RealtimeVoiceSessionRunner:
             return
         if msg.get("type") != "advance_interaction":
             return
+        # At the stop a move-on is the ceiling's, as a turn finishing there is
+        # (_maybe_advance): the encounter completes as ceiling_reached.
         if await self._at_ceiling():
             return
         # Moving on cannot complete the encounter before the study's floor;
         # between interactions it is never held.
         if await self._hold_at_floor("move_on"):
-            return
-        if self._is_last_segment():
             return
         # The participant chose to move on. Their judgement about when a
         # conversation is finished is better than a turn counter, so this
@@ -6168,10 +6156,15 @@ class RealtimeVoiceSessionRunner:
         (_hold_to_ceiling) and answered (_answer_held_call), so the
         character keeps speaking instead of leaving the participant in
         silence: s_1790278762_09bcbb (gpt, 2026-09-24c) held a call 1.5 s
-        before the floor and then had no event at all for 140 s."""
+        before the floor and then had no event at all for 140 s. At the stop
+        it is the ceiling's (_at_ceiling), whichever interaction it is in."""
         self.session.store.event(
             "tool_call", name=ev.get("name"), segment=self.segment
         )
+        if await self._at_ceiling():
+            # Over, as below: nothing may rebuild a session after the end.
+            self._closed = True
+            return True
         if await self._hold_to_ceiling("end_conversation"):
             await self._answer_held_call(rt, ev, agent_id=self.agent_id,
                                          ask_reply=True)
@@ -6387,10 +6380,11 @@ class RealtimeVoiceSessionRunner:
         if self._next_trigger() is not None:
             return  # beats remain in this interaction
 
-        # Firing the last planted trigger is not a finish line. Hold the scene
-        # open until it has had both enough turns and enough time, otherwise a
-        # scenario with one planted beat ends after three exchanges and there
-        # is nothing for a rater to score.
+        # An encounter is meant to run 7-12 minutes across its interactions, so
+        # firing the last planted trigger is a floor, not a finish line. Hold
+        # the scene open until it has had both enough turns and enough time,
+        # otherwise a scenario with one planted beat ends after three exchanges
+        # and there is nothing for a rater to score.
         min_turns = int(os.getenv("INTERACTION_MIN_TURNS", "8"))
         min_seconds = float(os.getenv("INTERACTION_MIN_SECONDS", "180"))
         elapsed = time.time() - self._interaction_started_at
@@ -6398,11 +6392,11 @@ class RealtimeVoiceSessionRunner:
             return
         if elapsed < min_seconds:
             return
-        if self._is_last_segment():
-            return
-        # A participant can end from the page after the floor; automated
-        # completion of the final interaction remains reserved for the ceiling.
-        if await self._hold_at_floor("auto_advance"):
+        # The last interaction is never ended by this: it stays open until the
+        # participant moves on (from the floor) or the ceiling, however spent
+        # its beats are (the end policy of 2026-09-28; see _hold_to_ceiling).
+        # Between interactions this advances exactly as before.
+        if await self._hold_to_ceiling("auto_advance"):
             return
 
         self.session.store.event(

@@ -233,7 +233,7 @@ def test_past_the_floor_nothing_is_held():
     assert not session.store.of("floor_held")
 
 
-def test_the_participants_move_on_cannot_finish_the_final_segment(monkeypatch):
+def test_the_participants_move_on_does_not_complete_an_early_encounter(monkeypatch):
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
     calls = []
@@ -247,7 +247,7 @@ def test_the_participants_move_on_cannot_finish_the_final_segment(monkeypatch):
     assert ws.frames("floor_held")
     runner._encounter_started_at = runner._first_line_at = time.time() - 500
     _run(runner._handle_client_command(json.dumps({"type": "advance_interaction"})))
-    assert calls == [] and not ws.frames("encounter_complete")
+    assert calls == [1] and ws.frames("encounter_complete")
 
 
 def test_the_actors_end_tool_is_held_past_the_floor_too(monkeypatch):
@@ -278,7 +278,8 @@ def test_the_actors_end_tool_is_held_past_the_floor_too(monkeypatch):
 def test_the_actors_end_tool_does_not_finish_the_final_segment_after_the_floor(monkeypatch):
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
-    runner._encounter_started_at = time.time() - 500
+    # Past the floor, which counts from the participant's first line (28b).
+    runner._encounter_started_at = runner._first_line_at = time.time() - 500
     calls = []
 
     async def advance():
@@ -287,28 +288,92 @@ def test_the_actors_end_tool_does_not_finish_the_final_segment_after_the_floor(m
     monkeypatch.setattr(runner, "_advance_segment", advance)
     _run(runner._advance_from_tool())
     assert calls == [] and not ws.frames("encounter_complete")
+    assert [h["reason"] for h in session.store.of("auto_end_held")] == ["end_conversation"]
+    assert not ws.frames("floor_held"), "past the floor the page already says they may move on"
+
+
+def _tool_call_bridge():
+    """A gpt bridge whose events are one end_conversation call, for the 1:1
+    pump (_pump_events) as a live call reaches it."""
+    from test_participant_turn_integrity import GPT, bridge
+    rt = bridge(GPT)
+
+    async def events():
+        yield {"type": "tool_call", "name": "end_conversation",
+               "call_id": "call_E1", "arguments": "{}"}
+    rt.events = events
+    return rt
+
+
+def _outputs(rt):
+    return [m["item"]["call_id"] for m in rt.ws.sent
+            if m["type"] == "conversation.item.create"
+            and m["item"].get("type") == "function_call_output"]
 
 
 def test_the_one_to_one_actor_tool_does_not_finish_the_final_segment_after_the_floor():
+    """Through the pump, not only _on_tool_call: held AND answered, so the
+    character goes on. PR #61's pump held the call without answering it,
+    which on gpt is the 140 s of silence of s_1790278762_09bcbb."""
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
-    runner._encounter_started_at = time.time() - 500
+    runner._encounter_started_at = runner._first_line_at = time.time() - 500
+    rt = _tool_call_bridge()
+    _run(runner._pump_events(rt))
+    assert not ws.frames("encounter_complete") and runner._closed is False
+    assert _outputs(rt) == ["call_E1"], "the held call was not answered"
+    (ans,) = session.store.of("tool_call_answered")
+    assert ans["reason"] == "held_to_ceiling"
+    (held,) = session.store.of("auto_end_held")
+    assert held["reason"] == "end_conversation"
+    assert not session.store.of("floor_held"), "floor_held is the participant's move-on"
 
-    class ToolCallRT:
-        participant_speaking = None
-        voiced_bar = None
 
-        async def events(self):
-            yield {"type": "tool_call", "name": "end_conversation"}
+@pytest.mark.parametrize("last", [True, False])
+def test_at_the_stop_a_call_is_the_ceilings_and_nothing_reconnects(monkeypatch, last):
+    """At 12:00 the call completes the encounter as the ceiling, in whichever
+    interaction it comes, and the pump ends closed: returning open reads to
+    _model_to_client as the gateway dropping a live encounter."""
+    runner, session, ws = harness.make_runner("S1A")
+    if last:
+        _last_segment(runner)
+    runner._encounter_started_at = time.time() - 721
+    calls = []
 
-    _run(runner._pump_events(ToolCallRT()))
-    assert not ws.frames("encounter_complete")
+    async def advance():
+        calls.append(1)
+        return True
+    monkeypatch.setattr(runner, "_advance_segment", advance)
+    rt = _tool_call_bridge()
+    _run(runner._pump_events(rt))
+    assert calls == [] and not _outputs(rt)
+    (done,) = ws.frames("encounter_complete")
+    assert done["reason"] == "ceiling" and len(session.store.of("ceiling_reached")) == 1
+    assert runner._closed is True
+
+
+def test_at_the_stop_a_move_on_is_the_ceilings(monkeypatch):
+    runner, session, ws = harness.make_runner("S1A")
+    runner._encounter_started_at = runner._first_line_at = time.time() - 721
+    calls = []
+
+    async def advance():
+        calls.append(1)
+        return True
+    monkeypatch.setattr(runner, "_advance_segment", advance)
+    _run(runner._handle_client_command(json.dumps({"type": "advance_interaction"})))
+    assert calls == [], "moved to the next interaction past the stop"
+    (done,) = ws.frames("encounter_complete")
+    assert done["reason"] == "ceiling" and session.store.of("ceiling_reached")
+    assert not session.store.of("advance_requested")
 
 
 def test_automatic_advance_keeps_the_final_segment_open_until_the_ceiling(monkeypatch):
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
-    runner._encounter_started_at = time.time() - 500
+    runner._encounter_started_at = runner._first_line_at = time.time() - 500
+    # Past the interaction's own pacing too, or this returns before the hold.
+    runner._interaction_started_at = time.time() - 400
     runner._turns_this_interaction = 20
     runner._next_trigger = lambda: None
     calls = []
@@ -319,6 +384,7 @@ def test_automatic_advance_keeps_the_final_segment_open_until_the_ceiling(monkey
     monkeypatch.setattr(runner, "_advance_segment", advance)
     _run(runner._maybe_advance())
     assert calls == [] and not ws.frames("encounter_complete")
+    assert [h["reason"] for h in session.store.of("auto_end_held")] == ["auto_advance"]
 
 
 def test_the_wrap_is_called_once_and_the_stop_completes_the_encounter():
@@ -352,9 +418,6 @@ def test_the_page_takes_its_clock_from_the_run_and_holds_end_until_the_floor():
     src = (ROOT / "static" / "v2.html").read_text(encoding="utf-8")
     assert "applyTiming(run.timing)" in src
     assert "let MIN_S = 7 * 60, WRAP_S = 11 * 60, MAX_S = 12 * 60;" in src
-    assert "s >= WRAP_S && WRAP_S < MAX_S && !wrapWarningFired" in src
-    assert "remaining === 60 ? '1 minute'" in src
-    assert "${left} left. This conversation will end automatically at ${endAt}." in src
     early = src[src.index("$('stopBtn').addEventListener('click'"):]
     early = early[:early.index("if (!confirm('Finish this conversation and move on?'))")]
     assert "return;" in early and "endSession()" not in early, \

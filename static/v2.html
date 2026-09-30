@@ -2100,11 +2100,16 @@
     showGateNote(moveOnText());
   }
   // Shortly before the stop: the one automatic end the conversation has.
+  // One notice however it is reached, and it names the stop as the timer
+  // will show it (PR #61's wording: "1 minute left. This conversation will
+  // end automatically at 12:00.").
   function noteWrap(secondsLeft) {
     if (wrapNoted || !started) return;
     wrapNoted = true;
-    const left = Math.max(1, Math.round((secondsLeft != null ? secondsLeft : MAX_S - encounterElapsedS()) / 60));
-    const text = `This conversation ends automatically in about ${left} minute${left === 1 ? '' : 's'}.`;
+    const left = secondsLeft != null ? secondsLeft : MAX_S - encounterElapsedS();
+    const stop = Math.round(MAX_S);
+    const text = `${minutesText(left)} left. This conversation will end automatically at ` +
+      `${pad2(Math.floor(stop / 60))}:${pad2(stop % 60)}.`;
     $('gateLabel').textContent = 'Wrapping up';
     showGateNote(text);
   }
@@ -2146,14 +2151,6 @@
         (runId ? ' To stop taking part, use “Stop and leave the study”.' : '');
       // The warning is the page's own here too, as past the floor above.
       if (s >= WRAP_S) noteWrap(MAX_S - s);
-    }
-    // Warning that session will automatically conclude.
-    if (s >= WRAP_S && WRAP_S < MAX_S && !wrapWarningFired) {
-      wrapWarningFired = true;
-      const remaining = Math.max(0, Math.ceil(MAX_S - WRAP_S));
-      const left = remaining === 60 ? '1 minute' : `${Math.ceil(remaining / 60)} minutes`;
-      const endAt = `${pad2(Math.floor(MAX_S / 60))}:${pad2(MAX_S % 60)}`;
-      showGateNote(`${left} left. This conversation will end automatically at ${endAt}.`);
     }
     // The hard stop, from the page's side. The server completes the encounter
     // on its own clock too (the watchdog's tick); whichever comes first. Once.
@@ -2281,7 +2278,6 @@
   }
   function startTimer() {
     timerStartMs = Date.now();
-    wrapWarningFired = false;
     renderTimer();
     $('timer').classList.add('running');
     if (timerInt) clearInterval(timerInt);
@@ -3936,8 +3932,6 @@
       if (m.type === 'session') {
         $('title').textContent = m.scenario.title;
         sessionId = m.session_id;
-        sessionStartedAt = Date.now();
-        startTimer();
         sessionMode = m.scenario.mode || 'single';
         cast = m.cast || [];
         renderGrid();
@@ -4310,6 +4304,7 @@
     hideOverlay($('dropNote'), { modal: false });
     speechQueue = [];
     if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
+    startTimer();
     const pidParam = participantId ? `&participant_id=${encodeURIComponent(participantId)}` : '';
     // The model is fixed by the server for the whole study wave, the agent is
     // the measurement instrument, so participants never vary it. A researcher
