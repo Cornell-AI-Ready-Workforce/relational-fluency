@@ -326,6 +326,45 @@ def test_the_one_to_one_actor_tool_does_not_finish_the_final_segment_after_the_f
     assert not session.store.of("floor_held"), "floor_held is the participant's move-on"
 
 
+@pytest.mark.parametrize("last", [True, False])
+def test_at_the_stop_a_call_is_the_ceilings_and_nothing_reconnects(monkeypatch, last):
+    """At 12:00 the call completes the encounter as the ceiling, in whichever
+    interaction it comes, and the pump ends closed: returning open reads to
+    _model_to_client as the gateway dropping a live encounter."""
+    runner, session, ws = harness.make_runner("S1A")
+    if last:
+        _last_segment(runner)
+    runner._encounter_started_at = time.time() - 721
+    calls = []
+
+    async def advance():
+        calls.append(1)
+        return True
+    monkeypatch.setattr(runner, "_advance_segment", advance)
+    rt = _tool_call_bridge()
+    _run(runner._pump_events(rt))
+    assert calls == [] and not _outputs(rt)
+    (done,) = ws.frames("encounter_complete")
+    assert done["reason"] == "ceiling" and len(session.store.of("ceiling_reached")) == 1
+    assert runner._closed is True
+
+
+def test_at_the_stop_a_move_on_is_the_ceilings(monkeypatch):
+    runner, session, ws = harness.make_runner("S1A")
+    runner._encounter_started_at = runner._first_line_at = time.time() - 721
+    calls = []
+
+    async def advance():
+        calls.append(1)
+        return True
+    monkeypatch.setattr(runner, "_advance_segment", advance)
+    _run(runner._handle_client_command(json.dumps({"type": "advance_interaction"})))
+    assert calls == [], "moved to the next interaction past the stop"
+    (done,) = ws.frames("encounter_complete")
+    assert done["reason"] == "ceiling" and session.store.of("ceiling_reached")
+    assert not session.store.of("advance_requested")
+
+
 def test_automatic_advance_keeps_the_final_segment_open_until_the_ceiling(monkeypatch):
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
