@@ -406,8 +406,8 @@ function page(search, runObj) {
     assert.strictEqual(p.moveOns().length, 1, label + ': the server frame repeated the notice');
 
     // Shortly before the stop: a visible warning, once, in PR #61's words.
-    // The server's wrap_up and the page's own clock both reach it; that PR
-    // put a second notice beside this one, so each is counted.
+    // The server's wrap_up and the page's own clock both reach it; the
+    // filter matches either wording, so a second notice would be counted.
     p.frame({ type: 'wrap_up', seconds_left: 60 });
     p.at(662);
     p.at(663);
