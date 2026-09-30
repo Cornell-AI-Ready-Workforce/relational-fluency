@@ -405,12 +405,16 @@ function page(search, runObj) {
     p.frame({ type: 'move_on_open' });
     assert.strictEqual(p.moveOns().length, 1, label + ': the server frame repeated the notice');
 
-    // Shortly before the stop: a visible warning, once.
+    // Shortly before the stop: a visible warning, once, in PR #61's words.
+    // The server's wrap_up and the page's own clock both reach it; that PR
+    // put a second notice beside this one, so each is counted.
     p.frame({ type: 'wrap_up', seconds_left: 60 });
     p.at(662);
-    const warned = p.notices().filter(t => /ends automatically/.test(t));
-    assert.strictEqual(warned.length, 1, label + ': warning ' + JSON.stringify(p.notices()));
-    assert(/about 1 minute/.test(warned[0]), warned[0]);
+    p.at(663);
+    const warned = p.notices().filter(t => /automatically|left\./.test(t));
+    assert.deepStrictEqual(warned, ['1 minute left. This conversation will end automatically at 12:00.'],
+      label + ': warning ' + JSON.stringify(p.notices()));
+    assert.strictEqual($('gateNote').textContent, warned[0], label + ': ' + $('gateNote').textContent);
     assert.strictEqual($('gateLabel').textContent, 'Wrapping up');
 
     // End now finishes the conversation.
@@ -431,6 +435,13 @@ function page(search, runObj) {
     p.frame({ type: 'move_on_open' });
     assert(!p.b.dom.$('stopBtn').classList.contains('locked'), 'End held after the server floor');
     assert.strictEqual(p.notices().length, 1);
+    // The warning from the page's own clock first, then the server's frame:
+    // still one, and it names the server's stop, not the page's default.
+    p.set('timerStartMs = Date.now() - 101 * 1000; renderTimer();');
+    p.frame({ type: 'wrap_up', seconds_left: 19 });
+    p.set('timerStartMs = Date.now() - 110 * 1000; renderTimer();');
+    assert.deepStrictEqual(p.notices().slice(1),
+      ['1 minute left. This conversation will end automatically at 02:00.']);
   }
   // The first screen (its text: test_the_first_screen_says_how_long_...):
   // the page's own numbers, and the study's stop control named only where
