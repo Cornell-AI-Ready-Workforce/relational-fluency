@@ -405,12 +405,16 @@ function page(search, runObj) {
     p.frame({ type: 'move_on_open' });
     assert.strictEqual(p.moveOns().length, 1, label + ': the server frame repeated the notice');
 
-    // Shortly before the stop: a visible warning, once.
+    // Shortly before the stop: a visible warning, once, in PR #61's words.
+    // The server's wrap_up and the page's own clock both reach it; the
+    // filter matches either wording, so a second notice would be counted.
     p.frame({ type: 'wrap_up', seconds_left: 60 });
     p.at(662);
-    const warned = p.notices().filter(t => /ends automatically/.test(t));
-    assert.strictEqual(warned.length, 1, label + ': warning ' + JSON.stringify(p.notices()));
-    assert(/about 1 minute/.test(warned[0]), warned[0]);
+    p.at(663);
+    const warned = p.notices().filter(t => /automatically|left\./.test(t));
+    assert.deepStrictEqual(warned, ['1 minute left. This conversation will end automatically at 12:00.'],
+      label + ': warning ' + JSON.stringify(p.notices()));
+    assert.strictEqual($('gateNote').textContent, warned[0], label + ': ' + $('gateNote').textContent);
     assert.strictEqual($('gateLabel').textContent, 'Wrapping up');
 
     // End now finishes the conversation.
@@ -431,6 +435,13 @@ function page(search, runObj) {
     p.frame({ type: 'move_on_open' });
     assert(!p.b.dom.$('stopBtn').classList.contains('locked'), 'End held after the server floor');
     assert.strictEqual(p.notices().length, 1);
+    // The warning from the page's own clock first, then the server's frame:
+    // still one, and it names the server's stop, not the page's default.
+    p.set('timerStartMs = Date.now() - 101 * 1000; renderTimer();');
+    p.frame({ type: 'wrap_up', seconds_left: 19 });
+    p.set('timerStartMs = Date.now() - 110 * 1000; renderTimer();');
+    assert.deepStrictEqual(p.notices().slice(1),
+      ['1 minute left. This conversation will end automatically at 02:00.']);
   }
   // The first screen (its text: test_the_first_screen_says_how_long_...):
   // the page's own numbers, and the study's stop control named only where
@@ -469,6 +480,141 @@ def test_the_page_gate_notice_and_warning_on_every_link_type(tmp_path):
                           text=True, encoding="utf-8", timeout=180)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "END POLICY PAGE OK" in proc.stdout
+
+
+# The page's clock against the server's, pressing the page's own Start
+# (PR #61, "mismatch between browser and server start times"). The timer
+# starts at the Start press, a connect before the runner's clock does; the
+# runner's encounter_clock lines it up (elapsed_s), so End opens no sooner
+# than the server's floor and the page's own stop comes no sooner than the
+# server's ceiling. Without that frame (the base PR #61 was written on) the
+# page ran a connect ahead of the server for the whole encounter. PR #61
+# started the timer at the `session` frame instead: nothing was drawn and
+# End was not held from the Start press to that frame, and a Reconnect kept
+# the dropped conversation's time, stopped, until it came.
+CLOCK_HARNESS = r"""'use strict';
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const { makeContext, vm } = require(path.join(__dirname, 'stub.js'));
+const SRC = fs.readFileSync(process.argv[2], 'utf8').match(/<script>([\s\S]*)<\/script>/)[1];
+
+// A study link whose Date.now() is the virtual clock too, so the timer, the
+// ring and the page's own stop move with clock.advance.
+function page() {
+  const search = '?run=r_1&participant_id=P1';
+  const loc = { search, href: 'http://t/v2' + search, host: 't', protocol: 'http:',
+                pathname: '/v2', reload() {}, replace() {} };
+  const store = { getItem: () => null, setItem() {}, removeItem() {} };
+  const b = makeContext({}, { location: loc, history: { replaceState() {} }, sessionStorage: store });
+  const RealDate = Date, BASE = 1790000000000;
+  b.sandbox.Date = class extends RealDate {
+    constructor(...a) { if (a.length) super(...a); else super(BASE + b.clock.now()); }
+    static now() { return BASE + b.clock.now(); }
+  };
+  const WS = b.sandbox.WebSocket;
+  b.sandbox.WebSocket = function (url) { WS.call(this, url); b.sock = this; };
+  b.net.route([{ match: '/api/', fn: () => b.net.res(503, {}) }]);
+  vm.runInContext(SRC, b.ctx, { filename: 'v2.html' });
+  b.get = (code) => vm.runInContext(code, b.ctx);
+  b.frame = (m) => (b.sock.listeners.message || []).forEach(f => f({ data: JSON.stringify(m) }));
+  b.get(`run = { run_id: 'r_1', participant_id: 'P1', cohort: 'study', position: 1, total: 4,
+                 done: false, current: { id: 'S2A' } };
+         onEncounterComplete = function () {};`);
+  const $ = b.dom.$;
+  b.timer = () => $('timer').textContent;
+  b.running = () => $('timer').classList.contains('running');
+  b.locked = () => $('stopBtn').classList.contains('locked');
+  b.warnings = () => $('transcript').children
+    .filter(c => /system-note/.test(c.className || '')).map(c => c.textContent)
+    .filter(t => /automatically|left\./.test(t));
+  // One server encounter: its clock starts `handshake` ms after Start (the
+  // socket, the session, the runner), its gateway takes `connect` ms, then
+  // encounter_clock; the participant opens at 20 s on its clock.
+  b.connect = async (handshake, connect) => {
+    const srv0 = b.clock.now() + handshake;
+    await b.clock.advance(handshake);
+    b.frame({ type: 'session', session_id: 's_1', cast: [{ id: 'morgan', name: 'Morgan' }],
+              scenario: { id: 'S2A', title: 'T', intro: '', mode: 'single' } });
+    await b.clock.advance(connect);
+    b.frame({ type: 'encounter_clock', min_seconds: 420, wrap_seconds: 660, max_seconds: 720,
+              elapsed_s: connect / 1000 });
+    b.srv = () => (b.clock.now() - srv0) / 1000;
+    b.until = (s) => b.clock.advance(srv0 + s * 1000 - b.clock.now());
+    await b.until(20);
+    b.frame({ type: 'participant_opened', reason: 'start', first_of_encounter: true });
+  };
+  return b;
+}
+
+(async () => {
+  // From the Start press: the timer runs and End is held, before any frame.
+  {
+    const b = page();
+    await b.get('startSession()');
+    assert(b.sock, 'no socket');
+    assert(b.running() && b.timer() === '00:00', 'timer at Start: ' + b.timer());
+    assert(b.dom.$('gate').classList.contains('show') && b.locked(), 'End not held at Start');
+    await b.clock.advance(4000);
+    assert(b.running() && b.locked(), 'End not held while connecting');
+  }
+  // A slow connect: the server's clock starts 5 s after Start.
+  {
+    const b = page();
+    await b.get('startSession()');
+    await b.connect(5000, 3000);
+    const off = b.get('(Date.now() - timerStartMs) / 1000') - b.srv();
+    assert(Math.abs(off) < 0.01, 'the page timer is off the server clock by ' + off + ' s');
+    await b.until(439.5);
+    assert(b.locked(), 'End unlocked before the server floor (first line + 420 s)');
+    await b.until(441);
+    assert(!b.locked(), 'End still held after the server floor');
+    await b.until(659.5);
+    assert.deepStrictEqual(b.warnings(), []);
+    b.frame({ type: 'wrap_up', seconds_left: 60 });
+    await b.until(665);
+    assert.deepStrictEqual(b.warnings(), ['1 minute left. This conversation will end automatically at 12:00.']);
+    await b.until(719.5);
+    assert.strictEqual(b.get('ceilingFired'), false, 'the page stopped before the server ceiling');
+    await b.until(720.5);
+    assert.strictEqual(b.get('ceilingFired'), true, 'the page has no stop of its own at 12:00');
+  }
+  // A drop at 11:30 and Reconnect: a new encounter on the server, so the
+  // timer starts again at 00:00 at once, and the warning comes again, once.
+  {
+    const b = page();
+    await b.get('startSession()');
+    await b.connect(500, 1000);
+    b.frame({ type: 'wrap_up', seconds_left: 60 });
+    await b.until(690);
+    assert.strictEqual(b.warnings().length, 1);
+    (b.sock.listeners.close || []).forEach(f => f({}));
+    await b.clock.advance(100);
+    const dropped = b.timer();
+    b.dom.$('dropReconnect').click();
+    await b.clock.advance(10);
+    assert(b.running() && b.timer() === '00:00', `after Reconnect: ${b.timer()} (was ${dropped})`);
+    assert(b.locked(), 'End not held again after Reconnect');
+    await b.connect(500, 1000);
+    b.frame({ type: 'wrap_up', seconds_left: 60 });
+    await b.until(665);
+    assert.strictEqual(b.warnings().length, 2, 'the new encounter was not warned: ' + JSON.stringify(b.warnings()));
+  }
+  console.log('PAGE CLOCK OK');
+})().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
+"""
+
+
+def test_the_page_clock_is_the_servers_whatever_the_connect_took(tmp_path):
+    from test_browser_compat import STUB_JS         # the thin browser with media
+
+    (tmp_path / "stub.js").write_text(STUB_JS, encoding="utf-8")
+    h = tmp_path / "harness.js"
+    h.write_text(CLOCK_HARNESS, encoding="utf-8")
+    proc = subprocess.run([_node(), str(h), str(V2)], capture_output=True,
+                          text=True, encoding="utf-8", timeout=180)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "PAGE CLOCK OK" in proc.stdout
 
 
 def test_the_first_screen_says_how_long_a_conversation_runs():

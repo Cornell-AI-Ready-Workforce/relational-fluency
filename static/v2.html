@@ -2100,11 +2100,16 @@
     showGateNote(moveOnText());
   }
   // Shortly before the stop: the one automatic end the conversation has.
+  // One notice however it is reached, and it names the stop as the timer
+  // will show it (PR #61's wording: "1 minute left. This conversation will
+  // end automatically at 12:00.").
   function noteWrap(secondsLeft) {
     if (wrapNoted || !started) return;
     wrapNoted = true;
-    const left = Math.max(1, Math.round((secondsLeft != null ? secondsLeft : MAX_S - encounterElapsedS()) / 60));
-    const text = `This conversation ends automatically in about ${left} minute${left === 1 ? '' : 's'}.`;
+    const left = secondsLeft != null ? secondsLeft : MAX_S - encounterElapsedS();
+    const stop = Math.round(MAX_S);
+    const text = `${minutesText(left)} left. This conversation will end automatically at ` +
+      `${pad2(Math.floor(stop / 60))}:${pad2(stop % 60)}.`;
     $('gateLabel').textContent = 'Wrapping up';
     showGateNote(text);
   }

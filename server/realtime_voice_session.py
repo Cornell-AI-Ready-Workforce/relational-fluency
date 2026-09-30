@@ -5787,6 +5787,10 @@ class RealtimeVoiceSessionRunner:
             return
         if msg.get("type") != "advance_interaction":
             return
+        # At the stop a move-on is the ceiling's, as a turn finishing there is
+        # (_maybe_advance): the encounter completes as ceiling_reached.
+        if await self._at_ceiling():
+            return
         # Moving on cannot complete the encounter before the study's floor;
         # between interactions it is never held.
         if await self._hold_at_floor("move_on"):
@@ -6152,10 +6156,15 @@ class RealtimeVoiceSessionRunner:
         (_hold_to_ceiling) and answered (_answer_held_call), so the
         character keeps speaking instead of leaving the participant in
         silence: s_1790278762_09bcbb (gpt, 2026-09-24c) held a call 1.5 s
-        before the floor and then had no event at all for 140 s."""
+        before the floor and then had no event at all for 140 s. At the stop
+        it is the ceiling's (_at_ceiling), whichever interaction it is in."""
         self.session.store.event(
             "tool_call", name=ev.get("name"), segment=self.segment
         )
+        if await self._at_ceiling():
+            # Over, as below: nothing may rebuild a session after the end.
+            self._closed = True
+            return True
         if await self._hold_to_ceiling("end_conversation"):
             await self._answer_held_call(rt, ev, agent_id=self.agent_id,
                                          ask_reply=True)

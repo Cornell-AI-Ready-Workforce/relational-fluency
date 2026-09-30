@@ -199,6 +199,10 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
 - AC: an encounter driven to finish at 4:00 is held open and completes at
   ≥ 7:00; `advance` before the floor is refused with a reason; withdrawal at
   any time works.
+- **Superseded 2026-09-28 (issue #34):** the floor now opens only the
+  participant's move-on; in the last interaction the actor's
+  `end_conversation` and the auto-advance are held to the 12:00 ceiling, not
+  to the floor (see 4.3).
 
 **4.2 Client timer and End button** — S · app — ✅ done 2026-09-17 (End held until the floor with a reason; `Stop and leave the study` never held; clock served on the run as `timing`)
 - `v2.html` already shows the elapsed timer with a ring that fills at 7:00 and
