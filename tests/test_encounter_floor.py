@@ -233,7 +233,7 @@ def test_past_the_floor_nothing_is_held():
     assert not session.store.of("floor_held")
 
 
-def test_the_participants_move_on_cannot_finish_the_final_segment(monkeypatch):
+def test_the_participants_move_on_does_not_complete_an_early_encounter(monkeypatch):
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
     calls = []
@@ -247,7 +247,7 @@ def test_the_participants_move_on_cannot_finish_the_final_segment(monkeypatch):
     assert ws.frames("floor_held")
     runner._encounter_started_at = runner._first_line_at = time.time() - 500
     _run(runner._handle_client_command(json.dumps({"type": "advance_interaction"})))
-    assert calls == [] and not ws.frames("encounter_complete")
+    assert calls == [1] and ws.frames("encounter_complete")
 
 
 def test_the_actors_end_tool_is_held_past_the_floor_too(monkeypatch):
@@ -289,20 +289,41 @@ def test_the_actors_end_tool_does_not_finish_the_final_segment_after_the_floor(m
     assert calls == [] and not ws.frames("encounter_complete")
 
 
+def _tool_call_bridge():
+    """A gpt bridge whose events are one end_conversation call, for the 1:1
+    pump (_pump_events) as a live call reaches it."""
+    from test_participant_turn_integrity import GPT, bridge
+    rt = bridge(GPT)
+
+    async def events():
+        yield {"type": "tool_call", "name": "end_conversation",
+               "call_id": "call_E1", "arguments": "{}"}
+    rt.events = events
+    return rt
+
+
+def _outputs(rt):
+    return [m["item"]["call_id"] for m in rt.ws.sent
+            if m["type"] == "conversation.item.create"
+            and m["item"].get("type") == "function_call_output"]
+
+
 def test_the_one_to_one_actor_tool_does_not_finish_the_final_segment_after_the_floor():
+    """Through the pump, not only _on_tool_call: held AND answered, so the
+    character goes on. PR #61's pump held the call without answering it,
+    which on gpt is the 140 s of silence of s_1790278762_09bcbb."""
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
-    runner._encounter_started_at = time.time() - 500
-
-    class ToolCallRT:
-        participant_speaking = None
-        voiced_bar = None
-
-        async def events(self):
-            yield {"type": "tool_call", "name": "end_conversation"}
-
-    _run(runner._pump_events(ToolCallRT()))
-    assert not ws.frames("encounter_complete")
+    runner._encounter_started_at = runner._first_line_at = time.time() - 500
+    rt = _tool_call_bridge()
+    _run(runner._pump_events(rt))
+    assert not ws.frames("encounter_complete") and runner._closed is False
+    assert _outputs(rt) == ["call_E1"], "the held call was not answered"
+    (ans,) = session.store.of("tool_call_answered")
+    assert ans["reason"] == "held_to_ceiling"
+    (held,) = session.store.of("auto_end_held")
+    assert held["reason"] == "end_conversation"
+    assert not session.store.of("floor_held"), "floor_held is the participant's move-on"
 
 
 def test_automatic_advance_keeps_the_final_segment_open_until_the_ceiling(monkeypatch):
