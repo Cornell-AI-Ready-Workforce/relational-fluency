@@ -2021,6 +2021,12 @@ class RealtimeVoiceSession:
         # (wall clock), set by the runner beside voiced_bar; what a commit's
         # tag dates the participant's line by (issue #50; _tag_commit).
         self.speech_began: Optional[Callable[[], float]] = None
+        # Called with each participant commit's tag as it goes out (not a
+        # probe's), set by the runner beside voiced_bar: the moment the speech
+        # check starts hearing the commit again, before its transcript is back
+        # (server/speech_check.py; pipeline 2026-09-30a). Whatever it adds to
+        # the tag rides on the transcript's event.
+        self.on_commit: Optional[Callable[[dict], None]] = None
         self._voiced_ms = 0.0
         # Where in the buffer the voice sits (P6 review, pipeline
         # 2026-09-24b): ms of audio appended since the last commit or clear,
@@ -2654,7 +2660,7 @@ class RealtimeVoiceSession:
             # rather than when it was re-sent.
             began = (self._last_commit_at - after_first / 1000.0
                      if counted and after_first is not None else None)
-        self._commit_tags.append({
+        tag = {
             "voiced_ms": int(round(voiced)) if counted else None,
             "voiced_span_ms": int(round(span)) if counted else None,
             "probe": probe, "replay": replay,
@@ -2674,11 +2680,20 @@ class RealtimeVoiceSession:
             # check. Only the newest few tags keep theirs: a tag no
             # transcript came for is not worth 20 s of audio.
             "pcm": audio,
-        })
+        }
+        self._commit_tags.append(tag)
         # A gateway that never answers a commit must not grow this forever.
         del self._commit_tags[:-16]
         for old in self._commit_tags[:-COMMIT_AUDIO_TAGS]:
             old.pop("pcm", None)
+            # A check started for it finishes on its own (it is bounded);
+            # nothing will read it.
+            old.pop("check", None)
+        if self.on_commit is not None and not probe and audio:
+            try:
+                self.on_commit(tag)
+            except Exception:  # noqa: BLE001 - never cost the participant a commit
+                pass
 
     def _reset_voice_count(self) -> None:
         """A new buffer: nothing appended to it, nothing voiced in it."""
@@ -3764,6 +3779,7 @@ class RealtimeVoiceSession:
                                 self._item_tags.pop(next(iter(self._item_tags)))
                             for old in list(self._item_tags.values())[:-COMMIT_AUDIO_TAGS]:
                                 old.pop("pcm", None)
+                                old.pop("check", None)
                     continue
 
                 # The bridge auto-fires responses without going through
@@ -4083,8 +4099,10 @@ class RealtimeVoiceSession:
                             # When they began saying it (issue #50).
                             "spoken_at": tag.get("spoken_at"),
                             # What the commit held, for the speech check
-                            # (pipeline 2026-09-30a); None where not kept.
-                            "pcm": tag.get("pcm")}
+                            # (pipeline 2026-09-30a); None where not kept,
+                            # and the check on_commit started for it.
+                            "pcm": tag.get("pcm"),
+                            "check": tag.get("check")}
                     if text:
                         yield {"type": "user_transcript", "text": text,
                                "garbled": garbled, **meta}

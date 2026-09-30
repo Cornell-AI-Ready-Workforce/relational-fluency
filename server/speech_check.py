@@ -20,6 +20,20 @@ theirs; any other answer keeps the live transcript, except that a line in
 another script is replaced by the English it heard. A check that fails or
 runs out of time keeps the line as it came, which is what happened before.
 
+WHAT IT COSTS IN TIME, AND WHY SO LITTLE. Speculation, both ways (OpenAI's
+latency guide calls it speculative execution: start the next step with the
+likely answer to the check, and cancel it when the check says otherwise).
+Every participant commit is heard again the moment it goes out
+(SPEECH_CHECK_AT_COMMIT), not once its transcript is back: the transcript
+takes 0.8 s at the median (p90 1.2-1.4 s, production gpt, 2026-09-24..30) and
+the check 1.3 s, so a checked line waits about half a second for its answer
+instead of 1.3 s, and a line that is not checked cancels it. And a room asks
+the director on a checked line's live text while it waits
+(ROOM_ROUTE_DURING_CHECK); a line the check keeps, as nearly every one is,
+routes on that answer, and one it drops throws it away. The director's
+1.6 s median was on the path already, so what the room waits for the check is
+then close to nothing.
+
 WHICH LINES (check_reason). Short ones (SPEECH_CHECK_MAX_WORDS, 3), any line
 with a letter outside the Latin script, and a line of up to
 SPEECH_CHECK_PLAYBACK_MAX_WORDS (7) that began while a character was playing
@@ -49,6 +63,10 @@ Knobs, read per call:
   SPEECH_CHECK_MAX_WORDS          default 3
   SPEECH_CHECK_PLAYBACK_MAX_WORDS default 7
   SPEECH_CHECK_PLAYBACK_TAIL_S    default 1.0
+  SPEECH_CHECK_AT_COMMIT          default on; "0" starts the check only once
+                                  the transcript is back
+  ROOM_ROUTE_DURING_CHECK         default on; "0" routes a room only once the
+                                  check has answered
 """
 
 from __future__ import annotations
@@ -63,7 +81,6 @@ import wave
 from typing import Iterable, Optional
 
 from .llm import gateway_api_key, gateway_base_url, redact_key, setting
-from .retranscribe import _completion_text
 
 DEFAULT_TIMEOUT_S = 2.5
 # Shorter than this is not a turn the model can judge (a commit is at least
@@ -80,7 +97,9 @@ PROMPT = (
     "the transcript or [no speech], with no labels or commentary."
 )
 
-_NO_SPEECH = re.compile(r"[\[(]?\s*(?:no speech|inaudible|silence)\s*[\])]?\.?", re.I)
+# "[no speech]" as asked, and the forms the model writes it in ("No speech.",
+# "[No speech.]", "(silence)"), with nothing else in the answer.
+_NO_SPEECH = re.compile(r"[\W_]*(?:no speech|inaudible|silence)[\W_]*", re.I)
 _WORD = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
 
 
@@ -122,11 +141,25 @@ def playback_tail_s() -> float:
     return _number("SPEECH_CHECK_PLAYBACK_TAIL_S", 1.0)
 
 
+def at_commit() -> bool:
+    """Start hearing a commit again as it goes out ("1", the default), or
+    only once its transcript has come back and is to be checked ("0")."""
+    return _flag("SPEECH_CHECK_AT_COMMIT", "1")
+
+
+def route_during_check() -> bool:
+    """Whether a room asks the director on a checked line's live text while
+    the check runs, and routes on that answer if the line is kept."""
+    return _flag("ROOM_ROUTE_DURING_CHECK", "1")
+
+
 def provenance() -> dict:
     return {"enabled": enabled(), "model": check_model(),
             "timeout_s": timeout_s(), "max_words": max_words(),
             "playback_max_words": playback_max_words(),
-            "playback_tail_s": playback_tail_s()}
+            "playback_tail_s": playback_tail_s(),
+            "at_commit": at_commit(),
+            "room_route_during_check": route_during_check()}
 
 
 # ── which lines ─────────────────────────────────────────────────────────────
@@ -227,6 +260,9 @@ def _client():
 
 
 async def _post(payload: dict, timeout: float) -> Optional[str]:
+    # Here, not at the top: server.retranscribe imports server.storage, which
+    # creates DATA_DIR on import, and llm.provenance() imports this module.
+    from .retranscribe import _completion_text
     r = await _client().post(
         f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
         headers={"Authorization": f"Bearer {gateway_api_key()}",

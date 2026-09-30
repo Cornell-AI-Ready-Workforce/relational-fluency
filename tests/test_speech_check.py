@@ -113,7 +113,8 @@ def test_the_knobs_move_the_bounds(monkeypatch):
 # --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("said", ["[no speech]", "[No speech].", "no speech",
-                                  "(silence)", "[inaudible]", '"[no speech]"'])
+                                  "(silence)", "[inaudible]", '"[no speech]"',
+                                  "[No speech.]"])
 def test_nobody_speaking_is_no_speech(answers, said):
     answers(said)
     assert asyncio.run(sc.hear(PCM))["outcome"] == "no_speech"
@@ -146,6 +147,8 @@ def test_a_check_that_fails_says_why_and_never_raises(answers, monkeypatch):
     assert "sk-abcdefghijklmnopqrstuvwxyz0123" not in out["error"]
     answers("")
     assert asyncio.run(sc.hear(PCM))["outcome"] == "empty"
+    answers("Hi. [no speech]")                 # words in it: heard, and kept
+    assert asyncio.run(sc.hear(PCM))["outcome"] == "heard"
     answers("Yes.", delay=0.5)
     monkeypatch.setenv("SPEECH_CHECK_TIMEOUT_S", "0.05")
     assert asyncio.run(sc.hear(PCM))["outcome"] == "timeout"
@@ -303,25 +306,63 @@ async def test_lines_that_are_not_checked_never_reach_the_model(answers, monkeyp
     assert all("speech_check" not in t for t in session.store.of("user_turn"))
 
 
+def _play(runner, seconds, *, chunk_s=0.2, agent_id="morgan"):
+    """Relay `seconds` of a 1:1 character's audio as the pump does, in
+    chunks, through the playback clock; returns when it started."""
+    began = time.time()
+    for _ in range(int(round(seconds / chunk_s))):
+        runner._advance_play_cursor(agent_id, None, b"\x00" * int(32000 * chunk_s))
+    return began
+
+
 @in_a_loop
 async def test_a_line_begun_over_a_characters_playback_is_checked(answers):
+    """Anywhere in the line, not only its last chunks: on the 1:1 route each
+    chunk is its own _last_played, and the check reads the joined stretch."""
     answers("[no speech]")
     runner, session, _ = gpt_runner()
-    now = time.time()
-    runner._last_played = {"agent_id": "morgan", "start": now - 5, "end": now + 3,
-                           "text": "More than they should right now."}
+    began = _play(runner, 10.0)
     await runner._record_user_turn("They should right now, I guess.",
-                                   spoken_at=now - 1, pcm=PCM)
+                                   spoken_at=began + 3, pcm=PCM)
     (chk,) = session.store.of("speech_check")
     assert chk["reason"] == "during_playback" and chk["during_playback"] is True
     assert not session.store.of("user_turn")
-    # The same line two seconds after the playback ended is left alone.
-    runner._last_played = {"agent_id": "morgan", "start": now - 10, "end": now - 3,
-                           "text": "..."}
+
+
+@in_a_loop
+async def test_a_line_after_the_playback_or_after_its_cut_is_left_alone(answers):
+    answers("[no speech]")
+    runner, session, _ = gpt_runner()
+    began = _play(runner, 10.0)
     await runner._record_user_turn("They should right now, I guess.",
-                                   spoken_at=now - 1, pcm=PCM)
-    assert len(session.store.of("speech_check")) == 1
-    assert len(session.store.of("user_turn")) == 1
+                                   spoken_at=began + 12, pcm=PCM)
+    # A barge-in stopped the page 1 s in: the rest was never played.
+    runner, session2, _ = gpt_runner()
+    began = _play(runner, 10.0)
+    runner._cut_play_spans(began + 1)
+    await runner._record_user_turn("They should right now, I guess.",
+                                   spoken_at=began + 4, pcm=PCM)
+    for store in (session.store, session2.store):
+        assert not store.of("speech_check")
+        assert len(store.of("user_turn")) == 1
+
+
+@in_a_loop
+async def test_a_room_members_adopted_reply_counts_as_playback(answers):
+    """A room reply adopted from a hold plays through _relay, which moves
+    _last_played only once the line has finished (_finish_live)."""
+    answers("[no speech]")
+    runner, session, _ = gpt_runner("S4A")
+    agent = runner._resolve_agents()[0]
+    st = rvs._MemberState()
+    began = time.time()
+    for _ in range(20):
+        await runner._relay(agent, st, {"type": "agent_audio",
+                                        "pcm": b"\x00" * 6400})
+    await runner._record_user_turn("We go live on the date.",
+                                   spoken_at=began + 2, pcm=PCM)
+    (chk,) = session.store.of("speech_check")
+    assert chk["reason"] == "during_playback"
 
 
 @in_a_loop
@@ -390,7 +431,12 @@ def test_a_room_turn_on_a_line_nobody_said_is_skipped(answers, monkeypatch):
         return session
 
     session = asyncio.run(go())
-    assert session.director.calls == [], "nobody is answered for nothing"
+    # The director was asked while the check ran; its answer was thrown away
+    # and nobody was given the floor.
+    (spec,) = session.store.of("director_speculation")
+    assert spec["used"] is False
+    (skipped,) = session.store.of("group_turn_skipped")
+    assert skipped["reason"] == "no_speech"
     assert not session.store.of("user_turn")
     (sup,) = session.store.of("user_turn_suppressed")
     assert sup["reason"] == "no_speech"
@@ -407,3 +453,267 @@ async def test_the_follow_up_gap_holds_while_a_line_is_being_checked():
     assert not gap.done(), "the follow-up was granted over a line still being checked"
     runner._speech_checks_pending = 0
     assert await asyncio.wait_for(gap, 2) is None
+
+
+# --------------------------------------------------------------------------
+# 6. Less waiting: heard from the commit, routed while it is heard
+# --------------------------------------------------------------------------
+
+async def _committed(runner, rt, text, *, voice_ms=600, probe=False):
+    """A participant commit through the bridge with the runner's hook on it,
+    and its transcript, as _pump would deliver them to _record_user_turn."""
+    rt.on_commit = runner._on_participant_commit
+    await rt.clear_input()
+    await send_ms(rt, LOUD, voice_ms)
+    if probe:
+        await rt.commit_input(probe=True)
+    else:
+        await rt.commit_input()
+    rt.ws.feed(type="input_audio_buffer.committed", item_id="item_X")
+    rt.ws.feed(type="conversation.item.input_audio_transcription.completed",
+               item_id="item_X", transcript=text)
+    return await next_transcript(rt)
+
+
+@in_a_loop
+async def test_the_check_begins_at_the_commit_and_is_awaited_not_repeated(answers):
+    a = answers("[no speech]", delay=0.3)
+    runner, session, _ = gpt_runner()
+    started = time.time()
+    ev = await _committed(runner, runner.rt, "Democrat")
+    assert ev["check"] is not None, "started as the commit went out"
+    await asyncio.sleep(0.2)                       # the transcript takes a while
+    await runner._record_user_turn(ev["text"], **rvs._turn_meta(ev))
+    assert len(a.payloads) == 1, "heard once, not again at the transcript"
+    (chk,) = session.store.of("speech_check")
+    assert chk["at_commit"] is True and chk["head_start_ms"] >= 150
+    assert chk["held_ms"] < 250, "the line waited only for what was left of it"
+    assert time.time() - started < 0.7
+    assert session.store.of("user_turn_suppressed")[0]["reason"] == "no_speech"
+
+
+@in_a_loop
+async def test_a_line_that_is_not_checked_cancels_the_hearing_begun_for_it(answers):
+    answers("x", delay=5)
+    runner, session, _ = gpt_runner()
+    ev = await _committed(runner, runner.rt,
+                          "Okay, that's fine. Can we go over the entire schedule?",
+                          voice_ms=2600)
+    task = ev["check"]["task"]
+    await runner._record_user_turn(ev["text"], **rvs._turn_meta(ev))
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 1)
+    assert not session.store.of("speech_check")
+    assert len(session.store.of("user_turn")) == 1
+
+
+@in_a_loop
+async def test_a_probe_starts_nothing_and_the_knob_moves_the_start(answers, monkeypatch):
+    answers("Yes.")
+    runner, session, _ = gpt_runner()
+    ev = await _committed(runner, runner.rt, "Thank you very much.", probe=True)
+    assert ev["check"] is None
+    monkeypatch.setenv("SPEECH_CHECK_AT_COMMIT", "0")
+    ev = await _committed(runner, runner.rt, "Yes.")
+    assert ev["check"] is None
+    await runner._record_user_turn(ev["text"], **rvs._turn_meta(ev))
+    (chk,) = session.store.of("speech_check")
+    assert chk["at_commit"] is False and chk["outcome"] == "heard"
+
+
+def _timed_director(session, delay=0.3):
+    """The room's director, answering after `delay`, with when each call was
+    made."""
+    calls = []
+
+    async def route(history, text):
+        calls.append((time.time(), text, [e.get("text") for e in history]))
+        await asyncio.sleep(delay)
+        return []
+    session.director.route = route
+    return calls
+
+
+def test_the_room_asks_the_director_while_the_line_is_checked(answers, monkeypatch):
+    monkeypatch.setenv("ROUTE_TRANSCRIPT_WAIT", "3")
+    answers("Yes, go on.", delay=0.4)
+
+    async def go():
+        runner, session, _ = runner_for("S4A")
+        _gpt_room(runner, session)
+        calls = _timed_director(session)
+        runner._turn_end_arrivals = runner._transcripts_arrived
+        line = asyncio.ensure_future(
+            runner._record_user_turn("Yes, go on.", voiced_ms=700, pcm=PCM))
+        await asyncio.sleep(0.05)
+        started = time.time()
+        await asyncio.wait_for(runner._run_group_turn(), timeout=10)
+        await line
+        return session, calls, started
+
+    session, calls, started = asyncio.run(go())
+    (asked_at, text, history) = calls[0]
+    assert len(calls) == 1, "asked once, while the check ran, and that answer used"
+    assert text == "Yes, go on." and history[-1] == "Yes, go on."
+    assert asked_at - started < 0.3, "the director was asked before the check answered"
+    (spec,) = session.store.of("director_speculation")
+    assert spec["used"] is True
+
+
+def test_a_line_that_names_somebody_is_not_speculated_on(answers, monkeypatch):
+    monkeypatch.setenv("ROUTE_TRANSCRIPT_WAIT", "3")
+    answers("Priya?", delay=0.3)
+
+    async def go():
+        runner, session, _ = runner_for("S4A")
+        _gpt_room(runner, session)
+        calls = _timed_director(session)
+        runner._turn_end_arrivals = runner._transcripts_arrived
+        line = asyncio.ensure_future(
+            runner._record_user_turn("Priya?", voiced_ms=700, pcm=PCM))
+        await asyncio.sleep(0.05)
+        await asyncio.wait_for(runner._run_group_turn(), timeout=10)
+        await line
+        return session, calls
+
+    session, calls = asyncio.run(go())
+    assert calls == [], "a name routes without the director"
+    assert not session.store.of("director_speculation")
+
+
+def test_with_the_knob_off_the_room_routes_after_the_check(answers, monkeypatch):
+    monkeypatch.setenv("ROUTE_TRANSCRIPT_WAIT", "3")
+    monkeypatch.setenv("ROOM_ROUTE_DURING_CHECK", "0")
+    answers("Yes, go on.", delay=0.4)
+
+    async def go():
+        runner, session, _ = runner_for("S4A")
+        _gpt_room(runner, session)
+        calls = _timed_director(session)
+        runner._turn_end_arrivals = runner._transcripts_arrived
+        line = asyncio.ensure_future(
+            runner._record_user_turn("Yes, go on.", voiced_ms=700, pcm=PCM))
+        await asyncio.sleep(0.05)
+        started = time.time()
+        await asyncio.wait_for(runner._run_group_turn(), timeout=10)
+        await line
+        return session, calls, started
+
+    session, calls, started = asyncio.run(go())
+    ((asked_at, text, _),) = calls
+    assert text == "Yes, go on." and asked_at - started >= 0.3
+    assert not session.store.of("director_speculation")
+
+
+def test_a_speculative_answer_is_not_used_when_the_room_moved_on(answers, monkeypatch):
+    """A character's line landed while the check ran: the director would now
+    read a different history, so it is asked again."""
+    monkeypatch.setenv("ROUTE_TRANSCRIPT_WAIT", "3")
+    answers("Yes, go on.", delay=0.4)
+
+    async def go():
+        runner, session, _ = runner_for("S4A")
+        _gpt_room(runner, session)
+        calls = _timed_director(session, delay=0.05)
+        runner._turn_end_arrivals = runner._transcripts_arrived
+        line = asyncio.ensure_future(
+            runner._record_user_turn("Yes, go on.", voiced_ms=700, pcm=PCM))
+        await asyncio.sleep(0.05)
+        turn = asyncio.ensure_future(runner._run_group_turn())
+        await asyncio.sleep(0.2)
+        session.append_agent("priya", "I can take the pilot.")
+        await asyncio.wait_for(turn, timeout=10)
+        await line
+        return session, calls
+
+    session, calls = asyncio.run(go())
+    assert len(calls) == 2
+    assert calls[1][2][-2:] == ["I can take the pilot.", "Yes, go on."]
+    (spec,) = session.store.of("director_speculation")
+    assert spec["used"] is False
+
+
+# --------------------------------------------------------------------------
+# 7. The wait itself (review of 30a)
+# --------------------------------------------------------------------------
+
+@in_a_loop
+async def test_a_line_whose_conversation_ended_during_its_check_opens_nothing(answers):
+    """S1's hand-off, an advance or a room closing can land while a line is
+    being checked: it was said to the conversation before, so it is recorded
+    and opens, routes and captions nothing in the new one."""
+    answers("Okay.", delay=0.2)
+    runner, session, ws = gpt_runner()
+    await runner._await_participant("handoff")
+    line = asyncio.ensure_future(runner._record_user_turn("Okay.", pcm=PCM))
+    await asyncio.sleep(0.05)
+    runner.segment += 1
+    await line
+    (turn,) = session.store.of("user_turn")
+    assert turn["after_switch"] is True and turn["speech_check"] == "heard"
+    assert runner._awaiting_participant, "the new conversation is still theirs to open"
+    assert not ws.frames("user_transcript")
+    assert runner._unrouted_user_texts == []
+
+
+@in_a_loop
+async def test_a_dropped_line_after_a_switch_withdraws_nothing_of_the_new_one(answers):
+    answers("[no speech]", delay=0.2)
+    runner, session, _ = gpt_runner()
+    withdrawn = []
+
+    async def withdraw(*a):
+        withdrawn.append(a)
+    runner._withdraw_reply = withdraw
+    line = asyncio.ensure_future(runner._record_user_turn("Hi.", pcm=PCM))
+    await asyncio.sleep(0.05)
+    runner.segment += 1
+    await line
+    (sup,) = session.store.of("user_turn_suppressed")
+    assert sup["after_switch"] is True
+    assert withdrawn == []
+
+
+@in_a_loop
+async def test_a_line_whose_pump_is_stopped_mid_check_is_on_the_record(answers):
+    answers("Yes.", delay=1.0)
+    runner, session, _ = gpt_runner()
+    line = asyncio.ensure_future(runner._record_user_turn("Yes.", pcm=PCM))
+    await asyncio.sleep(0.05)
+    line.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await line
+    (chk,) = session.store.of("speech_check")
+    assert chk["outcome"] == "cancelled" and chk["text"] == "Yes."
+    assert runner._speech_checks_pending == 0
+    assert runner._speech_checking_text is None
+
+
+@in_a_loop
+async def test_the_windows_count_from_the_lines_arrival(answers):
+    answers("Yes.", delay=0.3)
+    runner, session, _ = gpt_runner()
+    arrived = time.time()
+    await runner._record_user_turn("Yes.", pcm=PCM)
+    assert runner._last_user_at - arrived < 0.1
+
+
+def test_a_check_still_running_at_the_routing_deadline_is_waited_for(answers, monkeypatch):
+    monkeypatch.setenv("ROUTE_TRANSCRIPT_WAIT", "0.2")
+    monkeypatch.setenv("ROOM_ROUTE_DURING_CHECK", "0")
+    answers("Yes, go on.", delay=0.6)
+
+    async def go():
+        runner, session, _ = runner_for("S4A")
+        _gpt_room(runner, session)
+        runner._turn_end_arrivals = runner._transcripts_arrived
+        line = asyncio.ensure_future(
+            runner._record_user_turn("Yes, go on.", voiced_ms=700, pcm=PCM))
+        await asyncio.sleep(0.05)
+        await asyncio.wait_for(runner._run_group_turn(), timeout=10)
+        await line
+        return session
+
+    session = asyncio.run(go())
+    (_, text) = session.director.calls[0]
+    assert text == "Yes, go on.", "routed on nothing at the deadline"
