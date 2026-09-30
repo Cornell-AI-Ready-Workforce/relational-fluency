@@ -519,7 +519,8 @@ def _turn_meta(ev: dict) -> dict:
             "voiced_ms": ev.get("voiced_ms"),
             "voiced_span_ms": ev.get("voiced_span_ms"),
             "committed_at": ev.get("committed_at"),
-            "spoken_at": ev.get("spoken_at")}
+            "spoken_at": ev.get("spoken_at"),
+            "pcm": ev.get("pcm")}
 
 
 async def _await_transcript(buf: List[str], grace: float,
@@ -635,6 +636,9 @@ from .voice import realtime as _realtime
 # The one check that can tell a line the participant HEARD from a line the
 # record merely says was spoken. See server/voice/turn_audio.py.
 from .voice import turn_audio
+# A participant line that may be the transcriber's invention, heard again
+# (pipeline 2026-09-30a; gpt route). See _speech_check.
+from . import speech_check as _speech_check
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -901,6 +905,10 @@ class RealtimeVoiceSessionRunner:
         # Taken with the unrouted texts, so it never outlives the turn that
         # reads it.
         self._unreliable_arrivals: List[dict] = []
+        # Participant lines being heard again right now (_speech_check): a
+        # transcript that has arrived and is not written yet, which a room's
+        # routing waits for as it waits for one still owed by the scribe.
+        self._speech_checks_pending = 0
         self._preroll = bytearray()
         # (ended_at, agent_id, text), last 6. The timestamp is what bounds the
         # echo guard to the window in which playback echo is physically
@@ -3749,7 +3757,8 @@ class RealtimeVoiceSessionRunner:
                                 voiced_ms: Optional[int] = None,
                                 voiced_span_ms: Optional[int] = None,
                                 committed_at: Optional[float] = None,
-                                spoken_at: Optional[float] = None) -> None:
+                                spoken_at: Optional[float] = None,
+                                pcm: Optional[bytes] = None) -> None:
         """Record one participant utterance, once, as said.
 
         `garbled` is the bridge saying the transcriber dropped part of this
@@ -3770,6 +3779,9 @@ class RealtimeVoiceSessionRunner:
         a 1:1 reply to it is told from an older one (see _withdraw_reply).
         `spoken_at` is when the participant began saying it (wall clock; see
         _tag_commit), which is where the record and the page put the line.
+        `pcm` is the audio the commit held, where the bridge kept it: what a
+        line that may be the transcriber's invention is heard again from
+        (_speech_check, pipeline 2026-09-30a).
         """
         def unreliable(reason: str) -> None:
             # For the room: an arrival that will not reach the director.
@@ -3878,6 +3890,29 @@ class RealtimeVoiceSessionRunner:
             await self._withdraw_reply(text, "implausible_rate",
                                        committed_at, voiced_ms)
             return
+        # THE SPEECH CHECK (pipeline 2026-09-30a; gpt route). A short line, a
+        # line in another script, or a line begun over a character's
+        # playback is heard again from its own audio before anything reads
+        # it. Nobody speaking in it: no_speech, like the gates above, and the
+        # reply its commit started is withdrawn. Anything else is written as
+        # below, with the live text, except a line in another script that the
+        # check heard in English.
+        # Called through the class: the record's test doubles borrow this
+        # method without inheriting the rest.
+        checked = await RealtimeVoiceSessionRunner._speech_check(
+            self, text, pcm=pcm, spoken_at=spoken_at, item_id=item_id,
+            voiced_ms=voiced_ms)
+        if checked is not None:
+            if checked["outcome"] == "no_speech":
+                suppressed("no_speech", speech_check=checked["reason"])
+                await self._withdraw_reply(text, "no_speech", committed_at,
+                                           voiced_ms)
+                return
+            heard = checked.get("text")
+            if (checked["outcome"] == "heard" and checked["reason"] == "non_latin"
+                    and heard and not _speech_check.non_latin(heard)):
+                checked["original"] = text
+                text = heard
         now = time.time()
         norm = _norm_speech(text)
         # The bridge can deliver the same utterance twice (append + commit)
@@ -4034,6 +4069,12 @@ class RealtimeVoiceSessionRunner:
             voiced_span_ms=voiced_span_ms,
             low_confidence=low_confidence, replay=replay,
             spoken_at=said_at,
+            # Where the speech check heard it again: its outcome, and the
+            # transcriber's own text where the line is the English it heard.
+            **({"speech_check": checked["outcome"],
+                **({"transcript_original": checked["original"]}
+                   if checked.get("original") else {})}
+               if checked is not None else {}),
         )
         # The research record keeps the raw text (retranscribe repairs it
         # offline); the participant only sees a neutral caption, since a line
@@ -4055,6 +4096,89 @@ class RealtimeVoiceSessionRunner:
         # An accepted line: the first of a conversation lets the characters
         # answer (pipeline 2026-09-28b).
         await self._note_participant_opened()
+
+    # ── the speech check (pipeline 2026-09-30a; gpt route) ─────────────────
+    #
+    # On a real microphone the gpt route's transcriber writes words over noise
+    # and over the characters' own voices from the participant's speakers
+    # (S4A s_1790781273_b8b7cc: "Democrat", "Tuurlijk.", "Sexuality", "Hi."),
+    # and the room routed on them. So a line that looks like one of those is
+    # heard again from its own commit's audio (server/speech_check.py) before
+    # it is written, captioned or routed on. It is awaited where it arrives,
+    # so the pump that delivered it waits too: a 1:1 reply to the line is not
+    # relayed until the line is decided (and is withdrawn with it when nobody
+    # said it), and the scribe's next transcript is written after it, in
+    # order. A room's routing waits on _speech_checks_pending as it waits on
+    # a transcript the scribe still owes (_run_group_turn,
+    # _await_followup_gap). Bounded by SPEECH_CHECK_TIMEOUT_S; a check that
+    # fails or runs out keeps the line as it came.
+
+    def _speech_check_active(self) -> bool:
+        """True where this encounter's participant lines go through the
+        speech check: a family row that asks for it (gpt) and SPEECH_CHECK
+        not turned off."""
+        room = getattr(self, "room", None)
+        model = (getattr(room, "model", None)
+                 or getattr(getattr(self, "rt", None), "model", None)
+                 or realtime_model())
+        return _realtime.speech_check_family(model) and _speech_check.enabled()
+
+    def _said_over_playback(self, spoken_at: Optional[float]) -> bool:
+        """Whether a line begun at `spoken_at` (wall clock) began while a
+        character's line was playing on the page, or within
+        SPEECH_CHECK_PLAYBACK_TAIL_S of its end (the playback clock's
+        _last_played and the few lines before it; a cut line ends where it
+        was cut)."""
+        if not isinstance(spoken_at, (int, float)):
+            return False
+        tail = _speech_check.playback_tail_s()
+        lines = list(getattr(self, "_played_lines", None) or [])
+        lines.append(getattr(self, "_last_played", None))
+        for line in lines:
+            start, end = (line or {}).get("start"), (line or {}).get("end")
+            if (isinstance(start, (int, float)) and isinstance(end, (int, float))
+                    and start <= spoken_at <= end + tail):
+                return True
+        return False
+
+    def _speech_check_names(self) -> List[str]:
+        return [a.name for a in (getattr(self, "cast", None) or [])
+                if getattr(a, "name", None)]
+
+    async def _speech_check(self, text: str, *, pcm: Optional[bytes],
+                            spoken_at: Optional[float], item_id: Optional[str],
+                            voiced_ms: Optional[int]) -> Optional[dict]:
+        """Hear a line that may be the transcriber's invention again, from
+        its commit's audio. None when the line is not checked (another
+        route, the knob off, no audio kept, or nothing about it to check);
+        otherwise speech_check.hear's result with the `reason` it was
+        checked for, written as a `speech_check` event."""
+        if not pcm or not RealtimeVoiceSessionRunner._speech_check_active(self):
+            return None
+        playing = RealtimeVoiceSessionRunner._said_over_playback(self, spoken_at)
+        reason = _speech_check.check_reason(text, during_playback=playing)
+        if reason is None:
+            return None
+        started = time.time()
+        self._speech_checks_pending = getattr(self, "_speech_checks_pending", 0) + 1
+        try:
+            result = await _speech_check.hear(
+                pcm, names=RealtimeVoiceSessionRunner._speech_check_names(self))
+        finally:
+            self._speech_checks_pending -= 1
+        result = {**result, "reason": reason}
+        self.session.store.event(
+            "speech_check", text=text, reason=reason,
+            outcome=result.get("outcome"), heard=result.get("text"),
+            model=result.get("model"), check_ms=result.get("ms"),
+            # From the transcript's arrival to the decision: what the
+            # caption, the record, a 1:1 reply and a room's routing waited.
+            held_ms=int(round((time.time() - started) * 1000)),
+            audio_ms=result.get("audio_ms"), during_playback=playing,
+            item_id=item_id, voiced_ms=voiced_ms,
+            segment=getattr(self, "segment", None),
+            **({"error": result["error"]} if result.get("error") else {}))
+        return result
 
     async def _withdraw_reply(self, text: str, reason: str,
                               committed_at: Optional[float],
@@ -7596,7 +7720,11 @@ class RealtimeVoiceSessionRunner:
                     or getattr(self, "_last_unrouted_at", 0.0) >= began)
                 heard = waiting or self._transcripts_arrived != arrived_at
                 owed = getattr(room.scribe, "awaiting_transcript", None)
-                if heard and not (owed is not None and owed(wait_s)):
+                # A transcript that has arrived and is still being heard again
+                # (_speech_check) is owed too: routing now would route without
+                # it, or on nothing (pipeline 2026-09-30a).
+                checking = getattr(self, "_speech_checks_pending", 0)
+                if heard and not (owed is not None and owed(wait_s)) and not checking:
                     break
                 await asyncio.sleep(0.15)
             if self._closed or self.room is not room:
@@ -8241,6 +8369,11 @@ class RealtimeVoiceSessionRunner:
                 why, sound_at = "participant_speaking", now
             elif self._participant_turn_closing:
                 sound_at = now
+            elif getattr(self, "_speech_checks_pending", 0):
+                # A line of theirs is being heard again (_speech_check;
+                # pipeline 2026-09-30a): held like one the scribe still owes,
+                # until it is written (and yields) or suppressed.
+                pass
             elif heard and not (getattr(scribe, "owns_input_buffer", False)
                                 and scribe.awaiting_transcript(wait_s)) and (
                     now - max(self._play_cursor, self._heard_end_at, sound_at)

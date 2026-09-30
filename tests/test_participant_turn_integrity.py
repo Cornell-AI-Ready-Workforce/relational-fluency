@@ -507,6 +507,11 @@ def test_the_gate_is_in_provenance_with_its_defaults():
         "participant_rate_over": "voiced_span",
         # 2026-09-28a (issue #21): sound tags alone are no_speech.
         "participant_drop_annotations": True,
+        # 2026-09-30a: the speech check, on the gpt row.
+        "participant_speech_check": {
+            "enabled": True, "model": "nto.gemini-3.1-flash-lite",
+            "timeout_s": 2.5, "max_words": 3, "playback_max_words": 7,
+            "playback_tail_s": 1.0},
     }
 
 
