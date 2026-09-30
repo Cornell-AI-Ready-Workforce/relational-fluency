@@ -278,7 +278,8 @@ def test_the_actors_end_tool_is_held_past_the_floor_too(monkeypatch):
 def test_the_actors_end_tool_does_not_finish_the_final_segment_after_the_floor(monkeypatch):
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
-    runner._encounter_started_at = time.time() - 500
+    # Past the floor, which counts from the participant's first line (28b).
+    runner._encounter_started_at = runner._first_line_at = time.time() - 500
     calls = []
 
     async def advance():
@@ -287,6 +288,8 @@ def test_the_actors_end_tool_does_not_finish_the_final_segment_after_the_floor(m
     monkeypatch.setattr(runner, "_advance_segment", advance)
     _run(runner._advance_from_tool())
     assert calls == [] and not ws.frames("encounter_complete")
+    assert [h["reason"] for h in session.store.of("auto_end_held")] == ["end_conversation"]
+    assert not ws.frames("floor_held"), "past the floor the page already says they may move on"
 
 
 def _tool_call_bridge():
@@ -368,7 +371,9 @@ def test_at_the_stop_a_move_on_is_the_ceilings(monkeypatch):
 def test_automatic_advance_keeps_the_final_segment_open_until_the_ceiling(monkeypatch):
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
-    runner._encounter_started_at = time.time() - 500
+    runner._encounter_started_at = runner._first_line_at = time.time() - 500
+    # Past the interaction's own pacing too, or this returns before the hold.
+    runner._interaction_started_at = time.time() - 400
     runner._turns_this_interaction = 20
     runner._next_trigger = lambda: None
     calls = []
@@ -379,6 +384,7 @@ def test_automatic_advance_keeps_the_final_segment_open_until_the_ceiling(monkey
     monkeypatch.setattr(runner, "_advance_segment", advance)
     _run(runner._maybe_advance())
     assert calls == [] and not ws.frames("encounter_complete")
+    assert [h["reason"] for h in session.store.of("auto_end_held")] == ["auto_advance"]
 
 
 def test_the_wrap_is_called_once_and_the_stop_completes_the_encounter():
