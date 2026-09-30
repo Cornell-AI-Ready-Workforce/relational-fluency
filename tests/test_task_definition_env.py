@@ -31,13 +31,21 @@ _ENTRY = re.compile(r'\{\s*name\s*=\s*"([A-Z0-9_]+)"\s*,\s*(?:value|valueFrom)\s
 
 
 def _block(body: str, key: str) -> str:
-    """The text of the `key = [ ... ]` list in the container definition."""
-    start = body.index(f"{key} = [")
-    depth, i = 0, body.index("[", start)
+    """The text of the `key = [ ... ]` list in the container definition.
+
+    `key = concat([...], cond ? [...] : [])` is read whole, conditional entries
+    included (SURVEY_COMPLETION_CODE is added only when enabled), so a name set
+    under a condition is still checked against what server/ reads."""
+    m = re.search(rf"\b{key} = (concat\()?\[", body)
+    if not m:
+        raise AssertionError(f"no {key} list in {ECS_TF}")
+    open_, close = ("(", ")") if m.group(1) else ("[", "]")
+    i = m.end() - (2 if m.group(1) else 1)
+    depth = 0
     for j in range(i, len(body)):
-        if body[j] == "[":
+        if body[j] == open_:
             depth += 1
-        elif body[j] == "]":
+        elif body[j] == close:
             depth -= 1
             if depth == 0:
                 return body[i:j + 1]

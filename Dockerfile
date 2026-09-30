@@ -1,6 +1,12 @@
 # Build for Fargate with:
 #
-#     docker build --platform linux/amd64 -t $REPO:$SHA .
+#     docker build --platform linux/amd64 --build-arg BUILD_SHA=$SHA -t $REPO:$SHA .
+#
+# `--build-arg BUILD_SHA=$SHA`, with the same $SHA as the tag, is how the
+# running image knows which commit it is (see the ARG below and
+# server/build_info.py). Leave it out and the image still works, but /health,
+# the participant page and every encounter record report build null, and the
+# daily drift check (.github/workflows/prod-build-drift.yml) fails on it.
 #
 # `--platform linux/amd64` is not optional on an Apple Silicon Mac, which is the
 # most likely researcher laptop. python:3.12-slim is a multi-arch manifest, so
@@ -45,6 +51,15 @@ RUN mkdir -p /data
 # owns the mounted /data as 1000:1000 so this non-root user can write to it.
 RUN useradd -m -u 1000 appuser && chown -R appuser /app /data
 USER appuser
+
+# The commit this image is built from, published on /health, on
+# /api/run/config (the page's build tag) and in every encounter's provenance
+# (server/build_info.py). Declared here, after the pip and COPY layers, because
+# an ARG invalidates the cache from its first use onward and this value changes
+# on every build. Empty when --build-arg is not given, which build_sha() reads
+# as "unknown" rather than as a build.
+ARG BUILD_SHA=""
+ENV BUILD_SHA=$BUILD_SHA
 
 EXPOSE 8080
 

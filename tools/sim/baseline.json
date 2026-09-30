@@ -1,0 +1,122 @@
+{
+ "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
+ "realtime_model": "gpt-realtime-2.1",
+ "recorded": {
+  "build": "8c188a6",
+  "date": "2026-09-29",
+  "pipeline_version": "2026-09-28b",
+  "room_pacing_version": "2026-09-29b"
+ },
+ "scenarios": {
+  "S1A": {
+   "error_frames": 0,
+   "lines_answered": 8,
+   "lines_heard": 8,
+   "lines_said": 8,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "8c188a6",
+    "date": "2026-09-29",
+    "pipeline_version": "2026-09-28b",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790701657_de9f10"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "a4b2d90dd4da7ac2",
+   "speech_end_to_first_played_s": {
+    "n": 9,
+    "p50": 1.993,
+    "p90": 2.454
+   },
+   "triggers_fired": 4,
+   "voice_error": 0
+  },
+  "S2A": {
+   "error_frames": 0,
+   "lines_answered": 22,
+   "lines_heard": 27,
+   "lines_said": 27,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "8c188a6",
+    "date": "2026-09-29",
+    "pipeline_version": "2026-09-28b",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790701886_2a49cd"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "4ae8133b9c6e2fef",
+   "speech_end_to_first_played_s": {
+    "n": 22,
+    "p50": 3.553,
+    "p90": 5.579
+   },
+   "triggers_fired": 6,
+   "voice_error": 0
+  },
+  "S3A": {
+   "error_frames": 0,
+   "lines_answered": 7,
+   "lines_heard": 9,
+   "lines_said": 9,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "8c188a6",
+    "date": "2026-09-29",
+    "pipeline_version": "2026-09-28b",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790702608_f13b59"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "b839d60a54bb1537",
+   "speech_end_to_first_played_s": {
+    "n": 8,
+    "p50": 4.023,
+    "p90": 9.346
+   },
+   "triggers_fired": 3,
+   "voice_error": 0
+  },
+  "S4A": {
+   "error_frames": 0,
+   "lines_answered": 25,
+   "lines_heard": 31,
+   "lines_said": 31,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "8c188a6",
+    "date": "2026-09-29",
+    "pipeline_version": "2026-09-28b",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790702824_ebffd3"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "8efdc0004450ad17",
+   "speech_end_to_first_played_s": {
+    "n": 29,
+    "p50": 4.662,
+    "p90": 6.842
+   },
+   "triggers_fired": 4,
+   "voice_error": 0
+  }
+ },
+ "tolerances": {
+  "answered_rate_drop": 0.2,
+  "error_frames_extra": 0,
+  "heard_rate_drop": 0.15,
+  "latency_p50_ratio": 1.5,
+  "latency_p50_slack_s": 0.5,
+  "latency_p90_ratio": 1.5,
+  "latency_p90_slack_s": 1.0,
+  "phantom_turns_extra": 1,
+  "refused_creates_extra": 3,
+  "reply_missing_extra": 1,
+  "triggers_fired_drop": 1,
+  "voice_error_extra": 0
+ }
+}

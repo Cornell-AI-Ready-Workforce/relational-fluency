@@ -22,6 +22,12 @@ ElevenLabs agent service and is not on the serving path.)
 
 ## Deploy (first time, ~20 minutes)
 
+**A new environment only** (a staging account, a second study). Never run this
+against the running study service: its state is in the shared bucket, so an
+apply from here does whatever this checkout says, image pin included. To change
+the running service, release through the guard
+([`docs/OPERATIONS.md`, "Releasing a build"](../docs/OPERATIONS.md#releasing-a-build)).
+
 ```bash
 cd infra/terraform
 
@@ -53,11 +59,16 @@ REPO=$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/relational-fluency/platform
 SHA=$(git rev-parse --short HEAD)   # commit the tag on a clean tree, or the tag lies
 
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REPO
-docker build -t $REPO:$SHA .        # repo root: the platform Dockerfile
+docker build --build-arg BUILD_SHA=$SHA -t $REPO:$SHA .   # repo root: the platform Dockerfile
 docker push $REPO:$SHA
 
-# 4) Point the service at the image
-terraform apply -var domain_name=yourlab.org -var container_image=$REPO:$SHA
+# 4) Point the service at the image: pin it in terraform.tfvars and commit
+#    that, never as a -var at apply time (a -var deploy leaves
+#    the committed pin naming an older build, and the next plain apply rolls
+#    back to it)
+#      infra/terraform/terraform.tfvars:
+#        container_image = "<REPO>:<SHA>"
+terraform apply -var domain_name=yourlab.org
 
 # 5) Verify
 curl https://rf.yourlab.org/health
@@ -75,7 +86,10 @@ curl https://rf.yourlab.org/health
   **Freeze during collection.**
 - **Scale for collection bursts:** `aws ecs update-service --cluster
   relational-fluency --service platform --desired-count 2` (Terraform ignores
-  manual count changes by design).
+  manual count changes by design, so it never scales back: set
+  `--desired-count 1` again afterwards). `tools/deploy.sh` refuses to plan
+  while more than one task runs, because `/health` answers for one task only
+  and its `active_sessions` cannot speak for the other.
 - **Model pinning:** `actor_model` / `director_model` are Terraform variables →
   environment variables. Set snapshots explicitly; record them in the wave notes.
 - **Costs:** tracked against `docs/RelationalFluency_AWS_Cost_Estimation.pdf`

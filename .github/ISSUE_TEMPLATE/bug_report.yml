@@ -1,0 +1,99 @@
+# The form testers fill in when a conversation or a study page misbehaves.
+#
+# WHY each field is required. From 2026-09-24 to 09-28 production ran a
+# rolled-back image (ca77c2f instead of 4798e64) and nobody knew; the issues
+# filed in those four days had to be matched to a build afterwards by comparing
+# their timestamps with ECS task-definition revisions, one at a time. The build
+# tag on the page (server/build_info.py, shown from /api/run/config) and the
+# session id make that a lookup instead of an investigation, and the time with
+# its zone is what places a report against deploys when both are missing.
+#
+# tests/test_issue_template.py holds the required fields and the scenario list
+# to the scenario bank.
+name: Bug report
+description: Something went wrong in a conversation or on the study pages.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. Two things before you start:
+
+        - **This repository is public.** Do not paste participant names, email addresses, Prolific or Qualtrics ids, recordings or screenshots showing a face.
+        - **Never paste a full page address.** Test links carry the researcher key (`key=...`). Copy only the parts asked for below.
+  - type: input
+    id: build
+    attributes:
+      label: Build
+      description: >-
+        The small "build ..." tag on the participant page. If the page shows
+        none, open https://rf.ai-ready-workforce.ai.cornell.edu/health and copy
+        the value after "build" (write "null" if that is what it says).
+      placeholder: build 4798e64
+    validations:
+      required: true
+  - type: input
+    id: session
+    attributes:
+      label: Session id
+      description: >-
+        In the address bar after the conversation starts: the part after
+        session= (it starts with s_). Copy only that part.
+      placeholder: s_1790274135_d50253
+    validations:
+      required: true
+  - type: dropdown
+    id: scenario
+    attributes:
+      label: Scenario
+      options:
+        - S1A
+        - S1B
+        - S2A
+        - S2B
+        - S3A
+        - S3B
+        - S4A
+        - S4B
+        - Not in a conversation (intro, notices, closing screens)
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and operating system
+      description: With versions if you know them. Say if you used headphones or a headset.
+      placeholder: Chrome 131 on macOS 15.3, AirPods
+    validations:
+      required: true
+  - type: input
+    id: when
+    attributes:
+      label: Date and time, with time zone
+      description: >-
+        When it happened, not when you are filing this. The time zone matters:
+        it is how a report is placed against deploys.
+      placeholder: 2026-09-25 15:40 ET
+    validations:
+      required: true
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: What you saw and heard, in order. Minutes into the conversation help.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: How often it happens, steps to make it happen again, what you tried.
+    validations:
+      required: false

@@ -29,7 +29,9 @@
          min-height: 100vh; min-height: 100svh; display: flex; flex-direction: column; }
   header { padding: 14px 20px 10px; border-bottom: 1px solid var(--line-soft); background: var(--surface);
            display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-  header .title { font-size: 16px; font-weight: 600; }
+  /* The page's one h1 (#43): what the page is about, for a screen reader's
+     list of headings. It looks as the plain line it was. */
+  header .title { font-size: 16px; font-weight: 600; margin: 0; }
   header .meta { font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
   /* Lower area: description (left) and live transcript (right), side by side. */
   .lower-row { display: flex; gap: 16px; width: 100%; max-width: 1600px; align-items: stretch; }
@@ -73,6 +75,11 @@
     .lower-row { flex-direction: column; }
     .lower-row > *:first-child, .lower-row > *:last-child { flex: 1 1 auto; }
     .brief { max-height: none; }
+    /* Stacked, the captions and the page's notices come right under the
+       tiles and the setup card after them. The other way round, everything
+       the transcript says (the captions, the move-on notice) started 900 px
+       and more down a phone, below a card the participant had already read. */
+    .lower-row > .transcript { order: -1; }
   }
   main { flex: 1; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
   /* Photos in a single row across the top, large for immersion. */
@@ -92,11 +99,15 @@
   .avatar.self { background: var(--surface-2); color: var(--fg); }
   .name { font-size: 15px; font-weight: 500; }
   .role { font-size: 12px; opacity: 0.7; margin-top: -8px; }
+  /* Hidden with visibility as well as opacity: opacity alone left
+     "SPEAKING" in the accessibility tree on every tile all the time, so a
+     screen reader was told everyone was speaking. The fade is kept. */
   .speaking-indicator { position: absolute; top: 12px; right: 12px; font-size: 11px;
                         background: var(--accent); color: #fff; padding: 3px 9px;
-                        border-radius: 999px; opacity: 0; transition: opacity 0.2s;
+                        border-radius: 999px; opacity: 0; visibility: hidden;
+                        transition: opacity 0.2s, visibility 0.2s;
                         font-weight: 600; letter-spacing: 0.04em; }
-  .tile.speaking .speaking-indicator { opacity: 1; }
+  .tile.speaking .speaking-indicator { opacity: 1; visibility: visible; }
   .mic-icon { width: 18px; height: 18px; border-radius: 50%; background: var(--line);
               position: absolute; bottom: 12px; left: 12px; }
   .tile.self .mic-icon.live { background: var(--accent);
@@ -111,23 +122,30 @@
                background: var(--surface-2); border-radius: 3px; overflow: hidden; }
   .mic-level > div { height: 100%; width: 0%; background: var(--accent); transition: width 80ms linear; }
   .controls { display: flex; gap: 10px; align-items: center; padding: 8px 0; flex-wrap: wrap; }
+  /* The status and the buttons are grouped for the phone's pinned row (see
+     the small-screen rules). Here the groups have no box, so the row is laid
+     out as it always was. */
+  .status-group, .action-group { display: contents; }
   /* Header control that moves the encounter to the next beat. The per-tile
      "Talk to X" button cannot cover a handover to someone already in the room,
      so this one appears whenever a next beat exists and the current interaction
      has run its pacing floor (see renderAdvance).
      Long scenario labels are clipped rather than allowed to bow the header. */
   button#advanceBtn { max-width: 38vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* Live turn-state pill: tells first-time voice users whose turn it is. */
+  /* Live turn-state pill: tells first-time voice users whose turn it is.
+     While a conversation runs it keeps its place and its size, idle (the grey
+     dot and no words) between cues. Hidden and shown, it moved the header and
+     everything under it by 33px several times an exchange, and its width
+     followed the character's name. 12.5em holds the longest cue. */
   .turn-state { display: none; align-items: center; gap: 7px; font-size: 13px; color: var(--muted);
     padding: 4px 11px; border-radius: 99px; border: 1px solid var(--line-soft); background: var(--surface); white-space: nowrap; }
-  .turn-state.show { display: inline-flex; }
+  .turn-state.show { display: inline-flex; min-width: 12.5em; }
+  .turn-state.idle::after { content: "\00a0"; }   /* the line an empty pill would lose */
   .turn-state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
   .turn-state.you::before { background: var(--accent); animation: pulse 1.2s infinite; }
   .turn-state.you { color: var(--fg); font-weight: 600; }
   .turn-state.agent::before { background: #4a7bd0; animation: pulse 1.2s infinite; }
   .turn-state.listen::before { background: #3a9a5c; }
-  .turn-state.cue { color: var(--fg); font-weight: 600; border-color: var(--accent); }
-  .turn-state.cue::before { background: var(--accent); }
   /* Minimum-duration progress: the timer's dot becomes a ring that fills at 7:00. */
   .gate { display: none; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
   .gate.show { display: inline-flex; }
@@ -139,12 +157,24 @@
   /* Held, and it looks held: End does not finish a study conversation before
      the floor (storage.encounter_timing, 7:00 by default). Stopping the STUDY
      is a different control — "Stop and leave the study" — and that one is never
-     locked, which is what keeps the consent promise. */
-  button#stopBtn.locked { opacity: .55; cursor: not-allowed; }
+     locked, which is what keeps the consent promise. It wears the look of any
+     control that is not available now (with button:disabled below). */
   .gate-note { display: none; position: fixed; top: 104px; right: 20px; max-width: 340px; z-index: 50;
-    background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px;
-    font-size: 14px; line-height: 1.5; box-shadow: 0 8px 24px rgba(47,47,47,0.12); }
+    background: var(--surface); color: var(--fg); border-radius: 10px; padding: 12px 14px;
+    /* The neutral notice: the move-on note, the reply to an early End. The
+       connection-lost card is a fault and keeps the red. */
+    border: 1px solid var(--line); border-left: 4px solid var(--fg);
+    font-size: 14px; line-height: 1.5; box-shadow: 0 8px 24px rgba(47,47,47,0.12);
+    /* Placed under the header when shown (placeNote), and never taller than
+       the screen below that: the repeated-drop card with its doors ran to
+       500px, off the bottom of a phone held sideways. */
+    max-height: calc(100vh - 124px); overflow-y: auto; }
   .gate-note.show { display: block; }
+  #dropNote { border: 1px solid var(--accent); }
+  /* The note fades by itself, but a slow reader can close it sooner. */
+  #gateNote { padding-right: 50px; }
+  .gate-note .note-close { position: absolute; top: 6px; right: 6px; width: 36px; height: 36px;
+    padding: 0; font-size: 20px; line-height: 1; }
   /* Audio check card */
   .check-row { display: flex; gap: 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line-soft); }
   .check-row:first-of-type { border-top: none; }
@@ -155,24 +185,45 @@
   .check-row .status { width: 120px; text-align: right; font-size: 13.5px; color: var(--muted); }
   .check-row .status.ok { color: #2f7d4a; font-weight: 600; }
   .meter { height: 10px; border-radius: 99px; background: var(--line-soft); overflow: hidden; margin-top: 8px; }
-  .meter > i { display: block; height: 100%; width: 0; background: #3a9a5c; transition: width 80ms linear; }
+  /* The darker green: #3a9a5c on the track was 2.30:1, this is 3.30:1. */
+  .meter > i { display: block; height: 100%; width: 0; background: #2f7d4a; transition: width 80ms linear; }
   .check-help { display: none; font-size: 13.5px; color: var(--fg); background: var(--accent-soft, #fbeeee); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
   .check-help.show { display: block; }
   .check-actions { display: flex; gap: 10px; align-items: center; margin-top: 18px; }
-  .check-actions button[disabled] { opacity: .5; cursor: not-allowed; }
-  .check-actions .skip { font-size: 13px; color: var(--muted); background: none; border: none; text-decoration: underline; cursor: pointer; padding: 0; }
+  /* Why Continue waits, next to it: the card never said, and a disabled
+     button with no reason reads as broken. */
+  .check-note { margin: 14px 0 0; font-size: 13.5px; color: var(--muted); }
+  .check-note + .check-actions { margin-top: 8px; }
+  .check-actions .skip { font-size: 13px; font-weight: 400; color: var(--muted); background: none; border: none; text-decoration: underline; cursor: pointer; padding: 0; }
+  /* A link under the pointer too, not the primary's dark red behind grey text. */
+  .check-actions .skip:hover:not(:disabled) { background: none; }
   .timer { font-family: ui-monospace, Menlo, monospace; font-size: 13px; font-weight: 600;
            color: var(--fg); background: var(--surface-2); padding: 5px 10px; border-radius: 8px;
            letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 6px; }
   .timer::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
   .timer.running::before { background: var(--accent); animation: pulse 1.6s infinite; }
+  /* The weight after the font shorthand, which resets it: every button was
+     rendering at 400. */
   button { padding: 11px 22px; border: 0; border-radius: 10px; background: var(--accent);
-           color: #fff; font-weight: 600; cursor: pointer; font: inherit; font-size: 14px;
+           color: #fff; cursor: pointer; font: inherit; font-weight: 600; font-size: 14px;
            transition: background 0.15s, transform 0.05s; }
   button:hover:not(:disabled) { background: var(--accent-deep); }
   button:active:not(:disabled) { transform: translateY(1px); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
   button.secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--line); }
+  /* A secondary button stays readable under the pointer. The primary's hover
+     outranked it, so "Stop and leave the study" and End went dark red behind
+     dark text (1.5:1), and on a touch screen that sticks after the tap. */
+  button.secondary:hover:not(:disabled) { background: var(--surface-2); }
+  /* One look for a control that cannot be used now, whatever the reason.
+     There were four (opacity .4, .5, .55 and .6), and a faded red primary,
+     such as the audio check's Continue, read as an error tint. Its label
+     darker than --muted, which on this grey was 3.79:1: #4a4a48 is 6.2:1, and
+     the locked End is the control participants look for at 7:00. */
+  button:disabled, button#stopBtn.locked, .tile .talk-btn[disabled] { opacity: 1; background: var(--surface-2);
+    color: #4a4a48; border-color: var(--line-soft); cursor: not-allowed; }
+  /* Except work in progress ("Connecting…"), which is not unavailable, only
+     not done yet. */
+  button[aria-busy="true"]:disabled { background: var(--accent); color: #fff; cursor: progress; }
   select { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px;
            background: var(--surface); font: inherit; font-size: 13px; color: var(--fg); cursor: pointer; }
   select:focus { outline: none; border-color: var(--accent); }
@@ -185,23 +236,53 @@
     background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;
     letter-spacing: .02em; }
   .transcript .scene .with { font-weight: 400; opacity: .9; }
+  /* The start cue: who opens the conversation must be unmistakable. It is an
+     instruction, not a fault, so it is the neutral notice (an ink rule on
+     grey), not the red banner that "The connection dropped" and the camera
+     and video faults keep. */
+  .transcript .scene.start-cue { font-size: 15px; padding: 10px 12px;
+    background: var(--bg); color: var(--fg); border-left: 4px solid var(--fg); }
   /* A message from the app itself, not a line anybody spoke. It has to be
      visually distinct from a turn: a system message rendered as a turn is
      attributed to whoever the turn says spoke it, and this transcript is also
-     what the participant reads back to check they were understood. */
+     what the participant reads back to check they were understood.
+     Distinct by its grey box, not by being faint: muted italic 12px on that
+     grey was 3.79:1 and the smallest text on the page, for the notices a
+     participant most needs to read (a lost voice, a microphone that stopped,
+     "keep going"). Ink on grey is 9.37:1. */
   .transcript .system-note { margin: 10px 0; padding: 6px 10px; border-radius: 6px;
-    background: var(--surface-2); color: var(--muted);
-    font-size: 12px; font-style: italic; }
+    background: var(--surface-2); color: var(--fg);
+    font-size: 14px; }
+  /* The capture-failure notice, under the header (see showCaptureFailure). It
+     is a fault, so it has the fault's red edge, and it carries its own way
+     out, so its button is a control, not part of the text. */
+  .capture-slot .capture-note { margin: 12px 20px 0; padding: 10px 14px; border: 1px solid var(--accent);
+    border-radius: 10px; background: var(--surface); color: var(--fg); font-size: 14px; line-height: 1.5; }
+  .capture-slot .capture-note button { display: inline-block; margin: 6px 0 0 8px; padding: 5px 12px;
+    font-size: 12.5px; font-style: normal; }
   .tile.absent { opacity: .3; filter: grayscale(1); }
   /* The next character's tile offers a way in, so the participant can move on
      when the current conversation is done rather than waiting it out. */
   .tile.upnext { opacity: .75; filter: none; outline: 2px dashed var(--accent); }
+  /* Its button sits in room made for it under the name and role, not on top
+     of them. Made once the button is there, not before: kept from 0:00, the
+     room set S1's up-next character apart from the tile beside it for the
+     whole conversation (a 56px avatar against 108px at 641-900px, the name
+     23-50px higher), in the one condition that has an up-next tile. Where
+     :has() is not supported the button sits over the role, as it used to. */
+  .tile.upnext:has(.talk-btn) { padding-bottom: 60px; }
+  @media (min-width: 641px) and (max-width: 900px) {
+    .tile.upnext:has(.talk-btn) .avatar { width: 56px; height: 56px; font-size: 21px; }
+  }
   .tile .talk-btn { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
     background: var(--accent); color: #fff; border: 0; border-radius: 999px;
     padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
     white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
   .tile .talk-btn:hover { filter: brightness(1.08); }
-  .tile .talk-btn[disabled] { opacity: .6; cursor: default; }
+  /* The banner and the header. No box of its own on a wide screen, so the
+     banner stays sticky against the page as it always was; on a phone the
+     two stick together (see the small-screen rules). */
+  .topbar { display: contents; }
   .ai-banner { position: sticky; top: 0; z-index: 40; text-align: center;
     background: #2f2f2f; color: #fff; font-size: 12.5px; letter-spacing: .01em;
     padding: 6px 12px; }
@@ -212,7 +293,7 @@
   #nextBody .run-steps li { padding:6px 0; border-top:1px solid #eee; font-size:14px; }
   #nextBody .run-steps li.done { color:#2f7d4f; }
   #nextBody .run-steps li.now { font-weight:700; }
-  #nextBody .run-steps li.todo { color:#9a9a97; }
+  #nextBody .run-steps li.todo { color:var(--muted); }   /* #9a9a97 was 2.82:1 */
   #nextBody .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     background:#f2f2f0; border:1px solid #ddd; border-radius:5px; padding:2px 8px; }
   .transcript .speaker { font-weight: 600; color: var(--accent); }
@@ -278,9 +359,22 @@
   .consent-card .body.rich p { margin: 0 0 12px; }
   .consent-card .body.rich ul { margin: 0 0 12px; padding-left: 22px; }
   .consent-card .body.rich li { margin: 0 0 7px; }
-  /* Keep the action button reachable on short screens. */
-  .consent-card { max-height: 88vh; display: flex; flex-direction: column; }
-  .consent-card .body.rich, .situation-card .body { overflow-y: auto; }
+  /* Keep the action button reachable on short screens: an intro card has ONE
+     scroll region (.card-scroll), everything but its actions, and the actions
+     stay pinned under it. The situation card's body was told to scroll but
+     sat in a box that grew with it, so the whole card scrolled and "I'm
+     ready, let me in" was below the fold; the first screen pinned the
+     quiet-room box and scrolled the rules in a small window under it, so a
+     phone showed under half of them above "I understand, continue". The
+     shadow at an edge says there is more that way, which iOS, hiding its
+     scrollbars, does not. */
+  .consent-card { display: flex; flex-direction: column; }
+  .card-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    background:
+      linear-gradient(var(--surface) 30%, rgba(255,255,255,0)) top / 100% 24px no-repeat local,
+      linear-gradient(rgba(255,255,255,0), var(--surface) 70%) bottom / 100% 24px no-repeat local,
+      radial-gradient(farthest-side at 50% 0, rgba(47,47,47,.2), rgba(47,47,47,0)) top / 100% 10px no-repeat scroll,
+      radial-gradient(farthest-side at 50% 100%, rgba(47,47,47,.2), rgba(47,47,47,0)) bottom / 100% 10px no-repeat scroll; }
   .consent-card .actions { flex-shrink: 0; padding-top: 6px; }
   .situation-card .actions { margin-top: 22px; }
   .situation-card .actions button { width: 100%; padding: 13px; font-size: 15px; }
@@ -292,8 +386,17 @@
   .consent-overlay { position: fixed; inset: 0; background: rgba(47,47,47,0.45);
                      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
                       display:flex; align-items:center; justify-content:center; z-index: 50; padding: 20px; }
+  /* A card takes focus itself when it opens (showOverlay), so a screen reader
+     names it; it is where focus starts, not a control, so it has no ring. */
+  .consent-overlay:focus, #dropNote:focus { outline: none; }
+  /* Read by a screen reader and not shown: the page's status region. */
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+    overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
   .consent-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 14px;
-                  max-width: 620px; width: 100%; padding: 26px 28px; max-height: 92vh; overflow-y: auto;
+                  max-width: 620px; width: 100%; padding: 26px 28px; overflow-y: auto;
+                  /* svh where there is one: iOS counts vh against the viewport
+                     with its toolbars hidden, so a 92vh card ran under them. */
+                  max-height: 92vh; max-height: min(92vh, calc(100svh - 40px));
                   box-shadow: 0 24px 60px rgba(47,47,47,0.18); }
   .consent-card h2 { font-size: 17px; margin: 0 0 14px; }
   .consent-card .body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
@@ -302,40 +405,118 @@
   .consent-card .code-row { display:flex; gap:10px; align-items:center; margin: 16px 0; }
   .consent-card .code-row input { padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font: inherit; flex: 1; background: var(--surface); color: var(--fg); }
   .consent-card .code-row input:focus { outline: none; border-color: var(--accent); }
-  .consent-card .actions { display:flex; gap:8px; justify-content:flex-end; margin-top: 14px; }
+  .consent-card .actions { display:flex; flex-wrap: wrap; gap:8px; justify-content:flex-end; margin-top: 14px; }
   .consent-card .err { color: var(--accent); font-size: 13px; min-height: 18px; margin-top: 4px; }
+  /* The build tag: for a bug report or a screenshot, so it is small, muted and
+     below everything a participant reads. Not faded as well: at .75 it was
+     2.91:1, too faint to read off a screenshot; muted on the page is 4.63:1. */
+  .build-tag { padding: 0 20px 10px; text-align: right; font-size: 11px; color: var(--muted);
+    font-family: ui-monospace, Menlo, monospace; user-select: all; }
+  /* The quiet-room requirement (issue #37): a requirement, not a tip, so it is
+     boxed and bold at the top of the first intro screen and of the audio check. */
+  .quiet-notice { border: 2px solid var(--accent); background: var(--accent-soft); color: var(--fg);
+    border-radius: 10px; padding: 12px 14px; margin: 0 0 16px; font-size: 14.5px; line-height: 1.5;
+    flex-shrink: 0; }
+  .quiet-notice b { display: block; font-size: 15.5px; margin-bottom: 3px; }
 
   /* ---------- Mobile / small screens ---------- */
   @media (max-width: 640px) {
-    header { padding: 11px 14px 9px; gap: 10px; flex-wrap: wrap; }
     header .title { font-size: 15px; }
     header .meta { font-size: 11px; }
-    .controls { gap: 8px; padding: 0; }
-    button { padding: 10px 16px; font-size: 13px; }
+    /* 44px touch targets, and no smaller than on a desktop: this rule used
+       to shrink every button to 35-37px on the one kind of screen people tap. */
+    button { padding: 10px 16px; font-size: 15px; min-height: 44px; }
     main { padding: 14px; gap: 14px; }
     /* Two compact, square tiles per row instead of one tall stacked column. */
     .grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
     .tile { aspect-ratio: 1 / 1; gap: 8px; padding: 12px; border-radius: 12px; }
     .avatar { width: 56px; height: 56px; font-size: 21px; }
     .name { font-size: 13px; }
-    .role { font-size: 11px; }
-    .speaking-indicator { top: 8px; right: 8px; font-size: 10px; padding: 2px 7px; }
+    .role { font-size: 12px; }
+    .speaking-indicator { top: 8px; right: 8px; font-size: 12px; padding: 2px 7px; }
     .mic-icon { bottom: 9px; left: 9px; }
     .mic-level { bottom: 9px; right: 9px; width: 46px; }
-    .transcript { max-height: 220px; padding: 12px 14px; border-radius: 10px; }
+    /* The compact height this asked for: the base min-height of 340px beat
+       it, so the box was never shorter than that. */
+    .transcript { min-height: 0; max-height: 45vh; max-height: 45svh; padding: 12px 14px; border-radius: 10px; }
+    /* Whose turn it is stays on screen while the participant scrolls to the
+       captions: the banner, as on every screen, and under it one status row,
+       the turn cue, the ring and the timer, the same row in every condition.
+       The whole header was pinned here, 261-375px (half a 667px screen and
+       more, for the whole conversation, and 40-70px taller in S2/S4 than in
+       S1/S3); the title and the buttons (Start, End, Move on, "Stop and
+       leave the study") scroll with the page, as they always did. The header
+       and its controls have no box of their own here, so the status row can
+       stick against the page, and the three rows wear the header's look. It
+       sticks under the banner, whose height is measured (measureBanner):
+       the banner wraps on a narrow phone. */
+    header, .controls { display: contents; }
+    header > div:first-child, .status-group, .action-group { display: flex; flex-wrap: wrap;
+      align-items: center; gap: 8px; padding: 0 14px; background: var(--surface); }
+    header > div:first-child { padding-top: 11px; }
+    .status-group { position: sticky; top: var(--banner-h, 0px); z-index: 39;
+      padding-top: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
+    /* The ring's line is the long one, so it goes under the cue and the
+       timer rather than between them: two lines pinned, not three. */
+    .status-group .gate { order: 1; }
+    .action-group { padding-top: 8px; padding-bottom: 9px; border-bottom: 1px solid var(--line-soft); }
+    .capture-slot .capture-note { margin: 10px 14px 0; }
+    /* The page's notes span the screen, with a gutter: a 340px card pinned
+       right touched the left edge at 360px and below. */
+    .gate-note { left: 16px; right: 16px; max-width: none; }
+    .gate-note .note-close { top: 3px; right: 3px; width: 44px; height: 44px; }
+    .capture-slot .capture-note button { margin: 8px 0 0; padding: 10px 16px; font-size: 15px; }
+    /* One pattern for every card's actions on a phone: full-width buttons,
+       one to a row, the primary on top. Side by side they squeezed into two-
+       and three-line labels (mic help: 64, 84 and 133px wide at 375). */
+    .consent-card .actions { flex-direction: column-reverse; align-items: stretch; }
+    .check-actions { flex-direction: column; align-items: stretch; }
     .consent-card { padding: 20px 18px; }
     .consent-card h2 { font-size: 16px; }
+    /* The audio check's rows. A fixed 120px verdict and a nowrap button left
+       the instructions, and the mic meter inside them, 0-13px wide at 375px:
+       one word per line, under the button. Here they take the whole row, with
+       the button and its verdict on the line below. */
+    .check-row { flex-wrap: wrap; }
+    .check-row .what { flex: 1 1 100%; }
+    .check-row .status { width: auto; flex: 1 1 auto; text-align: left; }
+    /* What a participant reads, at reading size: 16px for body text and for
+       the captions they read back while talking (13px before), 14-15px for
+       the page's notes, scene lines, the banner and the check's instructions,
+       and nothing below 12px. */
+    .transcript, .brief .body, .brief .body.rich ul, .brief .body.rich .sit-lead,
+    .consent-card .body, .situation-card .body, .situation-text ul, .consent-card label { font-size: 16px; }
+    .transcript .system-note, .transcript .scene, .ai-banner, .brief .cast-line,
+    .brief .body.rich .sit-note, .sit-note, .fiction-reminder { font-size: 14px; }
+    .check-row .what span, .check-row .status, .check-help, .check-actions .skip, .check-note { font-size: 15px; }
+    .brief .label, .brief .body.rich h4 { font-size: 12px; }
+  }
+  /* A touch screen wider than that (a phone held sideways, a tablet) is
+     tapped too, so it gets the same 44px targets: the rules above go by
+     width, and at 812x375 "Skip the check" was 89x16px, Continue and Start
+     39px tall, the capture notice's way out 31px and the note's close 36px. */
+  @media (pointer: coarse) {
+    button { min-height: 44px; }
+    .gate-note .note-close { width: 44px; height: 44px; }
   }
   /* Very narrow phones: keep tiles legible. */
   @media (max-width: 360px) {
     .avatar { width: 48px; height: 48px; font-size: 18px; }
     .mic-level { width: 38px; }
   }
+  /* Somebody who has asked their system for less motion gets none: three
+     pulses run for the whole 7-12 minutes (the timer, the turn cue, the mic),
+     and the cue's words say whose turn it is without them. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
 </style>
 </head>
 <body>
-<div class="consent-overlay" id="situationOverlay" style="display:none">
+<div class="consent-overlay" id="situationOverlay" style="display:none"
+     role="dialog" aria-modal="true" aria-labelledby="situationTitle" tabindex="-1">
   <div class="consent-card situation-card">
+    <div class="card-scroll" tabindex="0" role="region" aria-labelledby="situationTitle">
     <div class="situation-main">
       <img id="situationImg" class="situation-img" alt="" />
       <div class="situation-text">
@@ -345,13 +526,26 @@
     </div>
     <p class="fiction-reminder">Reminder: this is a fictional scenario. Please use
     the names provided and avoid real personal details.</p>
+    </div>
     <div class="actions"><button id="situationStart">I'm ready, let me in</button></div>
   </div>
 </div>
 
-<div class="consent-overlay" id="fictionOverlay" style="display:none">
+<div class="consent-overlay" id="fictionOverlay" style="display:none"
+     role="dialog" aria-modal="true" aria-labelledby="fictionTitle" tabindex="-1">
   <div class="consent-card situation-card">
-    <h2>Before you begin: please keep this fictional</h2>
+    <div class="card-scroll" tabindex="0" role="region" aria-labelledby="fictionTitle">
+    <!-- The quiet-room requirement (issue #37, the researchers' decision of
+         2026-09-28), first on the first screen and the same words again at the
+         audio check. Other people talking near the participant are picked up,
+         transcribed as the participant and answered; browser noise
+         suppression removes steady noise, not voices, so the room is the fix. -->
+    <div class="quiet-notice" role="note"><b>You need a quiet room to take part.</b>
+      You will be talking out loud, and the microphone picks up other people's voices as
+      well as yours: the characters hear them as if you had said them. Please move to a
+      quiet room, away from anyone talking, before you go on. If you cannot, noise-cancelling
+      headphones also work.</div>
+    <h2 id="fictionTitle">Before you begin: please keep this fictional</h2>
     <div class="body rich">
       <p>These are made-up work situations with AI characters. You are playing a
       role, not telling us about your real life. To protect your privacy and
@@ -372,16 +566,37 @@
       <p>If something personal slips out by accident, that's okay, just keep
       going. We remove personal details from transcripts before we analyze or
       share anything, and the AI partner is instructed not to ask follow-up
-      questions about personal disclosures. You can end a conversation at any
-      time.</p>
+      questions about personal disclosures.</p>
+      <!-- How long a conversation runs, filled from the page's clock before
+           this is shown (describeEncounterLength). It said "You can end a
+           conversation at any time", which the 7:00 hold on End has made
+           untrue on every link type (#34). -->
+      <p>Each conversation lasts at least <span id="fictionMin">7</span> minutes.
+      After that you can move on whenever you are ready, or keep talking until it
+      ends by itself at <span id="fictionMax">12</span> minutes.<span id="fictionLeave"
+      style="display:none"> You can stop taking part in the study at any time with
+      “Stop and leave the study”.</span></p>
+    </div>
     </div>
     <div class="actions"><button id="fictionAck">I understand, continue</button></div>
   </div>
 </div>
 
-<div class="gate-note" id="gateNote" role="status"></div>
-<div class="gate-note" id="dropNote" role="alert">
-  <span id="dropText"><b>Connection lost.</b> Your conversation was interrupted. Click Reconnect to carry on — this part will start again from the beginning, so the other person will greet you afresh. You have not lost your place in the study or anything you have already finished.</span>
+<!-- Not a live region itself: its words are said once, by #srStatus
+     (showGateNote). It is given them while display:none, where a live region
+     is not read, and two live regions would say them twice. -->
+<div class="gate-note" id="gateNote"></div>
+<!-- The page's one live region (A11Y-02): what the app itself says, and the
+     start cue and "You can speak now" (announce). -->
+<div id="srStatus" class="sr-only" role="status"></div>
+<!-- A dialog, but not a modal one: it sits under the header and the page
+     stays usable around it, "Stop and leave the study" above all, which is
+     never locked. Named by its bold first sentence (onConnectionDropped). -->
+<div class="gate-note" id="dropNote" role="dialog" aria-labelledby="dropTitle"
+     aria-describedby="dropText" tabindex="-1">
+  <!-- Only the name here: every drop writes the rest (onConnectionDropped),
+       and a second copy of the wording went stale beside it. -->
+  <span id="dropText"><b id="dropTitle">Connection lost.</b></span>
   <div style="margin-top:10px"><button id="dropReconnect">Reconnect</button></div>
   <!-- The other doors out of a dropped encounter (the next encounter, the
        completion code, the contact, the survey), after the retry so the card
@@ -389,45 +604,77 @@
   <div id="dropDoors"></div>
 </div>
 
-<div class="consent-overlay" id="audioCheckOverlay" style="display:none">
+<div class="consent-overlay" id="audioCheckOverlay" style="display:none"
+     role="dialog" aria-modal="true" aria-labelledby="audioCheckTitle" tabindex="-1">
   <div class="consent-card situation-card">
-    <h2>Check your audio and camera</h2>
-    <div class="body rich">
-      <p>You will be talking out loud with AI characters for about 10 minutes at a time. Please use <b>headphones</b> if you have them, and find a quiet spot.</p>
+    <h2 id="audioCheckTitle">Check your audio and camera</h2>
+    <div class="body rich card-scroll" tabindex="0" role="region" aria-labelledby="audioCheckTitle">
+      <div class="quiet-notice" role="note"><b>You need a quiet room to take part.</b>
+      You will be talking out loud, and the microphone picks up other people's voices as
+      well as yours: the characters hear them as if you had said them. Please move to a
+      quiet room, away from anyone talking, before you go on. If you cannot, noise-cancelling
+      headphones also work.</div>
+      <!-- From the page's clock, as the first screen's is (describeEncounterLength):
+           "about 10 minutes" was neither the 7:00 floor nor the 12:00 stop. -->
+      <p>You will be talking out loud with AI characters for <span id="checkMin">7</span> to
+      <span id="checkMax">12</span> minutes at a time. Please use <b>headphones</b> if you have them.</p>
+      <!-- Each verdict is live (role=status) and describes its button. The
+           help under a row is not in that description: a description is read
+           even while its paragraph is hidden, and "We can't hear anything
+           yet" would be said before any test had run. -->
       <div class="check-row">
         <div class="what"><b>1. Your microphone</b><span>Press the button, then say "testing, one two three".</span>
           <div class="meter"><i id="micMeter"></i></div>
           <div class="check-help" id="micHelp">We can't hear anything yet. Check that your browser allowed the microphone (look for a mic icon in the address bar), that the right input device is selected, and that nothing is muted. Then try again.</div>
         </div>
-        <button id="micTestBtn">Test my microphone</button>
-        <div class="status" id="micStatus">Not tested</div>
+        <button id="micTestBtn" aria-describedby="micStatus">Test my microphone</button>
+        <div class="status" id="micStatus" role="status">Not tested</div>
       </div>
       <div class="check-row">
         <div class="what"><b>2. Your speakers or headphones</b><span>Play a short sound and confirm you heard it.</span>
           <div class="check-help" id="spkHelp">Didn't hear it? Check your volume and output device, then play it again.</div>
         </div>
-        <button id="spkTestBtn">Play a test sound</button>
-        <div class="status" id="spkStatus">Not tested</div>
+        <button id="spkTestBtn" aria-describedby="spkStatus">Play a test sound</button>
+        <div class="status" id="spkStatus" role="status">Not tested</div>
       </div>
       <div class="check-row">
         <div class="what"><b>3. Your camera</b><span>Every conversation is recorded on video. Turn the camera on and check you can see yourself.</span>
           <video id="camPreview" autoplay muted playsinline style="display:none;width:160px;height:120px;border-radius:8px;background:#000;margin-top:8px"></video>
           <div class="check-help" id="camHelp">We couldn't start your camera. Check that your browser allowed it (the camera icon in the address bar), that no other app is using it, and try again.</div>
         </div>
-        <button id="camTestBtn">Turn on my camera</button>
-        <div class="status" id="camStatus">Not tested</div>
+        <button id="camTestBtn" aria-describedby="camStatus">Turn on my camera</button>
+        <div class="status" id="camStatus" role="status">Not tested</div>
       </div>
     </div>
+    <p class="check-note" id="checkNote">Continue unlocks when all three checks have passed.</p>
     <div class="check-actions">
-      <button id="audioCheckContinue" disabled>Continue</button>
+      <button id="audioCheckContinue" aria-describedby="checkNote" disabled>Continue</button>
       <button class="skip" id="audioCheckSkip">Skip the check</button>
     </div>
   </div>
 </div>
 
-<div class="consent-overlay" id="nextOverlay" style="display:none">
+<!-- The way out of a microphone or camera that will not start, which is not a
+     withdrawal (issue #41). Opened from the capture-failure notice; see
+     openCaptureHelp. -->
+<div class="consent-overlay" id="micHelpOverlay" style="display:none"
+     role="dialog" aria-modal="true" aria-labelledby="micHelpTitle" tabindex="-1">
   <div class="consent-card">
-    <h2 id="nextTitle">Encounter complete</h2>
+    <h2 id="micHelpTitle">If your microphone will not work</h2>
+    <div class="body rich" id="micHelpBody"></div>
+    <div class="body rich"><p id="micHelpContact"></p></div>
+    <div class="actions">
+      <button class="secondary" id="micHelpBack">Back</button>
+      <button class="secondary" id="micHelpLeave">Finish here</button>
+      <button id="micHelpCheck">Check my audio again</button>
+    </div>
+  </div>
+</div>
+
+<div class="consent-overlay" id="nextOverlay" style="display:none"
+     role="dialog" aria-modal="true" aria-labelledby="nextTitle" tabindex="-1">
+  <div class="consent-card">
+    <h2 id="nextTitle">Conversation complete</h2>
     <div class="body" id="nextBody"></div>
     <!-- Two actions, not one. This overlay covers the whole page and has no
          dismiss control, so whenever the primary action can fail repeatedly
@@ -440,36 +687,53 @@
   </div>
 </div>
 
+<div class="topbar">
 <div class="ai-banner" id="aiBanner">
   You are speaking with an AI character. This is a fictional scenario.
 </div>
 
 <header>
   <div>
-    <div class="title"><span id="title">Loading…</span><span id="runChip" class="run-chip" style="display:none"></span></div>
+    <!-- A neutral name until the scenario's own title lands, which the boot
+         sequence asks for before the intro overlays (issue #44): the header
+         used to read "Loading…" for the whole of them and looked stuck. -->
+    <h1 class="title"><span id="title">Conversation</span><span id="runChip" class="run-chip" style="display:none"></span></h1>
   </div>
   <div class="controls" id="controls">
-    <span class="turn-state" id="turnState"></span>
-    <span class="gate" id="gate" title="Each conversation runs at least 7 minutes; End unlocks then. You can stop taking part at any time with “Stop and leave the study”.">
-      <svg viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="fill" id="gateFill" cx="12" cy="12" r="9" stroke-dasharray="56.5" stroke-dashoffset="56.5"/></svg>
-      <span id="gateLabel"></span>
+    <!-- Whose turn it is, the ring and the timer; then the buttons. One row
+         on a wide screen; on a phone only this first group is pinned (see
+         the small-screen rules). -->
+    <span class="status-group" id="statusGroup">
+      <span class="turn-state" id="turnState"></span>
+      <!-- Its title is renderGate's, from the clock. -->
+      <span class="gate" id="gate">
+        <svg viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="fill" id="gateFill" cx="12" cy="12" r="9" stroke-dasharray="56.5" stroke-dashoffset="56.5"/></svg>
+        <span id="gateLabel"></span>
+      </span>
+      <span class="timer" id="timer" title="Time in this conversation">00:00</span>
     </span>
-    <span class="timer" id="timer" title="Time in this conversation">00:00</span>
-    <!-- Ships disabled on purpose. This button is painted with the header, but
-         consent is only shown after two awaited round trips (loadRun, then the
-         consent form), and a click inside that window went straight through to
-         startCapture, which turns on the microphone and the webcam. It is armed
-         at the end of loadBrief, i.e. only once consent is on record and there
-         is a briefed scenario to start. startSession re-checks anyway. -->
-    <button id="startBtn" disabled>Start conversation</button>
-    <button id="advanceBtn" style="display:none"></button>
-    <button id="stopBtn" class="secondary" style="display:none">End conversation</button>
-    <!-- "End conversation" ends the encounter and enrols them in the next one,
-         so it is not the control the consent form promises ("You may stop at
-         any time by clicking Stop"). This one stops the study itself. -->
-    <button id="leaveBtn" class="secondary" style="display:none">Stop and leave the study</button>
+    <span class="action-group" id="actionGroup">
+      <!-- Ships disabled on purpose. This button is painted with the header, but
+           consent is only shown after two awaited round trips (loadRun, then the
+           consent form), and a click inside that window went straight through to
+           startCapture, which turns on the microphone and the webcam. It is armed
+           at the end of loadBrief, i.e. only once consent is on record and there
+           is a briefed scenario to start. startSession re-checks anyway. -->
+      <button id="startBtn" disabled>Start conversation</button>
+      <button id="advanceBtn" style="display:none"></button>
+      <button id="stopBtn" class="secondary" style="display:none">End conversation</button>
+      <!-- "End conversation" ends the encounter and enrols them in the next one,
+           so it is not the control the consent form promises ("You may stop at
+           any time by clicking Stop"). This one stops the study itself. -->
+      <button id="leaveBtn" class="secondary" style="display:none">Stop and leave the study</button>
+    </span>
   </div>
 </header>
+</div>
+<!-- The notice for a microphone or camera that would not start
+     (showCaptureFailure): under the header, next to the Start button whose
+     press it answers. -->
+<div class="capture-slot" id="captureSlot" aria-live="polite"></div>
 
 <main>
   <div class="grid" id="grid"></div>
@@ -480,9 +744,19 @@
       <div class="body" id="briefBody"></div>
       <div class="cast-line" id="castLine"></div>
     </div>
-    <div class="transcript" id="transcript" aria-live="polite"></div>
+    <!-- A log, and not read out as it changes (A11Y-02): a character's line
+         is rewritten sentence by sentence while the voice says it, and the
+         participant's own words on every interim result while they talk, so
+         a screen reader spoke over the character and read the participant
+         back to themselves, and on speakers the microphone can hear it.
+         Named and a tab stop, so it can be read and scrolled at will. -->
+    <div class="transcript" id="transcript" role="log" aria-live="off"
+         aria-label="Conversation transcript" tabindex="0"></div>
   </div>
 </main>
+<!-- Which build served this page (see showBuild). Empty and hidden when the
+     server does not say. -->
+<footer class="build-tag" id="buildTag" style="display:none"></footer>
 
 <script>
   const params = new URLSearchParams(location.search);
@@ -527,7 +801,11 @@
     if (run.done) { await showRunComplete(); return false; }
     scenario = run.current.id;
     const chip = $('runChip');
-    chip.textContent = `Encounter ${run.position} of ${run.total}`;
+    // "Conversation" is the unit's one name on the participant's screens, and
+    // "part" only a phase inside one (FLOW-11): it was also "encounter" here,
+    // on End and on the cards between, so "End conversation (go to encounter
+    // 2 of 4)" did not say which of them it ended.
+    chip.textContent = `Conversation ${run.position} of ${run.total}`;
     chip.style.display = 'inline-block';
     // Offered from the moment we know there is a run to leave, and kept
     // available for the rest of the page: the promise to stop is not honoured
@@ -553,18 +831,21 @@
 
   async function showRunComplete() {
     const code = run?.completion_code || '';
-    $('nextTitle').textContent = 'All encounters complete';
+    $('nextTitle').textContent = 'All conversations complete';
 
-    let cfg = { return_url: '', return_label: 'Return to the survey' };
-    try { cfg = await (await fetch('/api/run/config' + keyParamFirst)).json(); } catch {}
+    // The config the page already holds (loadRunCfg, fetched at boot for the
+    // build tag), so the card is painted in one go. A fresh fetch here left
+    // the new title over the previous card's body and its spent "Continue
+    // without waiting" until the server answered.
+    const cfg = (await loadRunCfg()) || { return_url: '', return_label: 'Return to the survey' };
 
     // The completion code is shown whether or not the return link is
     // configured, so a participant is never stranded without proof they
     // finished, that is what their payment depends on.
     $('nextBody').innerHTML =
       `<p>You have finished all ${run ? run.total : 4} conversations. Thank you.</p>` +
-      (code ? `<p>Your completion code is <b class="code">${esc(code)}</b>` +
-              `, you will be asked for it in the survey.</p>` : '') +
+      (code ? `<p>Your completion code is <b class="code">${esc(code)}</b>. ` +
+              `Go back to the Qualtrics survey now and enter this code there.</p>` : '') +
       // If the last encounter's recording was lost, say so here too. The
       // completion code comes first and is unaffected: a failed upload is our
       // problem, not a reason to withhold their payment.
@@ -594,9 +875,11 @@
       };
     } else {
       $('nextBtn').style.display = 'none';
-      $('nextBody').innerHTML += '<p>You can close this window and return to the survey.</p>';
+      $('nextBody').innerHTML += code
+        ? '<p>Once you have entered your code in the survey, you can close this window.</p>'
+        : '<p>You can close this window and return to the Qualtrics survey.</p>';
     }
-    $('nextOverlay').style.display = 'flex';
+    showOverlay($('nextOverlay'));
     // Finishing does not end the participant's rights: deletion is exercised
     // after the study, so the address has to be on the screen that closes it
     // too. Painted after the overlay is up, so a slow /api/run/config never holds
@@ -612,26 +895,30 @@
   // whatever proof of participation exists (the run's partial completion code)
   // and the way back to the survey. It reuses the completion overlay so there
   // is exactly one "you are done" surface in the page.
-  async function showClosing(title, bodyHtml, code) {
+  // `opts.status` goes onto the survey link, for a closing the survey should be
+  // able to tell apart without reading this page (mic_failed, see
+  // leaveOnCaptureFailure).
+  async function showClosing(title, bodyHtml, code, opts = {}) {
     // Paint immediately and fetch the return link afterwards: the participant
     // has just asked to stop, so nothing they are looking at should wait on a
     // network call that may not answer.
     closing = true;   // this surface owns the overlay now; nothing may repaint over it
-    $('situationOverlay').style.display = 'none';
+    hideOverlay($('situationOverlay'));
     $('nextTitle').textContent = title;
     $('nextBody').innerHTML = bodyHtml +
       (code ? `<p>Your code so far is <b class="code">${esc(code)}</b>. Take it back to ` +
               `the survey if you are asked for one.</p>` : '');
     $('nextAlt').style.display = 'none';
     $('nextBtn').style.display = 'none';
-    $('nextOverlay').style.display = 'flex';
-    let cfg = { return_url: '', return_label: 'Return to the survey' };
-    try { cfg = await (await fetch('/api/run/config' + keyParamFirst)).json(); } catch {}
+    showOverlay($('nextOverlay'));
+    // Held config where there is some, as showRunComplete: the card grew in
+    // steps as the fetch and then the contact landed, moving its button.
+    const cfg = (await loadRunCfg()) || { return_url: '', return_label: 'Return to the survey' };
     if (cfg.return_url) {
       const sep = cfg.return_url.includes('?') ? '&' : '?';
-      const back = `${cfg.return_url}${sep}` + new URLSearchParams({
+      const back = `${cfg.return_url}${sep}` + new URLSearchParams(Object.assign({
         run: run?.run_id || '', code: code || '', pid: run?.participant_id || '',
-      });
+      }, opts.status ? { status: opts.status } : {}));
       $('nextBtn').textContent = cfg.return_label || 'Return to the survey';
       $('nextBtn').style.display = 'inline-block';
       $('nextBtn').onclick = () => {
@@ -653,7 +940,10 @@
         Promise.race([pending.catch(() => null), wait(CLOSING_UPLOAD_WAIT_MS)]).then(leave);
       };
     } else {
-      $('nextBody').innerHTML += '<p>You must return to the Qualtrics survey now and enter the code <b class="code">${RF-COMPLETE}</b> . You can close this window now.</p>';
+      // No code is promised here: this card is also the between-encounter exit,
+      // which hands out none (2026-09-23). A code that exists is already shown
+      // above, from the run itself.
+      $('nextBody').innerHTML += '<p>You can close this window and return to the Qualtrics survey.</p>';
     }
     // Last, and on every closing card without exception: this is the surface a
     // participant reaches when the study is over for them, and it is where the
@@ -686,24 +976,21 @@
   // always possible, and the card says to tell the study team how far they got,
   // which is how a server-side fault gets resolved rather than through the code.
   //
-  // The default body is written for the failure call sites, where /advance did
-  // not land and this last encounter really may not have been counted. The door
-  // offered during the upload wait sits on the far side of a successful advance
-  // — `run = advanced` has already happened there — so that call site passes its
-  // own body rather than telling the participant something the code knows to be
-  // untrue about their own run.
-  function offerExit(label, bodyHtml) {
+  // Its body is written for the failure call sites, where /advance did not land
+  // and this last encounter really may not have been counted. The upload wait,
+  // on the far side of a successful advance, has no door of this kind: its door
+  // stops the study (stopTheStudy; FLOW-05).
+  function offerExit(label) {
     const alt = $('nextAlt');
     alt.textContent = label;
     alt.style.display = 'inline-block';
     alt.onclick = () => showClosing(
       'Finishing here',
-      bodyHtml ||
-      ('<p>Thank you for the conversations you did have. What you recorded is ' +
-       'stored on our side, though this last one may not have been counted ' +
-       'towards your run.</p>' +
-       '<p>Please use the contact below to tell the study team how far you ' +
-       'got.</p>'),
+      '<p>Thank you for the conversations you did have. What you recorded is ' +
+      'stored on our side, though this last one may not have been counted ' +
+      'towards your run.</p>' +
+      '<p>Please use the contact below to tell the study team how far you ' +
+      'got.</p>',
       '');
   }
 
@@ -743,12 +1030,12 @@
       $('nextTitle').textContent = 'That conversation did not start';
       $('nextBody').innerHTML =
         '<p>The conversation never connected, so there is nothing to save and ' +
-        'nothing was recorded. You can try this encounter again.</p>';
+        'nothing was recorded. You can try this conversation again.</p>';
       $('nextBtn').textContent = 'Try this conversation again';
       $('nextBtn').style.display = 'inline-block';
-      $('nextBtn').onclick = () => { $('nextOverlay').style.display = 'none'; };
+      $('nextBtn').onclick = () => { hideOverlay($('nextOverlay')); };
       offerExit('I can’t continue, finish here');
-      $('nextOverlay').style.display = 'flex';
+      showOverlay($('nextOverlay'));
       return;
     }
     const url = `/api/run/${encodeURIComponent(runId)}/advance` +
@@ -773,16 +1060,16 @@
           'again from the start.</p>';
         $('nextBtn').textContent = 'Have this conversation again';
         $('nextBtn').style.display = 'inline-block';
-        $('nextBtn').onclick = () => { $('nextOverlay').style.display = 'none'; };
+        $('nextBtn').onclick = () => { hideOverlay($('nextOverlay')); };
         offerExit('I can’t continue, finish here');
-        $('nextOverlay').style.display = 'flex';
+        showOverlay($('nextOverlay'));
         return;
       }
       // The encounter is recorded to the run ONLY on a successful advance. Never
       // discard a finished conversation silently: show the overlay, with a Retry
       // when a retry could plausibly work, and a way out either way.
       const terminal = !!r && TERMINAL_ADVANCE.has(r.status);
-      $('nextTitle').textContent = 'Could not save this encounter';
+      $('nextTitle').textContent = 'Could not save this conversation';
       $('nextBody').innerHTML = terminal
         ? '<p>We could not record that conversation against your run, and trying ' +
           'again will not change that. The recording itself is on our side, but ' +
@@ -796,7 +1083,7 @@
         $('nextBtn').onclick = () => { advancing = false; onEncounterComplete(opts); };
       }
       offerExit(terminal ? 'Finish here' : 'I can’t continue, finish here');
-      $('nextOverlay').style.display = 'flex';
+      showOverlay($('nextOverlay'));
       return;
     }
     run = advanced;
@@ -841,13 +1128,25 @@
       // died with no notice, no confirm and no events line.
       const skipped = new Promise(r => { skip = () => r({ ok: false, reason: 'skipped', pending: true }); });
       $('nextBtn').onclick = skip;
-      offerExit('I can’t continue, finish here',
-        '<p>Thank you for the conversations you did have. The one you just ' +
-        'finished was counted towards your run, only its video was still ' +
-        'uploading, and the study team can see how that ended.</p>' +
-        '<p>Please use the contact below to tell the study team how far you ' +
-        'got.</p>');
-      $('nextOverlay').style.display = 'flex';
+      // The door stays, but not as a one-tap twin of the way on (FLOW-05).
+      // This wait follows every conversation, so it is the normal path; both
+      // buttons said "continue", and this one ended the study for them with no
+      // code and no record. It says what it does, asks first, and does it: it
+      // is "Stop and leave the study", which this card covers. A stop that
+      // only showed the closing card left the run open, so the survey link
+      // started the next conversation again, and the export could not tell it
+      // from an abandoned tab. After the last conversation there is nothing
+      // left to stop, and leaving here would skip the completion code, so it
+      // is not offered (nor left over from a failed advance that a Retry got
+      // past).
+      if (run.done) $('nextAlt').style.display = 'none';
+      else {
+        $('nextAlt').textContent = 'Stop the study here';
+        $('nextAlt').style.display = 'inline-block';
+        $('nextAlt').onclick = () => stopTheStudy(
+          'Stop the study here? You will not go on to the remaining conversations.', $('nextAlt'));
+      }
+      showOverlay($('nextOverlay'));
       let outcome = await Promise.race([
         videoUpload.catch(() => ({ ok: false, reason: 'upload_threw' })),
         skipped,
@@ -887,8 +1186,8 @@
     $('nextAlt').style.display = 'none';   // the advance landed and the wait is over: no exit to offer
     if (run.done) { await showRunComplete(); return; }
     $('nextTitle').textContent = stoppedEarly
-      ? `Encounter ${run.position - 1} of ${run.total} stopped early`
-      : `Encounter ${run.position - 1} of ${run.total} complete`;
+      ? `Conversation ${run.position - 1} of ${run.total} stopped early`
+      : `Conversation ${run.position - 1} of ${run.total} complete`;
     $('nextBody').innerHTML =
       (stoppedEarly
         ? '<p>That conversation could not be finished. What was recorded of it is ' +
@@ -897,7 +1196,7 @@
         : '<p>That conversation is finished. Ready for the next one?</p>') +
       takeVideoNotice() +
       runStepsHtml(0);
-    $('nextBtn').textContent = `Start encounter ${run.position} of ${run.total}`;
+    $('nextBtn').textContent = `Start conversation ${run.position} of ${run.total}`;
     $('nextBtn').style.display = 'inline-block';
     $('nextBtn').onclick = () => {
       // Reload into the next encounter: a fresh page gives a clean audio
@@ -930,7 +1229,7 @@
       Promise.race([live.promise.catch(() => null), wait(NEXT_UPLOAD_HOLD_MS)])
         .then(leaveNow);
     };
-    $('nextOverlay').style.display = 'flex';
+    showOverlay($('nextOverlay'));
   }
   const launchId = params.get('launch') || '';   // researcher-configured launch
   const launchParam = launchId ? `&launch=${encodeURIComponent(launchId)}` : '';
@@ -1033,6 +1332,12 @@
   const AUDIO_DRAIN_MAX_S = 45;
   let cast = [];
   let activeSpeaker = null;
+  // The turn cue's state (see renderTurnCue): the server said the floor is
+  // open; the participant has started speaking; who each speaker is.
+  let cueOpen = false, cueListening = false;
+  // The start cue on screen (awaiting_participant), until participant_opened.
+  let startCueEl = null;
+  const cueNames = {};   // agent_id -> name, from assistant_started
   let assistantSpeaking = false;
   let currentTurn = null;  // the agent turn currently receiving text/audio (or null)
   let userFinals = [];     // committed final STT segments for the current utterance
@@ -1114,6 +1419,22 @@
 
   async function contactWho() { return contactPhrase(await loadRunCfg()); }
 
+  // ---------- the build tag ----------
+  // Which build this page came from, small and out of the way, so a tester's
+  // screenshot or a participant's report can say which code it was without
+  // anybody asking the server. The image carries its commit (BUILD_SHA) and
+  // /api/run/config serves it as `build`; a server that does not know, or that
+  // predates the field, says null or nothing, and then nothing is shown rather
+  // than a guess. A full commit hash is shortened the way git shortens one.
+  function showBuild(cfg) {
+    const el = $('buildTag');
+    if (!el) return;
+    let build = (cfg && typeof cfg.build === 'string') ? cfg.build.trim().slice(0, 40) : '';
+    if (/^[0-9a-f]{8,40}$/i.test(build)) build = build.slice(0, 7);
+    el.textContent = build ? `build ${build}` : '';
+    el.style.display = build ? 'block' : 'none';
+  }
+
   // ---------- the upstream consent handoff ----------
   // There is no consent form on this platform: it is handled in the survey,
   // before anybody is redirected to /start.
@@ -1141,9 +1462,19 @@
     // /start hands this page its participant record id, and a study arrival
     // never comes through here without one. A page opened WITHOUT one — the
     // researcher's single-scenario links, a keyless development box — mints a
-    // record now, because the voice socket refuses to open with no record at
-    // all (server/app.py, _participant_may_capture). Consent itself is taken
+    // record, because the voice socket refuses to open with no record at all
+    // (server/app.py, _participant_may_capture). Consent itself is taken
     // outside this platform (2026-09-17): there is no form and no tick here.
+    //
+    // Once, not once per load (issue #39). The id this minted was never kept,
+    // and the boot sequence minted before the participant had read anything,
+    // so every load and every refresh of /v2?scenario=... made a new record —
+    // one person who reloaded became two participants with no consent and no
+    // conversation behind either, and could be given a different assigned
+    // name, which is hashed from this id. The boot sequence now calls this
+    // after the fictional-scenario acknowledgement, and the minted id goes
+    // into the address bar (rememberParticipant), where a refresh reads it
+    // back as `participantId` and skips this entirely.
     if (participantId) return true;
     if (participantGate) return participantGate;
     participantGate = (async () => {
@@ -1154,16 +1485,38 @@
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         participantId = (await r.json()).participant_id || null;
         if (!participantId) throw new Error('no participant id in the reply');
+        rememberParticipant();
         return true;
       } catch (e) {
         showBlockingError(
           'This page could not set up a participant record, so the conversation ' +
           'cannot start. Please reload; if it happens again, use the contact below.',
           () => location.reload());
+        // The card has only a body and Retry, so "the contact below" was not
+        // there (FLOW-07). Added once the card is up, as the mic-help card's
+        // is: it is a network call.
+        contactWho().then((who) => {
+          const p = document.createElement('p');
+          p.innerHTML = 'Contact ' + who + '.';
+          $('errOverlay').querySelector('#errBody').appendChild(p);
+        }).catch(() => {});
         return false;
       }
     })();
     return participantGate;
+  }
+
+  // Put the minted record in the address bar, beside whatever else is there
+  // (the scenario, a researcher key, a launch), so a refresh reuses it. The
+  // same parameter /start hands a study arrival, and the one the `session`
+  // frame writes back; a browser that refuses replaceState only costs a
+  // second record on refresh, which is what every refresh cost before.
+  function rememberParticipant() {
+    try {
+      const qs = new URLSearchParams(location.search);
+      qs.set('participant_id', participantId);
+      history.replaceState(history.state, '', '?' + qs);
+    } catch (e) { /* see above */ }
   }
 
   // Reflow a hard-wrapped block-scalar string: join single line breaks within a
@@ -1181,6 +1534,82 @@
   const esc = v => String(v ?? '').replace(/[&<>"]/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+  // A list of people as a sentence says it: 'A', 'A and B', 'A, B, and C'.
+  // One helper for every such list on the page (issue #45): the cast line
+  // under the brief built this by hand and got it right, while the situation
+  // card's "How it runs" joined everybody with ' and ' and told S4A's
+  // participants they would meet "Dan and Priya and Chris". Items are joined
+  // as given, so a caller that wants markup around each name (the cast line's
+  // <strong>) escapes and wraps them first.
+  function listPhrase(items) {
+    const xs = (items || []).filter(x => x != null && x !== '');
+    if (xs.length <= 1) return xs.join('');
+    if (xs.length === 2) return `${xs[0]} and ${xs[1]}`;
+    return `${xs.slice(0, -1).join(', ')}, and ${xs[xs.length - 1]}`;
+  }
+
+  // ---------- the page's cards (issue #43) ----------
+  // Every card opens and closes through these two. They used to set `display`
+  // and nothing else, so a screen reader stayed on the page behind with
+  // nothing saying a card was up, Tab walked the controls under the scrim, and
+  // closing left focus nowhere. Each card is now a dialog named by its heading
+  // (the markup), takes focus when it opens, gives it back to whatever had it
+  // when it closes, and one that covers the page leaves the page behind it
+  // inert. The drop card is `modal: false`: it sits under the header, shown
+  // with .show, and the page stays usable around it ("Stop and leave the
+  // study" is never locked).
+  const cardOpeners = new Map();   // card -> what had focus before it opened
+  const modalCards = [];           // the full-screen cards up now, the top one last
+  // Where the engine has no inert (Safari before 15.5, Firefox before 112),
+  // aria-hidden takes the page behind out of what a screen reader reads, and
+  // focus that gets out of the top card is sent back into it.
+  const INERT_MISSING = typeof HTMLElement !== 'undefined' && !('inert' in HTMLElement.prototype);
+  function applyInert() {
+    const top = modalCards[modalCards.length - 1] || null;
+    Array.from(document.body.children).forEach(el => {
+      // The status region stays live: what the page says while a card is up
+      // is still heard.
+      const off = !!top && el !== top && el.id !== 'srStatus';
+      el.inert = off;
+      if (INERT_MISSING) { if (off) el.setAttribute('aria-hidden', 'true'); else el.removeAttribute('aria-hidden'); }
+    });
+  }
+  if (INERT_MISSING) {
+    document.addEventListener('focusin', (e) => {
+      const top = modalCards[modalCards.length - 1];
+      if (top && !top.contains(e.target)) top.focus();
+    });
+  }
+  function showOverlay(card, opts) {
+    // Repainted while it is up (the closing card, a Retry), a card keeps the
+    // opener it had.
+    if (!cardOpeners.has(card)) cardOpeners.set(card, document.activeElement);
+    if (opts && opts.modal === false) {
+      card.classList.add('show');
+    } else {
+      const i = modalCards.indexOf(card);
+      if (i >= 0) modalCards.splice(i, 1);
+      modalCards.push(card);
+      card.style.display = 'flex';
+      applyInert();
+    }
+    // Into the card itself (tabindex=-1), which is announced by its name;
+    // Tab goes on to what is in it.
+    card.focus();
+  }
+  function hideOverlay(card, opts) {
+    if (opts && opts.modal === false) card.classList.remove('show');
+    else card.style.display = 'none';
+    const i = modalCards.indexOf(card);
+    if (i >= 0) { modalCards.splice(i, 1); applyInert(); }
+    if (!cardOpeners.has(card)) return;
+    const opener = cardOpeners.get(card);
+    cardOpeners.delete(card);
+    // An opener hidden since (End, once the conversation is over) takes no
+    // focus, and the browser keeps it where it is.
+    if (opener && opener.focus) opener.focus();
+  }
+
   // Blocking full-screen error card. Prevents the participant from falling
   // through to a wrong/default/unbriefed encounter when a load fails, and
   // offers a Retry that re-runs the failed step.
@@ -1190,7 +1619,12 @@
       ov = document.createElement('div');
       ov.className = 'consent-overlay';
       ov.id = 'errOverlay';
-      ov.innerHTML = '<div class="consent-card"><h2>Something went wrong</h2>' +
+      // A dialog like the markup's cards (#43).
+      ov.setAttribute('role', 'dialog');
+      ov.setAttribute('aria-modal', 'true');
+      ov.setAttribute('aria-labelledby', 'errTitle');
+      ov.setAttribute('tabindex', '-1');
+      ov.innerHTML = '<div class="consent-card"><h2 id="errTitle">Something went wrong</h2>' +
         '<div class="body" id="errBody"></div>' +
         '<div class="actions"><button id="errRetry">Retry</button></div></div>';
       document.body.appendChild(ov);
@@ -1198,8 +1632,8 @@
     ov.querySelector('#errBody').textContent = msg;
     const btn = ov.querySelector('#errRetry');
     btn.style.display = retryFn ? 'inline-block' : 'none';
-    btn.onclick = async () => { ov.style.display = 'none'; if (retryFn) await retryFn(); };
-    ov.style.display = 'flex';
+    btn.onclick = async () => { hideOverlay(ov); if (retryFn) await retryFn(); };
+    showOverlay(ov);
   }
 
   // ---------- situation popup (shown before the meeting begins) ----------
@@ -1212,7 +1646,7 @@
     const people = (b.people || []).map(p =>
       `<li><b>${esc(p.name)}</b>${p.role ? `, ${esc(p.role)}` : ''}</li>`).join('');
     const parts = (b.parts || []).map((p, i) =>
-      `<li>${esc(p.label)}${p.with?.length ? `, with ${esc(p.with.join(' and '))}` : ''}</li>`).join('');
+      `<li>${esc(p.label)}${p.with?.length ? `, with ${listPhrase(p.with.map(esc))}` : ''}</li>`).join('');
     const how = (b.howto || []).map(h => `<li>${esc(h)}</li>`).join('');
     const dur = b.duration ? `${b.duration[0]}–${b.duration[1]} minutes` : '';
     return `
@@ -1252,12 +1686,13 @@
     } else {
       img.style.display = 'none';
     }
-    $('situationOverlay').style.display = 'flex';
+    showOverlay($('situationOverlay'));
     $('situationStart').addEventListener('click', async () => {
       $('situationStart').disabled = true;
+      $('situationStart').setAttribute('aria-busy', 'true');
       $('situationStart').textContent = 'Connecting…';
       await ensureParticipant();
-      $('situationOverlay').style.display = 'none';
+      hideOverlay($('situationOverlay'));
       // Start immediately. This click is the user gesture browsers require for
       // microphone capture and audio playback, so it has to be the one that
       // opens the session, a second "Start session" click is friction and
@@ -1273,6 +1708,7 @@
     d.className = 'avatar';
     d.style.background = colorFor(name);
     d.textContent = initialsOf(name);
+    d.setAttribute('aria-hidden', 'true');   // the name is on the tile; initials only repeat it
     return d;
   }
 
@@ -1298,11 +1734,13 @@
   // skipped_triggers, so the encounter is at least honest about it afterwards,
   // but an empty record is not a measurement.
   //
-  // This delays the control, it does not lock the participant in: End
-  // conversation is live from the first second and is never refused (consent
-  // promises they can stop at any time), and the floor expires on its own inside
-  // a 7-12 minute encounter. Internal and non-study runs skip it, exactly as
-  // they skip the 7-minute end gate, so the team can still move fast.
+  // This delays the control, it does not lock the participant in: "Stop and
+  // leave the study" is live from the first second and is never refused
+  // (consent promises they can stop at any time), and the floor expires on its
+  // own inside a 7-12 minute encounter. Internal and non-study runs skip it
+  // (gateActive), so the team can still walk the beats fast. The 7-minute gate
+  // on End is a different gate and no longer shares this exemption: since
+  // 2026-09-28 it holds on every link type (#34, renderGate).
   const ADVANCE_MIN_S = 180;
   function advanceFloorMet() {
     if (!gateActive()) return true;
@@ -1402,7 +1840,7 @@
     self.className = 'tile self'; self.id = 'tile-self';
     self.innerHTML = `
       <video id="selfCam" autoplay muted playsinline></video>
-      <div class="avatar self">YOU</div>
+      <div class="avatar self" aria-hidden="true">YOU</div>
       <div class="name">You</div>
       <div class="name cam">You</div>
       <div class="speaking-indicator">SPEAKING</div>
@@ -1437,6 +1875,7 @@
         av.className = 'avatar';
         av.style.background = colorFor(a.name);
         av.textContent = initialsOf(a.name);
+        av.setAttribute('aria-hidden', 'true');   // as makeInitials
         t.appendChild(av);
       }
       const nameEl = document.createElement('div');
@@ -1482,6 +1921,11 @@
       const next = $(`tile-${speakerId === 'user' ? 'self' : speakerId}`);
       if (next) next.classList.add('speaking');
     }
+    // The turn cue follows the audio: a line now playing is the character's
+    // turn, whatever came before it; one that has stopped hands back to
+    // whatever the page last knew (see renderTurnCue).
+    if (speakerId && speakerId !== 'user') { cueListening = false; cueOpen = false; }
+    renderTurnCue();
   }
 
   // ---------- speech sync: reveal captions + speaking-ring in time with audio ----------
@@ -1502,7 +1946,11 @@
   // Reveal the turn up to the end of whichever sentence the audio is currently
   // in, so the caption advances sentence by sentence in time with the voice.
   function revealTurn(turn, charN) {
-    if (!turn.el) turn.el = appendTranscript('assistant', turn.agent_id, '');
+    if (!turn.el) {
+      turn.el = appendTranscript('assistant', turn.agent_id, '');
+      // When this line began to play, on the audio clock (see placeUserCaption).
+      turn.el.audioAt = turn.startCtx;
+    }
     const cut = sentenceCut(turn.fullText, charN);
     const shown = turn.fullText.slice(0, cut).trim();
     if (shown !== turn.shown) {
@@ -1564,17 +2012,23 @@
 
   // ---------- the encounter clock ----------
   // Three numbers, served on the run (`run.timing`, from
-  // storage.encounter_timing) so the page and the server agree to the second:
-  //   MIN_S   the floor: End does not finish a study conversation before it,
-  //           and /advance answers 409 if asked. The ring fills toward it.
-  //   WRAP_S  the label says "wrapping up"; the server has told the actor.
-  //   MAX_S   the hard stop: the page ends the conversation itself, and so
-  //           does the server on the next turn, whichever comes first.
+  // storage.encounter_timing) and again by the runner itself on every link
+  // type (`encounter_clock`), so the page and the server agree to the second:
+  //   MIN_S   the floor: End / move-on unlocks here, with a notice that the
+  //           participant may move on whenever they are ready; /advance
+  //           answers 409 before it. The ring fills toward it.
+  //   WRAP_S  the warning that the conversation is about to end.
+  //   MAX_S   the stop, 12:00: the page ends the conversation itself, and so
+  //           does the server, whichever comes first. Nothing ends it sooner
+  //           by itself (the researchers' end policy of 2026-09-28, #34).
   // Stopping the STUDY ("Stop and leave the study") is never gated: that is
   // the consent promise, and it is a different control from End.
   let MIN_S = 7 * 60, WRAP_S = 11 * 60, MAX_S = 12 * 60;
   let ceilingFired = false;
-  let wrapWarningFired = false;
+  // Said once per conversation each: the move-on notice at the floor and the
+  // warning before the stop (from the page's clock or the server's frame,
+  // whichever comes first). Reset by startSession.
+  let moveOnNoted = false, wrapNoted = false;
   function applyTiming(t) {
     if (!t) return;
     if (t.min_seconds > 0) MIN_S = t.min_seconds;
@@ -1582,27 +2036,116 @@
     if (t.max_seconds > 0) MAX_S = t.max_seconds;
   }
   const RING = 56.5;   // circumference of the r=9 ring in the header
+  // The within-encounter advance floor only (advanceFloorMet): internal and
+  // direct links skip THAT, so the team can walk the beats fast. The 7:00
+  // gate on End is not this: since 2026-09-28 it holds on every link type,
+  // study, internal /test and direct researcher links alike (#34: a direct
+  // link had no ring, no lock and no sign at 7:00 at all).
   function gateActive() { return !!(runId && run && run.cohort !== 'internal'); }
+  // Seconds into this conversation on the timer's clock: the warning and the
+  // stop (WRAP_S, MAX_S) count on it.
+  function encounterElapsedS() {
+    return started && timerStartMs ? Math.max(0, (Date.now() - timerStartMs) / 1000) : 0;
+  }
+  // Seconds on the floor's clock, which the ring fills on and End unlocks
+  // by: from the participant's first accepted line (participant_opened), as
+  // the server's floor counts since pipeline 2026-09-28b, 0 before it.
+  let floorStartMs = 0;
+  function floorElapsedS() {
+    return started && floorStartMs ? Math.max(0, (Date.now() - floorStartMs) / 1000) : 0;
+  }
+  // Whether the stop comes before the floor: from the warning on, or when a
+  // late first line leaves the floor further off than the stop. The ceiling
+  // wins then (docs/OPERATIONS.md), so the page says the conversation ends,
+  // never a move-on that will not come.
+  function stopBeforeFloor(s) {
+    return s >= WRAP_S || MAX_S - s <= MIN_S - floorElapsedS();
+  }
+  // "N minute(s)", rounded up, for the gate's wording.
+  function minutesText(seconds) {
+    const n = Math.max(1, Math.ceil(seconds / 60));
+    return `${n} minute${n === 1 ? '' : 's'}`;
+  }
+  // Before the floor, when the participant CAN move on, in the words
+  // moveOnText uses at it. Never as the conversation ending: it runs to MAX_S
+  // unless they choose to move on, and "about 3 more minutes in this
+  // conversation" was a countdown to an end that does not come (review of
+  // 850b08e).
+  function canMoveOnIn(left) {
+    const what = (runId && run && !run.done && run.position < run.total)
+      ? 'move on to the next conversation' : 'end this conversation';
+    return `you can ${what} in about ${left} minute${left === 1 ? '' : 's'}`;
+  }
+  // The intro cards' account of the clock, from the same three numbers: the
+  // first screen and the audio check.
+  function describeEncounterLength() {
+    const mins = (s) => String(Math.round(s / 60));
+    $('fictionMin').textContent = mins(MIN_S);
+    $('fictionMax').textContent = mins(MAX_S);
+    $('checkMin').textContent = mins(MIN_S);
+    $('checkMax').textContent = mins(MAX_S);
+    // The study's own stop control exists only on a run link.
+    $('fictionLeave').style.display = runId ? 'inline' : 'none';
+  }
+  function moveOnText() {
+    return (runId && run && !run.done && run.position < run.total)
+      ? 'You can move on to the next conversation whenever you are ready, or keep talking.'
+      : 'You can end this conversation whenever you are ready, or keep talking.';
+  }
+  // The floor has passed: neutral, visible once, and repeated in the
+  // transcript so it is still there after the note fades.
+  function noteMoveOn() {
+    if (moveOnNoted || !started) return;
+    moveOnNoted = true;
+    showGateNote(moveOnText());
+  }
+  // Shortly before the stop: the one automatic end the conversation has.
+  function noteWrap(secondsLeft) {
+    if (wrapNoted || !started) return;
+    wrapNoted = true;
+    const left = Math.max(1, Math.round((secondsLeft != null ? secondsLeft : MAX_S - encounterElapsedS()) / 60));
+    const text = `This conversation ends automatically in about ${left} minute${left === 1 ? '' : 's'}.`;
+    $('gateLabel').textContent = 'Wrapping up';
+    showGateNote(text);
+  }
   function renderGate(s) {
     const g = $('gate');
-    if (!g || !gateActive() || !started) return;
+    if (!g || !started) return;
     g.classList.add('show');
-    const pct = Math.min(1, s / MIN_S);
+    // From the clock, which the runner's encounter_clock can reset mid-page;
+    // the markup's "7 minutes" would not follow it.
+    g.title = `Each conversation runs at least ${minutesText(MIN_S)}; End unlocks then. ` +
+      'You can stop taking part at any time with “Stop and leave the study”.';
+    const pct = Math.min(1, floorElapsedS() / MIN_S);
     $('gateFill').style.strokeDashoffset = String(RING * (1 - pct));
     if (pct >= 1) {
       g.classList.add('open');
-      $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up' : 'You can end when you are ready';
+      $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up' : 'You can move on when you are ready';
       $('stopBtn').classList.remove('locked');
       $('stopBtn').setAttribute('aria-disabled', 'false');
       $('stopBtn').title = '';
+      noteMoveOn();
+      if (s >= WRAP_S) noteWrap(MAX_S - s);
     } else {
-      const left = Math.ceil((MIN_S - s) / 60);
-      $('gateLabel').textContent = `about ${left} more minute${left === 1 ? '' : 's'}`;
+      // On the floor's clock, which the timer does not show (it starts at the
+      // participant's first line), unless the stop comes first; then the stop,
+      // and 'Wrapping up' stays up once noteWrap has said so.
+      const stopFirst = stopBeforeFloor(s);
+      const left = minutesText(stopFirst ? MAX_S - s : MIN_S - floorElapsedS());
+      $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up'
+        : stopFirst ? `Ends automatically in about ${left}`
+        : floorStartMs ? `You can move on in about ${left}`
+        : `You can move on ${minutesText(MIN_S)} after you start`;
       // Held until the floor. Not `disabled`, so the click can still explain
       // itself (see the handler); aria-disabled says what the styling shows.
       $('stopBtn').classList.add('locked');
       $('stopBtn').setAttribute('aria-disabled', 'true');
-      $('stopBtn').title = `End unlocks at ${pad2(Math.floor(MIN_S / 60))}:${pad2(MIN_S % 60)}. To stop taking part, use “Stop and leave the study”.`;
+      $('stopBtn').title = (stopFirst ? `This conversation ends automatically in about ${left}.`
+        : floorStartMs ? `End unlocks in about ${left}.`
+        : `End unlocks ${minutesText(MIN_S)} after you start.`) +
+        (runId ? ' To stop taking part, use “Stop and leave the study”.' : '');
+      // The warning is the page's own here too, as past the floor above.
+      if (s >= WRAP_S) noteWrap(MAX_S - s);
     }
     // Warning that session will automatically conclude.
     if (s >= WRAP_S && WRAP_S < MAX_S && !wrapWarningFired) {
@@ -1613,8 +2156,7 @@
       showGateNote(`${left} left. This conversation will end automatically at ${endAt}.`);
     }
     // The hard stop, from the page's side. The server completes the encounter
-    // on the next turn past MAX_S; a participant who has gone quiet has no next
-    // turn, so the page ends it too. Once.
+    // on its own clock too (the watchdog's tick); whichever comes first. Once.
     if (s >= MAX_S && started && !ceilingFired) {
       ceilingFired = true;
       showGateNote('Time is up for this conversation — thank you. Moving on.');
@@ -1622,30 +2164,120 @@
       onEncounterComplete();
     }
   }
-  let gateNoteTimer = null;
+  let gateNoteTimer = null, gateNoteClose = null, gateNoteCopy = null;
   function showGateNote(text) {
     const n = $('gateNote');
     n.textContent = text;
+    // Setting the text took the close control away; put it back.
+    if (!gateNoteClose) {
+      gateNoteClose = document.createElement('button');
+      gateNoteClose.type = 'button';
+      gateNoteClose.className = 'secondary note-close';
+      gateNoteClose.setAttribute('aria-label', 'Close');
+      gateNoteClose.textContent = '×';
+      gateNoteClose.addEventListener('click', () => n.classList.remove('show'));
+    }
+    n.appendChild(gateNoteClose);
+    placeNote(n);
     n.classList.add('show');
     if (gateNoteTimer) clearTimeout(gateNoteTimer);
-    gateNoteTimer = setTimeout(() => n.classList.remove('show'), 6000);
+    // Long enough to read: 6 s was too short for the 40-word reply to an
+    // early End, and it can be closed sooner.
+    gateNoteTimer = setTimeout(() => n.classList.remove('show'), 10000 + 60 * text.length);
+    // And in the transcript, where it is still there after it fades, and to
+    // a screen reader (appendNotice announces it). A second press of End says
+    // the same again; that is not stacked under itself, only said again.
+    const t = $('transcript');
+    if (!(gateNoteCopy && gateNoteCopy.textContent === text
+          && t.children[t.children.length - 1] === gateNoteCopy)) gateNoteCopy = appendNotice(text);
+    else announce(text);
   }
+  // Just under the header, wherever the header is. A fixed 104px fitted the
+  // desktop header only: on a phone the header runs to 250px and more, so a
+  // note there covered the very controls it was about (End, the ring, Move
+  // on), and the connection-lost card covered Start and "Stop and leave the
+  // study". Never above the banner, which stays when the header scrolls away.
+  // On a phone the header has no box of its own (only its status row is
+  // pinned there), so its rows are measured instead.
+  function placeNote(n) {
+    const bottom = (el) => (el ? el.getBoundingClientRect().bottom || 0 : 0);
+    const top = Math.round(Math.max(bottom(document.querySelector('header')),
+      ...['aiBanner', 'statusGroup', 'actionGroup'].map(id => bottom($(id))))) + 8;
+    n.style.top = top + 'px';
+    if (window.innerHeight) n.style.maxHeight = (window.innerHeight - top - 12) + 'px';
+  }
+  // And again whenever the page moves under a note that is showing. Placed
+  // only when it came up, a drop while the page was scrolled left the card
+  // 35px from the top, which is where "Stop and leave the study" and Start
+  // are once the participant scrolls back up (and the first drop's card
+  // offers only Reconnect); after a rotation it kept the old screen's top
+  // and height, and Reconnect sat below the new one.
+  const placeShownNotes = () => requestAnimationFrame(() =>
+    document.querySelectorAll('.gate-note.show').forEach(placeNote));
+  window.addEventListener('scroll', placeShownNotes, { passive: true });
+  window.addEventListener('resize', placeShownNotes, { passive: true });
+  // The banner's height, which the phone's pinned status row sticks under
+  // (.status-group): it is one line on a wide phone, two on a narrow one,
+  // and more at a large text size.
+  function measureBanner() {
+    const b = $('aiBanner'), root = document.documentElement;
+    if (b && root) root.style.setProperty('--banner-h', b.offsetHeight + 'px');
+  }
+  measureBanner();
+  window.addEventListener('resize', measureBanner, { passive: true });
 
   // ---------- turn state ----------
   // First-time voice users mostly stall on one question: is it my turn? The
   // pill in the header answers it continuously.
-  let turnStateTimer = null;
   function setTurnState(text, cls) {
     const el = $('turnState');
     if (!el) return;
-    if (turnStateTimer) { clearTimeout(turnStateTimer); turnStateTimer = null; }
-    if (!text) { el.className = 'turn-state'; el.textContent = ''; return; }
+    // Nothing to say during a conversation is the idle pill, not no pill.
+    if (!text) { el.className = started ? 'turn-state show idle' : 'turn-state'; el.textContent = ''; return; }
     el.className = 'turn-state show ' + (cls || '');
     el.textContent = text;
   }
-  function setTurnStateThen(text, cls, nextText, nextCls, ms) {
-    setTurnState(text, cls);
-    turnStateTimer = setTimeout(() => setTurnState(nextText, nextCls), ms);
+
+  // THE TURN CUE (issue #49; the researchers' decision of 2026-09-28). One
+  // neutral cue, the same wording and behaviour in 1:1 and in the S3/S4
+  // rooms:
+  //   "<Name> is speaking"  while that character's audio is PLAYING (the
+  //                         audio clock, setActiveSpeaker), not from when
+  //                         their reply started generating;
+  //   "Listening…"          once the participant starts speaking
+  //                         (speech_started), until a line plays or the
+  //                         floor opens again;
+  //   "You can speak now"   when the server says so (turn_open): the last
+  //                         queued line has finished playing on this page
+  //                         and nothing else is queued or being generated.
+  // Between those the pill is empty. It used to keep what it last said, so
+  // it read "Dan is speaking" over the silence while Chris's follow-up was
+  // generated, and "You can speak now" after a line (the silence probe, a
+  // held call's reply) had started generating (review of 850b08e). It used
+  // to say "Your turn" at generation end, which was 7-17 s before the
+  // character stopped talking in e80fca, and switch to "Listening…" 4 s
+  // later on a timer; and a room said "You speak first" although its lead
+  // opens every scene.
+  function speakerName(id) {
+    return cueNames[id] || (cast.find(a => a.id === id) || {}).name || 'Your partner';
+  }
+  function renderTurnCue() {
+    if (!started) return;
+    if (activeSpeaker && activeSpeaker !== 'user') {
+      setTurnState(`${speakerName(activeSpeaker)} is speaking`, 'agent');
+    } else if (cueListening) {
+      setTurnState('Listening…', 'listen');
+    } else if (cueOpen) {
+      // Said once each time the floor opens (A11Y-02), for somebody who
+      // cannot see the pill. "<Name> is speaking" is not: the voice says it.
+      // Nor while the start cue is up, which has just said it ("You start
+      // the conversation…", "You're now with Sam. You start."): at S1's
+      // hand-off turn_open comes 0.4 s after it and would cut it off.
+      if (!startCueEl && $('turnState').textContent !== 'You can speak now') announce('You can speak now');
+      setTurnState('You can speak now', 'you');
+    } else {
+      setTurnState('');
+    }
   }
   function startTimer() {
     timerStartMs = Date.now();
@@ -1699,7 +2331,181 @@
     el.textContent = text;
     $('transcript').appendChild(el);
     $('transcript').scrollTop = $('transcript').scrollHeight;
+    announce(text);
     return el;
+  }
+
+  // Said to a screen reader through the page's one status region (#srStatus).
+  // The transcript is not live, so what the app itself has to say, and the
+  // cues that it is the participant's turn, are said here and nothing else.
+  //
+  // What is said in one burst is said together, in order. At the start of
+  // every conversation segment_start, awaiting_participant and turn_open
+  // arrive in the same server tick, and each announce() replaced the one
+  // before it before the region was read: a screen reader heard "You can
+  // speak now" and never who they were with, or that they start.
+  const ANNOUNCE_BURST_MS = 100;
+  let saidInBurst = '', burstTimer = null;
+  function announce(text) {
+    const s = $('srStatus');
+    if (!s) return;
+    const said = !saidInBurst ? text
+      : saidInBurst + (/[.!?…]$/.test(saidInBurst) ? ' ' : '. ') + text;
+    saidInBurst = said;
+    if (!burstTimer) burstTimer = setTimeout(() => { saidInBurst = ''; burstTimer = null; }, ANNOUNCE_BURST_MS);
+    // The same words again (a second press of End) have to be a change, or
+    // they are not read: a trailing no-break space makes them one.
+    s.textContent = s.textContent === said ? said + '\u00a0' : said;
+  }
+
+  // ---------- the notice for a capture that would not start ----------
+  // ONE notice, replaced on every failed press and taken away when capture
+  // works (issue #42). startSession used to appendNotice on every failure, so
+  // a participant pressing Start with the microphone blocked piled up one
+  // identical copy per press — four presses, four paragraphs — on the screen
+  // they were already stuck on, and the transcript was an aria-live region, so
+  // a screen reader read the whole pile back. Replaced rather than edited in
+  // place, which lets a screen reader announce this attempt once. It lives in
+  // #captureSlot, under the header and next to the Start button whose press
+  // it answers, not at the end of the transcript: on a phone that was below
+  // the setup card, 800 px under Start, and nothing on screen changed when
+  // Start failed. Removed through the slot, the one parent it can have.
+  let captureNote = null;   // { el, kind } while a capture failure is on screen
+  function dropCaptureNote() {
+    if (!captureNote) return;
+    try { $('captureSlot').removeChild(captureNote.el); } catch (e) { /* already gone */ }
+  }
+  function showCaptureFailure(kind) {
+    dropCaptureNote();
+    if (!captureNote) {
+      const el = document.createElement('div');
+      el.className = 'system-note capture-note';
+      captureNote = { el, kind };
+    }
+    captureNote.kind = kind;
+    // The message is the element's own text, so the note reads as one
+    // sentence wherever it is read back from.
+    captureNote.el.textContent = CAPTURE_MESSAGES[kind] || CAPTURE_MESSAGES.denied;
+    // And the way out, which is not a withdrawal (issue #41): the only other
+    // control on this screen was Start, and on a run link "Stop and leave the
+    // study" — so somebody whose headset would not work had to withdraw to get
+    // out of the page. Rebuilt with the text, because setting textContent is
+    // what cleared the previous one.
+    const help = document.createElement('button');
+    help.type = 'button';
+    help.className = 'secondary';
+    help.textContent = kind === 'camera' ? 'I can’t get my camera working'
+                                         : 'I can’t get my microphone working';
+    help.addEventListener('click', () => openCaptureHelp(kind));
+    captureNote.el.appendChild(help);
+    captureNote.help = help;
+    $('captureSlot').appendChild(captureNote.el);
+    // Focus goes to the way out, so the failure is where the participant is,
+    // keyboard and screen reader included, not somewhere they have to find.
+    help.focus();
+    return captureNote.el;
+  }
+  // Capture works now, so the failure the notice describes is over. Never
+  // throws: it runs inside startSession's try, where a throw would be
+  // reported as the capture failing.
+  function clearCaptureFailure() {
+    try { dropCaptureNote(); } catch (e) {}
+    captureNote = null;
+    try { hideOverlay($('micHelpOverlay')); } catch (e) {}
+  }
+
+  // ---------- the way out of a capture failure (issue #41) ----------
+  // A microphone that will not start is the most common thing to go wrong on a
+  // participant's own machine, and the page had nothing for it but Start (which
+  // fails the same way again) and, on a study link, "Stop and leave the study"
+  // — a withdrawal, recorded as one, for somebody who never chose to stop. This
+  // card offers what actually helps: the audio check again, the study contact,
+  // and a way to finish that is recorded as what it is (mic_failed /
+  // camera_failed on the run, and the same status on the survey link) and
+  // leaves the run open, so the same person can come back on a machine that
+  // works. It hands out no completion code: that is reached by finishing the
+  // run and nowhere else (2026-09-23).
+  const CAPTURE_EXIT_TIMEOUT_MS = 8000;
+  const captureExitStatus = (kind) => (kind === 'camera' ? 'camera_failed' : 'mic_failed');
+
+  async function openCaptureHelp(kind) {
+    const camera = kind === 'camera';
+    const what = camera ? 'camera' : 'microphone';
+    $('micHelpTitle').textContent = `If your ${what} will not work`;
+    $('micHelpBody').innerHTML =
+      (camera
+        ? '<p>Every conversation is recorded on video, so they cannot go ahead without a ' +
+          'working camera. This is not something you did wrong.</p>'
+        : '<p>The conversations are spoken out loud, so they cannot go ahead without a ' +
+          'working microphone. This is not something you did wrong.</p>') +
+      '<p>You can run the audio and camera check again: it tests the microphone, the ' +
+      'speakers and the camera one at a time and says what to try for each. If it still ' +
+      'will not work, you can finish here.' +
+      // Only where it is true: the note is written on the run, and a direct
+      // link has none (leaveOnCaptureFailure records nothing there).
+      (runId
+        ? ' Finishing this way is not the same as stopping the study: we note that your ' +
+          `${what} did not work, not that you chose to stop.`
+        : '') +
+      '</p>';
+    $('micHelpContact').textContent = '';
+    $('micHelpLeave').disabled = false;
+    $('micHelpBack').onclick = () => { hideOverlay($('micHelpOverlay')); };
+    $('micHelpCheck').onclick = async () => {
+      hideOverlay($('micHelpOverlay'));
+      // Back on the room page afterwards, with Start offered: a fresh press
+      // is the gesture a browser wants before it asks for the microphone.
+      await runAudioCheck();
+      // The notice was about the attempt the check has just been run for,
+      // and it stayed up with nothing saying what to do next (FLOW-08). Focus
+      // goes to the Start button the note names, since the notice it was on
+      // has gone.
+      clearCaptureFailure();
+      showGateNote('The audio check is over. Press Start conversation when you are ready.');
+      $('startBtn').focus();
+    };
+    $('micHelpLeave').onclick = () => leaveOnCaptureFailure(kind);
+    showOverlay($('micHelpOverlay'));
+    // After the card paints: the contact is a network call, and somebody stuck
+    // on a broken microphone should not wait on it to see their options.
+    $('micHelpContact').innerHTML = 'If you would like help, contact ' + (await contactWho()) + '.';
+  }
+
+  async function leaveOnCaptureFailure(kind) {
+    const status = captureExitStatus(kind);
+    $('micHelpLeave').disabled = true;
+    // Recorded before the card changes, and bounded: a server that does not
+    // answer must not hold somebody on a page they are trying to leave. A run
+    // is what the line is written on, so a direct link records nothing.
+    let recorded = false;
+    if (runId) {
+      try {
+        const r = await fetchWithDeadline(`/api/run/${encodeURIComponent(runId)}/exit` + keyParamFirst, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status, capture_kind: kind,
+            participant_id: participantId || '',
+            session_id: sessionId || '',
+          }),
+        }, CAPTURE_EXIT_TIMEOUT_MS);
+        recorded = r.ok;
+      } catch (e) { recorded = false; }
+    }
+    hideOverlay($('micHelpOverlay'));
+    const what = kind === 'camera' ? 'camera' : 'microphone';
+    showClosing(
+      'Finishing here',
+      `<p>Thank you for trying. The conversations cannot go ahead on this computer without a ` +
+      `working ${what}.</p>` +
+      (recorded
+        ? `<p>We have noted that your ${what} did not work. This is not recorded as you ` +
+          'stopping the study, and if you can get to a computer where it works, the same ' +
+          'study link will still take you in.</p>'
+        : runId
+          ? `<p>We could not reach the server to note that your ${what} did not work, so ` +
+            'please mention it using the contact below.</p>'
+          : ''),
+      '', { status });
   }
 
   // ---- user caption: one consolidated, live-updating bubble per utterance ----
@@ -1715,6 +2521,23 @@
     if (userLiveEl) userLiveEl.classList.remove('live');
     userLiveEl = null;
     userFinals = [];
+  }
+  // A participant line goes above every character line that began to play
+  // after they began speaking (issue #50). Their transcript lands a second or
+  // more after they stop, and a line granted for their previous turn can start
+  // in that gap, so appended it sat under a line they had not heard yet.
+  // `spokenAgoS` is the server's "they began this line that long before the
+  // frame"; without it, or an audio clock, the line stays where it landed.
+  // Only character lines are stepped over, never another line of theirs or a
+  // note.
+  function placeUserCaption(el, spokenAgoS) {
+    if (!el || typeof spokenAgoS !== 'number' || !audioCtx) return;
+    const began = audioCtx.currentTime - spokenAgoS;
+    const tr = $('transcript');
+    const kids = tr.children;
+    let i = Array.prototype.indexOf.call(kids, el), ref = null;
+    while (i > 0 && typeof kids[i - 1].audioAt === 'number' && kids[i - 1].audioAt > began) ref = kids[--i];
+    if (ref) tr.insertBefore(el, ref);
   }
 
   // The participant's words, compared the way a listener would: letters and
@@ -1785,11 +2608,16 @@
     e.captureKind = kind;
     return e;
   }
+  // A blocked microphone gets one instruction, in the room and in the audio
+  // check (FLOW-08). The room's was "Please allow microphone access and try
+  // again", with no how-to and no reload, beside the check's full one.
+  const MIC_BLOCKED_HOWTO = 'Your browser has blocked the microphone for this page. Click the mic '
+    + 'or camera icon at the end of the address bar, choose Allow, then reload this page';
   const CAPTURE_MESSAGES = {
     camera: 'This study records video, so your camera needs to be on for every conversation. ' +
             'Please allow camera access (look for the camera icon in the address bar), close any ' +
             'other app that is using the camera, then press Start conversation again.',
-    denied: 'We couldn’t turn on your microphone. Please allow microphone access and try again.',
+    denied: MIC_BLOCKED_HOWTO + ' and press Start conversation again.',
     missing: 'We couldn’t find a working microphone. Check that one is plugged in and that no other ' +
              'app (a video call, a recorder) is using it, then try again.',
     insecure: 'This page is not being served over a secure connection, so the browser will not let it ' +
@@ -1820,8 +2648,7 @@
     quiet: "We can't hear anything yet. Check that your browser allowed the microphone (look for a "
          + 'mic icon in the address bar), that the right input device is selected, and that nothing '
          + 'is muted. Then try again.',
-    denied: 'Your browser is refusing this page the microphone. Click the mic or camera icon at the '
-          + 'end of the address bar, choose Allow, then reload this page and try again.',
+    denied: MIC_BLOCKED_HOWTO + ' and try again.',
     unanswered: 'Your browser has asked whether this page may use your microphone and is still '
               + 'waiting for an answer. Look for the permission bar at the top of the window, or the '
               + 'icon at the end of the address bar, choose Allow, then press Test my microphone again.',
@@ -2108,7 +2935,7 @@
         ctxWatchdog = null;
         if (!started || ctx !== audioCtx || ctx.state === 'running') return;
         appendNotice('Your browser paused this page’s audio, so nothing was being heard or recorded. ' +
-                     'Click Reconnect to start this part of the conversation again.');
+                     'Press Reconnect to start this conversation again from the beginning.');
         onConnectionDropped();
       }, 2000);
     });
@@ -2469,6 +3296,9 @@
     el.textContent = text;
     $('transcript').appendChild(el);
     $('transcript').scrollTop = $('transcript').scrollHeight;
+    // And said: the transcript is not a live region (A11Y-02), so without
+    // this a screen reader was never told the filming had stopped.
+    announce(text);
   }
 
   // The client's own reason for a failure, as a short bare token. server/app.py
@@ -3123,19 +3953,32 @@
           if (participantId) qs.set('participant_id', participantId);
           history.replaceState({}, '', '?' + qs);
         } catch {}
-        // The participant opens every scene: nobody speaks until they do.
-        // Say so, in the header and in the transcript, or they wait in
-        // silence for a character to start.
-        setTurnState("You're in the room. Say hello to get started.", 'cue');
-        const cue = document.createElement('div');
-        cue.className = 'scene';
-        cue.id = 'openingCue';
-        cue.textContent = 'You speak first. Say hello to get started, then talk as you would at work.';
-        $('transcript').appendChild(cue);
+      } else if (m.type === 'awaiting_participant') {
+        // The participant opens every conversation, 1:1 and rooms alike, and
+        // again when they are moved on to somebody new (the researchers' rule
+        // of 2026-09-28, pipeline 2026-09-28b): nobody speaks until they do,
+        // so the page says so plainly and keeps saying it until the server
+        // has accepted a line of theirs (participant_opened). A noise or a
+        // sound tag is not one, so speech_started does not take it down.
+        // One cue at a time: a hand-off before any accepted line would leave
+        // the first one on screen for good.
+        if (startCueEl) startCueEl.remove();
+        startCueEl = document.createElement('div');
+        startCueEl.className = 'scene start-cue';
+        startCueEl.textContent = m.reason === 'handoff'
+          ? `You're now with ${listPhrase(m.names || [])}. You start.`
+          : "You start the conversation. Say hello when you're ready.";
+        $('transcript').appendChild(startCueEl);
+        $('transcript').scrollTop = $('transcript').scrollHeight;
+        announce(startCueEl.textContent);
+      } else if (m.type === 'participant_opened') {
+        // Their first accepted line: the turn cue takes over. The first of
+        // the encounter also starts the floor's clock (floorElapsedS).
+        if (startCueEl) { startCueEl.remove(); startCueEl = null; }
+        if (m.first_of_encounter && !floorStartMs) floorStartMs = Date.now();
       } else if (m.type === 'speech_started') {
-        setTurnState("You're speaking", 'you');
-        const cue = $('openingCue');
-        if (cue) cue.remove();
+        cueListening = true; cueOpen = false;
+        renderTurnCue();
       } else if (m.type === 'user_transcript') {
         // Build one consolidated bubble: interim updates live, finals commit.
         // Count a committed participant turn here: user_transcript with
@@ -3153,6 +3996,7 @@
           if (m.unclear || !repeatsLastUserFinal(shown, now)) {
             userFinals.push(shown);
             renderUserCaption('');
+            placeUserCaption(userLiveEl, m.spoken_ago_s);
           }
           lastUserFinal = { text: m.unclear ? '' : speechKey(shown), at: now };
           // A committed turn is a line of its own. This used to wait for
@@ -3164,7 +4008,6 @@
           // commits each of these as its own turn; the page now shows them as
           // the server heard them.
           finalizeUserCaption();
-          setTurnState('Listening…', 'listen');
           userTurns++;
         }
         else { renderUserCaption(m.text); }
@@ -3172,7 +4015,12 @@
         finalizeUserCaption();
         agentTurns++;
         assistantSpeaking = true;
-        setTurnState(`${m.agent_name || 'Your partner'} is speaking`, 'agent');
+        // A line is on its way, so the floor is not open, and the pill stops
+        // saying it is; it names the speaker when their audio starts
+        // (setActiveSpeaker), not now.
+        cueOpen = false;
+        if (m.agent_id && m.agent_name) cueNames[m.agent_id] = m.agent_name;
+        renderTurnCue();
         // The mic stays open in EVERY mode, group and 1:1 alike, so the
         // participant can interject exactly as they could in a real room; the
         // server stops the current speaker when it hears them.
@@ -3247,8 +4095,8 @@
         }
         currentTurn = null;
         // The speaking state clears when the last audio chunk finishes
-        // (playPcmChunk.onended); capture itself never stopped.
-        setTurnStateThen('Your turn', 'you', 'Listening…', 'listen', 4000);
+        // (playPcmChunk.onended); capture itself never stopped. The pill is
+        // not told anything here: generation ending is not the line ending.
       } else if (m.type === 'segment_start') {
         // A new interaction: say plainly who the participant is now with, and
         // grey out anyone not in the room for this beat.
@@ -3267,19 +4115,44 @@
         el.innerHTML = `${label}<span class="with">, you are now with ${names}</span>`;
         $('transcript').appendChild(el);
         $('transcript').scrollTop = $('transcript').scrollHeight;
+        announce(el.textContent);
         applyPresence();
       } else if (m.type === 'floor_held') {
         // The server declined to finish the encounter before the floor (the
-        // actor's end tool, or an auto-advance that came due early). Nothing
-        // to do but say so; the conversation carries on.
+        // participant's move-on, or the character saying goodbye early).
+        // Nothing to do but say so; the conversation carries on.
+        // seconds_left is the nearer of the floor and the stop; when the stop
+        // is nearer, that is what the note says.
         const left = Math.max(1, Math.ceil((m.seconds_left || 0) / 60));
-        showGateNote(`Keep going — about ${left} more minute${left === 1 ? '' : 's'} in this conversation.`);
+        showGateNote(stopBeforeFloor(encounterElapsedS())
+          ? `Keep going — this conversation ends automatically in about ${minutesText(m.seconds_left || 0)}.`
+          : `Keep going — ${canMoveOnIn(left)}.`);
+      } else if (m.type === 'encounter_clock') {
+        // The runner's own floor, wrap and stop, on every link type (a direct
+        // link has no run to read them from), and where its clock stands: the
+        // timer is lined up with it, so End unlocks when the server's floor
+        // opens and not the connect earlier that the Start press was.
+        applyTiming(m);
+        if (typeof m.elapsed_s === 'number' && started) {
+          timerStartMs = Date.now() - Math.max(0, m.elapsed_s) * 1000;
+          renderTimer();
+        }
+      } else if (m.type === 'move_on_open') {
+        // The server's floor has passed: the same notice as the page's own
+        // clock gives, once. The server's clock is the one that counts, so a
+        // page clock still short of the floor is moved up to it, and the ring
+        // and End open with the notice.
+        if (started && floorElapsedS() < MIN_S) {
+          floorStartMs = Date.now() - MIN_S * 1000;
+          renderTimer();
+        }
+        noteMoveOn();
       } else if (m.type === 'wrap_up') {
-        $('gateLabel').textContent = 'Wrapping up';
+        noteWrap(m.seconds_left);
       } else if (m.type === 'encounter_complete') {
         const el = document.createElement('div');
         el.className = 'scene';
-        el.textContent = 'Encounter complete, thank you.';
+        el.textContent = 'Conversation complete, thank you.';
         $('transcript').appendChild(el);
         // Tear the session down FIRST: endSession finalizes and uploads the
         // webcam recording (sets videoUpload) and stops the mic/camera/ws/timer,
@@ -3301,13 +4174,18 @@
         // we already buffered so the character does not keep talking over the
         // participant, clear the speaking ring, and say whose turn it is.
         stopScheduledAudio();
-        setTurnState("You're speaking", 'you');
+        cueListening = true; cueOpen = false;
+        renderTurnCue();
       } else if (m.type === 'silence') {
         finalizeUserCaption();
         assistantSpeaking = false;
         setMicMuted(false);
         setActiveSpeaker(null);
-        setTurnState('Your turn', 'you');
+      } else if (m.type === 'turn_open') {
+        // The server's half of the turn cue: nothing is queued or being
+        // generated, and the last line has finished playing here.
+        cueOpen = true; cueListening = false;
+        renderTurnCue();
       } else if (m.type === 'voice_notice') {
         // A fault the encounter survived, from the runner: a gateway stall it
         // is retrying, a reply cut off, or — kind 'reconnected' — a session
@@ -3343,7 +4221,7 @@
           finalizeUserCaption();
           assistantSpeaking = false;
           setActiveSpeaker(null);
-          setTurnState('Your turn', 'you');
+          // The rebuilt session is quiet; the server's turn_open says so.
         }
       } else if (m.type === 'error') {
         // Not a turn: this is the runner reporting a segment boundary it
@@ -3352,7 +4230,13 @@
         // _advance_segment retries the boundary, so a persistent failure
         // wrote one more sentence into the participant's own transcript per
         // attempt.
-        appendNotice('Something went wrong. Please try again.');
+        // Said as what the participant can do (FLOW-07): "Please try again"
+        // pointed at nothing to retry. The conversation goes on past these,
+        // or the socket closes and the drop card takes over; a lost
+        // transcription channel leaves nobody hearing them, and then the way
+        // on is a reload.
+        appendNotice('There was a problem on our side. You can keep talking; if nobody ' +
+                     'answers you, reload this page to start this conversation again.');
         // The message itself is NOT shown: it is written for an operator
         // ("No gateway API key (set LITELLM_API_KEY)") and a participant can
         // do nothing with it. Only the fact that the server stated a reason
@@ -3374,7 +4258,7 @@
     // startCapture, which opens the microphone and the webcam. Honour the flag:
     // ensureParticipant returns only once a consent record actually exists.
     if (!participantId) await ensureParticipant();
-    try { await startCapture(); }
+    try { await startCapture(); clearCaptureFailure(); }
     catch (e) {
       // Release everything startCapture may have created before it failed, so
       // repeated mic denials don't leak AudioContexts (browsers cap concurrent
@@ -3394,7 +4278,7 @@
       // another app all threw here and all told the participant to allow a
       // permission they had already allowed, offering a Start button that would
       // fail identically forever. Say which of them it was.
-      appendNotice(CAPTURE_MESSAGES[captureKindFor(e)] || CAPTURE_MESSAGES.denied);
+      showCaptureFailure(captureKindFor(e));
       $('startBtn').disabled = false; return;
     }
     $('startBtn').style.display = 'none';
@@ -3402,7 +4286,7 @@
     if (runId && run && !run.done) {
       $('stopBtn').textContent =
         run.position < run.total
-          ? `End conversation (go to encounter ${run.position + 1} of ${run.total})`
+          ? `End conversation (go to conversation ${run.position + 1} of ${run.total})`
           : 'End conversation (finish)';
     }
     started = true;
@@ -3411,11 +4295,19 @@
     // Per attempt, not per page: a retry that succeeds must not inherit the
     // previous attempt's verdict, and one that fails again must earn its own.
     serverStatedFailure = false;
+    sessionStartedAt = Date.now();
+    // The encounter clock's once-only marks are per conversation: a direct
+    // link's "Start conversation" again is a new one.
+    ceilingFired = false; moveOnNoted = false; wrapNoted = false;
+    floorStartMs = 0;
+    if (startCueEl) { startCueEl.remove(); startCueEl = null; }
+    $('gate').classList.remove('open');
     userTurns = 0;
     agentTurns = 0;
     lastUserFinal = { text: '', at: 0 };
     setTurnState('Connecting…', '');
-    $('dropNote').classList.remove('show');
+    cueOpen = false; cueListening = false;
+    hideOverlay($('dropNote'), { modal: false });
     speechQueue = [];
     if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
     const pidParam = participantId ? `&participant_id=${encodeURIComponent(participantId)}` : '';
@@ -3440,8 +4332,10 @@
       catch (err) {
         if (!frameErrorNoted) {
           frameErrorNoted = true;
-          appendNotice('Something went wrong handling part of this conversation. ' +
-                       'If you stop hearing the other people, click Reconnect.');
+          // No Reconnect is on screen until the drop card is, and "the other
+          // people" was wrong in 1:1 (FLOW-07).
+          appendNotice('Something went wrong on this page. If you stop hearing anyone, ' +
+                       'reload the page to start this conversation again.');
         }
       }
     });
@@ -3515,12 +4409,12 @@
     const line = document.createElement('div');
     line.className = 'scene';
     line.textContent = fatal
-      ? 'This encounter could not continue. It is not something you did.'
-      : 'The connection dropped. Click Reconnect to start this part of the conversation again.';
+      ? 'This conversation could not continue. It is not something you did.'
+      : 'The connection dropped. Press Reconnect to start this conversation again from the beginning.';
     $('transcript').appendChild(line);
     $('transcript').scrollTop = $('transcript').scrollHeight;
     endSession();
-    setTurnState(fatal ? 'Encounter stopped' : 'Connection lost', '');
+    setTurnState(fatal ? 'Conversation stopped' : 'Connection lost', '');
     // Every branch writes the card, so no state is left wearing another's
     // wording. Static strings only: nothing the server sent reaches innerHTML.
     // Each card says which door it is offering and why, because a participant
@@ -3530,9 +4424,8 @@
         '<b>This is not working at the moment.</b> It stopped twice before the '
         + 'conversation could get going, so it will not be tried a third time. '
         + 'This is not something you did, and you have not lost your place in the '
-        + 'study or anything you have already done. You can go on to the next part '
-        + 'of the study without this conversation; the study team can see that it '
-        + 'did not run.';
+        + 'study or anything you have already done. You can go on without this '
+        + 'conversation; the study team can see that it did not run.';
       $('dropReconnect').style.display = 'none';
       showFailureExit(true);
     } else if (exhausted) {
@@ -3554,7 +4447,7 @@
       showFailureExit(true);
     } else if (fatal) {
       $('dropText').innerHTML =
-        '<b>This encounter could not continue.</b> Something on our side stopped it '
+        '<b>This conversation could not continue.</b> Something on our side stopped it '
         + 'before the conversation got going. It is not something you did, and you '
         + 'have not lost your place in the study. You can try once more; if it stops '
         + 'again, you will be able to go on without it'
@@ -3576,9 +4469,13 @@
       // but the study being broken.
       //
       // The sentence that replaces it is the one that IS true and the one they
-      // need before they press the button: this part starts over, the rest of
-      // the study does not. Whether the abandoned fragment is usable data is a
-      // separate question and answered elsewhere — server/app.py's
+      // need before they press the button: this conversation starts over, the
+      // rest of the study does not. The whole conversation, not "this part":
+      // in S2/S4 a part is one phase of it, and a drop in part 2 meets part 1
+      // again, with the timer back at 00:00 and End locked again for the
+      // floor, which the card has to say too (FLOW-06). Whether the abandoned
+      // fragment is usable data is a separate question and answered
+      // elsewhere — server/app.py's
       // _rateable_split already withholds any session no run recorded as
       // completed, which is exactly what this fragment is.
       //
@@ -3587,22 +4484,28 @@
       // but somebody whose conversation keeps dropping is told they may go on
       // without it rather than being handed the same button a fourth time.
       $('dropText').innerHTML =
-        '<b>Connection lost.</b> Your conversation was interrupted. Click Reconnect '
-        + 'to carry on — this part will start again from the beginning, so the other '
-        + 'person will greet you afresh. You have not lost your place in the study or '
+        '<b>Connection lost.</b> Your conversation was interrupted. Press Reconnect '
+        + 'to carry on: this conversation will start again from the beginning, and you '
+        + 'speak first. Its timer starts again at 00:00, and End unlocks again '
+        + minutesText(MIN_S) + ' after you start. You have not lost your place in the study or '
         + 'anything you have already finished.'
         + (repeated
             ? ' This is the ' + ordinalWord(encounterDrops) + ' time this conversation '
               + 'has dropped. You do not have to keep trying: '
               + (canSkip
-                  ? 'you can go on to the next part without it, what was recorded of it '
+                  ? 'you can go on without it, what was recorded of it '
                     + 'is kept and the study team can see it stopped early.'
                   : 'please tell the study team using the contact below.')
             : '');
       $('dropReconnect').textContent = 'Reconnect';
       if (repeated) showFailureExit(false);
     }
-    $('dropNote').classList.add('show');
+    // The card's name (aria-labelledby) is its bold first sentence, which
+    // every branch above has just rewritten.
+    const lead = $('dropText').querySelector('b');
+    if (lead) lead.id = 'dropTitle';
+    placeNote($('dropNote'));
+    showOverlay($('dropNote'), { modal: false });
   }
 
   function ordinalWord(n) {
@@ -3621,7 +4524,7 @@
   function skipDoorLabel() {
     if (!run) return 'Go on without this conversation';
     return run.position < run.total
-      ? `Go on to encounter ${run.position + 1} of ${run.total} without this one`
+      ? `Go on to conversation ${run.position + 1} of ${run.total} without this one`
       : 'Finish the study without this conversation';
   }
 
@@ -3631,7 +4534,7 @@
   // had (server/app.py flags one with none) rather than vanishing from it —
   // and the screen after says it stopped early.
   async function skipEncounter() {
-    $('dropNote').classList.remove('show');
+    hideOverlay($('dropNote'), { modal: false });
     await onEncounterComplete({ stoppedEarly: true });
   }
 
@@ -3717,7 +4620,7 @@
   }
 
   $('dropReconnect').addEventListener('click', async () => {
-    $('dropNote').classList.remove('show');
+    hideOverlay($('dropNote'), { modal: false });
     await startSession();
   });
 
@@ -3828,18 +4731,29 @@
     if (b.disabled) b.dataset.moving = '1';
   });
   $('stopBtn').addEventListener('click', () => {
+    // Every conversation runs at least MIN_S; the encounter is the
+    // measurement, and a 3-minute conversation has not exercised it. End is
+    // held until then on EVERY link type (#34: study, internal /test and
+    // direct researcher links; a direct link used to end at once, with no
+    // ring and no sign at 7:00) — the server would refuse a study advance
+    // anyway (409) — and the note says so, naming the control that is never
+    // held where there is one: "Stop and leave the study", which withdraws.
+    // The clock is the ring's: from the participant's first accepted line,
+    // as the runner's own floor (participant_opened, move_on_open).
+    const elapsed = floorElapsedS();
+    if (started && elapsed < MIN_S) {
+      const left = Math.max(1, Math.ceil((MIN_S - elapsed) / 60));
+      const when = canMoveOnIn(left);
+      // When the stop comes first End never unlocks, so the note says the
+      // stop instead (the gate's own rule, stopBeforeFloor).
+      const s = encounterElapsedS();
+      showGateNote((stopBeforeFloor(s)
+        ? `This conversation ends automatically in about ${minutesText(MAX_S - s)}.`
+        : `${when[0].toUpperCase()}${when.slice(1)} — the ring next to the timer fills when you can.`) +
+        (runId ? ' If you want to stop taking part in the study, use “Stop and leave the study”.' : ''));
+      return;
+    }
     if (runId) {
-      // Study encounters run at least MIN_S; the encounter is the measurement,
-      // and a 3-minute conversation has not exercised it. End is held until
-      // then — the server would refuse the advance anyway (409) — and the note
-      // says so and names the control that is never held: "Stop and leave the
-      // study", which withdraws. Internal test runs skip the gate.
-      const elapsed = sessionStartedAt ? (Date.now() - sessionStartedAt) / 1000 : 0;
-      if (gateActive() && elapsed < MIN_S) {
-        const left = Math.ceil((MIN_S - elapsed) / 60);
-        showGateNote(`This conversation runs about ${left} more minute${left === 1 ? '' : 's'} — the ring next to the timer fills when you can end it. If you want to stop taking part in the study, use “Stop and leave the study”.`);
-        return;
-      }
       if (!confirm('Finish this conversation and move on?')) return;
       endSession();
       onEncounterComplete();
@@ -3851,11 +4765,15 @@
   // until now nothing on the page did that: End conversation finishes the
   // current encounter and immediately enrols them in the next of four, so a
   // participant using it as the withdrawal control was told they had stopped
-  // and then handed another conversation. This is the control that stops the
-  // study, and it is the only one that does.
-  $('leaveBtn').addEventListener('click', async () => {
-    if (!confirm('Stop the study and leave? This ends your participation now. You will not be asked to do the remaining conversations.')) return;
-    $('leaveBtn').disabled = true;
+  // and then handed another conversation. This is what stops the study: the
+  // header's control, and the door that stands in for it on the upload wait,
+  // whose card covers the header (FLOW-05). Nothing else does.
+  $('leaveBtn').addEventListener('click', () => stopTheStudy(
+    'Stop the study and leave? This ends your participation now. You will not be asked to do the remaining conversations.',
+    $('leaveBtn')));
+  async function stopTheStudy(question, btn) {
+    if (!confirm(question)) return;
+    btn.disabled = true;
     // Before endSession, which is what stops the recorder and therefore what
     // starts the upload of a recording this server is about to refuse.
     withdrawing = true;
@@ -3892,16 +4810,38 @@
         : '<p>We could not reach the server to note that you stopped, so if you ' +
           'would like that on file, please say so using the contact below.</p>'),
       run?.completion_code || '');
-  });
+  }
+
+  // The scenario's brief, one request per participant id and shared (issue
+  // #44). The boot sequence asks for it as soon as the run has said which
+  // scenario this is, so the header can carry the title through the intro
+  // overlays instead of "Loading…"; loadBrief then reads the same answer
+  // rather than asking twice. Keyed on the participant id because the brief
+  // names the participant's assigned character from it: a brief fetched
+  // before a record existed is good for its title and nothing else, and
+  // loadBrief asks again once there is one. A failed fetch is not kept, so a
+  // Retry asks again.
+  let briefFetch = null;   // { pid, promise }
+  function fetchBrief() {
+    const pid = participantId || '';
+    if (briefFetch && briefFetch.pid === pid) return briefFetch.promise;
+    const pidQ = pid
+      ? `${keyParamFirst ? '&' : '?'}participant_id=${encodeURIComponent(pid)}` : '';
+    const promise = fetch('/api/scenarios/' + encodeURIComponent(scenario) + keyParamFirst + pidQ)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); });
+    const entry = { pid, promise };
+    briefFetch = entry;
+    promise.catch(() => { if (briefFetch === entry) briefFetch = null; });
+    return promise;
+  }
+  function showTitle(d) {
+    if (d && d.title) $('title').textContent = d.title;
+  }
 
   async function loadBrief() {
     try {
-      const pidQ = participantId
-        ? `${keyParamFirst ? '&' : '?'}participant_id=${encodeURIComponent(participantId)}` : '';
-      const r = await fetch('/api/scenarios/' + encodeURIComponent(scenario) + keyParamFirst + pidQ);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const d = await r.json();
-      $('title').textContent = d.title;
+      const d = await fetchBrief();
+      showTitle(d);
       const refHtml = briefingHtml(d, true);
       if (refHtml) {
         $('briefBody').classList.add('rich');
@@ -3913,12 +4853,8 @@
       // now (see showSituation), so keep the brief itself text-only.
       $('introPhoto').style.display = 'none';
       if (d.cast && d.cast.length) {
-        const names = d.cast.map(a => esc(a.name));
-        let label;
-        if (names.length === 1) label = `You will be talking with <strong>${names[0]}</strong>.`;
-        else if (names.length === 2) label = `You will be talking with <strong>${names[0]}</strong> and <strong>${names[1]}</strong>.`;
-        else label = `You will be talking with <strong>${names.slice(0, -1).join('</strong>, <strong>')}</strong>, and <strong>${names[names.length - 1]}</strong>.`;
-        $('castLine').innerHTML = label;
+        const names = d.cast.map(a => `<strong>${esc(a.name)}</strong>`);
+        $('castLine').innerHTML = `You will be talking with ${listPhrase(names)}.`;
       }
       $('brief').style.display = 'block';
       // Render preview tiles so the user sees who they'll meet before pressing Start.
@@ -3972,10 +4908,33 @@
     const scope = runId || scenario;
     try { sessionStorage.setItem(CHECK_KEY, scope); } catch {}
   }
+  // Every row back to "Not tested". The check can run a second time — "Check my
+  // audio again" on the capture-failure card (issue #41) — and a second run that
+  // opened on the first run's "We can hear you" and an armed Continue would
+  // let somebody walk back into the room past the very test they came to redo.
+  function resetAudioCheck() {
+    [['micStatus', 'micTestBtn', 'Test my microphone'],
+     ['spkStatus', 'spkTestBtn', 'Play a test sound'],
+     ['camStatus', 'camTestBtn', 'Turn on my camera']].forEach(([status, btn, label]) => {
+      $(status).textContent = 'Not tested';
+      $(status).className = 'status';
+      $(btn).textContent = label;
+    });
+    ['micHelp', 'spkHelp', 'camHelp'].forEach(id => $(id).classList.remove('show'));
+    $('micHelp').textContent = MIC_CHECK_HELP.quiet;
+    $('micMeter').style.width = '0%';
+    $('camPreview').style.display = 'none';
+    $('audioCheckContinue').disabled = true;
+  }
   function runAudioCheck() {
     return new Promise(resolve => {
       const ov = $('audioCheckOverlay');
+      resetAudioCheck();
+      // Its minutes too: this card is also shown without the first screen (a
+      // refresh after it, "Check my audio again").
+      describeEncounterLength();
       const micOk = { v: false }, spkOk = { v: false }, camOk = { v: false };
+      let spkPlays = 0;
       let testStream = null, testCtx = null, meterInt = null, micTimer = null, camStream = null;
       const update = () => { $('audioCheckContinue').disabled = !(micOk.v && spkOk.v && camOk.v); };
       // Release the microphone the moment the test has its answer.
@@ -4145,15 +5104,25 @@
           setTimeout(() => { try { ctx.close(); } catch {} }, 1200);
           $('spkStatus').innerHTML = '';
           const yes = document.createElement('button'); yes.textContent = 'I heard it';
-          yes.className = 'secondary'; yes.style.padding = '5px 10px'; yes.style.fontSize = '13px';
+          // A button's own size: the inline 5px padding made it the smallest
+          // target on the screen (27-33px tall).
+          yes.className = 'secondary';
           yes.addEventListener('click', () => {
             spkOk.v = true;
             $('spkStatus').textContent = 'Sound works'; $('spkStatus').className = 'status ok';
             $('spkHelp').classList.remove('show');
             update();
+            // The button pressed has just gone; focus back to the row's own.
+            $('spkTestBtn').focus();
           });
           $('spkStatus').appendChild(yes);
-          $('spkHelp').classList.add('show');
+          // The question to answer now, where a keyboard or screen-reader
+          // user is: it appeared in the status column with nothing said.
+          yes.focus();
+          // The help is for a sound that was not heard, so it waits for a
+          // second play: shown with the first, beside "I heard it", it read
+          // as a fault before the participant had answered (FLOW-13).
+          if (++spkPlays > 1) $('spkHelp').classList.add('show');
         } catch (e) {
           $('spkStatus').textContent = 'Could not play';
         }
@@ -4173,8 +5142,13 @@
         $('micTestBtn').removeEventListener('click', onMicTest);
         $('spkTestBtn').removeEventListener('click', onSpkTest);
         $('camTestBtn').removeEventListener('click', onCamTest);
+        // Both doors, whichever was used: the other one's `once` listener is
+        // still attached, and a second run would otherwise fire this run's
+        // finish as well as its own.
+        $('audioCheckContinue').removeEventListener('click', finish);
+        $('audioCheckSkip').removeEventListener('click', finish);
         markAudioCheck();
-        ov.style.display = 'none';
+        hideOverlay(ov);
         resolve();
       };
 
@@ -4185,29 +5159,42 @@
       // Internal testers can skip; study participants see the link too, since
       // a blocked check must never strand someone, but it is deliberately quiet.
       $('audioCheckSkip').addEventListener('click', finish, { once: true });
-      ov.style.display = 'flex';
+      showOverlay(ov);
     });
   }
 
   (async () => {
+    // Not awaited, and first: the build tag belongs on every screen this page
+    // can end up on, a blocking error included, since that is the screen a
+    // bug report is most often a picture of.
+    loadRunCfg().then(showBuild, () => {});
     // Resolve the run first: it decides which scenario this page is serving.
     // If it could not be resolved (or the run is already finished), stop here
     // rather than falling through to the default scenario.
     if (!(await loadRun())) return;
-    // Create the participant before the brief loads. The assigned name is
-    // derived from the participant key, so fetching the brief first would show
-    // one name on screen while the agents used another.
-    await ensureParticipant();
+    // The title as soon as the run has said which scenario this is, in
+    // parallel with the overlays below (issue #44). Nothing waits on it; a
+    // failure here is loadBrief's to report.
+    fetchBrief().then(showTitle, () => {});
     if (needsFictionAck()) {
-      $('fictionOverlay').style.display = 'flex';
+      describeEncounterLength();
+      showOverlay($('fictionOverlay'));
       await new Promise(resolve => {
         $('fictionAck').addEventListener('click', () => {
           markFictionAck();
-          $('fictionOverlay').style.display = 'none';
+          hideOverlay($('fictionOverlay'));
           resolve();
         }, { once: true });
       });
     }
+    // Create the participant once they have acknowledged the notice (issue
+    // #39) — opening the link, or refreshing it on that first screen, records
+    // nobody — and before the brief loads: the assigned name is derived from
+    // the participant key, so fetching the brief first would show one name on
+    // screen while the agents used another. A record that cannot be made has
+    // already put up its own card with a reload, and nothing below can run
+    // without one.
+    if (!(await ensureParticipant())) return;
     if (needsAudioCheck()) await runAudioCheck();
     await loadBrief();
   })();

@@ -17,6 +17,8 @@ from typing import Optional
 from anthropic import AsyncAnthropic
 from dotenv import dotenv_values
 
+from .build_info import build_sha
+
 # .env wins over ambient environment for these, deliberately.
 _FILE = dotenv_values()
 
@@ -507,13 +509,93 @@ def text_client() -> AsyncAnthropic:
 #                "Thank you.", "Casey?" heard as "TC?") unanswered. It
 #                routes as before 24a, on context; only a gate suppression
 #                (implausible_rate, no_speech, probe_pad) skips the turn.
+#   2026-09-28a  the post-turn steering review runs after the floor is
+#                released, as a tracked task and one review at a time, so the
+#                next routed turn no longer waits 0.8-1.2 s for it (#25); rooms
+#                get the turn_open cue (#49) and the 2026-09-28 end policy
+#                (#34; a member's held end_conversation is answered with its
+#                output alone). Who speaks next, and when, is unchanged.
+#   2026-09-28b  the participant opens every room: the lead no longer opens
+#                the scene (no _open_group_scene, open_scene or
+#                SCENE_OPEN_PROMPT), no silence probe and no turn routed on
+#                nothing before the participant's first accepted line
+#                (group_turn_skipped awaiting_participant). The room's
+#                `opening:` rides on the lead's brief as a first-reply note on
+#                every family, and unnamed turns go to the lead until it has
+#                spoken under it (director_route first_by opening_lead). A
+#                first line whose transcript lands after its turn stopped
+#                waiting is routed once it is accepted.
+#   2026-09-29a  the follow-up gap (#24, #48; the researchers' decision of
+#                2026-09-29, S3 and S4 alike): the second or third character
+#                of a room turn is given the floor only once the line before
+#                it has finished playing on the page (its play_end ack, or 2 s
+#                past its modelled end, as the turn cue reads it) and
+#                FOLLOWUP_GAP_S (1.0 s) of silence has followed. It was
+#                granted at that line's generation end and began 0.0-0.2 s
+#                after it. A participant line accepted during that wait or
+#                still unrouted, or their voice in the gap, gives them the
+#                floor instead: followup_yielded, with a reason, and the rest
+#                of the director's sequence is dropped. FOLLOWUP_GAP_S below
+#                0 restores 28b. Record: a barge-in's playback_cut names the
+#                line playing on the page, not a reply queued behind it (it
+#                was written for that reply, heard 0.0, #48 (c)).
+#   2026-09-29b  review of 29a: a follow-up yields only to a participant line
+#                the director will route. Their voice in the gap, a turn of
+#                theirs being closed, or its transcript still owed by the
+#                scribe (gpt, within ROUTE_TRANSCRIPT_WAIT) holds it instead,
+#                and it plays once that settles with no such line, the gap
+#                counted from the end of their sound as well. 29a dropped the
+#                sequence on a cough or a laugh in the gap (whose turn was then
+#                skipped as no_speech, so nobody spoke) and on a
+#                low_confidence "Yeah." the director never reads, and granted
+#                the follow-up while a line that ended in the gap was still
+#                being transcribed.
+#
+# PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
 #                is suppressed as no_speech at any voiced level
 #                (PARTICIPANT_DROP_WORDLESS), and a gateway
 #                response_cancel_not_active with no reply in flight is
 #                recorded but no longer shown to the participant as an error.
-PIPELINE_VERSION = "2026-09-24c"
-ROOM_PACING_VERSION = "2026-09-24b"
+#   2026-09-28a  the researchers' decisions of 2026-09-28. End policy (#34):
+#                from 7:00 the participant may move on (End unlocks on every
+#                link type, with a notice; move_on_open), and nothing ends an
+#                encounter by itself before 12:00 (warning 11:00, stop 12:00;
+#                were 12:00 and 13:00): the last interaction's auto-advance and
+#                end_conversation are held (auto_end_held), a held call is
+#                answered (tool_call_answered) and on gpt the character asked to
+#                go on (held_call_reply), and the clock runs on the watchdog's
+#                tick. Turn cue (#49): turn_open once the last line has played
+#                and nothing is queued or being generated. Issue #21: a
+#                transcript of sound tags alone ("(laughter)") is no_speech
+#                (PARTICIPANT_DROP_ANNOTATIONS), and in 1:1 a no_speech
+#                commit's reply is withdrawn.
+#   2026-09-28b  the participant opens every conversation (the researchers'
+#                rule of 2026-09-28, confirmed 2026-09-29): at the start of
+#                every encounter and at S1's hand-off to a new person nothing
+#                makes a character speak before the participant's first
+#                ACCEPTED line (awaiting_participant -> participant_opened):
+#                no silence or hand-off probe, no re-ask or reconnect replay,
+#                and in 1:1 a reply is held until its line is accepted
+#                (first_reply_released) and dropped if it is not
+#                (first_reply_withheld, the beat given back; a commit with no
+#                transcript is not, and a reply in flight at their next turn
+#                end is cancelled so that turn commits). Clocks: the
+#                7:00 move-on floor counts from the participant's first line,
+#                the S1 2:00 timebox from their first line to Riley or Mel;
+#                the 11:00 warning and the 12:00 ceiling stay on the
+#                encounter's clock. The page shows a start cue until then.
+#                Provenance `opening`.
+PIPELINE_VERSION = "2026-09-28b"
+ROOM_PACING_VERSION = "2026-09-29b"
+
+
+def _voice_style_provenance():
+    try:
+        from .voice_style import provenance as _vp
+        return _vp()
+    except Exception:  # noqa: BLE001 - provenance must never break a session
+        return None
 
 
 def provenance(model: Optional[str] = None) -> dict:
@@ -559,8 +641,30 @@ def provenance(model: Optional[str] = None) -> dict:
         # The deferral rule and the heard_text estimate (pipeline
         # 2026-09-23f); see record_provenance.
         "record": record_provenance(),
+        # Who opens a conversation, and which clock each limit counts on
+        # (pipeline 2026-09-28b; see realtime_voice_session's "the
+        # participant opens"). Before 28b a room's lead opened the scene and
+        # the floor counted from the socket opening.
+        "opening": {
+            "policy": "participant_opens",
+            "clocks": {"floor": "first_participant_line",
+                       "timebox": "first_participant_line_in_conversation",
+                       "wrap": "encounter_start",
+                       "ceiling": "encounter_start"},
+        },
         "pipeline_version": PIPELINE_VERSION,
         "room_pacing_version": ROOM_PACING_VERSION,
+        # The commit the running image was built from (server/build_info.py),
+        # None for a local checkout or an image built before BUILD_SHA. The
+        # two versions above name what the pipeline was MEANT to do; this
+        # names the code that did it, which is what an analyst needs when a
+        # deploy went somewhere nobody intended: the four days on a
+        # rolled-back image from 2026-09-24 are recognisable afterwards only
+        # because that image happened to predate pipeline_version.
+        "build": build_sha(),
+        # None unless VOICE_STYLE_FILE is set (a listening test): an accent is
+        # part of the stimulus, so a styled session must say so.
+        "voice_style": _voice_style_provenance(),
     }
 
 

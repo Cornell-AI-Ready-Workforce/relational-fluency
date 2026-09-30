@@ -754,7 +754,7 @@ function primed(uploadJs) {
     await b.clock.advance(43000);
     assert(/Saving your recording/.test($(b, 'nextTitle').textContent), 'the wait ended early');
     await b.clock.advance(3000);
-    assert(/Encounter 1 of 4 complete/.test($(b, 'nextTitle').textContent),
+    assert(/Conversation 1 of 4 complete/.test($(b, 'nextTitle').textContent),
       'the deadline did not release the participant: ' + $(b, 'nextTitle').textContent);
     assert(!/could not save/i.test($(b, 'nextBody').innerHTML),
       'a slow upload was reported to the participant as a lost one');
@@ -767,9 +767,9 @@ function primed(uploadJs) {
     await b.clock.advance(500);
     $(b, 'nextBtn').onclick();
     await b.clock.advance(10);
-    assert(/Encounter 1 of 4 complete/.test($(b, 'nextTitle').textContent),
+    assert(/Conversation 1 of 4 complete/.test($(b, 'nextTitle').textContent),
       'the skip button did not release the wait: ' + $(b, 'nextTitle').textContent);
-    assert(/Start encounter 2 of 4/.test($(b, 'nextBtn').textContent), 'no way on to the next encounter');
+    assert(/Start conversation 2 of 4/.test($(b, 'nextBtn').textContent), 'no way on to the next encounter');
   }
 
   // --- a failed upload is said out loud on the next screen ----------------
@@ -777,7 +777,7 @@ function primed(uploadJs) {
     const b = primed("videoUpload = Promise.resolve({ ok: false, reason: 'put_http_403' });");
     b.ctx.onEncounterComplete();
     await b.clock.advance(1000);
-    assert(/Encounter 1 of 4 complete/.test($(b, 'nextTitle').textContent), 'did not advance');
+    assert(/Conversation 1 of 4 complete/.test($(b, 'nextTitle').textContent), 'did not advance');
     assert(/could not save the video/i.test($(b, 'nextBody').innerHTML),
       'a lost recording produced the identical success screen: ' + $(b, 'nextBody').innerHTML);
   }
@@ -794,7 +794,7 @@ function primed(uploadJs) {
            "videoUpload = Promise.resolve({ ok: false, reason: 'network' });");
     b.ctx.onEncounterComplete();
     await b.clock.advance(1000);
-    assert(/All encounters complete/.test($(b, 'nextTitle').textContent), 'did not finish the run');
+    assert(/All conversations complete/.test($(b, 'nextTitle').textContent), 'did not finish the run');
     assert(/CODE1/.test($(b, 'nextBody').innerHTML), 'the completion code was lost');
     assert(/could not save the video/i.test($(b, 'nextBody').innerHTML), 'the final screen hid the loss');
   }
@@ -809,19 +809,18 @@ function primed(uploadJs) {
   }
 
   // --- taking the exit mid-wait is not painted over when the wait ends ----
+  // The door stops the study (FLOW-05), so its card is the withdrawal's.
   {
     const b = primed('videoUpload = new Promise(() => {});');
     b.ctx.onEncounterComplete();
     await b.clock.advance(500);
     $(b, 'nextAlt').onclick();
     await b.clock.advance(500);
-    assert(/Finishing here/.test($(b, 'nextTitle').textContent),
+    assert(/You have stopped the study/.test($(b, 'nextTitle').textContent),
       'the exit door did not open: ' + $(b, 'nextTitle').textContent);
     await b.clock.advance(60000);
-    assert(/Finishing here/.test($(b, 'nextTitle').textContent),
+    assert(/You have stopped the study/.test($(b, 'nextTitle').textContent),
       'the upload wait repainted over the goodbye screen: ' + $(b, 'nextTitle').textContent);
-    // No code on this exit since 2026-09-23: it is reached only by finishing the run.
-    assert(!/CODE1/.test($(b, 'nextBody').innerHTML), 'the between-encounter exit handed out the completion code');
   }
 
   // --- leaving the study holds briefly for an in-flight upload ------------
@@ -890,8 +889,9 @@ const CONFIRM = '/video-uploaded';
    page's own upload chain running against it, and a PUT that lands at
    `putAtMs` — 72 s for the 45 MB a ten-minute encounter makes at the 600 kbps
    this page records, which is an ordinary hotspot or rural uplink and well
-   inside the chain's own 180 s PUT deadline. */
-function primed(putAtMs, advanceDelayMs) {
+   inside the chain's own 180 s PUT deadline. `advanced` is what /advance
+   answers, ADVANCED unless a test says otherwise. */
+function primed(putAtMs, advanceDelayMs, advanced) {
   const b = bootV2(PAGE, '?run=r_1');
   let gone = null;
   b.sandbox.location = { search: '?run=r_1', get href() { return ''; },
@@ -910,7 +910,8 @@ function primed(putAtMs, advanceDelayMs) {
   const later = (ms, v) => new Promise(r => b.clock.setTimeout(() => r(v), ms));
   b.net.route([
     { match: '/advance', fn: () => (advanceDelayMs
-        ? later(advanceDelayMs, b.net.res(200, ADVANCED)) : b.net.res(200, ADVANCED)) },
+        ? later(advanceDelayMs, b.net.res(200, advanced || ADVANCED))
+        : b.net.res(200, advanced || ADVANCED)) },
     { match: '/withdraw', fn: () => b.net.res(200, { ok: true }) },
     { match: '/api/run/config', fn: () => b.net.res(200, {
         return_url: 'https://survey.invalid/x', return_label: 'Return to the survey' }) },
@@ -928,12 +929,12 @@ function primed(putAtMs, advanceDelayMs) {
     const { b, gone } = primed(72000);
     b.ctx.onEncounterComplete();
     await b.clock.advance(46000);
-    assert(/Encounter 1 of 4 complete/.test($(b, 'nextTitle').textContent),
+    assert(/Conversation 1 of 4 complete/.test($(b, 'nextTitle').textContent),
       'the deadline did not release the participant: ' + $(b, 'nextTitle').textContent);
     assert(/still being saved/i.test($(b, 'nextBody').innerHTML),
       'a release with the upload still running showed the plain success screen: ' +
       $(b, 'nextBody').innerHTML);
-    assert(/Start encounter 2 of 4/.test($(b, 'nextBtn').textContent), 'no way on');
+    assert(/Start conversation 2 of 4/.test($(b, 'nextBtn').textContent), 'no way on');
     $(b, 'nextBtn').onclick();
     await b.clock.advance(10);
     assert.strictEqual(gone(), null, 'the page navigated out from under a running upload');
@@ -995,7 +996,7 @@ function primed(putAtMs, advanceDelayMs) {
     const { b } = primed(2000);
     b.ctx.onEncounterComplete();
     await b.clock.advance(10000);
-    assert(/Encounter 1 of 4 complete/.test($(b, 'nextTitle').textContent), 'did not advance');
+    assert(/Conversation 1 of 4 complete/.test($(b, 'nextTitle').textContent), 'did not advance');
     assert(!/still being saved/i.test($(b, 'nextBody').innerHTML),
       'a landed upload was described as still running');
     b.fire('pagehide');
@@ -1035,15 +1036,56 @@ function primed(putAtMs, advanceDelayMs) {
     const { b } = primed(null);
     b.ctx.onEncounterComplete();
     await b.clock.advance(1000);
+    // FLOW-05: on this, the normal path, the door is not a one-tap twin of
+    // "Continue without waiting": it says what it does and asks first.
+    assert.strictEqual($(b, 'nextAlt').textContent, 'Stop the study here');
+    assert(!/continue/i.test($(b, 'nextAlt').textContent));
+    const asked = [];
+    b.sandbox.confirm = (q) => { asked.push(q); return false; };
     $(b, 'nextAlt').onclick();
     await b.clock.advance(500);
-    assert(/Finishing here/.test($(b, 'nextTitle').textContent), 'the exit door did not open');
+    assert(/Saving your recording/.test($(b, 'nextTitle').textContent),
+      'a cancelled exit still left the study: ' + $(b, 'nextTitle').textContent);
+    assert.deepStrictEqual(asked, ['Stop the study here? You will not go on to the remaining conversations.']);
+    b.sandbox.confirm = () => true;
+    const sent = [];
+    const fetched = b.sandbox.fetch;
+    b.sandbox.fetch = (url, o) => {
+      sent.push({ url: String(url), method: (o && o.method) || 'GET', body: o && o.body });
+      return fetched(url, o);
+    };
+    $(b, 'nextAlt').onclick();
+    await b.clock.advance(500);
+    // And it does what it says: the run is withdrawn, as "Stop and leave the
+    // study" (which this card covers) would have done. It only showed a
+    // closing card, so the run stayed open and the survey link started
+    // conversation 2 of 4 again, and the export could not tell this stop
+    // from an abandoned tab.
+    const stops = sent.filter(c => c.method === 'POST' && c.url.includes('/api/run/r_1/withdraw'));
+    assert.strictEqual(stops.length, 1, 'the stop door did not withdraw the run');
+    assert.strictEqual(JSON.parse(stops[0].body).reason, 'participant_withdrew');
+    assert(/You have stopped the study/.test($(b, 'nextTitle').textContent),
+      'the exit door did not open: ' + $(b, 'nextTitle').textContent);
     const body = $(b, 'nextBody').innerHTML;
     assert(!/may not have been counted/.test(body),
       'the exit door denied an encounter the run had already recorded: ' + body);
-    assert(/counted towards your run/.test(body), 'the door did not say what did happen: ' + body);
-    assert(!/CODE1/.test(body), 'the between-encounter exit handed out the completion code');
-    assert(/contact below/.test(body), 'the exit does not say who to tell: ' + body);
+    assert(/noted that you chose to stop/.test(body), 'the card does not say the stop was noted: ' + body);
+    // The run's code, as the header's stop hands back: part-way through a run
+    // that is its RF-PARTIAL- code (runs.survey_code), never the finished one.
+    assert(/CODE1/.test(body), 'the stop lost the code the run hands back: ' + body);
+    assert(/recorded about you removed, contact /.test(body), 'the exit does not say who to tell: ' + body);
+  }
+
+  // --- after the last conversation the wait has no door to stop by ---------
+  // There is nothing left to stop, and the door's closing card has no code:
+  // it skipped the completion code the run had just earned (FLOW-05).
+  {
+    const { b } = primed(null, 0, Object.assign({}, ADVANCED, { done: true, position: 5 }));
+    set(b, "$('nextAlt').style.display = 'inline-block';");   // left from a failed advance
+    b.ctx.onEncounterComplete();
+    await b.clock.advance(1000);
+    assert(/Saving your recording/.test($(b, 'nextTitle').textContent), $(b, 'nextTitle').textContent);
+    assert.strictEqual($(b, 'nextAlt').style.display, 'none', 'a way out that skips the code');
   }
 
   // --- a recorder that died mid-encounter is still said on the next screen --

@@ -38,14 +38,20 @@ def _text(p: Path) -> str:
 # The release path actually in use
 # --------------------------------------------------------------------------
 #
-# Every live revision of relational-fluency-agent was registered by hand with
-# the AWS CLI. The Terraform state for this stack is not in the account's state
-# bucket, and versions.tf still has its S3 backend block commented out. So a
-# person following the documented `tofu apply` flow today runs it from EMPTY
-# state, which does not update the service — it tries to CREATE the bucket, the
-# ECR repositories, the IAM roles and the ACM certificate that already exist.
-# A runbook that describes a procedure nobody has run is worse than no runbook,
-# because it is followed with confidence.
+# History, because the tests below are shaped by it. Until 17 September 2026
+# every live revision of relational-fluency-agent was registered by hand with
+# the AWS CLI, and the Terraform state was not in the account's state bucket,
+# so `tofu apply` from empty state would have tried to CREATE what already
+# existed. The state was found and the Terraform path became the release
+# procedure (revision 41). On 24 September a correct apply from the WRONG
+# checkout (a branch behind main, pinning ca77c2f) rolled production back for
+# four days, and the runbook became: merge, build with BUILD_SHA, pin by PR,
+# sim check, tools/deploy.sh, apply the saved plan, verify /health "build".
+#
+# The CLI steps were pinned here as "the path in use". They are the break-glass
+# path now (for a day Terraform itself cannot run), so the test still requires
+# them to be written down, and says so; what it no longer claims is that they
+# are how a release is done. The runbook tests after it pin the current flow.
 
 RELEASE_CLI_STEPS = [
     "aws ecs describe-task-definition",
@@ -56,21 +62,142 @@ RELEASE_CLI_STEPS = [
 
 @pytest.mark.parametrize("step", RELEASE_CLI_STEPS)
 def test_release_runbook_gives_the_cli_sequence_in_use(step):
-    """The AWS runbook must spell out the path the service is actually on."""
+    """The break-glass CLI release must stay spelled out, step by step.
+
+    (This test used to say the CLI path was the path in use. Since 17 September
+    2026 it is the fallback for when Terraform cannot run; the name is kept so
+    the history of what it guarded stays searchable.)"""
     assert step in _text(DEPLOY_AWS), (
-        f"docs/DEPLOY-AWS.md never mentions `{step}`. Every live task-definition "
-        "revision was registered by hand with the CLI, so this is the release "
-        "procedure a person has to follow; documenting only `tofu apply` sends "
-        "them to a flow that has never been run against this service."
+        f"docs/DEPLOY-AWS.md never mentions `{step}`. The hand-registered "
+        "task-definition release is the break-glass path for a day Terraform "
+        "cannot run, and it has to be written down before that day, not during it."
     )
+
+
+# The runbook, in order, in both documents. Each needle is the step's own
+# command or artefact, so a rewrite that drops a step fails here by name.
+RUNBOOK = [
+    ("build with BUILD_SHA", "BUILD_SHA"),
+    ("pin by PR", "terraform.tfvars"),
+    ("sim check", "tools.sim.check"),
+    ("plan through the guard", "tools/deploy.sh"),
+    ("apply the saved plan", "apply tfplan.bin"),
+    ("verify the build", '"build"'),
+]
+RUNBOOK_START = {OPERATIONS: "**The runbook, in order.**",
+                 DEPLOY_AWS: "### The release, end to end"}
+
+
+@pytest.mark.parametrize("doc", [OPERATIONS, DEPLOY_AWS], ids=["OPERATIONS", "DEPLOY-AWS"])
+def test_the_release_runbook_is_the_guarded_flow_in_order(doc):
+    """merge -> build with BUILD_SHA -> pin by PR -> sim check ->
+    tools/deploy.sh -> apply the saved plan -> verify /health build."""
+    body = _text(doc)
+    marker = RUNBOOK_START[doc]
+    assert marker in body, f"{doc.name} has lost its release runbook ({marker!r})"
+    section = body.split(marker, 1)[1].split("\n#", 1)[0]
+    at = []
+    for step, needle in RUNBOOK:
+        assert needle in section, f"{doc.name}: the release runbook no longer covers {step!r} ({needle})"
+        at.append(section.index(needle))
+    assert at == sorted(at), (
+        f"{doc.name}: the release steps are out of order: {list(zip([s for s, _ in RUNBOOK], at))}")
+
+
+@pytest.mark.parametrize("doc", [OPERATIONS, DEPLOY_AWS], ids=["OPERATIONS", "DEPLOY-AWS"])
+def test_the_runbook_names_the_incident_the_guard_exists_for(doc):
+    """So the next person to find tools/deploy.sh in their way knows why."""
+    body = _text(doc)
+    assert "ca77c2f" in body and "4798e64" in body and "tools/deploy.sh" in body
+
+
+def test_no_documented_release_deploys_around_the_pin():
+    """`tofu apply -var container_image=...` deploys an image the committed pin
+    does not name, and leaves main pinning an older build: the drift that makes
+    the next plain apply a rollback. No copyable block may say it."""
+    offenders = []
+    for doc in (OPERATIONS, DEPLOY_AWS):
+        inside = False
+        for n, line in enumerate(_text(doc).splitlines(), start=1):
+            if line.lstrip().startswith("```"):
+                inside = not inside
+                continue
+            if inside and "tofu" in line and "-var" in line and "container_image" in line:
+                offenders.append(f"{doc.name}:{n}: {line.strip()}")
+    wf = REPO_ROOT / ".github" / "workflows" / "build-platform-image.yml"
+    for n, line in enumerate(wf.read_text(encoding="utf-8").splitlines(), start=1):
+        if "echo" in line and "-var container_image" in line:
+            offenders.append(f"{wf.name}:{n}: {line.strip()}")
+    assert not offenders, "\n".join(offenders)
+
+
+# Every place a reader copies an apply from. A settings change (survey return
+# URL, completion code, an analyst's address) reaches production exactly as an
+# image does: by PR, then tools/deploy.sh from main, then `apply tfplan.bin`.
+# The config procedures in OPERATIONS.md said "edit terraform.tfvars, then
+# `tofu apply`" from whatever checkout was at hand, which skips every check the
+# guard makes and applies whatever image that checkout pins: the 24 September
+# rollback, reached through an unrelated setting (review of 850b08e). Only the
+# two blocks that build a NEW environment, and say so, may apply bare.
+_BARE_APPLY = re.compile(r"\b(tofu|terraform)(\s+-chdir=\S+)?\s+apply\b(?!\s+tfplan\.bin)")
+# A plan is tools/deploy.sh's to make: `tofu plan -out tfplan.bin && tofu
+# apply tfplan.bin` by hand is the same bypass with a saved file in between.
+_BARE_PLAN = re.compile(r"\b(tofu|terraform)(\s+-chdir=\S+)?\s+plan\b")
+_PROSE_APPLY = re.compile(
+    r"\b(then|and|run|re-?run)\s+`(tofu|terraform)(\s+-chdir=\S+)?\s+apply(?!\s+tfplan\.bin)")
+_PIN_AROUND = re.compile(r"-var[ =]container_image")
+INFRA_README = REPO_ROOT / "infra" / "README.md"
+NEW_ENVIRONMENT_ONLY = {DEPLOY_AWS: "## 1. Provision the infrastructure",
+                        INFRA_README: "## Deploy (first time"}
+
+
+def _apply_offenders(doc: Path) -> list:
+    offenders, inside, allowed = [], False, False
+    new_env = NEW_ENVIRONMENT_ONLY.get(doc)
+    for n, line in enumerate(_text(doc).splitlines(), start=1):
+        if line.startswith("## "):
+            allowed = bool(new_env) and line.startswith(new_env)
+        if line.lstrip().startswith("```"):
+            inside = not inside
+            continue
+        if inside:
+            command = re.sub(r"(^|\s)#.*$", "", line)
+            if _PIN_AROUND.search(command) or (not allowed and (
+                    _BARE_APPLY.search(command) or _BARE_PLAN.search(command))):
+                offenders.append(f"{doc.relative_to(REPO_ROOT)}:{n}: {line.strip()}")
+        elif not allowed and _PROSE_APPLY.search(line):
+            offenders.append(f"{doc.relative_to(REPO_ROOT)}:{n}: {line.strip()}")
+    return offenders
+
+
+def test_no_procedure_applies_around_the_guard():
+    offenders = []
+    for doc in (OPERATIONS, DEPLOY_AWS, INFRA_README, README):
+        offenders += _apply_offenders(doc)
+    for tf in sorted((REPO_ROOT / "infra" / "terraform").glob("*.tf")):
+        for n, line in enumerate(_text(tf).splitlines(), start=1):
+            if "description" in line and _PIN_AROUND.search(line):
+                offenders.append(f"{tf.relative_to(REPO_ROOT)}:{n}: {line.strip()}")
+    assert not offenders, "\n".join(offenders)
+
+
+def test_the_new_environment_blocks_say_they_are_for_a_new_environment():
+    for doc, heading in NEW_ENVIRONMENT_ONLY.items():
+        body = _text(doc)
+        section = body.split(heading, 1)[1].split("\n## ", 1)[0]
+        assert "new environment" in section.lower() or "new* environment" in section.lower(), doc
+    assert "#a-change-to-terraformtfvars-is-a-release" in _text(OPERATIONS)
+    assert "### A change to `terraform.tfvars` is a release" in _text(OPERATIONS)
 
 
 @pytest.mark.parametrize("doc", [DEPLOY_AWS, OPERATIONS], ids=["DEPLOY-AWS", "OPERATIONS"])
 def test_the_missing_terraform_state_is_written_down(doc):
-    """Terraform cannot be used at all until the state is found.
+    """Where the Terraform state is, and where it once was not.
 
-    This is the single fact that decides which of the two release paths a
-    reader is allowed to take, and it appeared in neither document.
+    Until 17 September 2026 this decided which release path a reader could
+    take, and it appeared in neither document. The state has been in the shared
+    bucket since; the documents keep the history, because a plan that proposes
+    to CREATE the bucket and the roles still means exactly this.
     """
     body = _text(doc)
     assert "tofu apply" in body or "tofu -chdir" in body, (

@@ -1,10 +1,13 @@
-"""The encounter clock: a seven-minute floor, an eleven-minute wrap, and a
-twelve-minute stop (docs/study1-plan.md, E4).
+"""The encounter clock: a seven-minute floor, an eleven-minute warning, a
+twelve-minute stop (docs/study1-plan.md, E4; the end policy of 2026-09-28,
+issue #34, which moved the wrap from 12:00 and the stop from 13:00).
 
 The floor is enforced in two places and this file holds both to the same
-numbers: the runner (auto-advance, the actor's end tool, the participant's
-move-on) and POST /api/run/{id}/advance, the backstop for the page's End button.
-Withdrawal is never gated; internal runs are exempt from the floor.
+numbers: the runner (the participant's move-on) and POST /api/run/{id}/advance,
+the backstop for the page's End button. The automatic exits (the actor's end
+tool, the auto-advance) are held to the stop instead; tests/test_end_policy.py
+has those. Withdrawal is never gated; internal runs are exempt from the floor
+at /advance.
 """
 from __future__ import annotations
 
@@ -223,7 +226,9 @@ def test_the_last_interaction_is_held_until_the_floor_and_says_so_once():
 def test_past_the_floor_nothing_is_held():
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
-    runner._encounter_started_at = time.time() - 421
+    # The floor counts from the participant's first line (pipeline
+    # 2026-09-28b); here they spoke as the encounter opened.
+    runner._encounter_started_at = runner._first_line_at = time.time() - 421
     assert _run(runner._hold_at_floor("move_on")) is False
     assert not session.store.of("floor_held")
 
@@ -240,12 +245,14 @@ def test_the_participants_move_on_cannot_finish_the_final_segment(monkeypatch):
     _run(runner._handle_client_command(json.dumps({"type": "advance_interaction"})))
     assert calls == [] and not ws.frames("encounter_complete")
     assert ws.frames("floor_held")
-    runner._encounter_started_at = time.time() - 500
+    runner._encounter_started_at = runner._first_line_at = time.time() - 500
     _run(runner._handle_client_command(json.dumps({"type": "advance_interaction"})))
     assert calls == [] and not ws.frames("encounter_complete")
 
 
-def test_the_actors_end_tool_is_held_the_same_way(monkeypatch):
+def test_the_actors_end_tool_is_held_past_the_floor_too(monkeypatch):
+    """Held until the stop now, not the floor (2026-09-28): before 7:00 the
+    page is still told to keep going; after it nothing more is sent."""
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
     calls = []
@@ -255,7 +262,17 @@ def test_the_actors_end_tool_is_held_the_same_way(monkeypatch):
         return False
     monkeypatch.setattr(runner, "_advance_segment", advance)
     _run(runner._advance_from_tool())
-    assert calls == [] and session.store.of("floor_held")[0]["reason"] == "end_conversation"
+    assert calls == []
+    (held,) = session.store.of("auto_end_held")
+    assert held["reason"] == "end_conversation"
+    assert ws.frames("floor_held"), "a goodbye before the floor is followed by 'keep going'"
+    assert not session.store.of("floor_held"), "floor_held is the participant's move-on"
+    runner._encounter_started_at = runner._first_line_at = time.time() - 500
+    _run(runner._advance_from_tool())
+    assert calls == [] and len(ws.frames("floor_held")) == 1
+    runner._encounter_started_at = time.time() - 721       # past the stop
+    _run(runner._advance_from_tool())
+    assert calls == [1]
 
 
 def test_the_actors_end_tool_does_not_finish_the_final_segment_after_the_floor(monkeypatch):
@@ -312,8 +329,10 @@ def test_the_wrap_is_called_once_and_the_stop_completes_the_encounter():
     assert len(session.store.of("ceiling_wrap")) == 1 and len(ws.frames("wrap_up")) == 1
     runner._encounter_started_at = time.time() - 730       # past 12:00
     assert _run(runner._at_ceiling()) is True
+    assert _run(runner._at_ceiling()) is True
     done = ws.frames("encounter_complete")
-    assert done and done[-1]["reason"] == "ceiling"
+    assert len(done) == 1, "a turn and the clock's tick both reach the stop; the page is told once"
+    assert done[-1]["reason"] == "ceiling"
     assert session.store.of("ceiling_reached")
 
 

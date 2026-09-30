@@ -262,6 +262,14 @@ class RealtimeCapabilities:
     grant_via_text_prompt: bool = False
     # Whether a ROOM MEMBER on this route may be given tools at all.
     member_tools: bool = True
+    # How a held end_conversation call is answered (pipeline 2026-09-28a): the
+    # last interaction runs to the ceiling, so a call there is given a
+    # function_call_output (TOOL_CALL_CONTINUES) saying the conversation goes
+    # on. "request": the output, then a response.create once the reply that
+    # made the call is over, because this route answers an output only when
+    # asked. None: the call is left unanswered, as before, on a route where
+    # sending the output has not been measured.
+    tool_output: Optional[str] = None
     # Whether `response.created` on its own is proof the bridge started a reply.
     autofire_at_created: bool = False
     # Whether the session dict may carry a transcription language hint.
@@ -358,8 +366,8 @@ REALTIME_FAMILIES = {
         # and answered, first delta 0.23 s, complete reply. The older finding
         # that a text item closes this socket with 1006 was the 2026-08-19
         # over-specified session config, not the item. Our audio-recovery retry
-        # (retry_response) and our group scene-open (open_scene) both ride on
-        # this being True; do not flip it without re-probing.
+        # (retry_response) rides on this being True, as the group scene-open
+        # did until pipeline 2026-09-28b; do not flip it without re-probing.
         accepts_text_items=True,
         # But colleague audio still goes in as AUDIO here. Our fan-out byte
         # counters (_fanned_since_grant) and give_floor's `heard_something`
@@ -448,7 +456,7 @@ REALTIME_FAMILIES = {
         # Pad-and-commit yields an EMPTY response here: the route has already
         # consumed the audio with a reply of its own that was dropped. A text
         # nudge plus request_response is the only recipe that wakes it -- the
-        # same recipe as open_scene.
+        # recipe the retired group scene-open was measured on.
         grant_via_text_prompt=True,
         # No tools for room members: this route calls end_conversation
         # constantly and every call is an empty turn. END_SEGMENT_TOOL is
@@ -551,6 +559,12 @@ REALTIME_FAMILIES = {
         # ended the wait for a reply before response.created could arrive.
         grant_via_text_prompt=False,
         member_tools=True,
+        # A held end_conversation is answered with its function_call_output
+        # and then a response.create: the model says nothing after a call
+        # until it is asked (s_1790278762_09bcbb, S2A on 2026-09-24c: a call
+        # held 1.5 s before the floor, then 140 s with no event at all). See
+        # the runner's _answer_held_call.
+        tool_output="request",
         # The first audio delta can trail response.created by several seconds
         # here, and a commit + create sent in that gap is rejected. On this
         # route `created` is the signal.
@@ -815,7 +829,8 @@ def grants_via_text_prompt(model: str) -> bool:
     True on native-audio: the route has already consumed the audio with a reply
     of its own that was dropped, so a commit of padding yields an empty
     response. Injecting a text item is the only recipe that wakes a session
-    which will not answer a commit -- the same recipe as open_scene.
+    which will not answer a commit -- the recipe the retired group
+    scene-open was measured on.
     """
     caps = capabilities_for(model)
     if caps is not None:
@@ -836,6 +851,14 @@ def member_tools_allowed(model: str) -> bool:
     if caps is not None:
         return caps.member_tools
     return "native-audio" not in (model or "").lower()
+
+
+def tool_output_for(model: str) -> Optional[str]:
+    """How a held end_conversation call is answered on this route: "request"
+    or None (see RealtimeCapabilities.tool_output). An unknown model is
+    answered the way it always was, not at all."""
+    caps = capabilities_for(model)
+    return caps.tool_output if caps is not None else None
 
 
 def autofire_visible_at_created(model: str) -> bool:
@@ -1148,6 +1171,8 @@ def turn_gate_provenance(model: Optional[str] = None) -> dict:
         "participant_rate_gate_max_voiced_ms": rate_gate_max_voiced_ms(),
         # 2026-09-24b: what the rate is taken over (was the voiced count).
         "participant_rate_over": rate_over(),
+        # 2026-09-28a: a transcript of sound tags alone is no_speech.
+        "participant_drop_annotations": drop_annotations(),
     }
     if model:
         out["room_dedupe_second_source"] = room_has_second_transcriber(model)
@@ -1252,6 +1277,17 @@ def room_split_turn_s() -> float:
     return max(0.0, _float_setting("ROOM_SPLIT_TURN_S", 1.5))
 
 
+def followup_gap_s() -> float:
+    """FOLLOWUP_GAP_S, default 1.0 (the researchers' decision of 2026-09-29,
+    room pacing 2026-09-29a). The silence the participant hears after a
+    character's line, counted from when the page says it has finished
+    playing, before the next character of the same room turn is given the
+    floor (see _await_followup_gap in realtime_voice_session). It was granted
+    at the previous reply's generation end, and so started 0.0-0.2 s after
+    that line on the page. Below 0 puts that back."""
+    return _float_setting("FOLLOWUP_GAP_S", 1.0)
+
+
 def probe_after_seconds() -> float:
     """PROBE_AFTER_SECONDS, default 12, read the way the watchdog always has
     (the process environment), so this is the value the probe fires on."""
@@ -1301,6 +1337,7 @@ def pacing_provenance() -> dict:
         "room_grant_unanswered_s": room_grant_unanswered_s(),
         "room_adopt_guard": room_adopt_guard(),
         "room_split_turn_s": room_split_turn_s(),
+        "followup_gap_s": followup_gap_s(),
         "room_play_clock": "per_turn",
         "probe_after_s": probe_after_seconds(),
         "probe_tick_s": probe_tick_s(),
@@ -1385,6 +1422,40 @@ def is_filler_only(text: str) -> bool:
     "." / "..." / "Um..." / "Mhm." / "Hmm, uh."."""
     words = re.findall(r"[^\W_]+", (text or "").lower())
     return all(w in _FILLERS for w in words)
+
+
+def drop_annotations() -> bool:
+    """PARTICIPANT_DROP_ANNOTATIONS, default on (pipeline 2026-09-28a). A
+    transcript made only of the transcriber's own sound tags ("(laughter)",
+    "[background noise]", "[Music]", "(inaudible)", several of them, with any
+    punctuation around them) is suppressed as no_speech, the word-less rule's
+    path, at any voiced level. gpt-4o-transcribe writes these over bleed,
+    breath and room noise; on 2026-09-24c "(laughter)" over 1000 ms of voice
+    was a steering pair's participant line and "[background noise]" over
+    2600 ms was routed to a character (S4A s_1790278989_77ee7e). Letters
+    inside the brackets are the tag's, not the participant's, so the
+    word-less rule could not see them. A word outside the tags keeps the
+    whole line ("Yeah (laughs)"). 0 turns this off."""
+    return _int_setting("PARTICIPANT_DROP_ANNOTATIONS", 1) != 0
+
+
+# One tag, innermost first so "((coughs))" comes apart in two passes. Square
+# and round brackets only: they are what gpt-4o-transcribe and whisper write.
+_ANNOTATION_TAG = re.compile(r"\[[^\[\]]*\]|\([^()]*\)")
+
+
+def is_annotation_only(text: str) -> bool:
+    """True for a transcript that holds at least one [..] or (..) tag and no
+    letter or digit outside them."""
+    rest = text or ""
+    if not _ANNOTATION_TAG.search(rest):
+        return False
+    while True:
+        stripped = _ANNOTATION_TAG.sub(" ", rest)
+        if stripped == rest:
+            break
+        rest = stripped
+    return re.search(r"[^\W_]", rest) is None
 
 
 def voice_for_model(voice: str, model: str) -> str:
@@ -1560,16 +1631,20 @@ UNANSWERED_NUDGE = setting(
     "REALTIME_UNANSWERED_NUDGE",
     "(They have just spoken and are waiting for you to answer.)",
 )
-# What opens a group scene on a family whose members answer a commit of pure
-# silence with nothing at all (Gemini: pad + commit + response.create on a
-# session that has heard nothing drew no frame, 5/5 rooms; a user TEXT item +
-# response.create drew a full in-character opening 4/4). Never spoken by the
-# participant and never enters the participant transcript; the runner writes
-# it on the record beside the opening turn.
-SCENE_OPEN_PROMPT = setting(
-    "REALTIME_SCENE_OPEN_PROMPT",
-    "(The meeting is under way and everyone is looking at you. You have the "
-    "floor - speak first, in character.)",
+# The function_call_output a held end_conversation call is answered with
+# (pipeline 2026-09-28a): in the last interaction nothing ends the encounter
+# before the ceiling, so the character is told the conversation goes on and
+# not to call the tool again yet. Worded from the native-audio measurement
+# on fix/gemini-native 69e6fbb (an output alone made that model speak and
+# answer the next turns, 5/5), for a route that is then asked for the reply:
+# on gpt it follows the character's own last line, so it says to carry on
+# rather than to answer again. Never spoken; on the record in
+# tool_call_answered.
+TOOL_CALL_CONTINUES = setting(
+    "REALTIME_TOOL_CALL_CONTINUES",
+    "(Not ended: they are still here and the conversation goes on. Keep "
+    "talking with them, out loud and in character, picking up where you left "
+    "off. Do not call end_conversation again yet.)",
 )
 # How many times one encounter may rebuild a 1:1 gateway session that the
 # GATEWAY closed under it. A close we did not ask for used to end the encounter
@@ -1911,6 +1986,10 @@ class RealtimeVoiceSession:
         # `commits` counts commits sent; `_restart_mark` is its value at the
         # last restart_input, so a restart happens at most once per commit.
         self.voiced_bar: Optional[Callable[[], int]] = None
+        # When the runner's VAD last marked the participant's speech starting
+        # (wall clock), set by the runner beside voiced_bar; what a commit's
+        # tag dates the participant's line by (issue #50; _tag_commit).
+        self.speech_began: Optional[Callable[[], float]] = None
         self._voiced_ms = 0.0
         # Where in the buffer the voice sits (P6 review, pipeline
         # 2026-09-24b): ms of audio appended since the last commit or clear,
@@ -1990,6 +2069,9 @@ class RealtimeVoiceSession:
         self.first_audio_at: Optional[float] = None
         self._first_audio_key = None
         self._response_output_items = 0
+        # Whether the reply in flight made a function call, which is a reply
+        # with no voice and no words that is NOT a lost one (see _undelivered).
+        self._response_called = False
         # The recovery's books. `_retries_this_turn` is reset by every commit
         # (a new participant turn) and by a reply the gateway starts on its own,
         # and incremented only by retry_response, so a turn can be re-asked
@@ -2505,16 +2587,44 @@ class RealtimeVoiceSession:
         """Note a commit about to be sent, and start the next one's count."""
         self.commits += 1
         voiced, span = self._voiced_ms, self._voiced_span_ms()
+        # Read before the reset below: how much of the buffer follows its
+        # first voiced frame (see spoken_at).
+        after_first = (self._appended_ms - self._voiced_first_ms
+                       if self._voiced_first_ms is not None else None)
+        previous = self._last_commit_at
         self._reset_voice_count()
         self._last_commit_at = time.time()
         if not self.owns_input_buffer:
             return
         counted = self.voiced_bar is not None
+        try:
+            began = self.speech_began() if self.speech_began is not None else None
+        except Exception:  # noqa: BLE001 - a date is never worth a commit
+            began = None
+        if not isinstance(began, float) or began <= previous:
+            # No speech the VAD confirmed since the last commit: the first
+            # voiced frame, counted back from now on the buffer's own audio
+            # (the page streams without gaps; the worklet sends zeros while
+            # muted), which also dates a restart's pre-roll where it was said
+            # rather than when it was re-sent.
+            began = (self._last_commit_at - after_first / 1000.0
+                     if counted and after_first is not None else None)
         self._commit_tags.append({
             "voiced_ms": int(round(voiced)) if counted else None,
             "voiced_span_ms": int(round(span)) if counted else None,
             "probe": probe, "replay": replay,
             "committed_at": self._last_commit_at,
+            # When the participant began saying what this commit holds (wall
+            # clock; issue #50): the runner VAD's speech_started for the turn
+            # this commit closes. Its transcript can land after a character's
+            # line has begun, and the record and the page order the line by
+            # this instead. Not the buffer's first voiced frame where the VAD
+            # has one: a buffer can open on voice from before a reply the
+            # participant then sat through (S2A 09bcbb at 60-89 s: voice 0.4 s
+            # after one commit, then Morgan's 14 s reply, then their next
+            # line, committed as one 27.7 s span). None where nothing in it
+            # was voiced.
+            "spoken_at": began,
         })
         # A gateway that never answers a commit must not grow this forever.
         del self._commit_tags[:-16]
@@ -2749,6 +2859,7 @@ class RealtimeVoiceSession:
         self._response_text = ""
         self._response_audio_bytes = 0
         self._response_output_items = 0
+        self._response_called = False
         self._retry_in_flight = False
         self._replay_in_flight = False
         self._audio_absent_hold = 0.0
@@ -2776,6 +2887,35 @@ class RealtimeVoiceSession:
         since = max(self._response_started_at, self._audio_absent_hold)
         return since > 0.0 and (time.time() - since) > (
             REQUEST_UNANSWERED_S + self._request_hold_s)
+
+    def _undelivered(self, shape: str, info: Optional[dict] = None) -> Optional[dict]:
+        """The `reply_missing` that the reply now ending amounts to, or None.
+
+        _request_unanswered's case after the gateway has named the reply: one
+        this bridge asked for, that response.created named (which is what
+        disarms _request_unanswered), and that is ending with no audio, no
+        words and no function call, so there is nothing to play, show or act
+        on. `shape` says how it ended: "empty_done", the gateway's own
+        response.done; "absent_done", AUDIO_ABSENT_S after a frame that was
+        none of those. Carried on the response_done: no turn is open behind
+        such a reply, and the 1:1 runner used to drop the done unrecorded and
+        never ask again (S2A 2026-09-29: four participant lines in a row
+        answered by nothing, 150-237 s, with no event of any kind). `info` is
+        _done_info's, so the record says what the gateway called the reply."""
+        if not (self._requested and self._response_created_id
+                and not self._response_audio_seen
+                and not self._response_text.strip()
+                and not self._response_called):
+            return None
+        started = self._response_started_at
+        out = {"type": "reply_missing", "shape": shape,
+               "waited_s": round(time.time() - started) if started else None,
+               "retryable": self._retries_this_turn < AUDIO_RETRY_LIMIT}
+        for key in ("response_status", "status_reason", "output_items",
+                    "output_tokens"):
+            if (info or {}).get(key) is not None:
+                out[key] = info[key]
+        return out
 
     # -- audio recovery --------------------------------------------------------
     def _drop_deferred(self, why: str) -> None:
@@ -3115,11 +3255,28 @@ class RealtimeVoiceSession:
         await self._send({"type": "response.create"})
         return True
 
+    async def answer_tool_call(self, call_id: Optional[str], output: str) -> bool:
+        """Give the model the result of a function call it made: a
+        function_call_output item for `call_id`, and nothing else (as on
+        fix/gemini-native 69e6fbb). Whether a reply is then asked for is the
+        runner's decision (see tool_output_for), and on the gpt route it asks
+        only once the reply that made the call is over, since a
+        response.create during it is refused. False when there is no call id
+        or no socket to send it on."""
+        if not call_id or self.ws is None:
+            return False
+        await self._send({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": output},
+        })
+        return True
+
     async def prompt_response(self, text: str) -> None:
         """Put a user TEXT item in front of the model and ask it to reply.
 
         The recipe behind every recovery on this gateway, and behind the
-        group scene open on Gemini (see SCENE_OPEN_PROMPT): a text item is new
+        room grant on native-audio (grant_via_text_prompt): a text item is new
         CONTENT for the model to answer, which is what a commit of silence is
         not. No cancel here — callers that need one (retry_response) send it
         first — and no budget: the callers keep the books. The reply it draws
@@ -3391,11 +3548,13 @@ class RealtimeVoiceSession:
                     waited = round(time.time() - self._audio_absent_since())
                     verdict = self._retry_verdict("absent")
                     retried = self._retry_in_flight
+                    undelivered = self._undelivered("absent_done")
                     self._end_response()
                     self._cancelled_by_us = False
                     yield {"type": "response_done", "interrupted": True,
                            "audio_absent": True, "retried": retried,
-                           "waited_s": waited, **verdict}
+                           "waited_s": waited, **verdict,
+                           **({"undelivered": undelivered} if undelivered else {})}
                     if not verdict["retryable"]:
                         yield {
                             "type": "error", "recoverable": True,
@@ -3865,7 +4024,9 @@ class RealtimeVoiceSession:
                             # When the commit went out, so the runner can
                             # tell a reply to THIS turn from an older one
                             # (pipeline 2026-09-24a; see _withdraw_reply).
-                            "committed_at": tag.get("committed_at")}
+                            "committed_at": tag.get("committed_at"),
+                            # When they began saying it (issue #50).
+                            "spoken_at": tag.get("spoken_at")}
                     if text:
                         yield {"type": "user_transcript", "text": text,
                                "garbled": garbled, **meta}
@@ -3874,11 +4035,26 @@ class RealtimeVoiceSession:
                         # none of it was transcribed. Said as such.
                         yield {"type": "user_transcript", "text": "",
                                "garbled": True, **meta}
+                    else:
+                        # No line at all for this commit. Not a user_transcript
+                        # (nothing arrived to record or route on); said only so
+                        # a reply held until the participant's first line is
+                        # decided now, while it can still be cancelled
+                        # (pipeline 2026-09-28b; the runner's
+                        # _hold_first_reply). No other pump reads it, and a
+                        # room member's skips it (_pump_member).
+                        yield {"type": "transcript_missing",
+                               "why": "transcript_empty", **meta}
 
                 elif etype == "conversation.item.input_audio_transcription.failed":
                     # No transcript is coming for this commit; its tag must not
-                    # be left to be paired with the next one's.
-                    self._tag_for(ev.get("item_id"))
+                    # be left to be paired with the next one's. Said as
+                    # transcript_missing, as an empty one is.
+                    tag = self._tag_for(ev.get("item_id")) or {}
+                    yield {"type": "transcript_missing", "why": "transcript_failed",
+                           "item_id": ev.get("item_id"),
+                           "probe": bool(tag.get("probe")),
+                           "committed_at": tag.get("committed_at")}
 
                 elif etype in ("response.output_audio.done",
                                "response.audio.done"):
@@ -3965,10 +4141,14 @@ class RealtimeVoiceSession:
                     verdict = self._retry_verdict(
                         "truncated" if self._truncated(unterminated) else None)
                     retried = self._retry_in_flight
+                    undelivered = (None if cancelled
+                                   else self._undelivered("empty_done", info))
                     self._end_response()
                     self._cancelled_by_us = False
                     if cancelled:
                         verdict["cancelled"] = True
+                    if undelivered:
+                        verdict["undelivered"] = undelivered
                     # The reply's own name, where the gateway gives one, so a
                     # pump holding a latch on a DIFFERENT reply can tell this
                     # done from that one's (see _pump_member's refused hold).
@@ -3989,6 +4169,7 @@ class RealtimeVoiceSession:
                            "retried": retried, **verdict, **info}
 
                 elif etype == "response.function_call_arguments.done":
+                    self._response_called = True
                     yield {
                         "type": "tool_call",
                         "name": ev.get("name"),
@@ -4015,7 +4196,15 @@ class RealtimeVoiceSession:
                         continue
 
                     if (code == "response_cancel_not_active"
-                            and not self._response_active):
+                            and (not self._response_active
+                                 # The cancel retry_response / replay_input
+                                 # lead with, refused before the retry's
+                                 # reply began: after a reply that ended
+                                 # empty there is nothing left to cancel.
+                                 # Taken as a failure it put the retry's
+                                 # flags down and an `error` on the page.
+                                 or (self._retry_in_flight
+                                     and not self._response_saw_output))):
                         # A cancel that found nothing to cancel, with no reply
                         # of ours in flight: the unconditional cancel_response()
                         # _enter sends on a fresh session at an interaction

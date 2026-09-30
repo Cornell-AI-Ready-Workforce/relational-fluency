@@ -13,7 +13,13 @@ which the event was logged. It is NOT a media offset into either WAV: the
 per-channel WAVs are gapless (the mic drops samples while muted, and each
 assistant_audio*.wav accumulates only during agent speech), so a turn's ``t``
 does not line up with the same-second position in a WAV. Treat ``t`` as an
-ordering/event timeline only, not as a seek offset into the audio.
+event timeline only, not as a seek offset into the audio.
+
+The transcript is in the order things were said and heard, not logged (issue
+#50): a participant turn at ``spoken_at``, when they began it, and a character
+turn at ``heard_at``, when its audio began to play, both on the same clock as
+``t``. A turn without the field keeps its ``t`` place, which is every turn of
+an encounter recorded before the fields existed.
 """
 
 from __future__ import annotations
@@ -23,6 +29,19 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .storage import replace_with_retry
+
+
+def _is_time(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _said_at(turn: dict) -> float:
+    """Where a transcript turn sorts: when it was said (a participant's
+    spoken_at) or heard (a character's heard_at), else when it was logged."""
+    for k in ("spoken_at", "heard_at"):
+        if _is_time(turn.get(k)):
+            return turn[k]
+    return turn.get("t") or 0
 
 
 def build(session_dir: Path) -> Dict[str, Any]:
@@ -45,6 +64,27 @@ def build(session_dir: Path) -> Dict[str, Any]:
          for e in reversed(events) if e.get("type") == "client_audio_settings"),
         None,
     )
+
+    # When each page turn was first heard: the page's play_start ack (which
+    # turn_timing repeats as first_audio_played), else when its first audio
+    # was sent to the page, where the page said nothing about the turn. A turn
+    # whose end the page acked without a start was cut before it played, and
+    # was never heard. Keyed by the `turn` those events and
+    # steering_pair.page_turn name.
+    heard: Dict[int, float] = {}
+    sent: Dict[int, float] = {}
+    for e in events:
+        n = e.get("turn")
+        if not isinstance(n, int) or isinstance(n, bool):
+            continue
+        if e.get("type") == "play_start" and _is_time(e.get("at")):
+            heard.setdefault(n, e["at"])
+        elif e.get("type") == "turn_timing":
+            if _is_time(e.get("first_audio_played")):
+                heard.setdefault(n, e["first_audio_played"])
+            if (_is_time(e.get("first_audio_to_client"))
+                    and e.get("play_end") is None):
+                sent.setdefault(n, e["first_audio_to_client"])
 
     turns: List[dict] = []
     directions: List[dict] = []
@@ -73,6 +113,9 @@ def build(session_dir: Path) -> Dict[str, Any]:
                 # route that cannot count voiced audio, which is NOT "trusted".
                 "low_confidence": e.get("low_confidence"),
                 "voiced_ms": e.get("voiced_ms"),
+                # When they began saying it; `t` is when its transcript
+                # arrived (see the sort below).
+                "spoken_at": e.get("spoken_at"),
             })
         elif etype == "assistant_turn" and e.get("channel") == "text":
             # Text-channel agent turns never emit a steering_pair (that comes
@@ -92,6 +135,7 @@ def build(session_dir: Path) -> Dict[str, Any]:
         elif etype == "steering_pair":
             actor = e.get("actor") or {}
             d = e.get("direction") or {}
+            page_turn = e.get("page_turn")
             turns.append({
                 "t": e.get("t"),
                 "role": "agent",
@@ -152,9 +196,21 @@ def build(session_dir: Path) -> Dict[str, Any]:
                 # for Casey.") but kept because it was spoken; None before
                 # 2026-09-23f, when such lines were blanked.
                 "deferral": actor.get("deferral"),
+                # When its audio began to play, None if it never did; `t` is
+                # when the line was closed, which for a follow-up held behind
+                # a colleague is seconds before anyone heard it (see the sort
+                # below).
+                "heard_at": (heard.get(page_turn, sent.get(page_turn))
+                             if isinstance(page_turn, int)
+                             and not isinstance(page_turn, bool) else None),
             })
 
-    turns.sort(key=lambda t: t.get("t") or 0)
+    # In the order things were said and heard, not logged (issue #50). Sorted
+    # by `t`, a participant line said while a character's line was playing
+    # landed under the next character line, one that began after they spoke
+    # and that a rater then read it as answering. A turn without the fields
+    # sorts at its `t`, so an older record keeps the order it always had.
+    turns.sort(key=_said_at)
 
     # Did the platform hear the participant for the whole encounter?
     #
@@ -392,6 +448,13 @@ def build(session_dir: Path) -> Dict[str, Any]:
             "input_resampler": realtime.get("input_resampler"),
             "pipeline_version": realtime.get("pipeline_version"),
             "room_pacing_version": realtime.get("room_pacing_version"),
+            # The commit the serving image was built from (BUILD_SHA, see
+            # server/build_info.py). None for a local checkout, for images
+            # built before it existed, and for encounters recorded before it.
+            "build": realtime.get("build"),
+            # A listening-test accent/tone file, when one was in force
+            # (server/voice_style.py); None for every study session.
+            "voice_style": realtime.get("voice_style"),
             # The room-grant, hold-adoption, split-turn and probe-clock knob
             # values (pipeline 2026-09-23e / room pacing 2026-09-23c); None
             # before they were written.
@@ -406,6 +469,22 @@ def build(session_dir: Path) -> Dict[str, Any]:
             "cancelled_output": realtime.get("cancelled_output"),
             "agent_transcript_items": realtime.get("agent_transcript_items"),
             "record": realtime.get("record"),
+            # Who opens a conversation and which clock each limit counts on
+            # (pipeline 2026-09-28b: the participant); None before it.
+            "opening": realtime.get("opening"),
+        },
+        # When the participant opened each conversation (participant_opened,
+        # on the events' own `t`) and how long the characters waited for
+        # them. `first_participant_line_s` is what the 7:00 floor counts from;
+        # None when they never spoke, or on an encounter from before 28b.
+        "opening": {
+            "first_participant_line_s": next(
+                (e.get("t") for e in events if e.get("type") == "participant_opened"
+                 and e.get("first_of_encounter")), None),
+            "conversations": [
+                {k: e.get(k) for k in ("t", "reason", "interaction", "agent_id",
+                                       "waited_s")}
+                for e in events if e.get("type") == "participant_opened"],
         },
         # The participant's microphone as the browser reported it
         # (track.getSettings() and the user agent; see the

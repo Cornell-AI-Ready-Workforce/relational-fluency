@@ -1240,6 +1240,23 @@ def completion_code(run: dict) -> str:
     return f"RF-{digest}" if finished else f"RF-PARTIAL-{digest}"
 
 
+def survey_code(run: dict) -> str:
+    """The code the participant is shown and takes back to the survey.
+
+    With SURVEY_COMPLETION_CODE set, a finished run shows that one study-wide
+    code, which is what the Qualtrics survey checks. It is kept in Secrets
+    Manager, not in the repo (which is public): a code anyone could read would
+    let them skip the conversations. A run that is not finished never shows it,
+    so a withdrawal still gets its own RF-PARTIAL- code and nothing that passes
+    the survey's check. Unset, every run shows its own completion_code, as
+    before. Exports keep completion_code, which stays verifiable per run.
+    """
+    fixed = (os.environ.get("SURVEY_COMPLETION_CODE") or "").strip()
+    if fixed and run["index"] >= len(run["scenarios"]):
+        return fixed
+    return completion_code(run)
+
+
 def get(run_id: str) -> Optional[dict]:
     # Run ids are uuid4().hex[:12]. Reject anything else before it reaches the
     # filesystem so a crafted id (backslashes, drive letters, ../) cannot escape
@@ -1359,6 +1376,47 @@ def withdraw(run_id: str, session_id: Optional[str] = None,
     return run
 
 
+# Why a participant may leave a run without it being a withdrawal (issue #41).
+# A microphone or a camera that will not start is the most common thing to go
+# wrong on a participant's own machine, and the only way out of it used to be
+# "Stop and leave the study" — so a broken headset was recorded as a refusal to
+# continue, which is a different fact about a person and a different number in
+# an IRB report.
+EXIT_STATUSES = ("mic_failed", "camera_failed")
+_EXITS_KEPT = 20
+
+
+def note_exit(run_id: str, status: str, capture_kind: Optional[str] = None,
+              session_id: Optional[str] = None) -> Optional[dict]:
+    """Record that the participant left because capture would not start.
+
+    NOT a withdrawal, and deliberately nothing like one: the run keeps handing
+    out encounters, so the same person can come back on a working machine and
+    carry on, and no participant record is stamped. What it leaves is a line on
+    the run an analyst can count: when, why (`status`, and the browser's own
+    `capture_kind`), and where in the run they were. Appended, because a person
+    can hit it, fix their headset, finish an encounter and hit it again on
+    another machine; bounded, because the page that sends it is participant-open.
+    """
+    if status not in EXIT_STATUSES:
+        raise ValueError(f"unknown exit status {status!r}")
+    run = get(run_id)
+    if run is None:
+        return None
+    exits = list(run.get("exits") or [])
+    exits.append({
+        "at": time.time(),
+        "status": status,
+        "capture_kind": capture_kind or None,
+        "session_id": session_id or None,
+        "index": run.get("index", 0),
+        "completed": len(run.get("completed", [])),
+    })
+    run["exits"] = exits[-_EXITS_KEPT:]
+    save(run)
+    return run
+
+
 def _others_for_participant(participant_id: str, except_run_id: str) -> List[dict]:
     """Every other run under this participant key."""
     out: List[dict] = []
@@ -1419,7 +1477,9 @@ def view(run: dict) -> dict:
         # into Qualtrics is the arm the participant actually got, without
         # opening the run file on the server.
         "arm": (run.get("construct_pool") or {}).get("arm", "full"),
-        "completion_code": completion_code(run),
+        # What the page shows: the study's survey code on a finished run when
+        # one is configured, else the run's own code (survey_code).
+        "completion_code": survey_code(run),
         "position": min(i + 1, total),
         "total": total,
         "current": current,

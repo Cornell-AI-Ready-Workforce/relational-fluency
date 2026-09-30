@@ -211,6 +211,13 @@ afterwards by JL. Nothing is assigned to @Ben-K-Jordan for now.
 - At 11:00 the actor is directed to close the scene within two turns; at 12:00
   the encounter completes regardless. Record both on the events trail.
 - AC: no encounter exceeds 12:00.
+- **Superseded 2026-09-28 (issue #34, the researchers' end policy):** from 7:00
+  the participant may move on (End unlocks on every link type, with a notice)
+  and may keep talking until 12:00; nothing ends an encounter automatically
+  before 12:00 (the last interaction's auto-advance and the actor's
+  `end_conversation` are held, `auto_end_held`); the warning is at 11:00 and
+  the stop at 12:00 (`ENCOUNTER_WRAP_SECONDS` 660, `ENCOUNTER_MAX_SECONDS` 720).
+  See docs/OPERATIONS.md, "The seven-minute floor, and the twelve-minute stop".
 
 **4.4 Duration report** — S · analysis ✅ 2026-09-17: `tools/encounter_health.py` prints duration, turns, floor/wrap/ceiling marks per encounter.
 - `tools/encounter_health.py` prints per-encounter duration, turns, floor and

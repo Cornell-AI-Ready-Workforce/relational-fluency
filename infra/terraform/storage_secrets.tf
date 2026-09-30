@@ -277,6 +277,15 @@ resource "aws_secretsmanager_secret" "agent_api_key" {
   name = "${var.project}/agent-api-key" # shared bearer token with ElevenLabs
 }
 
+# The one code a participant enters in the Qualtrics survey after finishing all
+# four encounters (server/runs.py survey_code). A secret because the repo is
+# public: a code in git is a code anyone can type without doing the study. The
+# task reads it only once survey_completion_code_enabled is true, so this can
+# exist, empty, before its value is set.
+resource "aws_secretsmanager_secret" "survey_completion_code" {
+  name = "${var.project}/survey-completion-code"
+}
+
 # Browser-direct webcam upload (IRB 6a: video goes straight to storage and
 # never transits the model path). Presigned PUTs come from the app origins.
 resource "aws_s3_bucket_cors_configuration" "study_data" {

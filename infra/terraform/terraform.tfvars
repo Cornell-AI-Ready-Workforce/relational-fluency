@@ -17,30 +17,19 @@
 # checked against, and tests/test_terraform_persistence.py requires it to be
 # present — change the tag and you have to say what you verified.
 #
-# To release a new build:
-#   1. docker build --platform linux/amd64 -t $REPO:$SHA . && docker push
-#   2. update container_image below to $SHA
-#   3. re-verify and update the `deployed:` line (see the handover commands:
-#      describe-services gives the running task definition revision)
-#   4. commit, then apply
+# To release a new build (docs/OPERATIONS.md, "Releasing a build"):
+#   1. docker build --platform linux/amd64 --build-arg BUILD_SHA=$SHA -t $REPO:$SHA . && docker push
+#      (or the build-platform-image workflow, which passes BUILD_SHA itself)
+#   2. by PR: update container_image below to $SHA, and re-verify and update
+#      the `deployed:` line (describe-services gives the running revision)
+#   3. after it merges: python -m tools.sim.check, then tools/deploy.sh from an
+#      up-to-date main; it refuses to plan from anywhere else
+#   4. tofu -chdir=infra/terraform apply tfplan.bin, then check /health "build"
 #
-# deployed: relational-fluency-agent:41 carries 3d3cbfc; this tag (5093dcd) is built and pushed, awaiting the apply that registers 42.
-#   Revision 0 does not exist. It is here so this line cannot be misread as a
-#   verification, while still satisfying tests/test_terraform_persistence.py,
-#   which requires the pin to name a revision. What is actually known:
-#     - the tag below was moved cabc1dd -> df1ab83 during the merge of
-#       origin/main (d1f3dfc, "Pin platform image df1ab83"), because df1ab83 is
-#       the build recorded at that earlier merge;
-#     - this merge follows origin/main's newer pin, 3d3cbfc (9659eb4).
-#       The running AWS task revision has not been verified by this merge;
-#     - the last time anyone ran describe-services and wrote the answer down was
-#       relational-fluency-agent:38, 2026-09-12, against image tag cabc1dd — two
-#       releases behind the tag below.
-#   BEFORE THE NEXT `tofu apply`: run the handover describe-services command,
-#   replace the 0 with the real running revision and today's date, and commit
-#   that in the same change. Applying against an unverified pin is exactly the
-#   rollback-with-a-success-message this block exists to prevent.
-container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:ca77c2f"
+# deployed: relational-fluency-agent:50 carries 0066b10, verified 2026-09-29
+#   (describe-services); this tag (55de607) is built with BUILD_SHA and pushed,
+#   awaiting the apply that registers 51. 8c188a6 was pinned but never applied.
+container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:55de607"
 
 # Live voice model. gpt-realtime-2.1 since 2026-09-18: the Gemini live routes
 # are being deprecated and the native-audio one is losing sessions to a gateway-side Vertex credentials error.
@@ -77,5 +66,11 @@ actor_model = "gpt-realtime-2.1"
 # nto.gemini-3.5-flash-lite since 2026-09-23 (was nto.gemini-3.1-flash-lite);
 # see docs/model-benchmark-2026-09-23.md. Recorded per encounter as
 # provenance.director_model.
-director_model = "nto.gemini-3.5-flash-lite"
+director_model            = "nto.gemini-3.5-flash-lite"
 analysis_db_allowed_cidrs = ["128.84.125.179/32"]
+
+# The study-wide code a participant enters in Qualtrics after finishing all four
+# encounters. Its VALUE lives in Secrets Manager (relational-fluency/survey-
+# completion-code), never here: this repo is public. Put the value first, then
+# set this to true (docs/OPERATIONS.md, "The survey completion code").
+survey_completion_code_enabled = true

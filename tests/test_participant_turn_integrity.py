@@ -505,6 +505,8 @@ def test_the_gate_is_in_provenance_with_its_defaults():
         "participant_rate_gate_max_voiced_ms": 1500,
         # 2026-09-24b (P6 review): over the voiced span, default 16.
         "participant_rate_over": "voiced_span",
+        # 2026-09-28a (issue #21): sound tags alone are no_speech.
+        "participant_drop_annotations": True,
     }
 
 

@@ -9,10 +9,14 @@
 # commit — the "auditable version" in infra/README.md had no audit trail.
 #
 # Manual-only, for the same reason as build-agent-image: deploy stays a
-# deliberate `tofu apply -var container_image=...` so the version participants
-# are talking to cannot change silently in the middle of a study wave. Building
-# an image is safe at any time; it is the apply that must be scheduled between
-# collection sessions (see docs/OPERATIONS.md).
+# deliberate, separate step so the version participants are talking to cannot
+# change silently in the middle of a study wave. Building an image is safe at
+# any time; what follows it is the release runbook (docs/OPERATIONS.md,
+# "Releasing a build"): pin the tag by PR in terraform.tfvars, run the sim
+# check, plan with tools/deploy.sh from main, and apply between collection
+# sessions. Never `tofu apply -var container_image=...`: it deploys around the
+# committed pin and leaves main pinning an older build, which is the state the
+# 2026-09-24 rollback grew out of.
 #
 # Requires repo secret AWS_ROLE_ARN (OIDC deploy role). Region comes from the
 # AWS_REGION repo variable, defaulting to us-east-1.
@@ -76,8 +80,8 @@ jobs:
                        --repository-name relational-fluency/platform \
                        --image-ids imageTag="$SHA" 2>&1); then
             echo "relational-fluency/platform:$SHA already exists in ECR (tags are immutable)."
-            echo "Nothing to build. Deploy it with:"
-            echo "  tofu apply -var container_image=$REPO:$SHA"
+            echo "Nothing to build. To release it: pin container_image = \"$REPO:$SHA\" by PR,"
+            echo "then follow docs/OPERATIONS.md, \"Releasing a build\" (tools/deploy.sh)."
             exit 0
           fi
           case "$probe" in
@@ -94,18 +98,25 @@ jobs:
           esac
 
           # Built from the repo root: the root Dockerfile is the platform.
-          docker build -t "$REPO:$SHA" .
+          # BUILD_SHA is the same value as the tag, so the running image can
+          # say which commit it is (server/build_info.py): /health "build" is
+          # what tools/check_prod_build.py compares with the pinned tag.
+          docker build --build-arg BUILD_SHA="$SHA" -t "$REPO:$SHA" .
           docker push "$REPO:$SHA"
 
-          echo "Pushed $REPO:$SHA"
-          echo "Deploy it deliberately, between collection sessions:"
-          echo "  cd infra/terraform && tofu apply -var container_image=$REPO:$SHA"
+          echo "Pushed $REPO:$SHA (BUILD_SHA=$SHA)"
+          echo "Next: pin it by PR in infra/terraform/terraform.tfvars, then the sim check"
+          echo "and tools/deploy.sh from main (docs/OPERATIONS.md, \"Releasing a build\")."
           {
             echo "### Platform image built"
             echo ""
-            echo "Commit \`$GITHUB_SHA\` → \`$REPO:$SHA\`"
+            echo "Commit \`$GITHUB_SHA\` → \`$REPO:$SHA\` (\`BUILD_SHA=$SHA\`)"
             echo ""
-            echo '```bash'
-            echo "cd infra/terraform && tofu apply -var container_image=$REPO:$SHA"
+            echo "Next, by PR: in \`infra/terraform/terraform.tfvars\`"
+            echo ""
+            echo '```hcl'
+            echo "container_image = \"$REPO:$SHA\""
             echo '```'
+            echo ""
+            echo "then \`python -m tools.sim.check\` and \`tools/deploy.sh\` from an up-to-date main."
           } >> "$GITHUB_STEP_SUMMARY"
