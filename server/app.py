@@ -3854,6 +3854,7 @@ async def ws_participant_voice(
             await _apply_launch_config(session, launch_cfg)
 
         session.participant_ws = ws
+        runner = RealtimeVoiceSessionRunner(session, ws)
         await ws.send_json({
             "type": "session",
             "session_id": session.id,
@@ -3872,7 +3873,6 @@ async def ws_participant_voice(
 
         # Every scenario runs as consecutive 1:1 conversations on Gemini Live,
         # the cast is played one character at a time, in order.
-        runner = RealtimeVoiceSessionRunner(session, ws)
         await runner.run()
     except WebSocketDisconnect:
         pass

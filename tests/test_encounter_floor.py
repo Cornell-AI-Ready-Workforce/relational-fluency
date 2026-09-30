@@ -228,7 +228,7 @@ def test_past_the_floor_nothing_is_held():
     assert not session.store.of("floor_held")
 
 
-def test_the_participants_move_on_does_not_complete_an_early_encounter(monkeypatch):
+def test_the_participants_move_on_cannot_finish_the_final_segment(monkeypatch):
     runner, session, ws = harness.make_runner("S1A")
     _last_segment(runner)
     calls = []
@@ -242,7 +242,7 @@ def test_the_participants_move_on_does_not_complete_an_early_encounter(monkeypat
     assert ws.frames("floor_held")
     runner._encounter_started_at = time.time() - 500
     _run(runner._handle_client_command(json.dumps({"type": "advance_interaction"})))
-    assert calls == [1] and ws.frames("encounter_complete")
+    assert calls == [] and not ws.frames("encounter_complete")
 
 
 def test_the_actors_end_tool_is_held_the_same_way(monkeypatch):
@@ -270,6 +270,22 @@ def test_the_actors_end_tool_does_not_finish_the_final_segment_after_the_floor(m
     monkeypatch.setattr(runner, "_advance_segment", advance)
     _run(runner._advance_from_tool())
     assert calls == [] and not ws.frames("encounter_complete")
+
+
+def test_the_one_to_one_actor_tool_does_not_finish_the_final_segment_after_the_floor():
+    runner, session, ws = harness.make_runner("S1A")
+    _last_segment(runner)
+    runner._encounter_started_at = time.time() - 500
+
+    class ToolCallRT:
+        participant_speaking = None
+        voiced_bar = None
+
+        async def events(self):
+            yield {"type": "tool_call", "name": "end_conversation"}
+
+    _run(runner._pump_events(ToolCallRT()))
+    assert not ws.frames("encounter_complete")
 
 
 def test_automatic_advance_keeps_the_final_segment_open_until_the_ceiling(monkeypatch):

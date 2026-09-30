@@ -3096,6 +3096,8 @@
       if (m.type === 'session') {
         $('title').textContent = m.scenario.title;
         sessionId = m.session_id;
+        sessionStartedAt = Date.now();
+        startTimer();
         sessionMode = m.scenario.mode || 'single';
         cast = m.cast || [];
         renderGrid();
@@ -3399,7 +3401,6 @@
     // Per attempt, not per page: a retry that succeeds must not inherit the
     // previous attempt's verdict, and one that fails again must earn its own.
     serverStatedFailure = false;
-    sessionStartedAt = Date.now();
     userTurns = 0;
     agentTurns = 0;
     lastUserFinal = { text: '', at: 0 };
@@ -3407,7 +3408,6 @@
     $('dropNote').classList.remove('show');
     speechQueue = [];
     if (speechRaf) { cancelAnimationFrame(speechRaf); speechRaf = null; }
-    startTimer();
     const pidParam = participantId ? `&participant_id=${encodeURIComponent(participantId)}` : '';
     // The model is fixed by the server for the whole study wave, the agent is
     // the measurement instrument, so participants never vary it. A researcher

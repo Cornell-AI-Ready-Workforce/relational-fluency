@@ -5348,7 +5348,11 @@ class RealtimeVoiceSessionRunner:
                 self.session.store.event(
                     "tool_call", name=ev.get("name"), segment=self.segment
                 )
+                if await self._at_ceiling():
+                    return
                 if await self._hold_at_floor("end_conversation"):
+                    continue
+                if self._is_last_segment():
                     continue
                 if not await self._advance_segment():
                     await self._send({"type": "encounter_complete"})
@@ -5592,9 +5596,13 @@ class RealtimeVoiceSessionRunner:
             return
         if msg.get("type") != "advance_interaction":
             return
+        if await self._at_ceiling():
+            return
         # Moving on cannot complete the encounter before the study's floor;
         # between interactions it is never held.
         if await self._hold_at_floor("move_on"):
+            return
+        if self._is_last_segment():
             return
         # The participant chose to move on. Their judgement about when a
         # conversation is finished is better than a turn counter, so this
