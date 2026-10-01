@@ -5451,8 +5451,15 @@ class RealtimeVoiceSession:
                     if self.track_items:
                         try:
                             owner = self._memory_error_owner(ev, err)
-                        except Exception:  # noqa: BLE001 - then it is not ours
-                            owner = None
+                        except Exception:  # noqa: BLE001
+                            # A fault in the bookkeeping must not send one of
+                            # our own refusals down the general path below
+                            # (where it would end the reply streaming now):
+                            # our event_id prefix alone still says it is
+                            # ours, and nothing more is done about it.
+                            eid = str(err.get("event_id") or ev.get("event_id") or "")
+                            owner = ({"answered": True}
+                                     if eid.startswith(_MEMORY_EID) else None)
                     if owner is not None:
                         # The gateway refused one of the memory frames
                         # (pipeline 2026-10-01a). Not a fault of any reply:

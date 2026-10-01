@@ -3059,3 +3059,35 @@ def test_room_memory_is_effective_only_on_an_encounter_with_a_room():
     assert with_room._scenario_is_group is True
     src = (ROOT / "server" / "realtime_voice_session.py").read_text(encoding="utf-8")
     assert "**provenance(self.rt.model, room=bool(self._scenario_is_group))" in src
+
+
+
+@in_a_loop
+async def test_a_fault_in_error_bookkeeping_still_keeps_our_refusal_off_the_general_path(monkeypatch):
+    """Hardening from the second re-review: should _memory_error_owner itself
+    raise, an error under our event_id prefix is still ours. It must not end
+    the reply streaming now, and must not reach the page as an error."""
+    rt = tracked()
+    await rt.request_response()
+    c = Consumer(rt)
+    try:
+        rt.ws.feed([committed("u1", None), created("R2"), item_added("R2", "j1"),
+                    tdelta("R2", "j1", "So what"), adelta("R2", "j1")])
+        await until(lambda: any(x.get("text") == "So what" for x in c.evs))
+
+        def boom(*a, **k):
+            raise RuntimeError("bookkeeping fault")
+
+        monkeypatch.setattr(rt, "_memory_error_owner", boom)
+        before = (rt.responding, rt._response_active)
+        n = len(c.evs)
+        rt.ws.feed([err("item_delete_invalid_item_id", "Item with item_id 'i1' not found",
+                        event_id="rfm_ff", param="item_id"),
+                    tdelta("R2", "j1", " now")])
+        await until(lambda: any(x.get("text") == " now" for x in c.evs))
+        after = (rt.responding, rt._response_active)
+    finally:
+        await c.stop()
+    later = [x["type"] for x in c.evs[n:]]
+    assert "error" not in later and "response_done" not in later, later
+    assert before == after == (True, True), "the live reply was ended"
