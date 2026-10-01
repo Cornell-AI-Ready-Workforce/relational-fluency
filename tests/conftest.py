@@ -538,7 +538,11 @@ def realtime_row_defaults(monkeypatch):
                  "PARTICIPANT_RATE_GATE_MAX_VOICED_MS", "HANDOFF_IDLE_S",
                  "PARTICIPANT_RATE_OVER",
                  # The follow-up gap (room pacing 2026-09-29a).
-                 "FOLLOWUP_GAP_S"):
+                 "FOLLOWUP_GAP_S",
+                 # Room memory hygiene (pipeline 2026-10-01a). Not
+                 # REALTIME_MEMORY_SETTLE_S / _OP_TTL_S: those are read at
+                 # import, like REALTIME_UPDATE_ACK_S.
+                 "ROOM_CUT_MEMORY", "ROOM_TOLD_TEXT", "ROOM_NUDGE_ROLE"):
         monkeypatch.delenv(knob, raising=False)
 
 

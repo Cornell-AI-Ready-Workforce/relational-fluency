@@ -398,7 +398,7 @@ def test_the_record_carries_every_knob_block(tmp_path):
     record = encounter_record.build(sdir)
     rp = record["provenance"]
     for key in ("turn_gate", "pacing", "record", "cancelled_output",
-                "agent_transcript_items", "pipeline_version",
+                "agent_transcript_items", "room_memory", "pipeline_version",
                 "room_pacing_version"):
         assert rp[key] == prov[key], key
 

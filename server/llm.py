@@ -586,7 +586,31 @@ def text_client() -> AsyncAnthropic:
 #                the 11:00 warning and the 12:00 ceiling stay on the
 #                encounter's clock. The page shows a start cue until then.
 #                Provenance `opening`.
-PIPELINE_VERSION = "2026-09-28b"
+#   2026-10-01a  room memory hygiene, gpt route (the researchers' decision of
+#                2026-10-01: no generated-but-unheard reply stays in a
+#                character's own conversation). A line the participant cut
+#                off, on the floor or still playing after its turn, is
+#                replaced in that character's conversation by the words heard
+#                on the playback clock (every output item deleted after its
+#                response.done, the heard words re-inserted in place once the
+#                deletes are acked; only deleted when nothing was heard); a
+#                reply that was never played (a suppressed hold refused,
+#                stale, expired, superseded or dropped; a reply a re-brief
+#                cancelled; a floor holder's reply cut before any of it
+#                reached the page; a line blanked as narration with no audio)
+#                is deleted; colleagues are told the heard words, and a line
+#                already told in full is corrected in place; retry and
+#                unanswered nudges to room members are system items. A
+#                reply-start to a member waits up to REALTIME_MEMORY_SETTLE_S
+#                for an operation still pending there. member_memory_replaced,
+#                told_line_corrected, member_memory_error / _skipped / _late /
+#                _waited; assistant_turn response_id, memory, told,
+#                memory_text, told_text, memory_estimate; nudge_role on a
+#                room's audio_retry / reply_retry. The director's history and
+#                assistant_turn text are unchanged. ROOM_CUT_MEMORY=keep,
+#                ROOM_TOLD_TEXT=generated, ROOM_NUDGE_ROLE=user restore 28b.
+#                Provenance `room_memory`.
+PIPELINE_VERSION = "2026-10-01a"
 ROOM_PACING_VERSION = "2026-09-29b"
 
 
@@ -609,7 +633,7 @@ def provenance(model: Optional[str] = None) -> dict:
     # Imported here, not at the top: server.voice.realtime imports this module.
     from .voice.realtime import (audio_provenance, bridge_provenance,
                                  pacing_provenance, record_provenance,
-                                 turn_gate_provenance)
+                                 room_memory_provenance, turn_gate_provenance)
 
     realtime = _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio")
     return {
@@ -641,6 +665,10 @@ def provenance(model: Optional[str] = None) -> dict:
         # The deferral rule and the heard_text estimate (pipeline
         # 2026-09-23f); see record_provenance.
         "record": record_provenance(),
+        # What a room character's own conversation keeps of lines nobody
+        # heard, and the role of a room's retry nudges (pipeline 2026-10-01a);
+        # see room_memory_provenance. `active` is False off the gpt route.
+        "room_memory": room_memory_provenance(model or realtime),
         # Who opens a conversation, and which clock each limit counts on
         # (pipeline 2026-09-28b; see realtime_voice_session's "the
         # participant opens"). Before 28b a room's lead opened the scene and

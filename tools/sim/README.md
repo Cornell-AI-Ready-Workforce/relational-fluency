@@ -94,12 +94,14 @@ shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
 check fails for it, saying so, until it is recorded. **All four are pending as
-committed.** S1A and S2A were recorded on 24c / 24b (a736d51) and are not
-comparable with 28a; S3A and S4A were never recorded. The gateway refused
-every realtime connection from about 22:44 UTC on 2026-09-28 and still did at
-01:01 UTC on 2026-09-29, so record all four with `python -m tools.sim.check
---write-baseline` on the first run that can reach the gateway, in the PR that
-ships 28a.
+committed.** They were recorded on 28b / room pacing 29b (build 8c188a6,
+2026-09-29), and pipeline 2026-10-01a (room memory hygiene) was made offline,
+without a gateway run: it changes what a gpt room character's own
+conversation keeps, so S3A and S4A are a different experiment, and S1A and
+S2A (1:1, unchanged by it) are pending only because a baseline compares one
+`pipeline_version` with itself. The 28b values are in git history (55de607).
+Record all four with `python -m tools.sim.check --write-baseline` on the
+first run that can reach the gateway, in the PR that ships 10-01a.
 
 ## The stimulus
 

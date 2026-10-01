@@ -332,7 +332,8 @@ Fixes for issues #21-#25, landed mid-study. Every record carries
 `pipeline_version` and `room_pacing_version` (on `realtime_session_started`,
 and in `/health` under `gateway`), plus the knob values that ran (`turn_gate`,
 `pacing`, `record`, `cancelled_output`, `input_rate`,
-`input_transcription_model`, `max_output_tokens`). From `23g` record.json's
+`input_transcription_model`, `max_output_tokens`, and `room_memory` from
+10-01a). From `23g` record.json's
 `provenance` carries all of them too, and the analysis DB's `encounter` row
 has `pipeline_version`, `room_pacing_version` and `pipeline_provenance` (the
 loader adds the columns to an older database). Split the archive on those
@@ -554,6 +555,42 @@ asked for; `followup_yielded` says where it stopped (before `29a` it had no
 `reason`, and fired only when the participant was speaking as the previous
 reply finished generating; from `29b` it fires only once a line of theirs
 that the director routes has landed).
+
+## What changed on 2026-10-01, what a character remembers (pipeline_version 2026-10-01a)
+
+The researchers' decision of 2026-10-01 for rooms on the gpt route: a
+character's own conversation (its gpt realtime session) keeps only what the
+participant actually heard. The director's history and the recorded line
+(`assistant_turn` `text`, the transcript, `steering_pair`) are unchanged;
+provenance `room_memory` says which rules ran. It rests on gateway behaviour
+measured live on 2026-09-30: an item delete is acked and forgotten (4/4), a
+reply often has two output items (3 of 4), and deleting them all and
+creating the heard words after the item before the reply leaves exactly
+those words in place (3/3); truncating an item drops its transcript (4/4)
+and is never used.
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 10-01a | A room line the participant cut off is replaced in that character's own conversation by the words heard on the playback clock (on the floor: the clock's milliseconds at the cut and the character's speaking rate, the estimator of `heard_text`; still playing after its turn: the `playback_cut` share): every output item of the reply is deleted once its `response.done` has arrived, and once the gateway has acked every delete the heard words are put back where the line was; nothing heard, nothing put back. `member_memory_replaced` (`reason` `cut_floor_holder` / `cut_still_playing`), `assistant_turn` `memory` / `memory_text` / `memory_estimate`. | `ROOM_CUT_MEMORY` (`replace`; `keep` restores `28b`) |
+| 10-01a | A reply that was never played is deleted from that character's conversation: a suppressed hold that is refused, stale, expired, overwritten by the next one or dropped when the participant speaks (`reason` `hold_dropped`, `why`), a reply a re-brief cancelled (`rebrief_cancel`), a floor holder's reply cut before any of it reached the page or cut before it was named (`cut_floor_holder`, `why` `not_relayed` / `cut_before_named`), a line blanked as narration with no audio (`unvoiced`). A hold that is adopted, or spliced in when the floor reaches it, is never touched; a deletion waiting for its reply's end is withdrawn if the reply starts to play (`member_memory_skipped` `played_after_request`). | `ROOM_CUT_MEMORY` |
+| 10-01a | The other characters are told the heard words of a cut line, not the whole line, and nothing of a line nobody heard; a line they were already told in full (it was cut while still playing) is corrected in place (`told_line_corrected`; `told_corrected` on `member_memory_replaced`). `assistant_turn` `told` (`generated` / `heard` / `none`) and `told_text`. | `ROOM_TOLD_TEXT` (`heard`; `generated` restores `28b`) |
+| 10-01a | The retry and unanswered nudges sent to a room character are system items, not lines the participant said (`nudge_role` on a room's `audio_retry` / `reply_retry`). 1:1 is unchanged. | `ROOM_NUDGE_ROLE` (`system`; `user` restores `28b`) |
+| 10-01a | A gateway error on any of these operations is `member_memory_error`, never `voice_error`, never on the page, and never ends a turn; a refused delete leaves the line and skips its replacement. A reply-start to a character with an operation still waiting (for its reply's end, the turn's decision, or the deletes' acks) waits up to `REALTIME_MEMORY_SETTLE_S` (1.0 s): `member_memory_waited` when it waited, `member_memory_late` when it went first. An operation that waits `REALTIME_MEMORY_OP_TTL_S` (10 s) is given up untouched (`member_memory_skipped` `no_done` / `no_decision` / `no_ack`). | `REALTIME_MEMORY_SETTLE_S`, `REALTIME_MEMORY_OP_TTL_S` (read at start-up) |
+
+Caveats for analysis: from `10-01a` a gpt room character's later replies are
+generated without the unheard part of lines it was cut off in, without
+replies nobody heard, and with only the heard part of a colleague's cut line;
+before it they had all three. The director still has the full text, so it
+may route on content no character remembers. `assistant_turn` `memory`/`told`
+is the decision when the turn was written; a line cut while still playing is
+written `memory: whole` and then `member_memory_replaced` with the same
+`response_id`. `heard_text` on `assistant_turn` is still the relayed-audio
+upper bound; `memory_text` is what the character kept, both estimates of
+words (within 1-3 words). Native-audio and Gemini rooms and every 1:1
+encounter are unchanged (`room_memory.active` is false off the gpt route, and
+means "a room on this model": it never applies to 1:1). Not covered: a
+reply that is re-asked after its audio was lost keeps its unheard tail
+(`member_memory_skipped` `retry_head`), and told notes stay user items.
 
 ## The seven-minute floor, and the twelve-minute stop
 
