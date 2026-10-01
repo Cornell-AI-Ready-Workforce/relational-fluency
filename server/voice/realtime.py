@@ -1448,7 +1448,8 @@ def new_item_id(kind: str) -> str:
     id): it is only the bridge's name for that note until the gateway's
     conversation.item.added gives its own (see _match_pending_create). A
     re-inserted heard line is sent under one, falling back to the measured
-    id-less frame if the gateway refuses it (P-M1 unmeasured)."""
+    id-less frame if the gateway refuses it. Measured 2026-10-01: the
+    gateway takes a client item id and echoes it in conversation.item.added."""
     k = "".join(c for c in (kind or "x").lower() if c.isalnum())[:2] or "x"
     return f"rf_{k}_{os.urandom(4).hex()}_{next(_ITEM_SEQ):x}"[:32]
 
@@ -2691,8 +2692,9 @@ class RealtimeVoiceSession:
         one to each told note, so that a line cut off while still playing
         after it was told in full can be corrected in place (correct_item).
         The frame is exactly the one this always sent, with no id and no
-        event_id, named or not: whether the gateway takes client-chosen ids
-        is unmeasured (P-M1), and a told note goes out on every room turn.
+        event_id, named or not: a told note goes out on every room turn, so
+        it stays the frame 28b sent (client ids are accepted, measured
+        2026-10-01, but a told note does not need one).
         The gateway's own id for the note is learned from its
         conversation.item.added (_match_pending_create). Returns the name
         when the frame went out, None otherwise.
@@ -2735,8 +2737,10 @@ class RealtimeVoiceSession:
     #       replaced the same way.
     #
     # An operation's frames go out only while no other reply is open on that
-    # session (_busy): item deletes and creates during an active response
-    # are unmeasured (P-M3), so the operation waits for that reply's done.
+    # session (_busy). Measured 2026-10-01: a delete and a create sent during
+    # an active response were both accepted and the reply played on, but
+    # waiting for that reply's done keeps the mirror's order simple, and a
+    # cancel's done lands 0.10-0.24 s after the cancel (4 samples).
     # The replacement is sent only once every delete has been answered; a
     # delete the gateway refuses is sent once more, and an item refused twice
     # stays where it was. The heard words are put back only when the line's
@@ -3047,7 +3051,7 @@ class RealtimeVoiceSession:
     def _busy(self, except_rid: Optional[str] = None) -> bool:
         """Whether a reply other than `except_rid` is open on the gateway, or
         one this session asked for has not been named yet: an operation's
-        frames wait for it to end (P-M3 is unmeasured). A reply open for
+        frames wait for it to end (by choice: see the ordering note above). A reply open for
         longer than _OPEN_REPLY_MAX_S is taken to have ended without a done."""
         now = time.time()
         for rid, at in list(self._open_replies.items()):
@@ -3058,7 +3062,7 @@ class RealtimeVoiceSession:
         return bool(self._reply_start_at) and now - self._reply_start_at < 2.0
 
     def _op_ready(self, op: dict) -> bool:
-        """Whether an operation's frames may go out now (rule 1 and P-M3),
+        """Whether an operation's frames may go out now (rule 1 and the busy rule),
         and if not, what it waits for (`waiting_for`, read on expiry)."""
         if op.get("kind") == "reply":
             rid = op.get("response_id")
@@ -3362,8 +3366,8 @@ class RealtimeVoiceSession:
                           context: Optional[dict] = None) -> Optional[str]:
         """Create one message item, after `previous_item_id` when given
         ("root": at the front). Sent under an id of ours unless the gateway
-        has refused one on this socket (P-M1 unmeasured; see
-        _recover_memory_error, which falls back to the measured id-less
+        has refused one on this socket (accepted and echoed, measured
+        2026-10-01; _recover_memory_error still falls back to the id-less
         frame). Returns the mirror's id for it, None when nothing was sent."""
         if not self.track_items:
             return None
@@ -3519,9 +3523,10 @@ class RealtimeVoiceSession:
         """The memory frame an `error` answers, taken once; None for any
         other error, which then takes the bridge's usual path unchanged.
 
-        By our event_id first: the realtime API documents its echo, but the
-        gateway's is unmeasured (P-M2: every probe error carried event_id
-        null, and no probe frame had sent one). Failing that, by an id of
+        By our event_id first: the gateway echoes it (measured 2026-10-01:
+        a refused delete came back as item_delete_invalid_item_id and a
+        refused anchored create as item_create_invalid_previous_item_id,
+        both with our event_id). Failing that, by an id of
         ours named in the message; by an item parameter while a frame of
         ours is less than 10 s old; and last, by any error that speaks of an
         item and carries none of the codes the bridge's own frames draw,
@@ -3566,11 +3571,12 @@ class RealtimeVoiceSession:
         on without it (_complete_memory_op).
 
         A refused insert falls back, one step at a time, to the frame that
-        was measured: first the same create without an id of ours (P-M1
-        unmeasured; the gateway's own id is then learned from its
+        was measured: first the same create without an id of ours (the
+        gateway's own id is then learned from its
         conversation.item.added, and no later insert on this socket names
         one), then, if it was anchored, at the end of the conversation (its
-        anchor may have gone under it; P-M4/P-M8 unmeasured). Each resend is
+        anchor may have gone under it; anchors on an audio item and "root" both
+        worked, measured 2026-10-01). Each resend is
         a memory frame too, so a second refusal is recognised again; the
         chain ends with an id-less create at the end."""
         op, iid = owner.get("op"), owner.get("item_id")
@@ -4429,8 +4435,10 @@ class RealtimeVoiceSession:
         room member (pipeline 2026-10-01a), because a user item is a line the
         participant said, and the character remembers it as theirs. System
         input_text items were accepted by the gateway on 2026-09-30; whether
-        a system nudge draws the answer a user one does is not yet measured
-        (P-M6), and ROOM_NUDGE_ROLE=user puts the user item back.
+        a system nudge draws the answer a user one does was measured on
+        2026-10-01: 3 of 3 answered the participant's question, as 3 of 3
+        user nudges did, none talking about the nudge. ROOM_NUDGE_ROLE=user
+        puts the user item back.
         """
         if self._memory_ops:
             await self._memory_ready("prompt")

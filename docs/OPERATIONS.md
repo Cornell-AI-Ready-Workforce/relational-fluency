@@ -576,7 +576,7 @@ transcript (4/4) and is never used.
 | 10-01a | A reply that was never played is deleted from that character's conversation: a suppressed hold that is refused, stale, expired, overwritten by the next one, left beside a live turn or dropped when the participant speaks (`reason` `hold_dropped`, `why`), a reply a re-brief cancelled (`rebrief_cancel`), a floor holder's reply cut before any of it reached the page or cut before it was named (`cut_floor_holder`, `why` `not_relayed` / `cut_before_named`), a line blanked as narration with no audio (`unvoiced`; its turn says `memory: deleted`). A hold that is adopted, or spliced in when the floor reaches it, is never touched; a deletion waiting for its reply's end is withdrawn if the reply starts to play (`member_memory_skipped` `played_after_request`). | `ROOM_CUT_MEMORY` |
 | 10-01a | The other characters are told the heard words of a cut line, not the whole line, and nothing of a line nobody heard; a line they were already told in full (it was cut while still playing, or queued) is corrected in place (`told_line_corrected`; `told_corrected` on `member_memory_replaced`; a colleague whose note could not be corrected is `member_memory_skipped` `reason` `told_correction`). Told notes keep 28b's frame, with no item id: the gateway's own id is learned from its `conversation.item.added`. `assistant_turn` `told` (`generated` / `heard` / `none`) and `told_text`. | `ROOM_TOLD_TEXT` (`heard`; `generated` restores `28b`) |
 | 10-01a | The retry and unanswered nudges sent to a room character are system items, not lines the participant said (`nudge_role` on a room's `audio_retry` / `reply_retry`). 1:1 is unchanged. | `ROOM_NUDGE_ROLE` (`system`; `user` restores `28b`) |
-| 10-01a | A gateway error recognised as answering one of these operations is `member_memory_error`, never `voice_error`, never on the page, and never ends a turn. It is recognised by our echoed `event_id`, else by our item id in its message, an item parameter of ours, or (with no other item or reply frame sent since ours) any item error without one of the codes the bridge's own frames draw; the gateway's echo of `event_id` is unmeasured, so an error matching none of these still takes the bridge's usual path. A refused delete is sent once more; refused again its item stays, and the heard words go back only if the line's first item is gone (`partial`). A refused insert is resent as the measured id-less frame, then at the end. A reply-start to a character with an operation still waiting (for its reply's end, the turn's decision, or the deletes' answers) waits up to `REALTIME_MEMORY_SETTLE_S` (1.0 s), before a grant's silence pad: `member_memory_waited` when it waited, `member_memory_late` when it went first. An operation that waits `REALTIME_MEMORY_OP_TTL_S` (10 s) is given up untouched (`member_memory_skipped` `no_done` / `busy` / `no_item` / `no_decision` / `no_ack`). | `REALTIME_MEMORY_SETTLE_S`, `REALTIME_MEMORY_OP_TTL_S` (read at start-up) |
+| 10-01a | A gateway error recognised as answering one of these operations is `member_memory_error`, never `voice_error`, never on the page, and never ends a turn. It is recognised by our echoed `event_id`, else by our item id in its message, an item parameter of ours, or (with no other item or reply frame sent since ours) any item error without one of the codes the bridge's own frames draw; the gateway echoes `event_id` (measured 2026-10-01), and an error matching none of these still takes the bridge's usual path. A refused delete is sent once more; refused again its item stays, and the heard words go back only if the line's first item is gone (`partial`). A refused insert is resent as the measured id-less frame, then at the end. A reply-start to a character with an operation still waiting (for its reply's end, the turn's decision, or the deletes' answers) waits up to `REALTIME_MEMORY_SETTLE_S` (1.0 s), before a grant's silence pad: `member_memory_waited` when it waited, `member_memory_late` when it went first. An operation that waits `REALTIME_MEMORY_OP_TTL_S` (10 s) is given up untouched (`member_memory_skipped` `no_done` / `busy` / `no_item` / `no_decision` / `no_ack`). | `REALTIME_MEMORY_SETTLE_S`, `REALTIME_MEMORY_OP_TTL_S` (read at start-up) |
 
 Caveats for analysis: from `10-01a` a gpt room character's later replies are
 generated without the unheard part of lines it was cut off in, without
@@ -597,12 +597,15 @@ Gemini rooms and every 1:1 encounter, the frames and the records are 28b's
 (`room_memory.active` is false off the gpt route; `effective` is false
 wherever nothing of 10-01a runs). Not covered: a reply that is re-asked after
 its audio was lost keeps its unheard tail (`member_memory_skipped`
-`retry_head`), and told notes stay user items. Unmeasured on the gateway
-(probe before relying on it): client item ids on a create, the `event_id`
-echo on errors, item operations while a reply is active (the bridge avoids
-them), `previous_item_id` on an audio item and `"root"`, whether a system
-nudge draws a reply, and whether replies stay voiced after an `output_text`
-assistant item.
+`retry_head`), and told notes stay user items. Measured on the gateway on 2026-10-01 (gpt-realtime-2.1, one session each):
+client item ids on a create are accepted and echoed; errors echo our `event_id`
+(`item_delete_invalid_item_id`, `item_create_invalid_previous_item_id`); a delete
+and a create during an active reply are accepted and the reply plays on (the
+bridge still waits for the reply's end); `previous_item_id` on an audio item and
+`"root"` both place the item; a system-role nudge answered the participant 3
+of 3, as the user-role one did; replies stayed voiced 3 of 3 after an
+`output_text` replacement; a cancel's `response.done` lands 0.10-0.24 s after
+the cancel.
 
 ## The seven-minute floor, and the twelve-minute stop
 

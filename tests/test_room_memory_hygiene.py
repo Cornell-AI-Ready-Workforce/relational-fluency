@@ -571,7 +571,7 @@ def told_frame(text):
 
 @in_a_loop
 async def test_correct_item_rewrites_a_told_line_in_place():
-    """A told note goes out as 28b's frame, with no id (P-M1 unmeasured);
+    """A told note goes out as 28b's frame, with no id (it needs none; client ids are accepted, measured 2026-10-01);
     the gateway's id for it is learned from its conversation.item.added, and
     a correction deletes THAT item and puts the heard version where it was.
     Asked for before the gateway has named the note, it waits for the name."""
@@ -617,7 +617,7 @@ async def test_correct_item_rewrites_a_told_line_in_place():
 
 @in_a_loop
 async def test_an_insert_the_gateway_renames_is_aliased():
-    """Unmeasured (P-M1): should the gateway put its own id on an item sent
+    """Defensive (the gateway echoed our id on 2026-10-01): should the gateway put its own id on an item sent
     under ours, the item is matched by role and text, and a later delete of
     it names the gateway's id."""
     rt = tracked()
@@ -636,7 +636,7 @@ async def test_an_insert_the_gateway_renames_is_aliased():
 
 @in_a_loop
 async def test_a_refused_insert_id_falls_back_to_the_measured_frame():
-    """Unmeasured (P-M1) the other way: a gateway that refuses an id of ours
+    """Defensive the other way: a gateway that refuses an id of ours
     gets the frame measured on 2026-09-30 instead (create with
     previous_item_id and no id), the mirror learns the gateway's id from its
     conversation.item.added, and no later insert on that socket names one."""
@@ -735,7 +735,7 @@ def gpt_room(make=tracked):
 async def test_told_notes_are_todays_frames_and_remembered_only_where_tracked(
         monkeypatch):
     """Every told note is 28b's frame, to every member and under every knob:
-    a told note is on every room turn, and client ids are unmeasured (P-M1).
+    a told note is on every room turn, and 28b's frame needs no client id.
     Only a tracking member's note of a line with a reply id, under "heard",
     is remembered (by the bridge's name for it) for a later correction."""
     room = gpt_room()
@@ -1358,7 +1358,7 @@ async def test_a_hold_never_played_is_deleted(how, monkeypatch):
             h.rt("priya").ws.feed([created("R5"), tdelta("R5", "h5", "Also")])
             await until(lambda: h.rt("priya")._memory_ops.get("R0"))
             # R5, suppressed in turn, is open: the delete waits for its done
-            # (P-M3, no item op during an active response).
+            # (the busy rule: no item op during an active response).
             await asyncio.sleep(0.05)
             assert deletes(h.rt("priya")) == []
             h.rt("priya").ws.feed([done_out("R5", ["h5"], "cancelled")])
@@ -1770,7 +1770,7 @@ def test_the_version_and_its_history_line():
 
 
 # --------------------------------------------------------------------------
-# 5. Review of the first cut: races, refusals, unmeasured frames, records
+# 5. Review of the first cut: races, refusals, fallback frames, records
 # --------------------------------------------------------------------------
 
 class YieldingWS(WireWS):
@@ -1974,7 +1974,7 @@ async def _a_pending_delete(rt, c):
 @pytest.mark.parametrize("shape", ["id_in_message", "param_only", "item_wording"])
 @in_a_loop
 async def test_an_error_without_our_event_id_is_still_recognised(shape):
-    """P-M2 unmeasured: the gateway may not echo event_id. Each fallback on
+    """Defensive (the gateway echoed event_id on 2026-10-01): a gateway may not echo event_id. Each fallback on
     its own: our id named in the message; an item parameter of ours; and an
     error that speaks of an item, with no frame but ours sent since."""
     rt = tracked()
@@ -2757,7 +2757,7 @@ async def test_a_cut_before_the_finalize_with_nothing_heard_keeps_and_tells_noth
 
 @in_a_loop
 async def test_a_told_correction_waits_for_the_reply_open_on_that_member():
-    """P-M3 is unmeasured: no item operation goes out while a reply is open
+    """By choice (both were accepted mid-reply on 2026-10-01): no item operation goes out while a reply is open
     on that member (the floor holder a case 2 correction lands on, just
     cancelled or still streaming); it goes at that reply's done."""
     rt = tracked()

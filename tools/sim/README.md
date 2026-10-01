@@ -111,7 +111,7 @@ p50 / p90 (4.023 / 9.346 and 4.662 / 6.842 s), `reply_missing` and
 `voice_error` (0), and in the sessions' events any `member_memory_late`,
 `member_memory_error` or `member_memory_skipped` `busy` / `no_item`. A drop
 in lines answered or a rise in latency there is 10-01a's ordering wait or its
-system-role nudges (P-M6) until shown otherwise, and is not a baseline.
+system-role nudges until shown otherwise, and is not a baseline.
 
 ## The stimulus
 
