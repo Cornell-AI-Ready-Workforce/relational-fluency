@@ -1360,9 +1360,10 @@ def handoff_idle_s() -> float:
 def room_cut_memory() -> str:
     """ROOM_CUT_MEMORY, default "replace". A room line the participant cut
     off is replaced in that character's own conversation by the words heard
-    on the playback clock (every output item deleted after the reply's
-    response.done, the heard words put back where the line was; only deleted
-    when nothing was heard), and a reply that was never played (a suppressed
+    on the playback clock (every message item of the reply deleted after its
+    response.done, function_call items kept; the heard words put back where
+    the line was; only deleted when nothing was heard, as for a line queued
+    behind the one cut), and a reply that was never played (a suppressed
     hold refused, stale, expired or dropped; a reply a re-brief cancelled) is
     deleted. "keep" restores 28b: the character remembers everything it
     generated. Anything else reads as the default."""
@@ -1397,22 +1398,40 @@ def room_memory_active(model: str) -> bool:
     return is_openai_realtime(model or "")
 
 
+def room_memory_effective(model: str) -> bool:
+    """Whether a room on `model` runs anything other than 28b: on the gpt
+    route, and with at least one of the three knobs away from its 28b value
+    (keep, generated, user). Only then does a room member track its items,
+    and only then do the room's records carry the 10-01a fields
+    (assistant_turn response_id / memory / told, nudge_role on a retry): at
+    keep / generated / user a room's frames AND records are 28b's, and only
+    provenance `room_memory` says which rules ran."""
+    return room_memory_active(model) and (
+        room_cut_memory(), room_told_text(), room_nudge_role()
+    ) != ("keep", "generated", "user")
+
+
 def room_memory_provenance(model: str) -> dict:
     """The room memory rules as this process applies them (pipeline
     2026-10-01a). `active` is whether they apply to a room on `model` (False
-    off the gpt route; 1:1 is never touched). `heard_basis` is not a knob: a
-    floor holder's heard words are its line's words that fit in the playback
-    clock's heard milliseconds at the character's speaking rate, a line cut
-    while still playing after its turn keeps playback_cut's share of its
-    words. `settle_s` / `op_ttl_s` are REALTIME_MEMORY_SETTLE_S and
-    REALTIME_MEMORY_OP_TTL_S, read at import."""
+    off the gpt route; 1:1 is never touched); `effective` is whether a room
+    on it runs anything other than 28b (room_memory_effective), which is the
+    flag to select encounters by. `heard_basis` is not a knob: a floor
+    holder's heard words are its line's words that fit in the playback
+    clock's heard milliseconds (the instant its playback_cut reads) at the
+    character's speaking rate; a line cut while still playing after its turn,
+    or queued behind the line cut, keeps playback_cut's share of its words
+    (none, for a queued one). `settle_s` / `op_ttl_s` are
+    REALTIME_MEMORY_SETTLE_S and REALTIME_MEMORY_OP_TTL_S, read at import."""
     return {
         "cut_memory": room_cut_memory(),
         "told_text": room_told_text(),
         "nudge_role": room_nudge_role(),
         "active": room_memory_active(model),
+        "effective": room_memory_effective(model),
         "heard_basis": {"cut_floor_holder": "play_clock_wpm",
-                        "cut_still_playing": "play_clock_share"},
+                        "cut_still_playing": "play_clock_share",
+                        "cut_queued": "play_clock_share"},
         "settle_s": MEMORY_SETTLE_S,
         "op_ttl_s": MEMORY_OP_TTL_S,
     }
@@ -1422,11 +1441,14 @@ _ITEM_SEQ = itertools.count(1)
 
 
 def new_item_id(kind: str) -> str:
-    """A client-chosen conversation item id: `rf_<kind>_<8 hex>_<seq>`, at
-    most 32 characters of [a-z0-9_], the shape the realtime API documents
-    for client ids. Unique in this process, which is all a conversation
-    needs; GroupRoom.tell names told notes with these so a told line can be
-    corrected later."""
+    """A conversation item id of ours: `rf_<kind>_<8 hex>_<seq>`, at most 32
+    characters of [a-z0-9_], the shape the realtime API documents for client
+    ids. Unique in this process, which is all a conversation needs. A told
+    note is never SENT under one (GroupRoom.tell's frame is 28b's, with no
+    id): it is only the bridge's name for that note until the gateway's
+    conversation.item.added gives its own (see _match_pending_create). A
+    re-inserted heard line is sent under one, falling back to the measured
+    id-less frame if the gateway refuses it (P-M1 unmeasured)."""
     k = "".join(c for c in (kind or "x").lower() if c.isalnum())[:2] or "x"
     return f"rf_{k}_{os.urandom(4).hex()}_{next(_ITEM_SEQ):x}"[:32]
 
@@ -1713,6 +1735,26 @@ UPDATE_ACK_S = float(setting("REALTIME_UPDATE_ACK_S", "2.0"))
 # up after MEMORY_OP_TTL_S, touching nothing more (member_memory_skipped).
 MEMORY_SETTLE_S = float(setting("REALTIME_MEMORY_SETTLE_S", "1.0"))
 MEMORY_OP_TTL_S = float(setting("REALTIME_MEMORY_OP_TTL_S", "10"))
+
+# Frames of ours that are not memory frames and can draw an item- or
+# reply-shaped error: counted on a tracking session (_plain_seq) so an error
+# that echoes no event_id is only claimed as a memory frame's when no such
+# frame went out after it (_memory_error_owner). Audio appends and cancels
+# are left out: appends flow all the time and draw no item error, and a
+# cancel's refusal has its own code below.
+_PLAIN_COUNTED = frozenset({
+    "conversation.item.create", "conversation.item.delete",
+    "conversation.item.truncate", "response.create",
+    "input_audio_buffer.commit", "input_audio_buffer.clear",
+    "session.update"})
+# Error codes the bridge's own frames draw, handled further down events():
+# never a memory frame's, whatever else the error says.
+_REPLY_ERROR_CODES = frozenset({
+    "response_cancel_not_active", "conversation_already_has_active_response",
+    "input_audio_buffer_commit_empty"})
+# A reply open on the gateway for longer than this is taken to have ended
+# without a done (an errored reply): it no longer holds an operation back.
+_OPEN_REPLY_MAX_S = 30.0
 
 # A reply THIS bridge asked for (commit_turn / request_response / a room's
 # give_floor) that has produced nothing at all — no response.created, no
@@ -2526,6 +2568,16 @@ class RealtimeVoiceSession:
         """
         if not self.ws:
             return
+        if self.track_items:
+            # Room memory hygiene (pipeline 2026-10-01a): what went out that
+            # is not a memory frame, for _memory_error_owner, and when this
+            # session last asked for a reply, for _busy.
+            ptype = payload.get("type")
+            if (ptype in _PLAIN_COUNTED
+                    and not str(payload.get("event_id") or "").startswith("rfm_")):
+                self._plain_seq += 1
+                if ptype in ("response.create", "input_audio_buffer.commit"):
+                    self._reply_start_at = time.time()
         try:
             await self.ws.send(json.dumps(payload))
         except websockets.ConnectionClosed as exc:
@@ -2634,37 +2686,36 @@ class RealtimeVoiceSession:
         and answers it, first delta 0.23 s. See the accepts_text_items column
         and docs/migration-plan.md.
 
-        `item_id` (pipeline 2026-10-01a) names the item, on a session that
-        tracks its items only: GroupRoom.tell names each told note so that a
-        line cut off while still playing after it was told in full can be
-        corrected in place (correct_item). Returns the id then. Without it,
-        or on any other session, the frame is exactly the one this always
-        sent, with no id and no event_id, and nothing is returned.
+        `item_id` (pipeline 2026-10-01a) is the bridge's own name for the
+        item, on a session that tracks its items only: GroupRoom.tell gives
+        one to each told note, so that a line cut off while still playing
+        after it was told in full can be corrected in place (correct_item).
+        The frame is exactly the one this always sent, with no id and no
+        event_id, named or not: whether the gateway takes client-chosen ids
+        is unmeasured (P-M1), and a told note goes out on every room turn.
+        The gateway's own id for the note is learned from its
+        conversation.item.added (_match_pending_create). Returns the name
+        when the frame went out, None otherwise.
         """
-        if item_id and self.track_items:
-            item = {"id": item_id, "type": "message", "role": role,
-                    "content": [{"type": "input_text", "text": text}]}
-            plain = {"type": "conversation.item.create",
-                     "item": {k: v for k, v in item.items() if k != "id"}}
-            self._pending_creates.append((item_id, role, text))
-            del self._pending_creates[:-64]
-            self._optimistic_place(item_id, None, role, text)
-            # `resend` is today's frame, sent instead should the gateway
-            # refuse a client-chosen id (unmeasured, P-M1): a colleague must
-            # never go untold because of the memory machinery.
-            eid = await self._send_memory(
-                {"type": "conversation.item.create", "item": item},
-                op="tell", item_id=item_id, extra={"resend": plain})
-            if eid is None:
-                self._unplace(item_id)
-                return None
-            return item_id
-        await self._send({
+        frame = {
             "type": "conversation.item.create",
             "item": {"type": "message", "role": role,
                      "content": [{"type": "input_text", "text": text}]},
-        })
-        return None
+        }
+        if not (item_id and self.track_items):
+            await self._send(frame)
+            return None
+        if self.ws is None:
+            return None
+        self._pending_creates.append((item_id, role, text))
+        del self._pending_creates[:-64]
+        self._optimistic_place(item_id, None, role, text, named=False)
+        failures = self.send_failures
+        await self._send(frame)
+        if self.ws is None or self.send_failures > failures:
+            self._unplace(item_id)
+            return None
+        return item_id
 
     # -- room memory hygiene (pipeline 2026-10-01a) -----------------------------
     #
@@ -2683,14 +2734,19 @@ class RealtimeVoiceSession:
     #   correct_item(item_id, text)   one item (a told note) deleted and
     #       replaced the same way.
     #
-    # The replacement is sent only once every delete has been acked
-    # (conversation.item.deleted): a delete the gateway refuses leaves the
-    # line where it was, and inserting the heard words beside it would give
-    # the character both. While an operation is waiting or sending, a frame
-    # that starts a reply on this session waits for it (_memory_ready).
-    # Errors answering these frames are routed to memory_op_error before the
-    # bridge's own error handling sees them, so a refused delete never ends a
-    # reply, raises no flag and never reaches the page.
+    # An operation's frames go out only while no other reply is open on that
+    # session (_busy): item deletes and creates during an active response
+    # are unmeasured (P-M3), so the operation waits for that reply's done.
+    # The replacement is sent only once every delete has been answered; a
+    # delete the gateway refuses is sent once more, and an item refused twice
+    # stays where it was. The heard words are put back only when the line's
+    # first item is gone: beside a surviving first item they would give the
+    # character the start of the line twice. While an operation is waiting
+    # or sending, a frame that starts a reply on this session waits for it
+    # (_memory_ready). Errors answering these frames are routed to
+    # memory_op_error before the bridge's own error handling sees them
+    # (_memory_error_owner), so a refused delete never ends a reply, raises
+    # no flag and never reaches the page.
 
     def _reset_memory(self) -> None:
         """The per-socket item mirror and memory operations, put back to
@@ -2699,16 +2755,22 @@ class RealtimeVoiceSession:
         pending = list((getattr(self, "_memory_ops", None) or {}).values())
         self._reply_items: dict = {}       # rid -> [item id], output order
         self._item_info: dict = {}         # item id -> {type, role, rid, prev, text}
-        self._conv: list = []              # live item ids, conversation order
+        self._conv: list = []              # item ids, conversation order
         self._conv_complete = True         # _conv has every item since connect
+        self._dead: dict = {}              # acked delete -> its op, marking a place
+        self._after_op: dict = {}          # op key -> ops whose insert waits on it
         self._reply_done_seen: dict = {}   # rid -> when its response.done came
+        self._open_replies: dict = {}      # rid -> when the gateway began it
+        self._reply_start_at = 0.0         # our last commit/create not yet answered
+        self._plain_seq = 0                # non-memory item/reply frames sent
         self._memory_ops: dict = {}        # key (rid / "told:<id>") -> operation
         self._memory_done: dict = {}       # rid -> what was done to it
         self._memory_frames: dict = {}     # event_id -> who sent that frame
-        self._memory_deleting: dict = {}   # item id -> op key, delete not acked
-        self._pending_creates: list = []   # (client id, role, text) not added yet
-        self._id_alias: dict = {}          # client id -> gateway id, if renamed
-        self._refused_ids: set = set()     # client ids the gateway refused
+        self._memory_deleting: dict = {}   # item id -> op key, delete not answered
+        self._pending_creates: list = []   # (our id, role, text) not added yet
+        self._id_alias: dict = {}          # our id -> gateway id
+        self._ids_refused = False          # the gateway refused an id of ours
+        self._gate_waived_at = 0.0         # memory_settled has just waited
         self._memory_outbox: list = [
             {"type": "memory_op_skipped", "response_id": op.get("response_id"),
              "kind": op.get("kind"), "why": "reconnected",
@@ -2769,12 +2831,16 @@ class RealtimeVoiceSession:
             self._conv_complete = False
 
     def _optimistic_place(self, iid: str, prev: Optional[str], role: str,
-                          text: str) -> None:
+                          text: str, *, named: bool = True) -> None:
         """Mirror an item we are about to create where the gateway will put
         it, at send time rather than at its conversation.item.added: two
         operations anchored on the same item in quick succession (a told
         correction and the member's own replacement) would otherwise both
-        resolve to it and land in the wrong order."""
+        resolve to it and land in the wrong order. `named` is whether the
+        frame carries this id; an item sent without one is `unconfirmed`
+        (the gateway does not know it by this name) until its
+        conversation.item.added aliases it, and is never an anchor or a
+        delete target until then."""
         if prev == "root":
             self._place(iid, {"_front": True})
         elif prev:
@@ -2782,7 +2848,8 @@ class RealtimeVoiceSession:
         else:
             self._place(iid, {})
         info = self._info(iid)
-        info.update(type="message", role=role, text=text, prev=prev, ours=True)
+        info.update(type="message", role=role, text=text, prev=prev, ours=True,
+                    unconfirmed=not named)
 
     def _unplace(self, iid: Optional[str]) -> None:
         if iid in self._conv:
@@ -2808,14 +2875,16 @@ class RealtimeVoiceSession:
 
     def _match_pending_create(self, item: dict) -> Optional[str]:
         """The mirror's id for an item the gateway says was added: ours when
-        it carries the id we chose; ours under the gateway's own name when
-        it does not (unmeasured, P-M1: if the gateway renames client ids,
-        the oldest create of the same role and text is the one, and the
-        alias is kept so a later correction deletes the right item)."""
+        it carries the id we sent; ours under the gateway's own name when it
+        does not, which is every told note (sent with no id) and any insert
+        the gateway renamed or that went without one: the oldest create of
+        ours with the same role and text is the one, and the alias is kept
+        so a later correction deletes the right item."""
         iid = item.get("id")
         for i, (cid, _role, _text) in enumerate(self._pending_creates):
             if cid == iid:
                 del self._pending_creates[i]
+                self._info(cid)["unconfirmed"] = False
                 self._ack_create(cid)
                 return iid
         text = self._item_text(item)
@@ -2829,13 +2898,14 @@ class RealtimeVoiceSession:
                         self._conv[self._conv.index(cid)] = iid
                     if cid in self._item_info:
                         self._item_info[iid] = self._item_info.pop(cid)
+                    self._info(iid)["unconfirmed"] = False
                     self._ack_create(cid)
                     return iid
         return iid
 
     def _ack_create(self, cid: str) -> None:
         for eid, f in list(self._memory_frames.items()):
-            if f.get("op") in ("insert", "tell") and f.get("item_id") == cid:
+            if f.get("op") == "insert" and f.get("item_id") == cid:
                 self._memory_frames.pop(eid, None)
 
     def _track_items(self, etype: str, ev: dict) -> None:
@@ -2844,10 +2914,38 @@ class RealtimeVoiceSession:
         before the cancelled-tail discard below drops any of them, so a
         cancelled reply's items are known too. Every key is read with .get():
         a reshaped frame costs the mirror one item, never the session."""
-        if etype in ("response.output_item.added", "response.output_item.done"):
+        if etype.startswith("response.") and etype.endswith(".delta"):
+            # The gateway's view of which replies are open (_busy), for a
+            # reply whose response.created was missed. Not for a reply whose
+            # done has been seen: a cancelled reply's trailing frames are not
+            # a reply resuming (the bridge's own re-bind says that one, in
+            # the delta branch below).
+            rid = ev.get("response_id")
+            if rid and rid not in self._reply_done_seen:
+                self._open_replies.setdefault(rid, time.time())
+        elif etype == "response.created":
+            resp = ev.get("response")
+            rid = resp.get("id") if isinstance(resp, dict) else None
+            if rid:
+                self._open_replies[rid] = time.time()
+                self._bound(self._open_replies, 64)
+            self._reply_start_at = 0.0
+        elif etype in ("response.output_item.added", "response.output_item.done"):
             item = ev.get("item")
             item = item if isinstance(item, dict) else {}
             rid, iid = ev.get("response_id"), item.get("id")
+            if rid and etype == "response.output_item.added":
+                # A reply producing: whatever we last asked for is answered.
+                self._reply_start_at = 0.0
+                if rid in self._reply_done_seen:
+                    # A new item of a reply whose done has been seen: the
+                    # gateway resuming it under its own id (a retry's answer;
+                    # see the delta branch). Not done any more, so an
+                    # operation on it waits for its next done (rule 1).
+                    del self._reply_done_seen[rid]
+                    self._open_replies[rid] = time.time()
+                else:
+                    self._open_replies.setdefault(rid, time.time())
             if rid and iid:
                 self._note_reply_item(rid, iid, item)
                 if iid not in self._conv:
@@ -2863,6 +2961,7 @@ class RealtimeVoiceSession:
             for out in resp.get("output") or []:
                 if isinstance(out, dict) and out.get("id"):
                     self._note_reply_item(rid, out["id"], out)
+            self._open_replies.pop(rid, None)
             self._reply_done_seen.setdefault(rid, time.time())
             self._bound(self._reply_done_seen, 256)
         elif etype in ("conversation.item.added", "conversation.item.created",
@@ -2894,26 +2993,102 @@ class RealtimeVoiceSession:
                     info["prev"] = ev.get("previous_item_id")
         elif etype == "conversation.item.deleted":
             iid = ev.get("item_id")
-            if iid in self._conv:
+            if iid in self._memory_deleting:
+                # Ours, its operation still waiting for other answers: kept
+                # as the marker of where the line was until the operation
+                # completes, so the heard words go where it is at THAT moment.
+                self._dead[iid] = self._memory_deleting[iid]
+            elif iid in self._conv:
                 self._conv.remove(iid)
+
+    def _anchorable(self, iid: str, skip) -> bool:
+        return (iid not in self._memory_deleting and iid not in self._dead
+                and iid not in skip
+                and not (self._item_info.get(iid) or {}).get("unconfirmed"))
 
     def _anchor(self, iid: str, skip=()) -> tuple:
         """(previous_item_id, placement) for words put back where `iid` is:
-        the nearest live item before it ("in_place"); the front ("root",
-        "front") when nothing is before it; or no anchor at all ("end"),
-        when the mirror does not know where it is."""
+        the nearest live item before it ("in_place"), never one being
+        deleted, already deleted, or not yet known to the gateway by our
+        name; the front ("root", "front") when nothing is before it; or no
+        anchor at all ("end"), when the mirror does not know where it is."""
         gid = self._gid(iid)
         if gid in self._conv:
             i = self._conv.index(gid)
             for prev in reversed(self._conv[:i]):
-                if prev not in self._memory_deleting and prev not in skip:
+                if self._anchorable(prev, skip):
                     return prev, "in_place"
             return ("root", "front") if self._conv_complete else (None, "end")
         prev = (self._item_info.get(gid) or {}).get("prev")
-        if (prev and prev in self._conv and prev not in self._memory_deleting
-                and prev not in skip):
+        if prev and prev in self._conv and self._anchorable(prev, skip):
             return prev, "in_place"
         return None, "end"
+
+    def _anchor_blocker(self, iid: str, skip, own_key: str) -> Optional[str]:
+        """Another operation, still running, whose deleted item lies between
+        `iid` and the anchor its words would get: that operation's words go
+        back first, so the two replacements land in the order of the items
+        they replace (a told note and the member's own reply right after it,
+        corrected at once, whichever was asked for first). Never circular:
+        only an item BEFORE `iid` can block it."""
+        gid = self._gid(iid)
+        if gid not in self._conv:
+            return None
+        for prev in reversed(self._conv[:self._conv.index(gid)]):
+            if prev in skip:
+                continue
+            owner = self._memory_deleting.get(prev) or self._dead.get(prev)
+            if owner is not None and owner != own_key and owner in self._memory_ops:
+                return owner
+            if self._anchorable(prev, skip):
+                return None
+        return None
+
+    def _busy(self, except_rid: Optional[str] = None) -> bool:
+        """Whether a reply other than `except_rid` is open on the gateway, or
+        one this session asked for has not been named yet: an operation's
+        frames wait for it to end (P-M3 is unmeasured). A reply open for
+        longer than _OPEN_REPLY_MAX_S is taken to have ended without a done."""
+        now = time.time()
+        for rid, at in list(self._open_replies.items()):
+            if now - at > _OPEN_REPLY_MAX_S:
+                del self._open_replies[rid]
+            elif rid != except_rid:
+                return True
+        return bool(self._reply_start_at) and now - self._reply_start_at < 2.0
+
+    def _op_ready(self, op: dict) -> bool:
+        """Whether an operation's frames may go out now (rule 1 and P-M3),
+        and if not, what it waits for (`waiting_for`, read on expiry)."""
+        if op.get("kind") == "reply":
+            rid = op.get("response_id")
+            if rid not in self._reply_done_seen:
+                op["waiting_for"] = "done"
+                return False
+            if self._busy(except_rid=rid):
+                op["waiting_for"] = "idle"
+                return False
+            return True
+        target = self._gid(op.get("item_id"))
+        if (self._item_info.get(target) or {}).get("unconfirmed"):
+            op["waiting_for"] = "item"
+            return False
+        if self._busy():
+            op["waiting_for"] = "idle"
+            return False
+        return True
+
+    async def _kick_ops(self) -> None:
+        """Start every pending operation that may go now, and complete one
+        whose insert waited on an operation that has since gone. From the
+        task iterating events(), at a done, an item added, or a quiet poll."""
+        for key, op in list(self._memory_ops.items()):
+            if op.get("state") == "pending" and self._op_ready(op):
+                op["deferred"] = True
+                await self._start_memory_op(key)
+            elif op.get("unblocked"):
+                op["unblocked"] = False
+                await self._complete_memory_op(key)
 
     def _settle_idle(self) -> None:
         if not self._memory_ops:
@@ -2982,10 +3157,11 @@ class RealtimeVoiceSession:
         in its place (only delete when it is empty). "untracked" on a
         session that does not track; "unknown" for a reply this socket never
         named; "already" when it was done or is being done; "closed" when
-        the socket is gone; "sent" when the reply's done had been seen and
-        the deletes have gone out from the caller's task, before anything
-        else the caller sends; "deferred" when they will go out at that
-        done. `context` is the runner's, echoed on the outcome events."""
+        the socket is gone; "sent" when the reply's done had been seen and no
+        other reply is open, and the deletes have gone out from the caller's
+        task, before anything else the caller sends; "deferred" when they
+        will go out from events() once both hold. `context` is the runner's,
+        echoed on the outcome events."""
         if not self.track_items:
             return "untracked"
         if not rid or not self._known_reply(rid):
@@ -3004,7 +3180,7 @@ class RealtimeVoiceSession:
                   context={**(op.get("context") or {}), **dict(context or {})})
         self._memory_ops[rid] = op
         self._memory_idle.clear()
-        if rid in self._reply_done_seen:
+        if self._op_ready(op):
             await self._start_memory_op(rid)
             return "sent"
         return "deferred"
@@ -3012,37 +3188,39 @@ class RealtimeVoiceSession:
     async def correct_item(self, item_id: Optional[str], *, role: str,
                            text: Optional[str],
                            context: Optional[dict] = None) -> str:
-        """Replace one item (a told note) by `text` in place, or delete it
-        when `text` is empty. Same states as forget_reply, plus "refused"
-        for an item the gateway would not create under our id."""
+        """Replace one item (a told note, by the name inject_text was given)
+        by `text` in place, or delete it when `text` is empty. Same states as
+        forget_reply: "deferred" while the gateway has not yet said under
+        which id it keeps the note, or while a reply is open here."""
         if not self.track_items:
             return "untracked"
-        if not item_id:
+        if not item_id or (item_id not in self._item_info
+                           and self._gid(item_id) not in self._item_info):
             return "unknown"
-        if item_id in self._refused_ids:
-            return "refused"
         if self.ws is None:
             return "closed"
-        gid = self._gid(item_id)
-        key = f"told:{gid}"
+        key = f"told:{item_id}"
         if key in self._memory_ops:
             return "already"
         ctx = dict(context or {})
-        self._memory_ops[key] = {
-            "key": key, "kind": "told_correction", "item_id": gid,
+        op = self._memory_ops[key] = {
+            "key": key, "kind": "told_correction", "item_id": item_id,
             "response_id": ctx.get("response_id"), "state": "pending",
             "keep_text": (text or "").strip() or None, "insert_role": role,
             "requested_at": time.time(), "deferred": False, "context": ctx}
         self._memory_idle.clear()
-        await self._start_memory_op(key)
-        return "sent"
+        if self._op_ready(op):
+            await self._start_memory_op(key)
+            return "sent"
+        return "deferred"
 
     async def _start_memory_op(self, key: str) -> None:
         """Send an operation's deletes. Marked running first, so a second
         request cannot start it twice and the gate keeps holding reply-starts
-        through the awaits below; each item is marked as being deleted before
-        its frame goes out, so an ack can never arrive for an item this op
-        does not yet know it is waiting for."""
+        through the awaits below; and EVERY item is marked as awaited before
+        the first frame goes out, so an ack read while a later delete is
+        still being sent (a socket whose send yields) can never complete the
+        operation early."""
         op = self._memory_ops.get(key)
         if op is None or op.get("state") == "running":
             return
@@ -3057,16 +3235,15 @@ class RealtimeVoiceSession:
                     if (self._item_info.get(i) or {}).get("type", "message") == "message"]
             kept = [i for i in items if i not in msgs]
         else:
+            op["item_id"] = self._gid(op["item_id"])
             msgs, kept = [op["item_id"]], []
         op["items_deleted"], op["items_kept"] = msgs, kept
         op["deleted_text"] = " ".join(
             t for t in ((self._item_info.get(i) or {}).get("text") for i in msgs) if t)
-        op["anchor"], op["placement"] = (
-            self._anchor(msgs[0], skip=set(msgs)) if msgs else (None, None))
-        op["awaiting"], op["failed"] = set(), []
+        op["awaiting"], op["failed"] = set(msgs), []
         for iid in msgs:
-            op["awaiting"].add(iid)
             self._memory_deleting[iid] = key
+        for iid in msgs:
             eid = await self._send_memory(
                 {"type": "conversation.item.delete", "item_id": iid},
                 op="delete", item_id=iid, key=key,
@@ -3091,23 +3268,44 @@ class RealtimeVoiceSession:
             await self._complete_memory_op(key)
 
     async def _complete_memory_op(self, key: str) -> None:
-        """Every delete answered: put the heard words back (only when all of
-        them were deleted) and say what was done."""
+        """Every delete answered: put the heard words back and say what was
+        done. The anchor is read now, not when the deletes went out: the
+        deleted items have kept their place in the mirror until this moment
+        (_dead), so an item inserted or deleted beside them meanwhile is
+        allowed for. The words go back when the line's first item is gone,
+        even if a later one survived a second refusal (`partial`): kept out,
+        the character would remember only the unheard tail."""
         op = self._memory_ops.get(key)
-        if op is None:
+        if op is None or op.get("completed") or op.get("awaiting"):
             return
         msgs = op.get("items_deleted") or []
         failed = op.get("failed") or []
         gone = [i for i in msgs if i not in failed]
         text = op.get("keep_text")
+        if text and gone and msgs[0] not in failed:
+            blocker = self._anchor_blocker(msgs[0], set(msgs), key)
+            if blocker is not None:
+                waiting = self._after_op.setdefault(blocker, [])
+                if key not in waiting:
+                    waiting.append(key)
+                return
+        op["completed"] = True
+        anchor, placement = (self._anchor(msgs[0], skip=set(msgs))
+                             if msgs else (None, None))
+        for iid in gone:
+            self._dead.pop(iid, None)
+            if iid in self._conv:
+                self._conv.remove(iid)
         inserted, skipped = None, None
         if text and msgs:
-            if failed:
+            if not gone:
                 skipped = "delete_refused"
+            elif msgs[0] in failed:
+                skipped = "first_item_kept"
             else:
                 inserted = await self.insert_item(
                     op.get("insert_role") or "assistant", text,
-                    previous_item_id=op.get("anchor"), key=key,
+                    previous_item_id=anchor, key=key,
                     response_id=op.get("response_id"), context=op["context"])
                 if inserted is None:
                     skipped = "send_failed"
@@ -3127,17 +3325,34 @@ class RealtimeVoiceSession:
             "response_id": op.get("response_id"), "action": action,
             "items_deleted": gone, "items_refused": list(failed),
             "items_kept": op.get("items_kept") or [],
+            "partial": bool(gone and failed),
             "deleted_text": op.get("deleted_text") or "",
             "inserted_item_id": inserted,
             "inserted_text": text if inserted else None,
             "insert_skipped": skipped,
-            "previous_item_id": op.get("anchor") if inserted else None,
-            "placement": op.get("placement") if inserted else None,
+            "previous_item_id": anchor if inserted else None,
+            "placement": placement if inserted else None,
             "deferred": bool(op.get("deferred")),
             "waited_s": round(now - op.get("requested_at", now), 3),
             "context": op.get("context") or {}})
+        # Released only now, after the replacement's frame has gone out: a
+        # reply-start waiting on the gate follows the words put back.
         self._memory_ops.pop(key, None)
+        for later in self._after_op.pop(key, []):
+            await self._complete_memory_op(later)
         self._settle_idle()
+
+    def _create_frame(self, iid: str, role: str, text: str, *,
+                      previous_item_id: Optional[str], named: bool) -> dict:
+        part = "output_text" if role == "assistant" else "input_text"
+        item = {"type": "message", "role": role,
+                "content": [{"type": part, "text": text}]}
+        if named:
+            item = {"id": iid, **item}
+        return {"type": "conversation.item.create",
+                **({"previous_item_id": previous_item_id}
+                   if previous_item_id else {}),
+                "item": item}
 
     async def insert_item(self, role: str, text: str, *,
                           previous_item_id: Optional[str] = None,
@@ -3146,22 +3361,22 @@ class RealtimeVoiceSession:
                           response_id: Optional[str] = None,
                           context: Optional[dict] = None) -> Optional[str]:
         """Create one message item, after `previous_item_id` when given
-        ("root": at the front). Returns its id, None when nothing was sent."""
+        ("root": at the front). Sent under an id of ours unless the gateway
+        has refused one on this socket (P-M1 unmeasured; see
+        _recover_memory_error, which falls back to the measured id-less
+        frame). Returns the mirror's id for it, None when nothing was sent."""
         if not self.track_items:
             return None
+        named = not self._ids_refused
         iid = item_id or new_item_id("a" if role == "assistant" else role[:1])
-        part = "output_text" if role == "assistant" else "input_text"
-        frame = {"type": "conversation.item.create",
-                 **({"previous_item_id": previous_item_id}
-                    if previous_item_id else {}),
-                 "item": {"id": iid, "type": "message", "role": role,
-                          "content": [{"type": part, "text": text}]}}
+        frame = self._create_frame(iid, role, text,
+                                   previous_item_id=previous_item_id, named=named)
         self._pending_creates.append((iid, role, text))
         del self._pending_creates[:-64]
-        self._optimistic_place(iid, previous_item_id, role, text)
+        self._optimistic_place(iid, previous_item_id, role, text, named=named)
         eid = await self._send_memory(
             frame, op="insert", item_id=iid, key=key, response_id=response_id,
-            context=context, extra={"role": role, "text": text})
+            context=context, extra={"role": role, "text": text, "named": named})
         if eid is None:
             self._unplace(iid)
             return None
@@ -3188,6 +3403,7 @@ class RealtimeVoiceSession:
                 "op": op, "item_id": item_id, "key": key,
                 "response_id": response_id, "context": dict(context or {}),
                 "previous_item_id": frame.get("previous_item_id"),
+                "plain_seq": self._plain_seq,
                 "at": time.time(), **(extra or {})}
             self._bound(self._memory_frames, 256)
             failures = self.send_failures
@@ -3207,9 +3423,10 @@ class RealtimeVoiceSession:
 
     def _expire_memory_ops(self) -> None:
         """Give up on operations whose reply never ended, whose decision
-        never came, or whose deletes were never acked, after MEMORY_OP_TTL_S,
-        touching nothing more. Rule 1 holds by construction: with no done,
-        nothing of that reply was ever sent a delete."""
+        never came, whose told note the gateway never named, or whose deletes
+        were never answered, after MEMORY_OP_TTL_S, touching nothing more.
+        Rule 1 holds by construction: with no done, nothing of that reply was
+        ever sent a delete."""
         if not self._memory_ops:
             return
         now = time.time()
@@ -3219,9 +3436,23 @@ class RealtimeVoiceSession:
                 continue
             del self._memory_ops[key]
             state = op.get("state")
-            why = {"running": "no_ack", "reserved": "no_decision"}.get(state, "no_done")
+            if state == "running":
+                why = "no_ack"
+            elif state == "reserved":
+                why = "no_decision"
+            else:
+                why = {"idle": "busy", "item": "no_item"}.get(
+                    op.get("waiting_for"), "no_done")
             for iid in list(op.get("awaiting") or ()):
                 self._memory_deleting.pop(iid, None)
+            for iid in op.get("items_deleted") or []:
+                if iid in self._dead:
+                    self._dead.pop(iid, None)
+                    if iid in self._conv:
+                        self._conv.remove(iid)
+            for later in self._after_op.pop(key, []):
+                if later in self._memory_ops:
+                    self._memory_ops[later]["unblocked"] = True
             rid = op.get("response_id")
             if op.get("kind") == "reply" and self._memory_done.get(rid) == "running":
                 self._memory_done[rid] = "expired"
@@ -3243,9 +3474,13 @@ class RealtimeVoiceSession:
         member pump's own retry), where the frame that would end the wait
         can only be read once this returns: that is recorded as late with
         own_task. Callers test `self._memory_ops` before awaiting this, so a
-        session with nothing pending (every 1:1 session) never yields here."""
+        session with nothing pending (every 1:1 session) never yields here.
+        A wait memory_settled has just done (give_floor, before its silence
+        pad) is not done twice."""
+        waived = time.time() - self._gate_waived_at < 0.5
+        self._gate_waived_at = 0.0
         self._expire_memory_ops()
-        if not self._memory_ops:
+        if not self._memory_ops or waived:
             return
         t0 = time.time()
         own = asyncio.current_task() is self._events_task
@@ -3266,19 +3501,39 @@ class RealtimeVoiceSession:
                         for k, op in self._memory_ops.items()],
             "waited_s": round(time.time() - t0, 3), "own_task": own})
 
+    async def memory_settled(self, before: str = "grant") -> None:
+        """The ordering gate, ahead of a grant's silence pad (GroupRoom
+        .give_floor): the wait is done before the pad goes into the input
+        buffer rather than between the pad and the commit, so what the
+        participant says during it is not committed behind the pad. The
+        commit that follows does not wait again."""
+        if not (self.track_items and self._memory_ops):
+            return
+        await self._memory_ready(before)
+        if self._memory_ops:
+            # Gone late (written down): the commit right behind it goes now,
+            # rather than waiting the same settle time again.
+            self._gate_waived_at = time.time()
+
     def _memory_error_owner(self, ev: dict, err: dict) -> Optional[dict]:
         """The memory frame an `error` answers, taken once; None for any
         other error, which then takes the bridge's usual path unchanged.
-        By our event_id first. The gateway's echo of it is unmeasured
-        (P-M2: every probe error carried event_id null, and no probe frame
-        had sent one), so failing that by an id of ours named in the message,
-        and failing that by an item parameter while a frame of ours is less
-        than 10 s old."""
+
+        By our event_id first: the realtime API documents its echo, but the
+        gateway's is unmeasured (P-M2: every probe error carried event_id
+        null, and no probe frame had sent one). Failing that, by an id of
+        ours named in the message; by an item parameter while a frame of
+        ours is less than 10 s old; and last, by any error that speaks of an
+        item and carries none of the codes the bridge's own frames draw,
+        while a memory frame of ours is unanswered and no other item or
+        reply frame has gone out since it (_plain_seq), so the error cannot
+        be that frame's."""
         if not self._memory_frames:
             return None
         eid = err.get("event_id") or ev.get("event_id")
         if eid and eid in self._memory_frames:
             return self._memory_frames.pop(eid)
+        code = str(err.get("code") or "")
         msg = str(err.get("message") or "")
         param = str(err.get("param") or "")
         now = time.time()
@@ -3292,22 +3547,47 @@ class RealtimeVoiceSession:
         # output (item.call_id) or any other item is not ours to swallow.
         if recent and param in ("item_id", "previous_item_id", "item.id"):
             return self._memory_frames.pop(recent[0][0])
+        if (code in _REPLY_ERROR_CODES or "voice" in param
+                or param.startswith("session") or param == "item.call_id"):
+            return None
+        if "item" in f"{code} {param} {msg}".lower():
+            unanswered = [e for e, f in recent
+                          if f.get("plain_seq") == self._plain_seq]
+            if unanswered:
+                return self._memory_frames.pop(unanswered[0])
         return None
 
-    async def _recover_memory_error(self, owner: dict) -> dict:
-        """What is done about a refused memory frame. A refused delete leaves
-        its item in place and its operation's replacement unsent. A refused
-        insert that was anchored is sent once more at the end (its anchor may
-        have gone under it; P-M4/P-M8 are unmeasured), recorded as such. A
-        refused told note is sent again as today's frame, with no id: the
-        colleague is told either way, and that line can no longer be
-        corrected."""
+    async def _recover_memory_error(self, owner: dict, param: str = "") -> dict:
+        """What is done about a refused memory frame.
+
+        A refused delete is sent once more (a refusal can be transient, and
+        the operation's whole point is lost if a reply's first item stays);
+        refused again, it leaves its item in place, and its operation goes
+        on without it (_complete_memory_op).
+
+        A refused insert falls back, one step at a time, to the frame that
+        was measured: first the same create without an id of ours (P-M1
+        unmeasured; the gateway's own id is then learned from its
+        conversation.item.added, and no later insert on this socket names
+        one), then, if it was anchored, at the end of the conversation (its
+        anchor may have gone under it; P-M4/P-M8 unmeasured). Each resend is
+        a memory frame too, so a second refusal is recognised again; the
+        chain ends with an id-less create at the end."""
         op, iid = owner.get("op"), owner.get("item_id")
         if op == "delete":
             key = owner.get("key") or self._memory_deleting.get(iid)
-            self._memory_deleting.pop(iid, None)
             mop = self._memory_ops.get(key) if key else None
-            if mop is not None:
+            if (mop is not None and not owner.get("retry")
+                    and iid in (mop.get("awaiting") or ())):
+                eid = await self._send_memory(
+                    {"type": "conversation.item.delete", "item_id": iid},
+                    op="delete", item_id=iid, key=key,
+                    response_id=owner.get("response_id"),
+                    context=owner.get("context"), extra={"retry": True})
+                if eid is not None:
+                    return {"recovery": "delete_resent"}
+            self._memory_deleting.pop(iid, None)
+            if mop is not None and iid in (mop.get("awaiting") or ()):
                 mop["awaiting"].discard(iid)
                 mop["failed"].append(iid)
                 if not mop["awaiting"]:
@@ -3315,31 +3595,35 @@ class RealtimeVoiceSession:
             return {}
         if op == "insert":
             self._unplace(iid)
-            if owner.get("previous_item_id") and not owner.get("retried"):
-                role, text = owner.get("role") or "assistant", owner.get("text") or ""
-                new = new_item_id("a" if role == "assistant" else role[:1])
-                part = "output_text" if role == "assistant" else "input_text"
-                self._pending_creates.append((new, role, text))
-                self._optimistic_place(new, None, role, text)
-                eid = await self._send_memory(
-                    {"type": "conversation.item.create",
-                     "item": {"id": new, "type": "message", "role": role,
-                              "content": [{"type": part, "text": text}]}},
-                    op="insert", item_id=new, key=owner.get("key"),
-                    response_id=owner.get("response_id"),
-                    context=owner.get("context"),
-                    extra={"role": role, "text": text, "retried": True})
-                if eid is not None:
-                    return {"recovery": "inserted_at_end", "retry_item_id": new,
-                            "placement": "end_after_error"}
+            role, text = owner.get("role") or "assistant", owner.get("text") or ""
+            anchor = owner.get("previous_item_id")
+            named = bool(owner.get("named"))
+            if named and param != "previous_item_id":
+                # Our id, refused (or an unknown reason): the measured frame,
+                # with the same anchor and no id.
+                self._ids_refused = True
+                nxt, recovery, placement = anchor, "inserted_without_id", (
+                    "in_place" if anchor else "end")
+            elif anchor:
+                nxt, recovery, placement = None, "inserted_at_end", "end_after_error"
+            else:
+                return {}
+            new = new_item_id("a" if role == "assistant" else role[:1])
+            self._pending_creates.append((new, role, text))
+            del self._pending_creates[:-64]
+            self._optimistic_place(new, nxt, role, text, named=False)
+            eid = await self._send_memory(
+                self._create_frame(new, role, text, previous_item_id=nxt,
+                                   named=False),
+                op="insert", item_id=new, key=owner.get("key"),
+                response_id=owner.get("response_id"),
+                context=owner.get("context"),
+                extra={"role": role, "text": text, "named": False})
+            if eid is None:
                 self._unplace(new)
-            return {}
-        if op == "tell":
-            self._unplace(iid)
-            self._refused_ids.add(iid)
-            if owner.get("resend"):
-                await self._send(owner["resend"])
-                return {"recovery": "told_without_id"}
+                return {}
+            return {"recovery": recovery, "retry_item_id": new,
+                    "placement": placement}
         return {}
 
     @property
@@ -4407,9 +4691,23 @@ class RealtimeVoiceSession:
                 self._events_task = asyncio.current_task()
                 if self._memory_ops or self._memory_outbox:
                     # Room memory hygiene: what an operation run from another
-                    # task, or the ordering gate, has to report, and the
-                    # operations that have waited too long.
+                    # task, or the ordering gate, has to report; the
+                    # operations that have waited too long; and those that
+                    # may go now (a reply-start of ours that drew nothing, a
+                    # reply that outlived _OPEN_REPLY_MAX_S), on any frame or
+                    # quiet poll.
                     self._expire_memory_ops()
+                    if self._memory_ops:
+                        try:
+                            await self._kick_ops()
+                        except Exception as exc:  # noqa: BLE001 - see below
+                            self.memory_errors += 1
+                            self._memory_outbox.append({
+                                "type": "memory_op_error", "op": "kick",
+                                "item_id": None, "response_id": None,
+                                "code": "internal", "param": "",
+                                "message": repr(exc), "context": {},
+                                "recovery": None})
                     while self._memory_outbox:
                         yield self._memory_outbox.pop(0)
                 pending = self._deferral_verdict()
@@ -4572,22 +4870,21 @@ class RealtimeVoiceSession:
                     # cancelled-tail discard below, which drops a cut reply's
                     # output_item frames: its items have to be known to be
                     # deleted. An operation waiting for this reply's done
-                    # runs now, from here, so nothing of the reply can be
-                    # added after its delete (rule 1). Nothing in here may
-                    # end the session: any exception in it is reported as a
-                    # memory_op_error and the frame goes on as if untracked.
+                    # (or for the reply open beside it to end, or for the
+                    # gateway to name a told note) runs now, from here, so
+                    # nothing of the reply can be added after its delete
+                    # (rule 1). Nothing in here may end the session: any
+                    # exception in it is reported as a memory_op_error and
+                    # the frame goes on as if untracked.
                     try:
                         self._track_items(etype, ev)
-                        if etype == "response.done" and self._memory_ops:
-                            resp = ev.get("response")
-                            drid = ((resp.get("id") if isinstance(resp, dict)
-                                     else None) or ev.get("response_id"))
-                            dop = self._memory_ops.get(drid) if drid else None
-                            if dop is not None and dop.get("state") == "pending":
-                                dop["deferred"] = True
-                                await self._start_memory_op(drid)
-                        elif etype == "conversation.item.deleted":
+                        if etype == "conversation.item.deleted":
                             await self._on_item_deleted(ev.get("item_id"))
+                        elif self._memory_ops and etype in (
+                                "response.done", "conversation.item.added",
+                                "conversation.item.created",
+                                "conversation.item.done"):
+                            await self._kick_ops()
                     except Exception as exc:  # noqa: BLE001 - see above
                         self.memory_errors += 1
                         self._memory_outbox.append({
@@ -4763,6 +5060,13 @@ class RealtimeVoiceSession:
                         self._created_ids.add(drid)
                         self._done_ids.discard(drid)
                         self._response_created_id = drid
+                        if self.track_items:
+                            # The memory mirror reads it the same way: not
+                            # done any more, so an operation on it waits for
+                            # the done it ends with (rule 1, 10-01a).
+                            self._reply_done_seen.pop(drid, None)
+                            self._open_replies[drid] = time.time()
+                            self._reply_start_at = 0.0
                     if not self._response_active:
                         self.autofire_active = True
                         # An auto-fired reply starts its own stall clock: it was
@@ -5120,7 +5424,8 @@ class RealtimeVoiceSession:
                         # voice_error, and never reaches the page.
                         self.memory_errors += 1
                         try:
-                            recovery = await self._recover_memory_error(owner)
+                            recovery = await self._recover_memory_error(
+                                owner, param)
                         except Exception as exc:  # noqa: BLE001
                             recovery = {"recovery": f"internal: {exc!r}"}
                         yield {"type": "memory_op_error", "op": owner.get("op"),
@@ -5231,6 +5536,10 @@ class RealtimeVoiceSession:
                     # Read whether anything was spoken BEFORE _end_response
                     # zeroes that flag, or the rescue below can never fire.
                     partial = self._response_saw_output
+                    if self.track_items and self._response_created_id:
+                        # Nor is it open any more for the memory operations
+                        # waiting on this member (_busy).
+                        self._open_replies.pop(self._response_created_id, None)
                     self._end_response()
                     if partial:
                         # The third way the gateway abandons a reply mid-

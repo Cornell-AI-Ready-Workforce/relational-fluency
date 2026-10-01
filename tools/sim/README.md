@@ -103,6 +103,16 @@ S2A (1:1, unchanged by it) are pending only because a baseline compares one
 Record all four with `python -m tools.sim.check --write-baseline` on the
 first run that can reach the gateway, in the PR that ships 10-01a.
 
+With nothing to compare against, that first run cannot fail on a regression,
+so before writing it as the baseline, read its report against the 28b values
+by hand (`git show 55de607:tools/sim/baseline.json`), above all S3A and S4A:
+`lines_answered` (7 of 9 and 25 of 31 on 28b), `speech_end_to_first_played_s`
+p50 / p90 (4.023 / 9.346 and 4.662 / 6.842 s), `reply_missing` and
+`voice_error` (0), and in the sessions' events any `member_memory_late`,
+`member_memory_error` or `member_memory_skipped` `busy` / `no_item`. A drop
+in lines answered or a rise in latency there is 10-01a's ordering wait or its
+system-role nudges (P-M6) until shown otherwise, and is not a baseline.
+
 ## The stimulus
 
 `stim/<name>.ulaw` are synthetic speech from macOS `say` (voices Samantha and

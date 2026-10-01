@@ -591,25 +591,32 @@ def text_client() -> AsyncAnthropic:
 #                character's own conversation). A line the participant cut
 #                off, on the floor or still playing after its turn, is
 #                replaced in that character's conversation by the words heard
-#                on the playback clock (every output item deleted after its
-#                response.done, the heard words re-inserted in place once the
-#                deletes are acked; only deleted when nothing was heard); a
-#                reply that was never played (a suppressed hold refused,
-#                stale, expired, superseded or dropped; a reply a re-brief
-#                cancelled; a floor holder's reply cut before any of it
-#                reached the page; a line blanked as narration with no audio)
-#                is deleted; colleagues are told the heard words, and a line
-#                already told in full is corrected in place; retry and
-#                unanswered nudges to room members are system items. A
-#                reply-start to a member waits up to REALTIME_MEMORY_SETTLE_S
-#                for an operation still pending there. member_memory_replaced,
-#                told_line_corrected, member_memory_error / _skipped / _late /
-#                _waited; assistant_turn response_id, memory, told,
-#                memory_text, told_text, memory_estimate; nudge_role on a
-#                room's audio_retry / reply_retry. The director's history and
-#                assistant_turn text are unchanged. ROOM_CUT_MEMORY=keep,
-#                ROOM_TOLD_TEXT=generated, ROOM_NUDGE_ROLE=user restore 28b.
-#                Provenance `room_memory`.
+#                on the playback clock (every message item of the reply
+#                deleted after its response.done, function_call items kept;
+#                the heard words re-inserted in place once the deletes are
+#                answered; only deleted when nothing was heard); a line
+#                queued on the page behind the one cut, and so dropped
+#                unheard, is deleted; a reply that was never played (a
+#                suppressed hold refused, stale, expired, superseded or
+#                dropped; a reply a re-brief cancelled; a floor holder's reply
+#                cut before any of it reached the page; a line blanked as
+#                narration with no audio) is deleted; colleagues are told the
+#                heard words, and a line already told in full is corrected in
+#                place; retry and unanswered nudges to room members are system
+#                items. Item operations wait for any reply open on that member
+#                to end; a reply-start to a member waits up to
+#                REALTIME_MEMORY_SETTLE_S for an operation still pending
+#                there. Told notes keep 28b's frame (no item id).
+#                member_memory_replaced, told_line_corrected,
+#                member_memory_error / _skipped / _late / _waited;
+#                assistant_turn response_id, memory, told, memory_text,
+#                told_text, memory_estimate and nudge_role on a room's
+#                audio_retry / reply_retry, written only where a room runs
+#                anything but 28b. The director's history and assistant_turn
+#                text and heard_text are unchanged. ROOM_CUT_MEMORY=keep,
+#                ROOM_TOLD_TEXT=generated, ROOM_NUDGE_ROLE=user restore 28b's
+#                frames, behaviour and records; only provenance `room_memory`
+#                (`effective` false) says so.
 PIPELINE_VERSION = "2026-10-01a"
 ROOM_PACING_VERSION = "2026-09-29b"
 

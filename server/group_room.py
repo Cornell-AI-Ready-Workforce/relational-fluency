@@ -663,11 +663,13 @@ class GroupRoom:
         answer would be "no" on every single grant and every grant would take
         the scene-open branch. A told line is something heard.
 
-        `response_id` (the speaker's reply, pipeline 2026-10-01a) names each
-        member's note, on a member that tracks its items and only while
-        ROOM_TOLD_TEXT is "heard": the line may yet turn out to have been cut
-        off while it was still playing, and the note is then corrected in
-        place (correct_told). Without it, the frame is exactly 28b's.
+        `response_id` (the speaker's reply, pipeline 2026-10-01a) has each
+        member's note remembered under a name of the bridge's, on a member
+        that tracks its items and only while ROOM_TOLD_TEXT is "heard": the
+        line may yet turn out to have been cut off while it was still
+        playing, and the note is then corrected in place (correct_told). The
+        frame itself is 28b's either way, with no id and no event_id (see
+        RealtimeVoiceSession.inject_text).
         """
         if not text:
             return
@@ -704,20 +706,34 @@ class GroupRoom:
 
     async def correct_told(self, speaker_name: str, speaker_id: str,
                            response_id: Optional[str],
-                           heard_text: str) -> List[str]:
+                           heard_text: str) -> Dict[str, str]:
         """Correct a line already told in full (pipeline 2026-10-01a): in each
         colleague's conversation the told note of `response_id` is deleted
         and the heard words told in its place, or nothing when nothing was
-        heard. Returns the members a correction was sent to. Only the note of
-        this one line is touched; never a participant item, never another
-        colleague's note. A member whose session has gone is skipped, and no
-        failure here costs the turn."""
-        done: List[str] = []
+        heard. Returns what happened per colleague told that line: the
+        bridge's state ("sent", "deferred" when it goes out at that member's
+        next quiet moment; "already", "closed", "unknown", "untracked"),
+        "gone" for a member whose session has left the room, "raised" for a
+        call that raised. Every colleague of the speaker this room tells as
+        text is in it: one of which no note of this line is known (told
+        without a name for it, by a member that does not track items or a
+        tell with no reply id, or never told, its socket gone) is "no_note",
+        so the runner can say so. Only the note of this one line is touched;
+        never a participant item, never another colleague's note, never the
+        same note twice; no failure here costs the turn."""
+        states: Dict[str, str] = {}
         entries = self._told.get((speaker_id, response_id)) or {}
         for aid, entry in sorted(entries.items()):
             rt = self.sessions.get(aid)
             fn = getattr(rt, "correct_item", None) if rt is not None else None
-            if fn is None or entry.get("corrected"):
+            if rt is None:
+                states[aid] = "gone"
+                continue
+            if fn is None:
+                states[aid] = "untracked"
+                continue
+            if entry.get("corrected"):
+                states[aid] = "already"
                 continue
             try:
                 state = await fn(
@@ -727,12 +743,17 @@ class GroupRoom:
                     context={"kind": "told_correction", "speaker_id": speaker_id,
                              "response_id": response_id, "text": heard_text})
             except Exception:  # noqa: BLE001 - a dead member must not kill the turn
+                states[aid] = "raised"
                 continue
-            if state == "sent":
+            states[aid] = str(state)
+            if state in ("sent", "deferred"):
                 entry["corrected"] = True
                 entry["text"] = heard_text
-                done.append(aid)
-        return done
+        for aid, rt in sorted(self.sessions.items()):
+            if (aid != speaker_id and aid not in states
+                    and relays_colleagues_as_text(getattr(rt, "model", ""))):
+                states[aid] = "no_note"
+        return states
 
     # -- the floor ----------------------------------------------------------
     @staticmethod
@@ -1183,6 +1204,17 @@ class GroupRoom:
                 await rt.request_response()
                 self.last_grant = {"agent_id": agent_id, "via": "text_prompt"}
             else:
+                # (The class through the module: tests replace this module's
+                # RealtimeVoiceSession name with session factories.)
+                if isinstance(rt, _realtime.RealtimeVoiceSession):
+                    # Room memory hygiene (pipeline 2026-10-01a): a memory
+                    # operation still owed on this member goes out before its
+                    # next reply, and the wait for it (REALTIME_MEMORY_SETTLE_S
+                    # at most) is taken HERE, ahead of the pad, not inside
+                    # commit_input between the pad and the commit, where what
+                    # the participant said meanwhile would be committed
+                    # behind the pad. Nothing pending, nothing waits.
+                    await rt.memory_settled("commit")
                 await rt.send_audio(_SILENCE_PAD)
                 # A prior reply whose response.done was lost leaves
                 # _response_active stuck True; request_response() would then
