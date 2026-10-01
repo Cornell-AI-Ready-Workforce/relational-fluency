@@ -68,13 +68,13 @@ CASTING = {
     "S2A": [("morgan", "Kore", "coral")],
     "S2B": [("sasha", "Kore", "coral")],
     "S3A": [("alex", "Fenrir", "verse"), ("jordan", "Charon", "ash"),
-            ("casey", "Leda", "marin")],
+            ("casey", "Leda", "coral")],
     "S3B": [("toni", "Fenrir", "verse"), ("lee", "Charon", "ash"),
-            ("ari", "Leda", "marin")],
+            ("ari", "Leda", "coral")],
     "S4A": [("dan", "Fenrir", "verse"), ("priya", "Aoede", "coral"),
-            ("chris", "Charon", "ash")],
+            ("chris", "Charon", "echo")],
     "S4B": [("dan", "Fenrir", "verse"), ("priya", "Aoede", "coral"),
-            ("chris", "Charon", "ash")],
+            ("chris", "Charon", "echo")],
 }
 
 
@@ -176,7 +176,7 @@ def test_the_group_room_is_not_cast_by_roster_position(on_model):
     runner, _ = make_runner("S4A")
     got = [runner._voice_for(a) for a in runner.cast]
     assert got != ROSTER_ORDER_ON_GPT
-    assert got == ["verse", "coral", "ash"]
+    assert got == ["verse", "coral", "echo"]
     assert len(set(got)) == 3, f"the room shares voices: {got}"
 
 
@@ -261,7 +261,8 @@ def test_every_named_voice_is_on_its_family_roster():
 
     The gpt names were re-confirmed on the gateway on 2026-09-12: one short
     socket each for verse, coral, ash and marin, session.updated acked in
-    333-1330 ms and audio returned on every one."""
+    333-1330 ms and audio returned on every one. echo, cast from 2026-10-01,
+    was confirmed the same way that day (two lines, audio returned on both)."""
     rosters = {caps.casting_key: set(caps.voices)
                for caps in rt_mod.REALTIME_FAMILIES.values()}
     columns = set(rt_mod.casting_families())
@@ -397,3 +398,25 @@ def test_a_model_outside_the_table_is_cast_by_nobody_here(on_model):
     on_model("some-model-nobody-has-a-row-for")
     scenario = v3.compile_scenario("S1A", "p_test")
     assert [getattr(a, "realtime_voice", "") for a in scenario.cast] == ["", ""]
+
+
+# Median F0 of every gpt voice, re-measured 2026-10-01 on two fixed lines with
+# one estimator (median over voiced 45 ms frames, normalised autocorrelation);
+# the mean of the two. ballad is left out: it read 125 and 195 on the two
+# lines, which is no number to cast against.
+GPT_PITCH_HZ = {"echo": 120, "ash": 129, "cedar": 129, "alloy": 132,
+                "shimmer": 148, "verse": 150, "marin": 182, "sage": 187,
+                "coral": 208}
+ROOM_MIN_GAP_HZ = 20
+
+
+@pytest.mark.parametrize("sid", ["S3A", "S3B", "S4A", "S4B"])
+def test_a_group_room_on_gpt_is_three_pitches_apart(sid):
+    """Participants could not tell S3 and S4's characters apart by ear. On gpt
+    S3 had Alex on verse and Casey on marin, 2 Hz apart on the 2026-09-12
+    figures, and S4's two men sat ~20 Hz apart. Every pair in a room now
+    stands at least ROOM_MIN_GAP_HZ apart on the measured figures."""
+    voices = [gpt for _, _, gpt in CASTING[sid]]
+    pitches = sorted(GPT_PITCH_HZ[v] for v in voices)
+    gaps = [b - a for a, b in zip(pitches, pitches[1:])]
+    assert min(gaps) >= ROOM_MIN_GAP_HZ, f"{sid} on gpt: {dict(zip(voices, pitches))}"
