@@ -629,13 +629,16 @@ def _voice_style_provenance():
         return None
 
 
-def provenance(model: Optional[str] = None) -> dict:
+def provenance(model: Optional[str] = None,
+               room: Optional[bool] = None) -> dict:
     """Recorded with each session so the record shows what served it.
 
     `model` is the realtime model the session actually opened; the audio
     fields (input rate, transcriber, reply cap, resamplers) are read for it
     from the bridge's own capability table. Omitted, they are read for the
-    configured REALTIME_MODEL, which is what /health reports.
+    configured REALTIME_MODEL, which is what /health reports. `room` is
+    whether the encounter has a room in it (the runner says; see
+    room_memory_provenance): False makes `room_memory.effective` False.
     """
     # Imported here, not at the top: server.voice.realtime imports this module.
     from .voice.realtime import (audio_provenance, bridge_provenance,
@@ -674,8 +677,9 @@ def provenance(model: Optional[str] = None) -> dict:
         "record": record_provenance(),
         # What a room character's own conversation keeps of lines nobody
         # heard, and the role of a room's retry nudges (pipeline 2026-10-01a);
-        # see room_memory_provenance. `active` is False off the gpt route.
-        "room_memory": room_memory_provenance(model or realtime),
+        # see room_memory_provenance. `active` is False off the gpt route;
+        # `effective` is False there and on every encounter without a room.
+        "room_memory": room_memory_provenance(model or realtime, room=room),
         # Who opens a conversation, and which clock each limit counts on
         # (pipeline 2026-09-28b; see realtime_voice_session's "the
         # participant opens"). Before 28b a room's lead opened the scene and

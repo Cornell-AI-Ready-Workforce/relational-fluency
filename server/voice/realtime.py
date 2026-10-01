@@ -1411,12 +1411,18 @@ def room_memory_effective(model: str) -> bool:
     ) != ("keep", "generated", "user")
 
 
-def room_memory_provenance(model: str) -> dict:
+def room_memory_provenance(model: str, room: Optional[bool] = None) -> dict:
     """The room memory rules as this process applies them (pipeline
     2026-10-01a). `active` is whether they apply to a room on `model` (False
-    off the gpt route; 1:1 is never touched); `effective` is whether a room
-    on it runs anything other than 28b (room_memory_effective), which is the
-    flag to select encounters by. `heard_basis` is not a knob: a floor
+    off the gpt route; 1:1 is never touched); `effective` is whether the
+    encounter runs anything other than 28b, which is the flag to select
+    encounters by: a room on the gpt route with a knob away from 28b
+    (room_memory_effective), and never an encounter without a room (`room`
+    False, which the runner passes for every 1:1 encounter: nothing of
+    10-01a runs there, and until 2026-10-01's review every 1:1 gpt
+    encounter said True). With `room` unsaid (the /health report, which
+    has no encounter) it is what a room on `model` would run.
+    `heard_basis` is not a knob: a floor
     holder's heard words are its line's words that fit in the playback
     clock's heard milliseconds (the instant its playback_cut reads) at the
     character's speaking rate; a line cut while still playing after its turn,
@@ -1428,7 +1434,7 @@ def room_memory_provenance(model: str) -> dict:
         "told_text": room_told_text(),
         "nudge_role": room_nudge_role(),
         "active": room_memory_active(model),
-        "effective": room_memory_effective(model),
+        "effective": room is not False and room_memory_effective(model),
         "heard_basis": {"cut_floor_holder": "play_clock_wpm",
                         "cut_still_playing": "play_clock_share",
                         "cut_queued": "play_clock_share"},
@@ -1737,22 +1743,18 @@ UPDATE_ACK_S = float(setting("REALTIME_UPDATE_ACK_S", "2.0"))
 MEMORY_SETTLE_S = float(setting("REALTIME_MEMORY_SETTLE_S", "1.0"))
 MEMORY_OP_TTL_S = float(setting("REALTIME_MEMORY_OP_TTL_S", "10"))
 
-# Frames of ours that are not memory frames and can draw an item- or
-# reply-shaped error: counted on a tracking session (_plain_seq) so an error
-# that echoes no event_id is only claimed as a memory frame's when no such
-# frame went out after it (_memory_error_owner). Audio appends and cancels
-# are left out: appends flow all the time and draw no item error, and a
-# cancel's refusal has its own code below.
-_PLAIN_COUNTED = frozenset({
-    "conversation.item.create", "conversation.item.delete",
-    "conversation.item.truncate", "response.create",
-    "input_audio_buffer.commit", "input_audio_buffer.clear",
-    "session.update"})
-# Error codes the bridge's own frames draw, handled further down events():
-# never a memory frame's, whatever else the error says.
-_REPLY_ERROR_CODES = frozenset({
-    "response_cancel_not_active", "conversation_already_has_active_response",
-    "input_audio_buffer_commit_empty"})
+# The event_id prefix of every memory frame (_send_memory), and the one way
+# an error is told to be a memory frame's (_memory_error_owner). Measured
+# 2026-10-01 on gpt-realtime-2.1: the gateway echoes our event_id on its
+# errors (a refused delete as item_delete_invalid_item_id, a refused anchored
+# create as item_create_invalid_previous_item_id). Nothing else of ours sends
+# an event_id, so an error under this prefix is ours even after its frame has
+# had its answer, and an error without one is never claimed: the guesses
+# that stood in for the echo before it was measured (an id of ours in the
+# message, an item parameter, any item-shaped error) could only ever claim an
+# error that was NOT ours, and did, in review (a told note's refusal taken
+# for the delete's, which resent the delete and later the heard words twice).
+_MEMORY_EID = "rfm_"
 # A reply open on the gateway for longer than this is taken to have ended
 # without a done (an errored reply): it no longer holds an operation back.
 _OPEN_REPLY_MAX_S = 30.0
@@ -2569,16 +2571,11 @@ class RealtimeVoiceSession:
         """
         if not self.ws:
             return
-        if self.track_items:
-            # Room memory hygiene (pipeline 2026-10-01a): what went out that
-            # is not a memory frame, for _memory_error_owner, and when this
-            # session last asked for a reply, for _busy.
-            ptype = payload.get("type")
-            if (ptype in _PLAIN_COUNTED
-                    and not str(payload.get("event_id") or "").startswith("rfm_")):
-                self._plain_seq += 1
-                if ptype in ("response.create", "input_audio_buffer.commit"):
-                    self._reply_start_at = time.time()
+        if self.track_items and payload.get("type") in (
+                "response.create", "input_audio_buffer.commit"):
+            # Room memory hygiene (pipeline 2026-10-01a): when this session
+            # last asked for a reply, for _busy.
+            self._reply_start_at = time.time()
         try:
             await self.ws.send(json.dumps(payload))
         except websockets.ConnectionClosed as exc:
@@ -2747,10 +2744,11 @@ class RealtimeVoiceSession:
     # first item is gone: beside a surviving first item they would give the
     # character the start of the line twice. While an operation is waiting
     # or sending, a frame that starts a reply on this session waits for it
-    # (_memory_ready). Errors answering these frames are routed to
-    # memory_op_error before the bridge's own error handling sees them
-    # (_memory_error_owner), so a refused delete never ends a reply, raises
-    # no flag and never reaches the page.
+    # (_memory_ready). Errors answering these frames, told by the event_id
+    # of ours the gateway echoes (_MEMORY_EID), are routed to memory_op_error
+    # before the bridge's own error handling sees them (_memory_error_owner),
+    # so a refused delete never ends a reply, raises no flag and never
+    # reaches the page; an error without one is never taken for theirs.
 
     def _reset_memory(self) -> None:
         """The per-socket item mirror and memory operations, put back to
@@ -2766,15 +2764,16 @@ class RealtimeVoiceSession:
         self._reply_done_seen: dict = {}   # rid -> when its response.done came
         self._open_replies: dict = {}      # rid -> when the gateway began it
         self._reply_start_at = 0.0         # our last commit/create not yet answered
-        self._plain_seq = 0                # non-memory item/reply frames sent
         self._memory_ops: dict = {}        # key (rid / "told:<id>") -> operation
         self._memory_done: dict = {}       # rid -> what was done to it
         self._memory_frames: dict = {}     # event_id -> who sent that frame
+        self._memory_answered: dict = {}   # event_id -> its frame, answered since
         self._memory_deleting: dict = {}   # item id -> op key, delete not answered
         self._pending_creates: list = []   # (our id, role, text) not added yet
         self._id_alias: dict = {}          # our id -> gateway id
         self._ids_refused = False          # the gateway refused an id of ours
-        self._gate_waived_at = 0.0         # memory_settled has just waited
+        self._grant_task = None            # the grant's task memory_settled gated
+        self._grant_reported: set = set()  # op keys this grant's wait wrote down
         self._memory_outbox: list = [
             {"type": "memory_op_skipped", "response_id": op.get("response_id"),
              "kind": op.get("kind"), "why": "reconnected",
@@ -2907,10 +2906,21 @@ class RealtimeVoiceSession:
                     return iid
         return iid
 
+    def _answered(self, eid: str) -> Optional[dict]:
+        """A memory frame has had its answer (an ack, or an error under its
+        event_id): out of the frames still awaited, into the bounded record of
+        answered ones, so an error naming it later is still known as ours and
+        what it was (_memory_error_owner)."""
+        f = self._memory_frames.pop(eid, None)
+        if f is not None:
+            self._memory_answered[eid] = f
+            self._bound(self._memory_answered, 256)
+        return f
+
     def _ack_create(self, cid: str) -> None:
         for eid, f in list(self._memory_frames.items()):
             if f.get("op") == "insert" and f.get("item_id") == cid:
-                self._memory_frames.pop(eid, None)
+                self._answered(eid)
 
     def _track_items(self, etype: str, ev: dict) -> None:
         """Keep the mirror from one frame. Synchronous, yields nothing and
@@ -3261,9 +3271,18 @@ class RealtimeVoiceSession:
 
     async def _on_item_deleted(self, iid: Optional[str]) -> None:
         key = self._memory_deleting.pop(iid, None)
+        # One ack answers one delete frame: the oldest of ours still awaited
+        # for this item (one socket, frames answered in the order they were
+        # sent; the ack carries no event_id of ours). Any later delete frame
+        # still out for it stays awaited until its own answer, which, an
+        # error under its event_id, is then handled as that frame's (review
+        # of 2026-10-01: every one was dropped here, and a resend's refusal
+        # then reached the bridge's general error path and ended the reply
+        # streaming on that member).
         for eid, f in list(self._memory_frames.items()):
             if f.get("op") == "delete" and f.get("item_id") == iid:
-                self._memory_frames.pop(eid, None)
+                self._answered(eid)
+                break
         op = self._memory_ops.get(key) if key else None
         if op is None:
             return
@@ -3398,7 +3417,7 @@ class RealtimeVoiceSession:
         memory_op_error either way, so an operation never reports as done a
         frame that never went."""
         self._memory_seq += 1
-        eid = f"rfm_{self._memory_seq:x}"
+        eid = f"{_MEMORY_EID}{self._memory_seq:x}"
         why = None
         if self.ws is None:
             why = ("closed", "the session's socket is gone; nothing was sent")
@@ -3407,7 +3426,6 @@ class RealtimeVoiceSession:
                 "op": op, "item_id": item_id, "key": key,
                 "response_id": response_id, "context": dict(context or {}),
                 "previous_item_id": frame.get("previous_item_id"),
-                "plain_seq": self._plain_seq,
                 "at": time.time(), **(extra or {})}
             self._bound(self._memory_frames, 256)
             failures = self.send_failures
@@ -3479,12 +3497,37 @@ class RealtimeVoiceSession:
         can only be read once this returns: that is recorded as late with
         own_task. Callers test `self._memory_ops` before awaiting this, so a
         session with nothing pending (every 1:1 session) never yields here.
-        A wait memory_settled has just done (give_floor, before its silence
-        pad) is not done twice."""
-        waived = time.time() - self._gate_waived_at < 0.5
-        self._gate_waived_at = 0.0
+
+        A room grant is gated once, by memory_settled ahead of its silence
+        pad (GroupRoom.give_floor), and until memory_grant_over every later
+        reply-start of that grant (its commit, the response.create of a
+        commit+create grant or a commit-only grant's fallback) goes without
+        waiting again. The commit is right behind that wait, which has just
+        been spent; and a wait behind the commit could not succeed: the
+        grant's own commit makes this member busy (_busy) for up to 2 s, and
+        no operation's frames go out while it is, so it was MEMORY_SETTLE_S
+        of dead air spent for nothing (review of 2026-10-01: a commit+create
+        grant waited the settle time twice). An operation that wait did not
+        write down (decided after it) is written down here as late, with
+        nothing waited. Only the grant's own task goes ungated: give_floor
+        sends every frame of a grant itself, and a reply-start from anywhere
+        else in that window (a commit-only grant's lasts up to
+        ROOM_GRANT_UNANSWERED_S) is not the grant's and is gated as usual."""
         self._expire_memory_ops()
-        if not self._memory_ops or waived:
+        if not self._memory_ops:
+            return
+        if (self._grant_task is not None
+                and asyncio.current_task() is self._grant_task):
+            fresh = [k for k in self._memory_ops if k not in self._grant_reported]
+            if fresh:
+                self._grant_reported.update(fresh)
+                self.memory_late += 1
+                self._memory_outbox.append({
+                    "type": "memory_op_late", "before": before,
+                    "pending": [self._memory_ops[k].get("response_id") or k
+                                for k in fresh],
+                    "waited_s": 0.0,
+                    "own_task": asyncio.current_task() is self._events_task})
             return
         t0 = time.time()
         own = asyncio.current_task() is self._events_task
@@ -3506,61 +3549,49 @@ class RealtimeVoiceSession:
             "waited_s": round(time.time() - t0, 3), "own_task": own})
 
     async def memory_settled(self, before: str = "grant") -> None:
-        """The ordering gate, ahead of a grant's silence pad (GroupRoom
-        .give_floor): the wait is done before the pad goes into the input
-        buffer rather than between the pad and the commit, so what the
-        participant says during it is not committed behind the pad. The
-        commit that follows does not wait again."""
-        if not (self.track_items and self._memory_ops):
+        """The ordering gate for a whole grant, ahead of its silence pad
+        (GroupRoom.give_floor): the wait is done before the pad goes into
+        the input buffer rather than between the pad and the commit, so what
+        the participant says during it is not committed behind the pad. No
+        reply-start of the grant waits again until memory_grant_over, which
+        give_floor calls after its last frame (see _memory_ready), so one
+        grant waits MEMORY_SETTLE_S at most, on every branch of it."""
+        if not self.track_items:
             return
-        await self._memory_ready(before)
+        self._grant_task = None
         if self._memory_ops:
-            # Gone late (written down): the commit right behind it goes now,
-            # rather than waiting the same settle time again.
-            self._gate_waived_at = time.time()
+            await self._memory_ready(before)
+        # Whatever is still pending was written down by that wait, as late.
+        self._grant_reported = set(self._memory_ops)
+        self._grant_task = asyncio.current_task()
+
+    def memory_grant_over(self) -> None:
+        """give_floor's last frame has gone: the next reply-start on this
+        member is gated as any other is (_memory_ready)."""
+        self._grant_task = None
+        self._grant_reported = set()
 
     def _memory_error_owner(self, ev: dict, err: dict) -> Optional[dict]:
         """The memory frame an `error` answers, taken once; None for any
         other error, which then takes the bridge's usual path unchanged.
 
-        By our event_id first: the gateway echoes it (measured 2026-10-01:
-        a refused delete came back as item_delete_invalid_item_id and a
-        refused anchored create as item_create_invalid_previous_item_id,
-        both with our event_id). Failing that, by an id of
-        ours named in the message; by an item parameter while a frame of
-        ours is less than 10 s old; and last, by any error that speaks of an
-        item and carries none of the codes the bridge's own frames draw,
-        while a memory frame of ours is unanswered and no other item or
-        reply frame has gone out since it (_plain_seq), so the error cannot
-        be that frame's."""
-        if not self._memory_frames:
+        By our event_id, and by nothing else: the gateway echoes it
+        (measured 2026-10-01: a refused delete came back as
+        item_delete_invalid_item_id and a refused anchored create as
+        item_create_invalid_previous_item_id, both with our event_id), and
+        no other frame of ours sends one (_MEMORY_EID). An error under one
+        whose frame has already had its answer (acked, or refused before) is
+        still ours: it is returned `answered`, with that frame's record while
+        _memory_answered still holds it, and nothing more is done about it.
+        Never the general path: there it would end the reply streaming on
+        this member as interrupted and reach the page."""
+        eid = str(err.get("event_id") or ev.get("event_id") or "")
+        if not eid.startswith(_MEMORY_EID):
             return None
-        eid = err.get("event_id") or ev.get("event_id")
-        if eid and eid in self._memory_frames:
-            return self._memory_frames.pop(eid)
-        code = str(err.get("code") or "")
-        msg = str(err.get("message") or "")
-        param = str(err.get("param") or "")
-        now = time.time()
-        recent = [(e, f) for e, f in self._memory_frames.items()
-                  if now - f.get("at", 0.0) < 10.0]
-        for e, f in recent:
-            for ident in (f.get("item_id"), f.get("previous_item_id")):
-                if ident and ident != "root" and ident in msg:
-                    return self._memory_frames.pop(e)
-        # Only the parameters our frames carry: an error about a tool call's
-        # output (item.call_id) or any other item is not ours to swallow.
-        if recent and param in ("item_id", "previous_item_id", "item.id"):
-            return self._memory_frames.pop(recent[0][0])
-        if (code in _REPLY_ERROR_CODES or "voice" in param
-                or param.startswith("session") or param == "item.call_id"):
-            return None
-        if "item" in f"{code} {param} {msg}".lower():
-            unanswered = [e for e, f in recent
-                          if f.get("plain_seq") == self._plain_seq]
-            if unanswered:
-                return self._memory_frames.pop(unanswered[0])
-        return None
+        owner = self._answered(eid)
+        if owner is not None:
+            return owner
+        return {**(self._memory_answered.get(eid) or {}), "answered": True}
 
     async def _recover_memory_error(self, owner: dict, param: str = "") -> dict:
         """What is done about a refused memory frame.
@@ -5417,7 +5448,7 @@ class RealtimeVoiceSession:
                     code = str(err.get("code") or "")
                     param = str(err.get("param") or "")
                     owner = None
-                    if self._memory_frames:
+                    if self.track_items:
                         try:
                             owner = self._memory_error_owner(ev, err)
                         except Exception:  # noqa: BLE001 - then it is not ours
@@ -5429,13 +5460,19 @@ class RealtimeVoiceSession:
                         # puts down the flags of the reply streaming now,
                         # never closes that turn as interrupted, never reaches
                         # the fatal voice path or the member pump's
-                        # voice_error, and never reaches the page.
+                        # voice_error, and never reaches the page. A frame
+                        # that had already had its answer gets nothing more
+                        # done about it (`already_answered`): a recovery for
+                        # it is how review put the heard words back twice.
                         self.memory_errors += 1
-                        try:
-                            recovery = await self._recover_memory_error(
-                                owner, param)
-                        except Exception as exc:  # noqa: BLE001
-                            recovery = {"recovery": f"internal: {exc!r}"}
+                        if owner.get("answered"):
+                            recovery = {"recovery": "already_answered"}
+                        else:
+                            try:
+                                recovery = await self._recover_memory_error(
+                                    owner, param)
+                            except Exception as exc:  # noqa: BLE001
+                                recovery = {"recovery": f"internal: {exc!r}"}
                         yield {"type": "memory_op_error", "op": owner.get("op"),
                                "item_id": owner.get("item_id"),
                                "response_id": owner.get("response_id"),

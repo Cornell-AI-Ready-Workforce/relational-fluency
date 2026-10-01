@@ -1149,6 +1149,7 @@ class GroupRoom:
         # _note_grant in the runner). Replaced on every grant.
         self.last_grant = None
         failures_before = getattr(rt, "send_failures", 0)
+        settled = None      # the bridge memory_settled gated this grant on
         heard_something = self._fanned_since_grant.pop(agent_id, 0) > 0
         model = getattr(rt, "model", "") or self._model or _configured_model()
         try:
@@ -1213,7 +1214,11 @@ class GroupRoom:
                     # at most) is taken HERE, ahead of the pad, not inside
                     # commit_input between the pad and the commit, where what
                     # the participant said meanwhile would be committed
-                    # behind the pad. Nothing pending, nothing waits.
+                    # behind the pad. Nothing pending, nothing waits. It is
+                    # the grant's only wait: neither its commit nor any
+                    # response.create below waits again, until the finally
+                    # after the grant's last frame (memory_grant_over).
+                    settled = rt
                     await rt.memory_settled("commit")
                 await rt.send_audio(_SILENCE_PAD)
                 # A prior reply whose response.done was lost leaves
@@ -1303,6 +1308,9 @@ class GroupRoom:
         except Exception:  # noqa: BLE001, a dead session must not kill the turn
             self.sessions.pop(agent_id, None)
             return None
+        finally:
+            if settled is not None:
+                settled.memory_grant_over()
         if (getattr(rt, "ws", True) is None
                 or getattr(rt, "send_failures", 0) > failures_before):
             await self._went_deaf(

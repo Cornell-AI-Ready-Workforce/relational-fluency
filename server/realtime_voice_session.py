@@ -5438,8 +5438,11 @@ class RealtimeVoiceSessionRunner:
                 voices_offered=realtime_voices(),
                 # For the model this session opened, not only the configured
                 # one: input rate, transcriber, reply cap and resamplers are
-                # per family (see voice.realtime.audio_provenance).
-                **provenance(self.rt.model)
+                # per family (see voice.realtime.audio_provenance). `room`:
+                # whether this encounter has a room at all, so that
+                # room_memory.effective is False on every 1:1 encounter,
+                # where nothing of 10-01a runs (see room_memory_provenance).
+                **provenance(self.rt.model, room=bool(self._scenario_is_group))
             )
             # FIRST_COMPLETED + cancel, not gather: the watchdog loops on
             # _closed and _client_to_model's return paths do not set it, so a
@@ -6016,7 +6019,18 @@ class RealtimeVoiceSessionRunner:
                                 and (self._last_played or {}).get("agent_id")
                                 is not None):
                             cut = self._cut_last_played(now=cut_now)
-                        queued = self._queued_cuts_safe(cut_now, cut, fin_rid)
+                        # The floor holder's reply is left out of the queued
+                        # lines only where case 1 above owns it: its reply
+                        # named (cut_rid) or announced (holder_heard). With
+                        # neither, fin_rid is the playback clock's line_rid,
+                        # which until the new reply is announced still names
+                        # the holder's PREVIOUS line; queued behind the line
+                        # cut, the page has just dropped it unheard, and left
+                        # out here it stayed whole in the holder's own
+                        # conversation (review of 2026-10-01).
+                        queued = self._queued_cuts_safe(
+                            cut_now, cut,
+                            fin_rid if (cut_rid or holder_heard) else None)
                         if cut_st is not None:
                             # This turn is closed now; see the pump's
                             # response_done finalize for why the mark must

@@ -18,8 +18,9 @@ drops the transcript (4/4) and is never sent.
 
 Offline: real RealtimeVoiceSession objects on the fake socket of
 tests/test_bridge_correctness.py, a real GroupRoom, a real runner. The frame
-shapes below are the GA ones the probes saw; what the probes did NOT measure
-(an echoed event_id, client item ids, "root") is marked where it is relied on.
+shapes below are the GA ones the probes saw; what the 2026-09-30 probes did
+not measure (an echoed event_id, client item ids, "root") was measured on
+2026-10-01, and an error is a memory frame's only by that echoed event_id.
 """
 from __future__ import annotations
 
@@ -362,41 +363,42 @@ async def _streaming_after_a_delete(rt, c):
 
 @in_a_loop
 async def test_a_delete_error_is_not_a_reply_error():
-    for by_id in (True, False):
-        rt = tracked()
-        await rt.request_response()
-        c = Consumer(rt)
-        try:
-            eid = await _streaming_after_a_delete(rt, c)
-            n = len(c.evs)
-            rt.ws.feed([err("item_not_found",
-                            "Item with id 'i1' not found.",
-                            event_id=eid if by_id else None, param="item_id")])
-            (e,) = await c.wait("memory_op_error")
-            # Sent once more (a refusal can be transient), and refused again.
-            await until(lambda: len(deletes(rt)) == 2)
-            again = of(rt, "conversation.item.delete")[-1]
-            assert again["item_id"] == "i1" and again["event_id"] != eid
-            rt.ws.feed([err("item_not_found",
-                            "Item with id 'i1' not found.",
-                            event_id=again["event_id"] if by_id else None,
-                            param="item_id")])
-            (op,) = await c.wait("memory_op")
-            rt.ws.feed([tdelta("R2", "j1", " three")])
-            await until(lambda: any(x.get("text") == " three" for x in c.evs))
-            # Read before the consumer stops: stopping events() ends a reply.
-            active = rt._response_active
-        finally:
-            await c.stop()
-        later = [x["type"] for x in c.evs[n:]]
-        assert "error" not in later and "response_done" not in later, later
-        assert e["op"] == "delete" and e["item_id"] == "i1"
-        assert e["code"] == "item_not_found" and e["recovery"] == "delete_resent"
-        assert c.of("memory_op_error")[1]["recovery"] is None
-        assert active is True, "the streaming reply was ended"
-        assert op["action"] == "refused" and op["insert_skipped"] == "delete_refused"
-        assert creates(rt) == [], "the heard words were put in beside the line"
-        assert rt.memory_errors == 2
+    """Told by the event_id the gateway echoes (measured 2026-10-01), the
+    only way a memory frame's error is told (see the id-less shapes in
+    test_an_error_that_is_not_ours_takes_the_bridges_own_path)."""
+    rt = tracked()
+    await rt.request_response()
+    c = Consumer(rt)
+    try:
+        eid = await _streaming_after_a_delete(rt, c)
+        n = len(c.evs)
+        rt.ws.feed([err("item_not_found",
+                        "Item with id 'i1' not found.",
+                        event_id=eid, param="item_id")])
+        (e,) = await c.wait("memory_op_error")
+        # Sent once more (a refusal can be transient), and refused again.
+        await until(lambda: len(deletes(rt)) == 2)
+        again = of(rt, "conversation.item.delete")[-1]
+        assert again["item_id"] == "i1" and again["event_id"] != eid
+        rt.ws.feed([err("item_not_found",
+                        "Item with id 'i1' not found.",
+                        event_id=again["event_id"], param="item_id")])
+        (op,) = await c.wait("memory_op")
+        rt.ws.feed([tdelta("R2", "j1", " three")])
+        await until(lambda: any(x.get("text") == " three" for x in c.evs))
+        # Read before the consumer stops: stopping events() ends a reply.
+        active = rt._response_active
+    finally:
+        await c.stop()
+    later = [x["type"] for x in c.evs[n:]]
+    assert "error" not in later and "response_done" not in later, later
+    assert e["op"] == "delete" and e["item_id"] == "i1"
+    assert e["code"] == "item_not_found" and e["recovery"] == "delete_resent"
+    assert c.of("memory_op_error")[1]["recovery"] is None
+    assert active is True, "the streaming reply was ended"
+    assert op["action"] == "refused" and op["insert_skipped"] == "delete_refused"
+    assert creates(rt) == [], "the heard words were put in beside the line"
+    assert rt.memory_errors == 2
 
     # And an error that is not ours still takes the bridge's own path.
     rt = tracked()
@@ -654,7 +656,7 @@ async def test_a_refused_insert_id_falls_back_to_the_measured_frame():
         (ins,) = creates(rt)
         assert ins["item"]["id"].startswith("rf_a_")
         rt.ws.feed([err("invalid_value", "Invalid 'item.id': not allowed.",
-                        param="item.id")])
+                        event_id=ins["event_id"], param="item.id")])
         (e,) = await c.wait("memory_op_error")
         _first, again = creates(rt)
         assert again["previous_item_id"] == "p1" and "id" not in again["item"]
@@ -1971,43 +1973,33 @@ async def _a_pending_delete(rt, c):
     return of(rt, "conversation.item.delete")[-1]
 
 
-@pytest.mark.parametrize("shape", ["id_in_message", "param_only", "item_wording"])
-@in_a_loop
-async def test_an_error_without_our_event_id_is_still_recognised(shape):
-    """Defensive (the gateway echoed event_id on 2026-10-01): a gateway may not echo event_id. Each fallback on
-    its own: our id named in the message; an item parameter of ours; and an
-    error that speaks of an item, with no frame but ours sent since."""
-    rt = tracked()
-    await rt.request_response()
-    c = Consumer(rt)
-    try:
-        await _a_pending_delete(rt, c)
-        if shape != "item_wording":
-            # A plain item frame since ours: the last fallback is off, so the
-            # one under test is the only one that can claim the error.
-            await rt.inject_text("note")
-        frame = {"id_in_message": err("x_code", "Nothing called 'i1' here."),
-                 "param_only": err("x_code", "Not found.", param="item_id"),
-                 "item_wording": err("conversation_item_missing",
-                                     "That conversation item does not exist.")}[shape]
-        rt.ws.feed([frame])
-        (e,) = await c.wait("memory_op_error")
-    finally:
-        await c.stop()
-    assert e["op"] == "delete" and e["item_id"] == "i1"
-    assert not c.of("error")
-
-
 @pytest.mark.parametrize("shape", ["tool_call", "stale_frame", "plain_frame_since",
-                                   "reply_code"])
+                                   "reply_code", "id_in_message", "param_only",
+                                   "item_wording", "server_event_id"])
 @in_a_loop
 async def test_an_error_that_is_not_ours_takes_the_bridges_own_path(shape):
+    """Only our echoed event_id makes an error a memory frame's. The shapes
+    the guesses before that echo was measured took for ours (our id in the
+    message, an item parameter, any error speaking of an item) are left to
+    the bridge's own path with a delete of ours unanswered: in review every
+    one of them could only ever claim an error that was not ours."""
     rt = tracked()
     await rt.request_response()
     c = Consumer(rt)
     try:
         await _a_pending_delete(rt, c)
-        if shape == "tool_call":
+        if shape == "id_in_message":
+            frame = err("x_code", "Nothing called 'i1' here.")
+        elif shape == "param_only":
+            frame = err("x_code", "Not found.", param="item_id")
+        elif shape == "item_wording":
+            frame = err("conversation_item_missing",
+                        "That conversation item does not exist.")
+        elif shape == "server_event_id":
+            # The gateway's own id on the error event is never ours.
+            frame = dict(err("x_code", "Not found.", param="item_id"),
+                         event_id="event_abc123")
+        elif shape == "tool_call":
             frame = err("invalid_value", "No tool call found for item.",
                         param="item.call_id")
         elif shape == "stale_frame":
@@ -2780,3 +2772,290 @@ async def test_a_told_correction_waits_for_the_reply_open_on_that_member():
     finally:
         await c.stop()
     assert op["action"] == "corrected" and op["deferred"] is True
+
+
+# --------------------------------------------------------------------------
+# 6. Re-review of 2026-10-01: errors by event_id only, one wait a grant,
+#    the floor holder's previous line, `effective` off 1:1
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("keep", ["Hello…", None])
+@in_a_loop
+async def test_a_refusal_of_a_frame_already_answered_is_ours_and_does_nothing(keep):
+    """Re-review 1, the reviewer's sequence (rr_skeptic): a plain frame of
+    the bridge's (a told note, no event_id) and right behind it a memory
+    operation's delete; the told note's refusal (no event_id, speaking of an
+    item); the delete's ack; a new reply streaming on the member; then a
+    refusal under the delete's event_id. Before the fix the told note's
+    refusal was taken for the delete's (the last id-less fallback), the
+    delete was resent, the ack dropped the resend's record with the
+    original's, and the resend's refusal then either put the heard words
+    back a second time (an item-parameter fallback claimed it for the
+    insert) or, with no frame left to claim it, ended the live reply as
+    interrupted and reached the page as an error."""
+    rt = tracked()
+    await rt.request_response()
+    c = Consumer(rt)
+    try:
+        rt.ws.feed([committed("u1", None), created("R1"), item_added("R1", "i1"),
+                    done_out("R1", ["i1"], texts={"i1": "Hello there my friend"})])
+        await c.wait("response_done")
+        await rt.inject_text("Dan: something")
+        assert await rt.forget_reply("R1", keep_text=keep) == "sent"
+        (d,) = of(rt, "conversation.item.delete")
+        rt.ws.feed([err("invalid_value", "Invalid 'item.content[0].text'",
+                        param="item.content")])
+        await c.wait("error")
+        assert not c.of("memory_op_error"), (
+            "the told note's refusal was taken for the delete's")
+        assert deletes(rt) == ["i1"], "the delete was resent"
+        assert d["event_id"] in rt._memory_frames, "the delete's answer is still owed"
+        rt.ws.feed([deleted("i1")])
+        (op,) = await c.wait("memory_op")
+        inserts = [m for m in creates(rt) if m.get("event_id")]
+        assert len(inserts) == (1 if keep else 0)
+        await rt.request_response()
+        rt.ws.feed([created("R2"), item_added("R2", "j1"),
+                    tdelta("R2", "j1", "So what"), adelta("R2", "j1")])
+        await until(lambda: any(x.get("text") == "So what" for x in c.evs))
+        before = (rt.responding, rt._response_active)
+        n = len(c.evs)
+        rt.ws.feed([err("item_delete_invalid_item_id",
+                        "Item with item_id 'i1' not found",
+                        event_id=d["event_id"], param="item_id")])
+        (e,) = await c.wait("memory_op_error")
+        rt.ws.feed([tdelta("R2", "j1", " now")])
+        await until(lambda: any(x.get("text") == " now" for x in c.evs))
+        # Read before the consumer stops: stopping events() ends a reply.
+        after = (rt.responding, rt._response_active)
+    finally:
+        await c.stop()
+    later = [x["type"] for x in c.evs[n:]]
+    assert "error" not in later and "response_done" not in later, later
+    assert before == after == (True, True), "the live reply was ended"
+    assert e["op"] == "delete" and e["item_id"] == "i1"
+    assert e["code"] == "item_delete_invalid_item_id"
+    assert e["recovery"] == "already_answered"
+    assert deletes(rt) == ["i1"]
+    assert [m for m in creates(rt) if m.get("event_id")] == inserts, (
+        "the heard words were put back a second time")
+    assert op["action"] == ("replaced" if keep else "deleted")
+
+
+@in_a_loop
+async def test_one_ack_answers_one_delete_frame_and_a_later_one_stays_awaited():
+    """Re-review 1: a conversation.item.deleted carries no event_id of ours,
+    and answers the oldest delete frame still out for its item (frames are
+    answered in the order sent). A later one stays awaited, and its own
+    refusal is handled as that frame's, never as an answered one's."""
+    rt = tracked()
+    c = Consumer(rt)
+    try:
+        frame = {"type": "conversation.item.delete", "item_id": "i1"}
+        first = await rt._send_memory(frame, op="delete", item_id="i1")
+        second = await rt._send_memory(frame, op="delete", item_id="i1")
+        rt.ws.feed([deleted("i1")])
+        await until(lambda: first not in rt._memory_frames)
+        assert second in rt._memory_frames, (
+            "a delete still awaiting its answer was unregistered")
+        assert first in rt._memory_answered
+        rt.ws.feed([err("item_delete_invalid_item_id",
+                        "Item with item_id 'i1' not found",
+                        event_id=second, param="item_id")])
+        (e,) = await c.wait("memory_op_error")
+        # An event_id of ours this socket no longer holds a record of
+        # (bounded out, say): still ours, still nothing more done.
+        rt.ws.feed([err("item_create_invalid_previous_item_id", "Not found.",
+                        event_id="rfm_fffff", param="previous_item_id")])
+        await c.wait("memory_op_error", 2)
+    finally:
+        await c.stop()
+    assert e["op"] == "delete" and e["recovery"] is None
+    assert second not in rt._memory_frames and second in rt._memory_answered
+    stray = c.of("memory_op_error")[1]
+    assert stray["op"] is None and stray["recovery"] == "already_answered"
+    assert not c.of("error")
+    assert deletes(rt) == ["i1", "i1"], "nothing was resent"
+    assert rt.memory_errors == 2
+
+
+@pytest.mark.parametrize("when", ["reserved", "fresh"])
+@pytest.mark.parametrize("branch", ["commit_only", "commit_only_fallback",
+                                    "commit_create", "commit_autofire"])
+@in_a_loop
+async def test_a_grant_waits_one_settle_time_at_most_on_every_branch(
+        branch, when, monkeypatch):
+    """Re-review 2 (rr_skeptic's commit-then-create replay, through
+    give_floor): an operation still pending when the grant starts
+    (`reserved`), decided only once the grant's commit has gone, or one
+    first asked for then (`fresh`). memory_settled is the grant's one
+    wait: neither the commit nor the response.create behind it (a
+    commit+create grant, ROOM_COMMIT_ONLY_GRANT=0, or a commit-only grant's
+    fallback) waits again, where the wait could not end early anyway (the
+    grant's own commit holds the operation back, _busy). A commit answered
+    by itself (`commit_only`, and `commit_autofire` with
+    ROOM_COMMIT_ONLY_GRANT=0) sends nothing behind it. An operation the
+    wait did not write down is written down as late, nothing waited. (The
+    text-prompt grant never runs on a member that tracks its items.)"""
+    settle_s = 0.5
+    monkeypatch.setattr(R, "MEMORY_SETTLE_S", settle_s)
+    monkeypatch.setattr(R, "MEMORY_OP_TTL_S", 5.0)
+    monkeypatch.setattr(R, "room_grant_unanswered_s", lambda: 0.05)
+    monkeypatch.setenv("AUTOFIRE_WAIT", "0.05")
+    if branch in ("commit_create", "commit_autofire"):
+        monkeypatch.setenv("ROOM_COMMIT_ONLY_GRANT", "0")
+    room = gpt_room()
+    dan = room.sessions["dan"]
+    await dan.request_response()
+    c = Consumer(dan)
+    try:
+        dan.ws.feed([committed("p1", None)] + chain(reply_frames("R1", ["i1"]), "p1")
+                    + [done_out("R1", ["i1"])])
+        await c.wait("response_done")
+        if when == "reserved":
+            assert dan.reserve_memory("R1")
+        real_commit = dan.commit_input
+
+        async def commit_then_decide(**kw):
+            await real_commit(**kw)
+            if when == "fresh":
+                assert dan.reserve_memory("R1")
+            assert await dan.forget_reply("R1", keep_text="Ok") == "deferred"
+            if branch in ("commit_only", "commit_autofire"):
+                dan.ws.feed([created("R2")])
+
+        dan.commit_input = commit_then_decide
+        n = len(dan.ws.sent)
+        t0 = time.time()
+        assert await room.give_floor("dan") is dan
+        took = time.time() - t0
+        await asyncio.sleep(0.05)
+    finally:
+        await c.stop()
+    via = room.last_grant["via"]
+    asks = branch in ("commit_only_fallback", "commit_create")
+    assert via == {"commit_only": "commit",
+                   "commit_only_fallback": "commit+create_fallback",
+                   "commit_create": "commit+create",
+                   "commit_autofire": "commit"}[branch], via
+    sent = [t for t in dan.ws.types()[n:] if t != "input_audio_buffer.append"]
+    assert sent[0] == "input_audio_buffer.commit"
+    assert ("response.create" in sent) is asks
+    assert took <= settle_s + 0.25, f"one grant waited {took:.2f} s"
+    late = c.of("memory_op_late")
+    if when == "reserved":
+        assert took >= settle_s - 0.05, "the grant's one wait was not taken"
+        assert [(x["before"], x["pending"]) for x in late] == [("commit", ["R1"])]
+    elif not asks:
+        assert late == [] and took < settle_s
+    else:
+        assert [(x["before"], x["pending"], x["waited_s"]) for x in late] == [
+            ("create", ["R1"], 0.0)]
+        assert took < settle_s
+    assert not c.of("memory_op_waited")
+    # Over with the grant: the next reply-start is gated as any other is.
+    assert dan._grant_task is None
+
+
+@in_a_loop
+async def test_only_the_grants_own_task_goes_ungated(monkeypatch):
+    """Re-review 2: the grant's one wait spares the grant's own frames, not
+    every reply-start on the member while it lasts (a commit-only grant's
+    can last ROOM_GRANT_UNANSWERED_S): one from another task is gated as
+    any other is, and after memory_grant_over the grant's task is too."""
+    settle_s = 0.3
+    monkeypatch.setattr(R, "MEMORY_SETTLE_S", settle_s)
+    monkeypatch.setattr(R, "MEMORY_OP_TTL_S", 5.0)
+    rt = tracked()
+    await rt.request_response()
+    c = Consumer(rt)
+    try:
+        rt.ws.feed([committed("u1", None), created("R1"), item_added("R1", "i1"),
+                    done_out("R1", ["i1"])])
+        await c.wait("response_done")
+        assert rt.reserve_memory("R1")
+        await rt.memory_settled("commit")
+        t0 = time.time()
+        await rt._memory_ready("create")
+        own = time.time() - t0
+        t0 = time.time()
+        await asyncio.ensure_future(rt._memory_ready("create"))
+        other = time.time() - t0
+        rt.memory_grant_over()
+        t0 = time.time()
+        await rt._memory_ready("create")
+        after = time.time() - t0
+        await c.wait("memory_op_late", 3)
+    finally:
+        await c.stop()
+    assert own < 0.1, f"the grant's own create waited {own:.2f} s"
+    assert other >= settle_s - 0.05, "another task's reply-start went ungated"
+    assert after >= settle_s - 0.05, "the grant's waiver outlived the grant"
+    assert [x["before"] for x in c.of("memory_op_late")] == [
+        "commit", "create", "create"]
+
+
+@pytest.mark.parametrize("holder", ["previous_line", "own_line"])
+@in_a_loop
+async def test_a_floor_holders_previous_line_queued_behind_the_cut_is_dropped(
+        holder, monkeypatch):
+    """Re-review 3: Dan holds the floor again before his new reply is named
+    or announced, and his PREVIOUS line R1 is still queued on the page
+    behind Priya's, which is playing. The participant cuts in: the page
+    drops R1 unheard, so it is one of the queued cuts (deleted from his
+    conversation); it was left out as if case 1 owned it, because the
+    playback clock's line_rid still named it. Once R1 is the announced
+    reply on the floor (`own_line`), case 1 does own it, and it is not."""
+    h = RoomHarness()
+    now = time.time()
+    h.runner._played_lines = [{"agent_id": "priya", "response_id": "R2",
+                               "start": now - 1.0, "end": now + 20.0,
+                               "text": PRIYA_LINE}]
+    h.runner._last_played = {"agent_id": "dan", "response_id": "R1",
+                             "start": now + 20.0, "end": now + 26.0, "text": LINE}
+    h.runner._play_cursor = now + 26.0
+    st = rvs._MemberState()
+    st.line_rid = "R1"
+    st.play_start, st.play_end = now + 20.0, now + 26.0
+    st.announced = holder == "own_line"
+    h.runner._member_states["dan"] = st
+    h.room.speaking = "dan"
+    assert h.rt("dan")._response_created_id is None      # no cut_rid
+    seen = []
+
+    async def after_cuts(cut, queued):
+        seen.append((cut, queued))
+
+    monkeypatch.setattr(h.runner, "_memory_after_cuts", after_cuts)
+    try:
+        await h.barge_in()
+    finally:
+        await settle(h.runner)
+    ((cut, queued),) = seen
+    assert cut["agent_id"] == "priya" and cut["response_id"] == "R2"
+    if holder == "previous_line":
+        assert [(q["agent_id"], q["response_id"]) for q in queued] == [("dan", "R1")]
+        assert queued[0]["heard_s"] == 0.0
+    else:
+        assert queued == [], "case 1's own reply was taken for a queued line"
+        assert ("dan", "R1") in h.runner._line_cuts
+
+
+def test_room_memory_is_effective_only_on_an_encounter_with_a_room():
+    """Re-review 4: provenance `room_memory.effective` is the flag to select
+    affected encounters by, and nothing of 10-01a runs on a 1:1 encounter,
+    gpt or not; it said True on every 1:1 gpt encounter. The runner says
+    whether the encounter has a room; with nothing said (the /health report)
+    it is what a room on that model would run."""
+    assert llm.provenance(GPT, room=False)["room_memory"]["effective"] is False
+    assert llm.provenance(GPT, room=True)["room_memory"]["effective"] is True
+    assert llm.provenance(GPT)["room_memory"]["effective"] is True
+    assert llm.provenance(NATIVE, room=True)["room_memory"]["effective"] is False
+    one = llm.provenance(GPT, room=False)["room_memory"]
+    assert one["active"] is True, "active still says what a room here would run"
+    one_to_one = rvs.RealtimeVoiceSessionRunner(FakeSession("S1A"), PageWS())
+    with_room = rvs.RealtimeVoiceSessionRunner(FakeSession("S4A"), PageWS())
+    assert one_to_one._scenario_is_group is False
+    assert with_room._scenario_is_group is True
+    src = (ROOT / "server" / "realtime_voice_session.py").read_text(encoding="utf-8")
+    assert "**provenance(self.rt.model, room=bool(self._scenario_is_group))" in src
