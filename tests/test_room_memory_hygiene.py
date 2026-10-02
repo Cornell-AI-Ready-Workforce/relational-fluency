@@ -1650,7 +1650,7 @@ async def test_knobs_at_todays_values_send_todays_frames(monkeypatch):
     assert [m["type"] for m in h.rt("dan").ws.sent[n:]
             if m["type"] != "input_audio_buffer.append"] == ["response.cancel"]
     (turn,) = h.of("assistant_turn")
-    # 28b's record too, not only its frames: none of the 10-01a fields.
+    # 30a's record too, not only its frames: none of the 10-01a fields.
     assert not NEW_TURN_FIELDS & set(turn), turn
     for aid in ("priya", "chris"):
         (note,) = creates(h.rt(aid))

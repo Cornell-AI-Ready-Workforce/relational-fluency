@@ -3651,7 +3651,7 @@ class RealtimeVoiceSessionRunner:
 
     def _memory_policy(self, rt) -> tuple:
         """(cut_memory, told_text) for a line of `rt`'s character: the knobs,
-        in a room on the gpt route; 28b's ("keep", "generated") anywhere
+        in a room on the gpt route; 30a's ("keep", "generated") anywhere
         else, every 1:1 encounter included."""
         if getattr(self, "room", None) is None or rt is None:
             return "keep", "generated"
@@ -3660,11 +3660,11 @@ class RealtimeVoiceSessionRunner:
         return _realtime.room_cut_memory(), _realtime.room_told_text()
 
     def _memory_effective(self, rt) -> bool:
-        """Whether this room member runs anything other than 28b
+        """Whether this room member runs anything other than 30a
         (room_memory_effective on its model). Only then do its records carry
         the 10-01a fields (assistant_turn response_id / memory / told / ...,
         nudge_role on a retry), so that at keep / generated / user a room's
-        records are 28b's as well as its frames, and on native-audio and
+        records are 30a's as well as its frames, and on native-audio and
         Gemini rooms they always are."""
         if getattr(self, "room", None) is None or rt is None:
             return False
@@ -4572,9 +4572,9 @@ class RealtimeVoiceSessionRunner:
             # response_id. `memory_text` is the words kept and `told_text` the
             # words told, from the playback clock (`memory_estimate` says
             # how), never the relayed-audio `heard_text` above, which is an
-            # upper bound. Only where the room runs anything but 28b
+            # upper bound. Only where the room runs anything but 30a
             # (_memory_effective): at keep / generated / user, and on every
-            # native-audio and Gemini room, the turn is 28b's.
+            # native-audio and Gemini room, the turn is 30a's.
             **(_memory_turn_fields(response_id, plan)
                if plan.get("effective") else {}),
         )
@@ -10086,8 +10086,8 @@ class RealtimeVoiceSessionRunner:
                 why = "bridge_refused"
         if self._memory_effective(rt) and why is None and how == "nudge":
             # The role the room member's nudge went as (ROOM_NUDGE_ROLE,
-            # pipeline 2026-10-01a), where the room runs anything but 28b; a
-            # 1:1 record, and a 28b room's, are unchanged.
+            # pipeline 2026-10-01a), where the room runs anything but 30a; a
+            # 1:1 record, and a 30a room's, are unchanged.
             fields["nudge_role"] = getattr(rt, "nudge_role", None) or "user"
         self.session.store.event(
             "reply_retry", why=why, asked=why is None, how=how,

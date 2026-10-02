@@ -622,11 +622,11 @@ def text_client() -> AsyncAnthropic:
 #                assistant_turn response_id, memory, told, memory_text,
 #                told_text, memory_estimate and nudge_role on a room's
 #                audio_retry / reply_retry, written only where a room runs
-#                anything but 28b. The director's history and assistant_turn
+#                anything but 30a. The director's history and assistant_turn
 #                text and heard_text are unchanged. ROOM_CUT_MEMORY=keep,
-#                ROOM_TOLD_TEXT=generated, ROOM_NUDGE_ROLE=user restore 28b's
-#                frames, behaviour and records; only provenance `room_memory`
-#                (`effective` false) says so.
+#                ROOM_TOLD_TEXT=generated, ROOM_NUDGE_ROLE=user restore 30a's
+#                frames, behaviour and records (the speech check included);
+#                only provenance `room_memory` (`effective` false) says so.
 PIPELINE_VERSION = "2026-10-01a"
 ROOM_PACING_VERSION = "2026-09-29b"
 

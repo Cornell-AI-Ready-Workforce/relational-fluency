@@ -420,7 +420,7 @@ class GroupRoom:
         runner delete a reply nobody heard and put back the heard words of
         one cut off, and its retry nudges become system items. Only where a
         knob asks for it: with ROOM_CUT_MEMORY=keep, ROOM_TOLD_TEXT=generated
-        and ROOM_NUDGE_ROLE=user the member is exactly the 28b session, and
+        and ROOM_NUDGE_ROLE=user the member is exactly the 30a session, and
         off the gpt route it always is. Assigned like `model` is in
         _new_session, so a test factory's session takes it harmlessly. The
         scribe is never configured: it holds nothing a character remembers."""

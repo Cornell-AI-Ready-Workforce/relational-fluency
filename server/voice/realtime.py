@@ -1396,7 +1396,7 @@ def room_cut_memory() -> str:
     the line was; only deleted when nothing was heard, as for a line queued
     behind the one cut), and a reply that was never played (a suppressed
     hold refused, stale, expired or dropped; a reply a re-brief cancelled) is
-    deleted. "keep" restores 28b: the character remembers everything it
+    deleted. "keep" restores 30a: the character remembers everything it
     generated. Anything else reads as the default."""
     v = (setting("ROOM_CUT_MEMORY", "replace") or "").strip().lower()
     return v if v in ("replace", "keep") else "replace"
@@ -1406,7 +1406,7 @@ def room_told_text() -> str:
     """ROOM_TOLD_TEXT, default "heard". What the other characters are told
     (GroupRoom.tell) about a line the participant cut off: the heard words;
     and a line they were already told in full because it was cut while still
-    playing after its turn is corrected in place. "generated" restores 28b:
+    playing after its turn is corrected in place. "generated" restores 30a:
     they are told the whole generated line."""
     v = (setting("ROOM_TOLD_TEXT", "heard") or "").strip().lower()
     return v if v in ("heard", "generated") else "heard"
@@ -1416,7 +1416,7 @@ def room_nudge_role() -> str:
     """ROOM_NUDGE_ROLE, default "system". The role of the retry and
     unanswered nudges (AUDIO_RETRY_NUDGE, UNANSWERED_NUDGE) a ROOM member is
     given: as user items they were lines the participant never said, sitting
-    in the character's memory as theirs. "user" restores 28b. 1:1 sessions
+    in the character's memory as theirs. "user" restores 30a. 1:1 sessions
     are always "user" whatever this says (RealtimeVoiceSession.nudge_role)."""
     v = (setting("ROOM_NUDGE_ROLE", "system") or "").strip().lower()
     return v if v in ("system", "user") else "system"
@@ -1430,12 +1430,12 @@ def room_memory_active(model: str) -> bool:
 
 
 def room_memory_effective(model: str) -> bool:
-    """Whether a room on `model` runs anything other than 28b: on the gpt
-    route, and with at least one of the three knobs away from its 28b value
+    """Whether a room on `model` runs anything other than 30a: on the gpt
+    route, and with at least one of the three knobs away from its 30a value
     (keep, generated, user). Only then does a room member track its items,
     and only then do the room's records carry the 10-01a fields
     (assistant_turn response_id / memory / told, nudge_role on a retry): at
-    keep / generated / user a room's frames AND records are 28b's, and only
+    keep / generated / user a room's frames AND records are 30a's, and only
     provenance `room_memory` says which rules ran."""
     return room_memory_active(model) and (
         room_cut_memory(), room_told_text(), room_nudge_role()
@@ -1446,8 +1446,8 @@ def room_memory_provenance(model: str, room: Optional[bool] = None) -> dict:
     """The room memory rules as this process applies them (pipeline
     2026-10-01a). `active` is whether they apply to a room on `model` (False
     off the gpt route; 1:1 is never touched); `effective` is whether the
-    encounter runs anything other than 28b, which is the flag to select
-    encounters by: a room on the gpt route with a knob away from 28b
+    encounter runs anything other than 30a, which is the flag to select
+    encounters by: a room on the gpt route with a knob away from 30a
     (room_memory_effective), and never an encounter without a room (`room`
     False, which the runner passes for every 1:1 encounter: nothing of
     10-01a runs there, and until 2026-10-01's review every 1:1 gpt
