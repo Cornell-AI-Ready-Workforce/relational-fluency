@@ -109,10 +109,11 @@ def test_provenance_agrees_with_the_session_the_bridge_actually_sends():
 
 def test_the_session_started_event_is_stamped_for_the_running_model():
     """Read off the source: run() opens the session and then stamps the event
-    with provenance() for THAT session's model, not the configured one."""
+    with provenance() for THAT session's model, not the configured one (and,
+    from 10-01a's review, whether the encounter has a room)."""
     src = (ROOT / "server" / "realtime_voice_session.py").read_text(encoding="utf-8")
     at = src.index('"realtime_session_started", model=self.rt.model')
-    assert "**provenance(self.rt.model)" in src[at:at + 600]
+    assert "**provenance(self.rt.model, room=" in src[at:at + 700]
 
 
 def _write(root: Path, events) -> Path:

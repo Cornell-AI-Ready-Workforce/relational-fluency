@@ -542,7 +542,11 @@ def realtime_row_defaults(monkeypatch):
                  # The speech check (pipeline 2026-09-30a).
                  "SPEECH_CHECK", "SPEECH_CHECK_MODEL", "SPEECH_CHECK_TIMEOUT_S",
                  "SPEECH_CHECK_MAX_WORDS", "SPEECH_CHECK_PLAYBACK_MAX_WORDS",
-                 "SPEECH_CHECK_PLAYBACK_TAIL_S"):
+                 "SPEECH_CHECK_PLAYBACK_TAIL_S",
+                 # Room memory hygiene (pipeline 2026-10-01a). Not
+                 # REALTIME_MEMORY_SETTLE_S / _OP_TTL_S: those are read at
+                 # import, like REALTIME_UPDATE_ACK_S.
+                 "ROOM_CUT_MEMORY", "ROOM_TOLD_TEXT", "ROOM_NUDGE_ROLE"):
         monkeypatch.delenv(knob, raising=False)
 
 
