@@ -539,11 +539,44 @@ def realtime_row_defaults(monkeypatch):
                  "PARTICIPANT_RATE_OVER",
                  # The follow-up gap (room pacing 2026-09-29a).
                  "FOLLOWUP_GAP_S",
+                 # The speech check (pipeline 2026-09-30a).
+                 "SPEECH_CHECK", "SPEECH_CHECK_MODEL", "SPEECH_CHECK_TIMEOUT_S",
+                 "SPEECH_CHECK_MAX_WORDS", "SPEECH_CHECK_PLAYBACK_MAX_WORDS",
+                 "SPEECH_CHECK_PLAYBACK_TAIL_S",
                  # Room memory hygiene (pipeline 2026-10-01a). Not
                  # REALTIME_MEMORY_SETTLE_S / _OP_TTL_S: those are read at
                  # import, like REALTIME_UPDATE_ACK_S.
                  "ROOM_CUT_MEMORY", "ROOM_TOLD_TEXT", "ROOM_NUDGE_ROLE"):
         monkeypatch.delenv(knob, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def offline_speech_check(monkeypatch):
+    """The speech check's one network call (server/speech_check.py), answered
+    as a check that failed.
+
+    A test that drives a real bridge with audio and a short line (the gpt
+    route's commit keeps its audio) reaches the check, and the check POSTs the
+    audio to the gateway with this machine's key. Failed is the offline
+    answer, and the check keeps the line as it came, so such a test sees the
+    behaviour before the check existed plus a `speech_check` event saying it
+    failed. tests/test_speech_check.py stands its own answers in; monkeypatch
+    applies in order, so theirs wins.
+
+    Patched only where the module is already imported, for the same reason
+    as offline_boot_preflights below: importing it here would import
+    server.storage and bind DATA_DIR at session start.
+    """
+    import sys as _sys
+
+    mod = _sys.modules.get("server.speech_check")
+    if mod is None:
+        return
+
+    async def _offline(payload, timeout):
+        raise ConnectionError("offline: tests/conftest.py makes no network calls")
+
+    monkeypatch.setattr(mod, "_post", _offline)
 
 
 @pytest.fixture(autouse=True)

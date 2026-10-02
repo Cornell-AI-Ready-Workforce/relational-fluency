@@ -198,6 +198,12 @@ _PLACEHOLDER = re.compile(r"\{\s*\}")
 # Defined ABOVE the capability table because a row names an input rate: the
 # native-audio route needs 24 kHz in and every other route takes this.
 CLIENT_RATE = 16000
+# How much of a commit's own audio the bridge keeps for the speech check
+# (server/speech_check.py), and on how many unanswered commits at once. A line
+# the check hears is short; the commit under it can be long ("The" over 6.9 s
+# in s_1790781273_b8b7cc), so the latest 20 s, where it ends.
+COMMIT_AUDIO_KEEP_S = 20
+COMMIT_AUDIO_TAGS = 4
 GATEWAY_OUTPUT_RATE = int(setting("REALTIME_OUTPUT_RATE", "24000"))
 
 
@@ -275,6 +281,13 @@ class RealtimeCapabilities:
     autofire_at_created: bool = False
     # Whether the session dict may carry a transcription language hint.
     transcription_language_hint: bool = True
+    # Whether a participant line that looks like a transcriber's invention
+    # (short, another script, or said over a character's playback) is heard
+    # again from its own commit's audio before it is written
+    # (server/speech_check.py; pipeline 2026-09-30a). Only where the bridge
+    # owns the input buffer, since that is where a commit's audio is exactly
+    # known (owns_input_buffer): the gpt row.
+    participant_speech_check: bool = False
     # Session-level cap on a reply's output tokens (audio tokens included), or
     # None to leave the family's default. Audio costs ~20 tokens per second of
     # voice and the reply's text shares the same budget, so a cap is a length
@@ -574,6 +587,11 @@ REALTIME_FAMILIES = {
         # (needs_input_transcription); the language rides on the same dict and
         # asking for it is harmless (verified 2026-09-08).
         transcription_language_hint=True,
+        # The hint does not stop gpt-4o-transcribe writing words over noise
+        # and over the characters' own voices on a real microphone
+        # (s_1790781273_b8b7cc: "Democrat", "Tuurlijk.", "Sexuality"; see
+        # server/speech_check.py).
+        participant_speech_check=True,
         # The scenario bank names Gemini voices and a bank entry is not a typo.
         # Each maps to the nearest voice on this roster, stable per character,
         # so a character cast as Kore is `shimmer` on every gpt run rather than
@@ -1155,6 +1173,14 @@ def room_has_second_transcriber(model: str) -> bool:
                             and not is_openai_realtime(model))
 
 
+def speech_check_family(model: str) -> bool:
+    """True when `model`'s family row has suspect participant lines heard
+    again before they are written (the gpt row; see the column). The
+    operator's SPEECH_CHECK knob is read by the runner, on top of this."""
+    caps = capabilities_for(model)
+    return bool(caps and caps.participant_speech_check)
+
+
 def turn_gate_provenance(model: Optional[str] = None) -> dict:
     """The knob values above, as this process will apply them. With `model`,
     also whether a room on it runs the near-duplicate filter at all."""
@@ -1177,6 +1203,11 @@ def turn_gate_provenance(model: Optional[str] = None) -> dict:
     }
     if model:
         out["room_dedupe_second_source"] = room_has_second_transcriber(model)
+    if model and speech_check_family(model):
+        # Pipeline 2026-09-30a, gpt only: which lines are heard again, on
+        # what, within how long. Absent on every other route.
+        from ..speech_check import provenance as _speech_check_provenance
+        out["participant_speech_check"] = _speech_check_provenance()
     return out
 
 
@@ -2163,6 +2194,12 @@ class RealtimeVoiceSession:
         # (wall clock), set by the runner beside voiced_bar; what a commit's
         # tag dates the participant's line by (issue #50; _tag_commit).
         self.speech_began: Optional[Callable[[], float]] = None
+        # Called with each participant commit's tag as it goes out (not a
+        # probe's), set by the runner beside voiced_bar: the moment the speech
+        # check starts hearing the commit again, before its transcript is back
+        # (server/speech_check.py; pipeline 2026-09-30a). Whatever it adds to
+        # the tag rides on the transcript's event.
+        self.on_commit: Optional[Callable[[dict], None]] = None
         self._voiced_ms = 0.0
         # Where in the buffer the voice sits (P6 review, pipeline
         # 2026-09-24b): ms of audio appended since the last commit or clear,
@@ -2172,6 +2209,12 @@ class RealtimeVoiceSession:
         self._appended_ms = 0.0
         self._voiced_first_ms: Optional[float] = None
         self._voiced_last_ms: Optional[float] = None
+        # The audio itself, as the page sent it (CLIENT_RATE, before the
+        # resample), since the last commit or clear, where the buffer is ours
+        # alone: what a commit's transcript is heard again from
+        # (server/speech_check.py; pipeline 2026-09-30a). The latest
+        # COMMIT_AUDIO_KEEP_S of it.
+        self._commit_audio = bytearray()
         # When the latest commit of any kind (turn, probe, replay) went out,
         # so the runner can tell that a reply in flight answers a LATER
         # commit than the one it is withdrawing (see last_commit_at).
@@ -2636,6 +2679,13 @@ class RealtimeVoiceSession:
         """Append participant audio (PCM16 at CLIENT_RATE)."""
         if not pcm16:
             return
+        if self.voiced_bar is not None and self.owns_input_buffer:
+            # The participant's own channel only (the runner sets voiced_bar
+            # on the scribe and the 1:1 session; a room member hears the room).
+            self._commit_audio += pcm16
+            over = len(self._commit_audio) - COMMIT_AUDIO_KEEP_S * CLIENT_RATE * 2
+            if over > 0:
+                del self._commit_audio[:over]
         if self.voiced_bar is not None:
             # Voiced audio since the last commit, for the transcript gate. On
             # the page's own frames (100 ms, CLIENT_RATE: pcm-worklet.js flushes
@@ -3764,6 +3814,7 @@ class RealtimeVoiceSession:
         after_first = (self._appended_ms - self._voiced_first_ms
                        if self._voiced_first_ms is not None else None)
         previous = self._last_commit_at
+        audio = bytes(self._commit_audio)
         self._reset_voice_count()
         self._last_commit_at = time.time()
         if not self.owns_input_buffer:
@@ -3781,7 +3832,7 @@ class RealtimeVoiceSession:
             # rather than when it was re-sent.
             began = (self._last_commit_at - after_first / 1000.0
                      if counted and after_first is not None else None)
-        self._commit_tags.append({
+        tag = {
             "voiced_ms": int(round(voiced)) if counted else None,
             "voiced_span_ms": int(round(span)) if counted else None,
             "probe": probe, "replay": replay,
@@ -3797,15 +3848,31 @@ class RealtimeVoiceSession:
             # line, committed as one 27.7 s span). None where nothing in it
             # was voiced.
             "spoken_at": began,
-        })
+            # What this commit held (see _commit_audio), for the speech
+            # check. Only the newest few tags keep theirs: a tag no
+            # transcript came for is not worth 20 s of audio.
+            "pcm": audio,
+        }
+        self._commit_tags.append(tag)
         # A gateway that never answers a commit must not grow this forever.
         del self._commit_tags[:-16]
+        for old in self._commit_tags[:-COMMIT_AUDIO_TAGS]:
+            old.pop("pcm", None)
+            # A check started for it finishes on its own (it is bounded);
+            # nothing will read it.
+            old.pop("check", None)
+        if self.on_commit is not None and not probe and audio:
+            try:
+                self.on_commit(tag)
+            except Exception:  # noqa: BLE001 - never cost the participant a commit
+                pass
 
     def _reset_voice_count(self) -> None:
         """A new buffer: nothing appended to it, nothing voiced in it."""
         self._voiced_ms = 0.0
         self._appended_ms = 0.0
         self._voiced_first_ms = self._voiced_last_ms = None
+        self._commit_audio = bytearray()
 
     def _voiced_span_ms(self) -> float:
         """First voiced frame's start to last voiced frame's end, since the
@@ -4954,9 +5021,13 @@ class RealtimeVoiceSession:
                         item = ev.get("item_id")
                         if item:
                             self._item_tags[item] = tag
-                            # Bounded like the queue it came from.
+                            # Bounded like the queue it came from, and so is
+                            # the audio the oldest of them still hold.
                             while len(self._item_tags) > 16:
                                 self._item_tags.pop(next(iter(self._item_tags)))
+                            for old in list(self._item_tags.values())[:-COMMIT_AUDIO_TAGS]:
+                                old.pop("pcm", None)
+                                old.pop("check", None)
                     continue
 
                 # The bridge auto-fires responses without going through
@@ -5291,7 +5362,12 @@ class RealtimeVoiceSession:
                             # (pipeline 2026-09-24a; see _withdraw_reply).
                             "committed_at": tag.get("committed_at"),
                             # When they began saying it (issue #50).
-                            "spoken_at": tag.get("spoken_at")}
+                            "spoken_at": tag.get("spoken_at"),
+                            # What the commit held, for the speech check
+                            # (pipeline 2026-09-30a); None where not kept,
+                            # and the check on_commit started for it.
+                            "pcm": tag.get("pcm"),
+                            "check": tag.get("check")}
                     if text:
                         yield {"type": "user_transcript", "text": text,
                                "garbled": garbled, **meta}

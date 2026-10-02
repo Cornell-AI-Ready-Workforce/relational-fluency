@@ -586,6 +586,16 @@ def text_client() -> AsyncAnthropic:
 #                the 11:00 warning and the 12:00 ceiling stay on the
 #                encounter's clock. The page shows a start cue until then.
 #                Provenance `opening`.
+#   2026-09-30a  the speech check (gpt route; server/speech_check.py): a
+#                participant line of at most three words, in another script,
+#                or of at most seven begun over a character's playback, is
+#                heard again from its own commit's audio by
+#                SPEECH_CHECK_MODEL before it is written. Nobody speaking in
+#                it: suppressed as no_speech (speech_check on the event), its
+#                1:1 reply withdrawn, a room turn on it skipped. The live
+#                text is kept otherwise, except a line in another script the
+#                check heard in English. A room routes only once the line is
+#                decided. Provenance turn_gate.participant_speech_check.
 #   2026-10-01a  room memory hygiene, gpt route (the researchers' decision of
 #                2026-10-01: no generated-but-unheard reply stays in a
 #                character's own conversation). A line the participant cut
@@ -725,11 +735,13 @@ def provenance(model: Optional[str] = None,
 # `blocks` is the difference between "no encounter can run" and "a report will
 # fail later". The first four are the encounter path and they turn `ok` false,
 # which is what docs/OPERATIONS.md tells an operator `gateway.ok` means. The
-# last one is offline tooling - the re-transcriber - and a typo there costs a
+# re-transcriber is offline tooling, and a typo there costs a
 # re-transcription run rather than a wave, so
 # it is named without taking the gateway "down" for something no participant
-# will ever touch. A warning that fires for a harmless reason is a warning that
-# gets ignored for the harmful one.
+# will ever touch. The speech check is on the encounter path but fails open (a
+# refused check keeps the line, as before it existed), so it warns too. A
+# warning that fires for a harmless reason is a warning that gets ignored for
+# the harmful one.
 #
 # The defaults are duplicated from the modules that read them, which is a real
 # hazard: a default that drifts here silently checks a model the study does not
@@ -743,6 +755,9 @@ _MODEL_ROLES = (
     ("STEERING_MODEL", "nto.gemini-3.5-flash-lite", "the steering reviewer", True),
     ("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio", "the voice socket", True),
     ("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash", "the re-transcriber, offline", False),
+    # Not blocking: a check the gateway refuses keeps the line as it came,
+    # which is the behaviour before 2026-09-30a.
+    ("SPEECH_CHECK_MODEL", "nto.gemini-3.1-flash-lite", "the participant speech check", False),
 )
 
 

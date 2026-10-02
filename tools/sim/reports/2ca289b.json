@@ -1,0 +1,235 @@
+{
+ "baseline": {
+  "realtime_model": "gpt-realtime-2.1",
+  "recorded": {
+   "build": "8c188a6",
+   "date": "2026-09-29",
+   "pipeline_version": "2026-09-28b",
+   "room_pacing_version": "2026-09-29b"
+  }
+ },
+ "build": "2ca289b",
+ "build_from": "HEAD (its image contents differ from the pinned tag)",
+ "failures": [
+  "S1A: no baseline yet: not recorded on pipeline 2026-09-30a yet: the live run on d7e26a0 (2026-09-30) was cut off when the machine went offline. The 28b values (build 8c188a6) are in git history and are a different experiment. Record all four with python -m tools.sim.check --write-baseline before this pipeline ships.",
+  "S2A: no baseline yet: not recorded on pipeline 2026-09-30a yet: the live run on d7e26a0 (2026-09-30) was cut off when the machine went offline. The 28b values (build 8c188a6) are in git history and are a different experiment. Record all four with python -m tools.sim.check --write-baseline before this pipeline ships.",
+  "S3A: no baseline yet: not recorded on pipeline 2026-09-30a yet: the live run on d7e26a0 (2026-09-30) was cut off when the machine went offline. The 28b values (build 8c188a6) are in git history and are a different experiment. Record all four with python -m tools.sim.check --write-baseline before this pipeline ships.",
+  "S4A: no baseline yet: not recorded on pipeline 2026-09-30a yet: the live run on d7e26a0 (2026-09-30) was cut off when the machine went offline. The 28b values (build 8c188a6) are in git history and are a different experiment. Record all four with python -m tools.sim.check --write-baseline before this pipeline ships."
+ ],
+ "generated_at": "2026-10-01T00:05:13Z",
+ "health": {
+  "build": "2ca289b",
+  "pipeline_version": "2026-09-30a",
+  "realtime_model": "gpt-realtime-2.1",
+  "room_pacing_version": "2026-09-29b"
+ },
+ "passed": false,
+ "scenarios": {
+  "S1A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-09-30a yet: the live run on d7e26a0 (2026-09-30) was cut off when the machine went offline. The 28b values (build 8c188a6) are in git history and are a different experiment. Record all four with python -m tools.sim.check --write-baseline before this pipeline ships.",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 11,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 8,
+    "lines_said": 8,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "2ca289b",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-09-30a",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1790811205_9c4deb",
+    "speech_end_to_first_played_s": {
+     "n": 9,
+     "p50": 2.85,
+     "p90": 3.541
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_retaliation_fork",
+     "t2_the_opening",
+     "t3_defensiveness",
+     "t4_half_concession"
+    ],
+    "triggers_fired": 4,
+    "turns_suppressed": {
+     "probe_pad": 2
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1790811205_9c4deb"
+  },
+  "S2A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-09-30a yet: the live run on d7e26a0 (2026-09-30) was cut off when the machine went offline. The 28b values (build 8c188a6) are in git history and are a different experiment. Record all four with python -m tools.sim.check --write-baseline before this pipeline ships.",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 24,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 24,
+    "lines_heard": 24,
+    "lines_said": 24,
+    "participant_turns": 24,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "2ca289b",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-09-30a",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1790811429_fd06ba",
+    "speech_end_to_first_played_s": {
+     "n": 24,
+     "p50": 3.642,
+     "p90": 4.767
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_the_opening",
+     "t2_rung1_no_budget",
+     "t3_rung2_everyone_stretched",
+     "t4_rung3_no_precedent",
+     "t5_rung4_the_package",
+     "t6_rung4_fairness"
+    ],
+    "triggers_fired": 6,
+    "turns_suppressed": {
+     "probe_pad": 1
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 1,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1790811429_fd06ba"
+  },
+  "S3A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-09-30a yet: the live run on d7e26a0 (2026-09-30) was cut off when the machine went offline. The 28b values (build 8c188a6) are in git history and are a different experiment. Record all four with python -m tools.sim.check --write-baseline before this pipeline ships.",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 10,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 9,
+    "lines_said": 9,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "2ca289b",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-09-30a",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1790812151_f6e71c",
+    "speech_end_to_first_played_s": {
+     "n": 9,
+     "p50": 4.538,
+     "p90": 7.28
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_public_challenge",
+     "t2_jordans_flat_fine",
+     "t3_caseys_overload"
+    ],
+    "triggers_fired": 3,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 2,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1790812151_f6e71c"
+  },
+  "S4A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-09-30a yet: the live run on d7e26a0 (2026-09-30) was cut off when the machine went offline. The 28b values (build 8c188a6) are in git history and are a different experiment. Record all four with python -m tools.sim.check --write-baseline before this pipeline ships.",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 30,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 25,
+    "lines_heard": 30,
+    "lines_said": 30,
+    "participant_turns": 30,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "2ca289b",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-09-30a",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1790812391_5a870f",
+    "speech_end_to_first_played_s": {
+     "n": 29,
+     "p50": 4.406,
+     "p90": 6.021
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_priya_interrupted",
+     "t2_idea_relabelled",
+     "t3_decisions_close_with_priya_silent",
+     "t4_dan_claims_the_writeup"
+    ],
+    "triggers_fired": 4,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 3,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1790812391_5a870f"
+  }
+ },
+ "server": "http://127.0.0.1:50410"
+}
