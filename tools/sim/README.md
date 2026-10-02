@@ -93,25 +93,30 @@ the 720 s ceiling where 24c ended it about 451 s in, and the count limits
 shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
-check fails for it, saying so, until it is recorded. **All four are pending as
-committed.** They were recorded on 28b / room pacing 29b (build 8c188a6,
-2026-09-29), and pipeline 2026-10-01a (room memory hygiene) was made offline,
-without a gateway run: it changes what a gpt room character's own
-conversation keeps, so S3A and S4A are a different experiment, and S1A and
-S2A (1:1, unchanged by it) are pending only because a baseline compares one
-`pipeline_version` with itself. The 28b values are in git history (55de607).
-Record all four with `python -m tools.sim.check --write-baseline` on the
-first run that can reach the gateway, in the PR that ships 10-01a.
+check fails for it, saying so, until it is recorded. None is pending as
+committed: all four are recorded on pipeline 2026-10-01a / room pacing 29b,
+build 0c271c7 (2026-10-02, `reports/0c271c7.json`), which is 30a's speech
+check (#67) with 10-01a's room memory hygiene (#72) on top.
 
-With nothing to compare against, that first run cannot fail on a regression,
-so before writing it as the baseline, read its report against the 28b values
-by hand (`git show 55de607:tools/sim/baseline.json`), above all S3A and S4A:
-`lines_answered` (7 of 9 and 25 of 31 on 28b), `speech_end_to_first_played_s`
-p50 / p90 (4.023 / 9.346 and 4.662 / 6.842 s), `reply_missing` and
-`voice_error` (0), and in the sessions' events any `member_memory_late`,
-`member_memory_error` or `member_memory_skipped` `busy` / `no_item`. A drop
-in lines answered or a rise in latency there is 10-01a's ordering wait or its
-system-role nudges until shown otherwise, and is not a baseline.
+A baseline compares one `pipeline_version` with itself, so a merge that brings
+another version's change in under the same label needs a re-record that the
+version guard cannot ask for. That happened to 10-01a: it was first recorded on
+18a54be (`reports/18a54be.json`, S4A from `reports/18a54be-S4A-rerun.json`)
+before #67 merged into it, and those values were replaced because they
+described a build without the speech check.
+
+With nothing to compare against, a version's first run cannot fail on a
+regression, so before writing it as the baseline, read its report against the
+version before by hand (30a: `git show 2df0cdf:tools/sim/baseline.json`, build
+2ca289b), above all S3A and S4A: `lines_answered` (8 of 9 and 25 of 30 on
+30a), `speech_end_to_first_played_s` p50 / p90 (4.538 / 7.28 and 4.406 /
+6.021 s), `reply_missing` and `voice_error` (0), and in the sessions' events
+any `member_memory_late`, `member_memory_error` or `member_memory_skipped`
+`busy` / `no_item`. A drop in lines answered or a rise in latency there is
+10-01a's ordering wait or its system-role nudges until shown otherwise, and is
+not a baseline. 0c271c7's run answered 8 of 9 and 25 of 30, at 3.862 / 5.88
+and 4.027 / 6.379 s, with none of those events (7 lines replaced, 4 told lines
+corrected, no wait).
 
 ## The stimulus
 
