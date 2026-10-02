@@ -6,7 +6,15 @@
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
 <title>Conversation</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preload" href="/static/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
 <style>
+  /* Inter (SIL OFL, static/fonts/LICENSE-Inter.txt), served by this app and
+     not by a font CDN, so a participant's browser contacts nobody else. The
+     Latin subset; a character outside it is drawn in the system font. */
+  @font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; font-display: swap;
+    src: url("/static/fonts/inter-latin-wght-normal.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+      U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
   :root {
     --bg:        #ededec;
     --surface:   #ffffff;
@@ -14,6 +22,9 @@
     --tile-bg:   #2f2f2f;
     --tile-bg-active: #b3181b;
     --line:      #b8b9b6;
+    /* The edge of a control (a field, a select, a secondary button), which
+       has to be seen to be found: 3:1 and more. --line is 1.68:1 on --bg. */
+    --line-strong:#858683;
     --line-soft: #d0d1ce;
     --fg:        #2f2f2f;
     --fg-on-dark:#f5f5f4;
@@ -24,9 +35,12 @@
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
-  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  body { margin:0; font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
          background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased;
          min-height: 100vh; min-height: 100svh; display: flex; flex-direction: column; }
+  /* Inter is drawn for text sizes; a heading is tightened a little, as the
+     typeface's own spacing guide has it for 16px and up. */
+  h1, h2 { letter-spacing: -0.011em; }
   header { padding: 14px 20px 10px; border-bottom: 1px solid var(--line-soft); background: var(--surface);
            display: flex; justify-content: space-between; align-items: center; gap: 16px; }
   /* The page's one h1 (#43): what the page is about, for a screen reader's
@@ -49,25 +63,28 @@
     overflow-y: auto;
     max-height: 560px;
   }
+  /* The brief is read while talking, a glance away from the camera: 15px for
+     what it says (the situation card's size), 12px and more for its labels.
+     It was 13.5-14px, its labels 10-11px; a phone already had 16px. */
   .brief .label {
-    font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
     color: var(--accent); margin: 0 0 8px;
   }
   .brief .body {
-    font-size: 14px; line-height: 1.6; color: var(--fg); white-space: pre-wrap;
+    font-size: 15px; line-height: 1.6; color: var(--fg); white-space: pre-wrap;
     margin: 0 0 12px;
   }
   /* Rich briefing inside the reference panel: same sections as the situation
      popup, sized down to sit beside the transcript. */
   .brief .body.rich { white-space: normal; }
-  .brief .body.rich h4 { font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+  .brief .body.rich h4 { font-size: 12px; letter-spacing: .05em; text-transform: uppercase;
     color: var(--muted); margin: 14px 0 5px; }
-  .brief .body.rich ul { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.55; }
+  .brief .body.rich ul { margin: 0; padding-left: 18px; font-size: 15px; line-height: 1.55; }
   .brief .body.rich li { margin-bottom: 3px; }
-  .brief .body.rich .sit-lead { margin: 0; font-size: 14px; line-height: 1.6; }
-  .brief .body.rich .sit-note { font-size: 12.5px; color: var(--muted); margin: 6px 0 0; }
+  .brief .body.rich .sit-lead { margin: 0; font-size: 15px; line-height: 1.6; }
+  .brief .body.rich .sit-note { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
   .brief .cast-line {
-    font-size: 12px; color: var(--muted);
+    font-size: 13px; color: var(--muted);
     border-top: 1px solid var(--line-soft); padding-top: 10px; margin-top: 10px;
   }
   .brief .cast-line strong { color: var(--fg); font-weight: 600; }
@@ -147,7 +164,7 @@
   .turn-state.agent::before { background: #4a7bd0; animation: pulse 1.2s infinite; }
   .turn-state.listen::before { background: #3a9a5c; }
   /* Minimum-duration progress: the timer's dot becomes a ring that fills at 7:00. */
-  .gate { display: none; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  .gate { display: none; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); white-space: nowrap; }
   .gate.show { display: inline-flex; }
   .gate svg { width: 22px; height: 22px; transform: rotate(-90deg); flex-shrink: 0; }
   .gate .track { fill: none; stroke: var(--line-soft); stroke-width: 3; }
@@ -180,24 +197,26 @@
   .check-row:first-of-type { border-top: none; }
   .check-row .what { flex: 1; min-width: 0; }
   .check-row .what b { display: block; margin-bottom: 2px; }
-  .check-row .what span { font-size: 13.5px; color: var(--muted); }
+  .check-row .what span { font-size: 14px; color: var(--muted); }
   .check-row button { white-space: nowrap; }
-  .check-row .status { width: 120px; text-align: right; font-size: 13.5px; color: var(--muted); }
+  .check-row .status { width: 120px; text-align: right; font-size: 14px; color: var(--muted); }
   .check-row .status.ok { color: #2f7d4a; font-weight: 600; }
   .meter { height: 10px; border-radius: 99px; background: var(--line-soft); overflow: hidden; margin-top: 8px; }
   /* The darker green: #3a9a5c on the track was 2.30:1, this is 3.30:1. */
   .meter > i { display: block; height: 100%; width: 0; background: #2f7d4a; transition: width 80ms linear; }
-  .check-help { display: none; font-size: 13.5px; color: var(--fg); background: var(--accent-soft, #fbeeee); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
+  .check-help { display: none; font-size: 14px; color: var(--fg); background: var(--accent-soft, #fbeeee); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
   .check-help.show { display: block; }
   .check-actions { display: flex; gap: 10px; align-items: center; margin-top: 18px; }
   /* Why Continue waits, next to it: the card never said, and a disabled
      button with no reason reads as broken. */
-  .check-note { margin: 14px 0 0; font-size: 13.5px; color: var(--muted); }
+  .check-note { margin: 14px 0 0; font-size: 14px; color: var(--muted); }
   .check-note + .check-actions { margin-top: 8px; }
   .check-actions .skip { font-size: 13px; font-weight: 400; color: var(--muted); background: none; border: none; text-decoration: underline; cursor: pointer; padding: 0; }
   /* A link under the pointer too, not the primary's dark red behind grey text. */
   .check-actions .skip:hover:not(:disabled) { background: none; }
-  .timer { font-family: ui-monospace, Menlo, monospace; font-size: 13px; font-weight: 600;
+  /* Figures of one width, so the clock does not jitter as it counts; the
+     page's typeface rather than a monospace one. */
+  .timer { font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600;
            color: var(--fg); background: var(--surface-2); padding: 5px 10px; border-radius: 8px;
            letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 6px; }
   .timer::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
@@ -209,7 +228,7 @@
            transition: background 0.15s, transform 0.05s; }
   button:hover:not(:disabled) { background: var(--accent-deep); }
   button:active:not(:disabled) { transform: translateY(1px); }
-  button.secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--line); }
+  button.secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--line-strong); }
   /* A secondary button stays readable under the pointer. The primary's hover
      outranked it, so "Stop and leave the study" and End went dark red behind
      dark text (1.5:1), and on a touch screen that sticks after the tap. */
@@ -224,16 +243,26 @@
   /* Except work in progress ("Connecting…"), which is not unavailable, only
      not done yet. */
   button[aria-busy="true"]:disabled { background: var(--accent); color: #fff; cursor: progress; }
-  select { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px;
+  select { padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 10px;
            background: var(--surface); font: inherit; font-size: 13px; color: var(--fg); cursor: pointer; }
-  select:focus { outline: none; border-color: var(--accent); }
+  /* One focus ring for every control, for the keyboard (:focus-visible; a
+     field shows it while typing too). The select and the code field turned
+     theirs off for a 1px border in red, and a button got whatever ring the
+     browser draws. Ink, set off from the control, so it shows on the red
+     primary and the white secondary alike, and red here means a fault; on a
+     dark tile it is white. The transcript is a tab stop too (to read and
+     scroll it); a card's own focus (tabindex -1) keeps no ring. */
+  button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible,
+  [tabindex="0"]:focus-visible {
+    outline: 2px solid var(--fg); outline-offset: 2px; }
+  .tile :focus-visible { outline-color: var(--fg-on-dark); }
   .transcript { width: 100%; max-height: 52vh; min-height: 340px; overflow-y: auto;
                 background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px;
-                padding: 14px 18px; font-size: 13px; line-height: 1.5; }
+                padding: 14px 18px; font-size: 15px; line-height: 1.55; }
   .transcript .turn { margin-bottom: 8px; }
   /* Scene change: the participant must never be unsure who they are talking to. */
   .transcript .scene { margin: 14px 0 10px; padding: 6px 10px; border-radius: 6px;
-    background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;
+    background: var(--accent); color: #fff; font-size: 13px; font-weight: 600;
     letter-spacing: .02em; }
   .transcript .scene .with { font-weight: 400; opacity: .9; }
   /* The start cue: who opens the conversation must be unmistakable. It is an
@@ -284,7 +313,7 @@
      two stick together (see the small-screen rules). */
   .topbar { display: contents; }
   .ai-banner { position: sticky; top: 0; z-index: 40; text-align: center;
-    background: #2f2f2f; color: #fff; font-size: 12.5px; letter-spacing: .01em;
+    background: #2f2f2f; color: #fff; font-size: 13px; letter-spacing: .01em;
     padding: 6px 12px; }
   .run-chip { display:inline-block; margin-left:10px; font-size:12px; font-weight:600;
     color:#fff; background:var(--accent); border-radius:999px; padding:2px 10px;
@@ -298,7 +327,7 @@
     background:#f2f2f0; border:1px solid #ddd; border-radius:5px; padding:2px 8px; }
   .transcript .speaker { font-weight: 600; color: var(--accent); }
   .transcript .speaker.self { color: var(--fg); }
-  .transcript .meta { font-size: 11px; color: var(--muted); margin-left: 6px; }
+  .transcript .meta { font-size: 12px; color: var(--muted); margin-left: 6px; }
   /* Live (in-progress) caption, muted until the utterance is committed. */
   .transcript .turn.live .text { color: var(--muted); }
   .transcript .turn.live .speaker::after { content: " \2026"; color: var(--muted); font-weight: 400; }
@@ -340,8 +369,8 @@
   @media (max-width: 640px) { .sit-cols { grid-template-columns: 1fr; } }
   .situation-text h4 { font-size: 12px; letter-spacing: .05em; text-transform: uppercase;
     color: var(--muted, #6b6b68); margin: 10px 0 5px; }
-  .situation-text ul { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.5; }
-  .sit-note { font-size: 12px; color: var(--muted, #6b6b68); margin: 6px 0 0; }
+  .situation-text ul { margin: 0; padding-left: 18px; font-size: 15px; line-height: 1.5; }
+  .sit-note { font-size: 13px; color: var(--muted, #6b6b68); margin: 6px 0 0; }
   .sit-assets { background: #f6f6f4; border-left: 3px solid var(--accent, #b3181b);
     padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 14px; }
   .sit-assets h4 { margin-top: 0; }
@@ -399,14 +428,13 @@
                   max-height: 92vh; max-height: min(92vh, calc(100svh - 40px));
                   box-shadow: 0 24px 60px rgba(47,47,47,0.18); }
   .consent-card h2 { font-size: 17px; margin: 0 0 14px; }
-  .consent-card .body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
-  .consent-card label { display: flex; gap: 10px; align-items: flex-start; margin: 18px 0 6px; font-size: 14px; cursor: pointer; }
+  .consent-card .body { font-size: 15px; line-height: 1.6; white-space: pre-wrap; }
+  .consent-card label { display: flex; gap: 10px; align-items: flex-start; margin: 18px 0 6px; font-size: 15px; cursor: pointer; }
   .consent-card label input { margin-top: 3px; accent-color: var(--accent); }
   .consent-card .code-row { display:flex; gap:10px; align-items:center; margin: 16px 0; }
-  .consent-card .code-row input { padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font: inherit; flex: 1; background: var(--surface); color: var(--fg); }
-  .consent-card .code-row input:focus { outline: none; border-color: var(--accent); }
+  .consent-card .code-row input { padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 8px; font: inherit; flex: 1; background: var(--surface); color: var(--fg); }
   .consent-card .actions { display:flex; flex-wrap: wrap; gap:8px; justify-content:flex-end; margin-top: 14px; }
-  .consent-card .err { color: var(--accent); font-size: 13px; min-height: 18px; margin-top: 4px; }
+  .consent-card .err { color: var(--accent); font-size: 14px; min-height: 18px; margin-top: 4px; }
   /* The build tag: for a bug report or a screenshot, so it is small, muted and
      below everything a participant reads. Not faded as well: at .75 it was
      2.91:1, too faint to read off a screenshot; muted on the page is 4.63:1. */
@@ -489,7 +517,6 @@
     .transcript .system-note, .transcript .scene, .ai-banner, .brief .cast-line,
     .brief .body.rich .sit-note, .sit-note, .fiction-reminder { font-size: 14px; }
     .check-row .what span, .check-row .status, .check-help, .check-actions .skip, .check-note { font-size: 15px; }
-    .brief .label, .brief .body.rich h4 { font-size: 12px; }
   }
   /* A touch screen wider than that (a phone held sideways, a tablet) is
      tapped too, so it gets the same 44px targets: the rules above go by
