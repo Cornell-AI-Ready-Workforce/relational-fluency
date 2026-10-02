@@ -555,6 +555,35 @@ asked for; `followup_yielded` says where it stopped (before `29a` it had no
 reply finished generating; from `29b` it fires only once a line of theirs
 that the director routes has landed).
 
+## What changed on 2026-09-30, the speech check (pipeline_version 2026-09-30a)
+
+On a real microphone the gpt route's transcriber writes words over noise and
+over the characters' own voices coming back through the participant's
+speakers. S4A `s_1790781273_b8b7cc` (2026-09-30, build `55de607`) recorded
+"լավ.", "Democrat", "Tuurlijk.", "The", "Good afternoon.", "Hi.", "Post." and
+"Sexuality" as the participant's, and the room answered most of them. Heard
+again from the recorded microphone, none held speech.
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 30a | gpt route only. A participant line of at most three words, a line with a letter outside the Latin script, or a line of at most seven words begun while a character was playing (or within 1 s of its end) is heard again from its own commit's audio by `SPEECH_CHECK_MODEL` before it is written, captioned or routed on. A `speech_check` event records every check (`reason` `short` / `non_latin` / `during_playback`, `outcome`, what it `heard`, `held_ms`). Outcome `no_speech`: `user_turn_suppressed{no_speech}` with `speech_check` set to the reason; in 1:1 the reply is withdrawn, and in a room the turn is skipped. Otherwise the `user_turn` keeps the live text with `speech_check` set to the outcome. The exception is a line in another script that the check heard in English, whose `text` is that English and whose `transcript_original` is the transcriber's. A check that fails or times out (`error`, `timeout`, `empty`) keeps the line. The line waits for the check: a 1:1 reply to it is not played until then, and a room routes, or grants a follow-up, only once it is decided. A line whose conversation ended while it was checked (S1's hand-off, an advance) is written with `after_switch` and opens, routes and captions nothing in the next one. A check interrupted by teardown is written as `speech_check{cancelled}` with the line's text. | `SPEECH_CHECK` (1; 0 restores `28b`), `SPEECH_CHECK_MODEL` (nto.gemini-3.1-flash-lite), `SPEECH_CHECK_TIMEOUT_S` (2.5), `SPEECH_CHECK_MAX_WORDS` (3), `SPEECH_CHECK_PLAYBACK_MAX_WORDS` (7), `SPEECH_CHECK_PLAYBACK_TAIL_S` (1.0) |
+| 30a | The wait is mostly hidden, by speculation. Every participant commit is heard again as it goes out, so a checked line waits only for what is left of its check when its transcript arrives (`speech_check` `at_commit`, `head_start_ms`), and a line that is not checked cancels it. While a room line is checked, the director is asked on its live text (`director_speculation`); if the check keeps the line and the room has not moved on, that answer is used (`used: true`), otherwise it is thrown away. | `SPEECH_CHECK_AT_COMMIT` (1), `ROOM_ROUTE_DURING_CHECK` (1); 0 waits in sequence |
+
+Measured before shipping on 83 lines from six production encounters whose
+clips could be cut near their commit's bounds. Every phantom above, and a
+"Right now." picked up from Morgan's own line, came back `no_speech`. Every
+short real line was heard. The check takes 1.3 s at the median and 1.7 s at
+p90; begun at the commit, 0.8 s before the transcript (median), and with the
+director asked meanwhile, it adds little to a room turn and usually nothing
+to a 1:1 reply. Nothing is charged: the nto models are not priced on the
+gateway.
+
+Caveats for analysis: from `30a` short participant lines on gpt that nobody
+said are `user_turn_suppressed`, not `user_turn`, so participant turn counts
+drop where the microphone was noisy. The check does not undo a barge-in: a
+sound that cuts a character's line (`playback_cut`) still cuts it, even when
+the check then finds nobody speaking. Headphones prevent both.
+
 ## The seven-minute floor, and the twelve-minute stop
 
 Every encounter runs **at least 7:00** and **at most 12:00**. Since `28b` the
