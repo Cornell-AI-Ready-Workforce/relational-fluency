@@ -715,6 +715,11 @@ REPLAY_MIN_SPEECH_MS = int(os.getenv("REPLAY_MIN_SPEECH_MS", "300"))
 # for lack of the floor, so that a floor grant arriving mid-reply can relay
 # the line from its first word rather than from wherever the grant landed.
 HELD_AUDIO_MAX_S = float(os.getenv("HELD_AUDIO_MAX_S", "20"))
+# How long the character who owns a room's audio stream may send nothing before
+# the next speaker's queued audio goes out anyway (see _send_bytes). A live
+# reply arrives faster than real time, so this only fires on a reply that is
+# over without its finalize having landed yet, or stuck.
+AUDIO_OWNER_IDLE_S = float(os.getenv("AUDIO_OWNER_IDLE_S", "1.5"))
 
 
 def realtime_model() -> str:
@@ -1074,6 +1079,17 @@ class RealtimeVoiceSessionRunner:
         # it. This clock tracks when audio already sent will finish playing,
         # which is what "heard" has to mean for interruptions.
         self._play_cursor = 0.0
+        # The character whose audio _send_bytes last handed the page. The page
+        # plays every binary frame on one timeline with no speaker tag, so a
+        # chunk from a second character while the first is still mid-reply is
+        # heard as one voice turning into another mid-sentence. So a room's
+        # stream has one owner at a time and other speakers' audio waits in
+        # _audio_queue (agent id -> chunks, in arrival order). See _send_bytes.
+        self._audio_src: Optional[str] = None
+        self._audio_src_at = 0.0
+        self._audio_queue: Dict[str, List[bytes]] = {}
+        self._audio_queued_at: Dict[str, float] = {}
+        self._audio_drain_task: Optional[asyncio.Task] = None
         # When the page's last play_end ack arrived: the page's own word that
         # a line has stopped playing, which the follow-up gap counts from
         # (_await_followup_gap). Later than the clock above by the page's
@@ -2537,7 +2553,7 @@ class RealtimeVoiceSessionRunner:
                         state["audio_bytes"] = (state.get("audio_bytes", 0)
                                                 + len(held_audio))
                         self._advance_play_cursor(agent.id, st, held_audio)
-                        await self._send_bytes(held_audio)
+                        await self._send_bytes(held_audio, agent_id=agent.id)
                         if self.room:
                             await self.room.hear(held_audio, exclude=agent.id)
                         self.session.store.event(
@@ -2642,7 +2658,7 @@ class RealtimeVoiceSessionRunner:
                     self.session.store.append_assistant_audio(ev["pcm"], agent_id=agent.id)
                     state["audio_bytes"] = state.get("audio_bytes", 0) + len(ev["pcm"])
                     self._advance_play_cursor(agent.id, st, ev["pcm"])
-                    await self._send_bytes(ev["pcm"])
+                    await self._send_bytes(ev["pcm"], agent_id=agent.id)
                     if self.room:
                         await self.room.hear(ev["pcm"], exclude=agent.id)
 
@@ -3226,7 +3242,7 @@ class RealtimeVoiceSessionRunner:
             RealtimeVoiceSessionRunner._note_play_span(self, start, self._play_cursor)
             st.play_end = self._play_cursor
             self.session.store.append_assistant_audio(pcm, agent_id=agent.id)
-            await self._send_bytes(pcm)
+            await self._send_bytes(pcm, agent_id=agent.id)
             if self.room:
                 await self.room.hear(pcm, exclude=agent.id)
         else:
@@ -9695,6 +9711,8 @@ class RealtimeVoiceSessionRunner:
         if kind in ("assistant_started", "assistant_done", "assistant_interrupted",
                     "speech_started"):
             self._cue_track(kind, payload, seq)
+        if kind == "assistant_interrupted":
+            self._drop_queued_audio("assistant_interrupted")
         try:
             await self.ws.send_json(payload)
         except Exception:  # noqa: BLE001, client vanished
@@ -9715,7 +9733,153 @@ class RealtimeVoiceSessionRunner:
             rt = getattr(self, "rt", None)
         return getattr(rt, "first_audio_at", None)
 
-    async def _send_bytes(self, payload: bytes) -> None:
+    def _member_mid_reply(self, agent_id: str) -> bool:
+        """True while `agent_id`'s current reply is still being relayed: its
+        pump has announced it and not yet finalized it."""
+        turn = getattr(self, "_member_turns", {}).get(agent_id)
+        if turn is not None and turn[1].get("announced"):
+            return True
+        st = getattr(self, "_member_states", {}).get(agent_id)
+        return bool(st is not None and getattr(st, "announced", False))
+
+    def _audio_owner_done(self, owner: str) -> bool:
+        """Whether `owner` has let go of the page's audio stream.
+
+        Its reply is over, or it has sent nothing for AUDIO_OWNER_IDLE_S. The
+        gateway streams a live reply many times faster than real time, so a
+        gap that long is a reply that is finished or stuck, and a finalize that
+        never comes (a lost response.done, a 45 s group_turn_timeout) must not
+        hold the next speaker silent behind it.
+        """
+        if not self._member_mid_reply(owner):
+            return True
+        last = getattr(self, "_audio_src_at", 0.0) or 0.0
+        return time.time() - last >= AUDIO_OWNER_IDLE_S
+
+    def _note_audio_source(self, agent_id: str) -> None:
+        """Record every change of speaker on the page's audio stream.
+
+        One `audio_source_switch` event per switch (about one per turn), with
+        `prev_mid_reply` saying whether the previous speaker's reply was still
+        being relayed. With the gate in _send_bytes that is only ever True
+        after an idle release, never because two replies were interleaved.
+        """
+        prev = getattr(self, "_audio_src", None)
+        self._audio_src = agent_id
+        self._audio_src_at = time.time()
+        if prev is None or prev == agent_id:
+            return
+        try:
+            self.session.store.event(
+                "audio_source_switch", segment=getattr(self, "segment", None),
+                from_agent=prev, to_agent=agent_id,
+                prev_mid_reply=self._member_mid_reply(prev),
+                play_ahead_s=round(max(0.0, self._play_cursor - time.time()), 3))
+        except Exception:  # noqa: BLE001 - instrumentation only
+            pass
+
+    def _drop_queued_audio(self, reason: str) -> None:
+        """Throw away audio waiting behind the current speaker. Called when the
+        page is told to stop playback: a line queued behind the one the
+        participant just talked over must not start playing after they did."""
+        queue = getattr(self, "_audio_queue", None)
+        if not queue:
+            return
+        dropped = {aid: sum(len(c) for c in chunks) // 32
+                   for aid, chunks in queue.items()}
+        queue.clear()
+        try:
+            self.session.store.event(
+                "audio_queue_dropped", segment=getattr(self, "segment", None),
+                reason=reason, audio_ms=dropped)
+        except Exception:  # noqa: BLE001 - instrumentation only
+            pass
+
+    async def _drain_audio_queue(self) -> None:
+        """Send queued speakers' audio, in arrival order, once the owner of
+        the stream has finished. Runs only while something is queued."""
+        try:
+            while not getattr(self, "_closed", False):
+                queue = self._audio_queue
+                if not queue:
+                    return
+                owner = getattr(self, "_audio_src", None)
+                if owner is not None and not self._audio_owner_done(owner):
+                    await asyncio.sleep(0.05)
+                    continue
+                aid = next(iter(queue))
+                chunks = queue[aid]
+                waited = time.time() - self._audio_queued_at.pop(aid, time.time())
+                self._note_audio_source(aid)
+                try:
+                    self.session.store.event(
+                        "audio_queue_flushed", segment=getattr(self, "segment", None),
+                        agent_id=aid, previous=owner, waited_s=round(waited, 3),
+                        audio_ms=sum(len(c) for c in chunks) // 32,
+                        idle_release=bool(owner and owner != aid
+                                          and self._member_mid_reply(owner)))
+                except Exception:  # noqa: BLE001 - instrumentation only
+                    pass
+                # Left in the queue while it drains: chunks this speaker sends
+                # meanwhile are appended to the same list and go out after the
+                # ones already waiting, never ahead of them.
+                while chunks and queue.get(aid) is chunks:
+                    await self._send_bytes_now(chunks.pop(0))
+                if queue.get(aid) is chunks:
+                    del queue[aid]
+        finally:
+            self._audio_drain_task = None
+
+    async def _send_bytes(self, payload: bytes,
+                          agent_id: Optional[str] = None) -> None:
+        """Hand the page one chunk of a character's audio, one speaker at a time.
+
+        THE VOICE THAT CHANGES MID-SENTENCE. The page plays every binary frame
+        on a single timeline, in arrival order, with no speaker tag. In a room
+        a reply that has started keeps playing after the floor moves (the
+        `announced` leniency in _pump_member), so the next speaker's chunks
+        could arrive while the previous one was still streaming — and the page
+        spliced the two, alternating voices inside what sounded like one line.
+
+        So a room's audio stream has one owner: the character whose reply is
+        being relayed. Another character's audio arriving meanwhile is queued,
+        not dropped, and sent in order once the owner's reply ends (or has
+        been idle AUDIO_OWNER_IDLE_S). The playback clock needs no correction:
+        _advance_play_cursor already schedules every chunk after the last one,
+        which is exactly the order the queue sends them in.
+        """
+        room = getattr(self, "room", None)
+        if agent_id is None or room is None:
+            await self._send_bytes_now(payload)
+            return
+        queue = getattr(self, "_audio_queue", None)
+        if queue is None:
+            queue = self._audio_queue = {}
+            self._audio_queued_at = {}
+            self._audio_drain_task = None
+        owner = getattr(self, "_audio_src", None)
+        if queue.get(agent_id) is not None or (
+                owner is not None and owner != agent_id
+                and not self._audio_owner_done(owner)):
+            if agent_id not in queue:
+                queue[agent_id] = []
+                self._audio_queued_at[agent_id] = time.time()
+                try:
+                    self.session.store.event(
+                        "audio_queued_behind_speaker",
+                        segment=getattr(self, "segment", None),
+                        agent_id=agent_id, speaking=owner)
+                except Exception:  # noqa: BLE001 - instrumentation only
+                    pass
+            queue[agent_id].append(payload)
+            if self._audio_drain_task is None:
+                self._audio_drain_task = asyncio.ensure_future(
+                    self._drain_audio_queue())
+            return
+        self._note_audio_source(agent_id)
+        await self._send_bytes_now(payload)
+
+    async def _send_bytes_now(self, payload: bytes) -> None:
         try:
             await self.ws.send_bytes(payload)
         except Exception:  # noqa: BLE001
