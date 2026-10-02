@@ -1,19 +1,110 @@
 {
  "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
- "pending": {
-  "S1A": "not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790701657_de9f10) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes group rooms only and this is a 1:1 scenario, so its numbers are expected to hold, but a baseline compares one pipeline_version with itself. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline",
-  "S2A": "not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790701886_2a49cd) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes group rooms only and this is a 1:1 scenario, so its numbers are expected to hold, but a baseline compares one pipeline_version with itself. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline",
-  "S3A": "not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790702608_f13b59) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes what a gpt room character's own conversation keeps of lines nobody heard (cut lines replaced by their heard words, unplayed replies deleted, told lines corrected, system-role nudges) and can hold a member's reply-start for up to REALTIME_MEMORY_SETTLE_S, so these room numbers are a different experiment. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline",
-  "S4A": "not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790702824_ebffd3) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes what a gpt room character's own conversation keeps of lines nobody heard (cut lines replaced by their heard words, unplayed replies deleted, told lines corrected, system-role nudges) and can hold a member's reply-start for up to REALTIME_MEMORY_SETTLE_S, so these room numbers are a different experiment. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline"
- },
  "realtime_model": "gpt-realtime-2.1",
  "recorded": {
-  "build": "8c188a6",
-  "date": "2026-09-29",
-  "pipeline_version": "2026-09-28b",
+  "build": "18a54be",
+  "date": "2026-10-02",
+  "pipeline_version": "2026-10-01a",
   "room_pacing_version": "2026-09-29b"
  },
- "scenarios": {},
+ "scenarios": {
+  "S1A": {
+   "error_frames": 0,
+   "lines_answered": 8,
+   "lines_heard": 8,
+   "lines_said": 8,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "18a54be",
+    "date": "2026-10-01",
+    "pipeline_version": "2026-10-01a",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790896956_a05abb"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "a4b2d90dd4da7ac2",
+   "speech_end_to_first_played_s": {
+    "n": 9,
+    "p50": 1.993,
+    "p90": 2.427
+   },
+   "triggers_fired": 4,
+   "voice_error": 0
+  },
+  "S2A": {
+   "error_frames": 0,
+   "lines_answered": 25,
+   "lines_heard": 25,
+   "lines_said": 25,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "18a54be",
+    "date": "2026-10-01",
+    "pipeline_version": "2026-10-01a",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790897182_73d030"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "4ae8133b9c6e2fef",
+   "speech_end_to_first_played_s": {
+    "n": 25,
+    "p50": 1.775,
+    "p90": 2.153
+   },
+   "triggers_fired": 6,
+   "voice_error": 0
+  },
+  "S3A": {
+   "error_frames": 0,
+   "lines_answered": 8,
+   "lines_heard": 9,
+   "lines_said": 9,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "18a54be",
+    "date": "2026-10-01",
+    "pipeline_version": "2026-10-01a",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790897904_f2d436"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "b839d60a54bb1537",
+   "speech_end_to_first_played_s": {
+    "n": 9,
+    "p50": 4.281,
+    "p90": 8.351
+   },
+   "triggers_fired": 3,
+   "voice_error": 0
+  },
+  "S4A": {
+   "error_frames": 0,
+   "lines_answered": 25,
+   "lines_heard": 33,
+   "lines_said": 33,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "18a54be",
+    "date": "2026-10-02",
+    "pipeline_version": "2026-10-01a",
+    "room_pacing_version": "2026-09-29b",
+    "session_id": "s_1790900717_ee3187"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "8efdc0004450ad17",
+   "speech_end_to_first_played_s": {
+    "n": 29,
+    "p50": 2.932,
+    "p90": 5.566
+   },
+   "triggers_fired": 4,
+   "voice_error": 0
+  }
+ },
  "tolerances": {
   "answered_rate_drop": 0.2,
   "error_frames_extra": 0,
