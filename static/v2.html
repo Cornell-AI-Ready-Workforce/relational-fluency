@@ -399,6 +399,11 @@
      scrollbars, does not. */
   .consent-card { display: flex; flex-direction: column; }
   .card-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    /* Room for a control's focus ring, drawn 4px outside it (2px wide, 2px
+       off): the region clips at its padding box, so a button flush with its
+       edge (the audio check's, on a phone; "I heard it" on a desktop) lost
+       that side of the ring. The margin keeps the text where it was. */
+    padding-left: 4px; padding-right: 4px; margin-left: -4px; margin-right: -4px;
     background:
       linear-gradient(var(--surface) 30%, rgba(255,255,255,0)) top / 100% 24px no-repeat local,
       linear-gradient(rgba(255,255,255,0), var(--surface) 70%) bottom / 100% 24px no-repeat local,
@@ -492,7 +497,8 @@
     /* The page's notes span the screen, with a gutter: a 340px card pinned
        right touched the left edge at 360px and below. */
     .gate-note { left: 16px; right: 16px; max-width: none; }
-    .gate-note .note-close { top: 3px; right: 3px; width: 44px; height: 44px; }
+    /* 4px in, the reach of its focus ring: the note scrolls, so it clips. */
+    .gate-note .note-close { top: 4px; right: 4px; width: 44px; height: 44px; }
     .capture-slot .capture-note button { margin: 8px 0 0; padding: 10px 16px; font-size: 15px; }
     /* One pattern for every card's actions on a phone: full-width buttons,
        one to a row, the primary on top. Side by side they squeezed into two-
@@ -2249,6 +2255,14 @@
   }
   measureBanner();
   window.addEventListener('resize', measureBanner, { passive: true });
+  // And whenever the banner's own height changes, which no resize reports:
+  // the page's typeface (Inter, font-display: swap) arrives after the first
+  // reading, and at some widths the banner is one line in the fallback font
+  // and two in Inter, so the pinned row sat under its second line and the
+  // banner covered the top of the timer.
+  const banner = $('aiBanner');
+  if (banner && window.ResizeObserver) new ResizeObserver(measureBanner).observe(banner);
+  else if (document.fonts && document.fonts.ready) document.fonts.ready.then(measureBanner);
 
   // ---------- turn state ----------
   // First-time voice users mostly stall on one question: is it my turn? The
