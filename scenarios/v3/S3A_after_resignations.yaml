@@ -81,17 +81,18 @@ pre_reading:
 # Nobody had to be moved: ~91, ~116 and ~224 Hz were already three
 # clearly different people.
 #
-# THE PARAGRAPH ABOVE HOLDS ON GEMINI AND NOT ON gpt, and that is written down
-# here rather than repaired by quietly picking other voices. On Gemini this
-# room is Alex 115 Hz (Fenrir), Jordan 100 Hz (Charon), Casey 181 Hz (Leda). On gpt
-# it is Alex 160 Hz (verse), Jordan 130 Hz (ash), Casey 158 Hz (marin) — so Alex and
-# Casey, 66 Hz apart on Gemini, sit 2 Hz apart on gpt. Their timbres still
-# differ and Jordan still stands clear of both, but the pitch separation this
-# room was cast for is gone on that family. S3B is cast identically and
-# inherits the same gap, so the two forms stay matched to EACH OTHER either
-# way, which is the property the pair was corrected for. Unused gpt voices,
-# measured on the same line, for whoever recasts this: cedar 137, shimmer 141,
-# ballad 170, coral 190, sage 190.
+# ON gpt THIS ROOM HAS BEEN RECAST (2026-10-01). It was Alex verse, Jordan ash,
+# Casey marin, which put Alex and Casey 2 Hz apart on the 2026-09-12 figures (66 Hz
+# apart on Gemini), and participants reported the room's voices hard to tell
+# apart. Casey is now coral. Re-measured 2026-10-01 on two fixed lines with one
+# estimator (median F0 over voiced 45 ms frames, normalised autocorrelation):
+# echo 120, ash 129, cedar 129, alloy 132, shimmer 148, verse 150, ballad 160
+# (unstable between lines, 125-195), marin 182, sage 187, coral 208. So on gpt
+# the room is Jordan ~129 Hz (ash), Alex ~150 (verse), Casey ~208 (coral): the same
+# order as on Gemini and at least ~20 Hz between any two. Marin read 182 on
+# this pass against 158 on the last, so it is too close to verse to trust in
+# either reading. S3B is recast identically, so the two forms stay matched
+# to each other. Gemini casting is unchanged.
 
 # ── How the briefs below are written, and why ──────────────────────────────
 #
@@ -654,7 +655,7 @@ agents:
     display_role: junior team member
     realtime_voice:
       gemini-live: Leda    # ~224 Hz earlier; 181 Hz re-measured 2026-09-12
-      gpt-realtime: marin  # ~198 Hz earlier; 158 Hz re-measured 2026-09-12
+      gpt-realtime: coral  # 190 Hz 2026-09-12; 208 Hz re-measured 2026-10-01 (was marin, see header)
     voice: Leda
     system_prompt: |
       You are Casey, eighteen months in and the most junior person here.

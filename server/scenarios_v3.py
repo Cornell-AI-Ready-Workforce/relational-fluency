@@ -655,6 +655,14 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
         "- This is a live spoken conversation.",
         "- Never read out stage directions, JSON, or anything meta.",
         "- Stay in character. Do not summarise or coach the participant.",
+        # Both realtime families generate speech end to end, with no fixed TTS
+        # voice behind it, and can drift: characters were reported changing
+        # voice mid-sentence and across a session, worst in the S3/S4 rooms
+        # where three people have to be told apart by ear. The session's
+        # `voice` picks the timbre; this asks the model to hold it.
+        f"- {name} has one voice. Keep the same voice, pitch, accent and pace",
+        "  in every turn, from your first word to your last. Never imitate or",
+        "  drift toward anyone else's voice, including the participant's.",
         "",
         # The style every character shares, said once here rather than in each
         # brief. These bullets were measured on the live model across the S1

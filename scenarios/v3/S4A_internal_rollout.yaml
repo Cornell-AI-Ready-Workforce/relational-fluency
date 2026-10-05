@@ -89,8 +89,12 @@ setup: >-
 # participation of everyone present" is being asked to hear a room.
 #
 # The gaps do hold here. On Gemini the room is Chris 100 (Charon), Dan 115
-# (Fenrir), Priya 166 (Aoede); on gpt it is Chris 130 (ash), Dan 160 (verse),
-# Priya 190 (coral) — same order, same rough spread. One collision is worth
+# (Fenrir), Priya 166 (Aoede); on gpt it is Chris ~120 (echo), Dan ~150
+# (verse), Priya ~208 (coral) — same order, same rough spread. Chris was ash
+# (~129) until 2026-10-01, when participants reported the room's voices hard
+# to tell apart; echo, the lowest and steadiest gpt voice on that day's
+# re-measure (two fixed lines: echo 120/121), widens the two men's gap from
+# ~20 Hz to ~30 Hz. S4B is recast identically. Gemini casting is unchanged. One collision is worth
 # knowing about anyway: `coral` is also S2's voice, because Aoede at 166 Hz
 # and Kore at 220 Hz both land nearest coral on gpt. S2 and S4 are different
 # encounters and nobody meets both characters in one room, so nothing inside a
@@ -517,7 +521,7 @@ agents:
     display_role: project teammate
     realtime_voice:
       gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
-      gpt-realtime: ash    # ~89 Hz earlier; 130 Hz re-measured 2026-09-12
+      gpt-realtime: echo   # 120 Hz measured 2026-10-01 (was ash, see header)
     voice: Charon
     # "one team first, see what breaks, then the rest" was a three-beat formula
     # and it came back verbatim: "See what breaks, then expand" in 6 of 6 runs,
