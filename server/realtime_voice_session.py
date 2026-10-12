@@ -640,7 +640,8 @@ def _turn_meta(ev: dict) -> dict:
             "voiced_span_ms": ev.get("voiced_span_ms"),
             "committed_at": ev.get("committed_at"),
             "spoken_at": ev.get("spoken_at"),
-            "pcm": ev.get("pcm"), "check": ev.get("check")}
+            "pcm": ev.get("pcm"), "check": ev.get("check"),
+            "confidence": ev.get("confidence")}
 
 
 def _routing_text(texts: List[str]) -> str:
@@ -771,6 +772,7 @@ from .voice.realtime import (accepts_text_items, autofire_wait_for_model,
 # piece of per-family behaviour below and it has to be readable at call time
 # rather than frozen into this module at import.
 from .voice import realtime as _realtime
+from .voice import transcript_gates as _gates
 # The one check that can tell a line the participant HEARD from a line the
 # record merely says was spoken. See server/voice/turn_audio.py.
 from .voice import turn_audio
@@ -1035,7 +1037,8 @@ class RealtimeVoiceSessionRunner:
         self._unrouted_user_texts: List[str] = []
         self._last_unrouted_at = 0.0
         # Participant transcripts that arrived and that a gate judged not to
-        # be speech ({reason, text}): implausible_rate, no_speech, probe_pad.
+        # be speech ({reason, text}): implausible_rate, no_speech, probe_pad,
+        # low_transcriber_confidence, not_english.
         # A room turn whose only words are these is skipped rather than
         # answered (group_turn_skipped, pipeline 2026-09-24a; see
         # _run_group_turn). A low_confidence line is NOT one of them (24b):
@@ -4693,7 +4696,8 @@ class RealtimeVoiceSessionRunner:
                                 committed_at: Optional[float] = None,
                                 spoken_at: Optional[float] = None,
                                 pcm: Optional[bytes] = None,
-                                check: Optional[dict] = None) -> None:
+                                check: Optional[dict] = None,
+                                confidence: Optional[dict] = None) -> None:
         """Record one participant utterance, once, as said.
 
         `garbled` is the bridge saying the transcriber dropped part of this
@@ -4717,7 +4721,9 @@ class RealtimeVoiceSessionRunner:
         `pcm` is the audio the commit held, where the bridge kept it: what a
         line that may be the transcriber's invention is heard again from
         (_speech_check, pipeline 2026-09-30a); `check` the hearing of it that
-        _on_participant_commit started as the commit went out.
+        _on_participant_commit started as the commit went out. `confidence`
+        is the transcriber's own word scores for the line, where the session
+        asked for them (voice/transcript_gates.py, pipeline 2026-10-12a).
         """
         def unreliable(reason: str) -> None:
             # For the room: an arrival that will not reach the director.
@@ -4837,6 +4843,20 @@ class RealtimeVoiceSessionRunner:
             await self._withdraw_reply(text, "implausible_rate",
                                        committed_at, voiced_ms)
             return
+        # THE CONFIDENCE GATE (pipeline 2026-10-12a; gpt route). The
+        # transcriber's own word scores say it was guessing: over room tone
+        # and silence it wrote "Sure." at -3.5 and "Yes." at -3.6 a word,
+        # where every real short line scored better than -0.3. Decided here,
+        # before the speech check, so a line it drops costs no second
+        # hearing (the one begun at the commit is cancelled), and it still
+        # stands where that hearing would have failed or timed out. Echo of a
+        # character is confident and passes; that is the check's to catch.
+        # See voice/transcript_gates.py.
+        if _gates.unsure(confidence):
+            suppressed("low_transcriber_confidence", **confidence)
+            await self._withdraw_reply(text, "low_transcriber_confidence",
+                                       committed_at, voiced_ms)
+            return
         # THE SPEECH CHECK (pipeline 2026-09-30a; gpt route). A short line, a
         # line in another script, or a line begun over a character's
         # playback is heard again from its own audio before anything reads
@@ -4869,6 +4889,31 @@ class RealtimeVoiceSessionRunner:
                     and heard and not _speech_check.non_latin(heard)):
                 checked["original"] = text
                 text = heard
+        # THE ENGLISH GATE (pipeline 2026-10-12a; every route). A short line
+        # with not one English word in it, after the check above has had its
+        # say: "Tuurlijk." (Latin script, so the check keeps the live text
+        # whatever it heard), or a line in another script the check could not
+        # put into English. Where the check heard English in the same audio,
+        # that is the line; otherwise nobody here said it. See
+        # voice/transcript_gates.py.
+        foreign = _gates.not_english(
+            text, RealtimeVoiceSessionRunner._speech_check_names(self))
+        if foreign is not None:
+            heard = checked.get("text") if checked is not None else None
+            if (checked is not None and checked.get("outcome") == "heard"
+                    and heard and _gates.not_english(
+                        heard, RealtimeVoiceSessionRunner._speech_check_names(self)) is None):
+                checked.setdefault("original", text)
+                text = heard
+            else:
+                suppressed("not_english", unknown=foreign["unknown"],
+                           **({"speech_check": checked["outcome"]}
+                              if checked is not None else {}),
+                           **({"after_switch": True} if moved else {}))
+                if not moved:
+                    await self._withdraw_reply(text, "not_english",
+                                               committed_at, voiced_ms)
+                return
         # The line's arrival, not the check's end, is what the duplicate and
         # echo windows below measure: they are about when it came.
         now = arrived
@@ -5027,6 +5072,9 @@ class RealtimeVoiceSessionRunner:
             voiced_span_ms=voiced_span_ms,
             low_confidence=low_confidence, replay=replay,
             spoken_at=said_at,
+            # The transcriber's word scores, where it gave them: what the
+            # confidence gate's bar is re-read from (pipeline 2026-10-12a).
+            **({"transcriber_confidence": confidence} if confidence else {}),
             # Where the speech check heard it again: its outcome, and the
             # transcriber's own text where the line is the English it heard.
             **({"speech_check": checked["outcome"],
@@ -8906,7 +8954,8 @@ class RealtimeVoiceSessionRunner:
             # NO ROOM REPLY FOR AN UNRELIABLE LINE (issues #21, #24; pipeline
             # 2026-09-24a). Something arrived for this turn, and all of it
             # was withheld from the director: a transcript a gate suppressed
-            # (implausible_rate, no_speech, probe_pad); not a low_confidence
+            # (implausible_rate, no_speech, probe_pad, and since 10-12a
+            # low_transcriber_confidence, not_english); not a low_confidence
             # one, which routes as before (24b). Routing on nothing here is
             # what answered the tester's phantom "I'm not a cat. I'm a
             # cat..." with Jordan and Alex: the director is handed an empty line and the
