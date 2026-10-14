@@ -1508,8 +1508,9 @@ def room_reconnect_limit() -> int:
     rebuild each room member whose session the gateway closed. Every connect
     attempt counts, so a member the gateway keeps refusing stops costing a
     session at the limit. Per member, not per room: one gateway restart
-    closes every member at once. 0 restores 10-01a: a member the gateway
-    closed leaves the room. A value that is not a whole number reads as the
+    closes every member at once. 0 turns it off: a member the gateway
+    closed is handled as on 10-01a (it stays in the room until a send to it
+    fails, then leaves it). A value that is not a whole number reads as the
     default."""
     raw = (setting("ROOM_RECONNECT_LIMIT", "2") or "").strip()
     try:

@@ -638,24 +638,30 @@ def text_client() -> AsyncAnthropic:
 #                accepted lines, its own lines as room memory left them, its
 #                colleagues' lines as it was told them (nothing the
 #                participant did not hear, as 10-01a decides it); off the gpt
-#                route as a recap in that brief. Seeded first, then put back
-#                in the room. A floor holder whose session went before any of
-#                its reply reached the page is given the floor again once it
-#                is back (floor_regranted; its beat or direction redelivered),
-#                unless the participant has spoken since; otherwise its beat
-#                goes back (trigger_undelivered member_lost). A hold it had is
-#                dropped. A room turn, a routing decision and an interaction
-#                boundary wait up to 10 s for a member being rebuilt instead
-#                of finding nobody (group_turn_no_members), and a follow-up
-#                whose grant failed no longer waits out the 45 s timeout. A
-#                commit-only grant stops waiting on a socket that is gone.
-#                ROOM_RECONNECT_LIMIT (2, per member per encounter; every
-#                connect attempt counts) bounds it, and 0 restores 10-01a;
+#                route as a recap in that brief (lines finished after it
+#                told as colleagues' notes where the family takes them).
+#                Seeded first, then put back in the room; a cut decided while
+#                the seed went out is applied once it is seated. A floor holder
+#                whose session went before any of its reply reached the page
+#                is given the floor again once it is back, if that grant went
+#                to the session that went (floor_regranted; its beat or
+#                direction redelivered; the page told it heard them), unless
+#                the participant has spoken since; otherwise its beat goes
+#                back (trigger_undelivered member_lost). A hold it had is
+#                dropped. A room turn, a routing decision and a boundary that
+#                can keep the room wait up to 10 s for a member being rebuilt
+#                instead of finding nobody (group_turn_no_members); a probe
+#                waits a tick for its beat's character. ROOM_RECONNECT_LIMIT
+#                (2, per member per encounter; every connect attempt counts)
+#                bounds it, and 0 turns all of it off (10-01a's handling);
 #                when no member is left the page is told, as a 1:1 encounter
-#                past its limit is. room_member_dropped, _reconnected, _lost,
-#                room_members_lost, room_member_line_late, floor_regranted,
-#                floor_regrant_skipped, stage_direction_redelivered;
-#                provenance `reconnect`. The scribe is untouched.
+#                past its limit is. No knob: a follow-up whose grant failed no
+#                longer waits out the 45 s timeout, and a commit-only grant
+#                stops waiting on a socket that is gone. room_member_dropped,
+#                _reconnected, _lost, room_members_lost, room_member_line_late,
+#                floor_regranted, floor_regrant_skipped,
+#                stage_direction_redelivered; provenance `reconnect`. The
+#                scribe is untouched.
 PIPELINE_VERSION = "2026-10-14a"
 ROOM_PACING_VERSION = "2026-09-29b"
 

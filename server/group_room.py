@@ -792,7 +792,11 @@ class GroupRoom:
                 self._fanned_since_grant[channel_id] = (
                     self._fanned_since_grant.get(channel_id, 0) + len(note)
                 )
-                if ids[channel_id] and result:
+                # Only for the session that was told: a member rebuilt while
+                # the tell was going out (pipeline 2026-10-14a) holds its note
+                # of this line under the name its seed gave it, if it has one.
+                if (ids[channel_id] and result
+                        and self.sessions.get(channel_id) is _rt):
                     self._told.setdefault(key, {})[channel_id] = {
                         "item_id": ids[channel_id], "text": text}
         while len(self._told) > 32:

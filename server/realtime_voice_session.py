@@ -1252,18 +1252,23 @@ class RealtimeVoiceSessionRunner:
         # sessions already taken as lost, so the pump's end and the room's
         # _went_deaf are one loss and not two. `_dropped_unanswered`: floor
         # holders whose session went before any of their reply reached the
-        # page, for the turn waiting on them to grant again;
+        # page -> that session, for the turn waiting on a grant to it to
+        # grant again (only a grant to that very session; a grant decided
+        # since went to whatever session the member had by then);
         # `_floor_reply_began` says whether the floor holder's reply has.
         # `_member_seated_at`: agent id -> when a rebuilt member was put back,
-        # so a participant line it missed the audio of is told to it.
+        # so a participant line it missed the audio of is told to it, unless
+        # it is in what the member was given (`_member_seeded_seq`: the last
+        # line of _room_heard it was given).
         self._room_heard: List[dict] = []
         self._member_rebuilds: Dict[str, asyncio.Task] = {}
         self._member_reconnects: Dict[str, int] = {}
         self._member_notes: Dict[str, str] = {}
         self._lost_sessions: List[object] = []
-        self._dropped_unanswered: set = set()
+        self._dropped_unanswered: Dict[str, object] = {}
         self._floor_reply_began = False
         self._member_seated_at: Dict[str, float] = {}
+        self._member_seeded_seq: Dict[str, int] = {}
         self._room_lost_said = False
         self._floor = asyncio.Lock()
         # Set when the room's scribe pump ends under a live encounter. The
@@ -2143,8 +2148,9 @@ class RealtimeVoiceSessionRunner:
         # Nor are they this room's conversation: its members have heard none
         # of it, so a member rebuilt here is seeded with this room's alone.
         self._room_heard = []
-        self._dropped_unanswered = set()
+        self._dropped_unanswered = {}
         self._member_seated_at = {}
+        self._member_seeded_seq = {}
         self._room_lost_said = False
         self.session.store.event(
             "group_room_opened", agents=[a.id for a in agents]
@@ -2362,7 +2368,11 @@ class RealtimeVoiceSessionRunner:
                 task.cancel()
         if getattr(self, "_member_rebuilds", None):
             self._member_rebuilds.clear()
-        self._dropped_unanswered = set()
+        self._dropped_unanswered = {}
+        # A reconnect note belongs to the room it was written in: a fresh
+        # room's sessions are no reconnect, and a 1:1 one never was.
+        if getattr(self, "_member_notes", None):
+            self._member_notes.clear()
         for t in self._pumps:
             t.cancel()
         self._pumps = []
@@ -4541,9 +4551,12 @@ class RealtimeVoiceSessionRunner:
             self._opening_note = ""
             self._opening_agent = None
         # And a rebuilt member's own note that the line dropped (pipeline
-        # 2026-10-14a), the room's twin of _reconnect_note.
+        # 2026-10-14a), the room's twin of _reconnect_note; but not by a line
+        # finalized while the member is being rebuilt, which is the old
+        # session's, the one its socket went in the middle of.
         notes = getattr(self, "_member_notes", None)
-        if notes:
+        if notes and agent.id not in (getattr(self, "_member_rebuilds", None)
+                                      or {}):
             notes.pop(agent.id, None)
 
         if text:
@@ -5102,10 +5115,12 @@ class RealtimeVoiceSessionRunner:
         if unrouted is not None and to_director and not moved:
             unrouted.append(text)
             self._last_unrouted_at = now
+        heard_seq = None
         if not moved:
             # The room's conversation, as a member rebuilt later is given it
             # (pipeline 2026-10-14a).
-            RealtimeVoiceSessionRunner._note_room_user_line(self, text, spoken_at)
+            heard_seq = RealtimeVoiceSessionRunner._note_room_user_line(
+                self, text, spoken_at)
         unclear = _script_mismatch(text)
         # When they began saying it, on the events' own clock (issue #50).
         # `t` is when the transcript arrived, which is often after a
@@ -5160,7 +5175,8 @@ class RealtimeVoiceSessionRunner:
         await self._note_participant_opened()
         # A room member rebuilt while this was being said missed its audio
         # (pipeline 2026-10-14a).
-        await RealtimeVoiceSessionRunner._tell_late_line(self, text, spoken_at)
+        await RealtimeVoiceSessionRunner._tell_late_line(
+            self, text, spoken_at, heard_seq)
 
     # ── the speech check (pipeline 2026-09-30a; gpt route) ─────────────────
     #
@@ -5546,14 +5562,17 @@ class RealtimeVoiceSessionRunner:
         self._transitioning = True
         try:
             if self.is_group():
-                if self.room is not None:
+                wanted = [a.id for a in self._resolve_agents()]
+                have = [a.id for a in (self.room.agents if self.room else [])]
+                if (self.room is not None and not new_scene
+                        and set(wanted) == set(have)):
                     # A member being rebuilt (pipeline 2026-10-14a) is waited
                     # for, so a room whose cast carries on can be kept: one
                     # member missing at this check rebuilds the whole room,
-                    # with nobody in it who remembers the meeting.
-                    await self._await_member_rebuilds(self.room)
-                wanted = [a.id for a in self._resolve_agents()]
-                have = [a.id for a in (self.room.agents if self.room else [])]
+                    # with nobody in it who remembers the meeting. Only where
+                    # the room could be kept: this can run on the participant's
+                    # own move-on, inline on the microphone's loop.
+                    await self._await_member_rebuilds(self.room, set(wanted))
                 # Same cast carrying on the same scene (S4's working session
                 # then its close): keep the room. Rebuilding it would replace
                 # Dan, Priya and Chris with people who never attended the
@@ -5571,6 +5590,10 @@ class RealtimeVoiceSessionRunner:
                     # turns, and rebrief() cancels any reply still in flight and
                     # leaves the floor ungranted before the update goes out.
                     self._cancel_group_turns()
+                    # A member rebuilt in the last interaction that has not
+                    # spoken since is covered from here by the continuation
+                    # note below; its reconnect note is not stacked on it.
+                    self._member_notes.clear()
                     # Set on the runner, not concatenated here: this rebrief is
                     # not the brief anyone speaks under. _brief_member rebuilds
                     # a member's instructions from _instructions() before the
@@ -8607,6 +8630,11 @@ class RealtimeVoiceSessionRunner:
             if trigger is None or not trigger.get("on_silence"):
                 return
             speaker = self._trigger_agent(trigger)
+            if speaker in (getattr(self, "_member_rebuilds", None) or {}):
+                # Its character is being rebuilt (pipeline 2026-10-14a): the
+                # probe waits for it, a tick at a time, rather than handing
+                # its beat to somebody else.
+                return
             if speaker not in room.sessions:
                 order = [a for a in self.agent_order() if a in room.sessions]
                 if not order:
@@ -8630,6 +8658,8 @@ class RealtimeVoiceSessionRunner:
                 return
             self._response_done.clear()
             self._floor_reply_began = False
+            # See _grant: a drop reported before this grant is not its own.
+            self._dropped_unanswered.pop(speaker, None)
             granted = await room.give_floor(speaker)
             self._note_grant(room)
             if granted is None:
@@ -8693,21 +8723,25 @@ class RealtimeVoiceSessionRunner:
                     rt = room.session_for(speaker)
                     if rt is not None:
                         rt.clear_response_state()
-                if (self._closed or self.room is not room
-                        or speaker not in self._dropped_unanswered):
+                if self._closed or self.room is not room:
+                    break
+                if self._dropped_unanswered.get(speaker) is not granted:
+                    # Nothing dropped, or a session this grant never went to.
+                    self._dropped_unanswered.pop(speaker, None)
                     break
                 # Its session went before any of the probe reached the page
                 # (pipeline 2026-10-14a): asked again once it is back, once;
                 # otherwise the beat goes back, as for a grant that failed.
-                if regranted or await self._regrant_after_drop(
-                        room, speaker, why="dropped_unanswered") is None:
-                    self._dropped_unanswered.discard(speaker)
+                again = None if regranted else await self._regrant_after_drop(
+                    room, speaker, why="dropped_unanswered")
+                if again is None:
+                    self._dropped_unanswered.pop(speaker, None)
                     if not self._closed and self.room is room:
                         await self._give_beat_back(
                             speaker, spent_idx, spent_fired, probing=True,
                             reason="member_lost")
                     break
-                regranted = True
+                granted, regranted = again, True
             if self.room is room:
                 room.speaking = None
             self._last_activity = time.time()
@@ -8861,6 +8895,13 @@ class RealtimeVoiceSessionRunner:
             await asyncio.sleep(0.05)
         self.session.store.event("fresh_reply_requested", agent_id=agent_id)
         room = self.room
+        # A drop of this member reported while the grant was being decided is
+        # behind it: the grant below goes to whatever session the member has
+        # now, rebuilt or not, so neither the floor's release nor the mark
+        # for a grant to the session that went belongs to it (pipeline
+        # 2026-10-14a).
+        self._response_done.clear()
+        (getattr(self, "_dropped_unanswered", None) or {}).pop(agent_id, None)
         granted = await room.give_floor(agent_id)
         self._note_grant(room)
         return granted
@@ -9080,14 +9121,15 @@ class RealtimeVoiceSessionRunner:
                     interaction=self._interaction_id(),
                 )
                 return
+            named_early = self._named_in(fresh)
             # A member the gateway closed is about to be back (pipeline
             # 2026-10-14a): routing waits for it rather than routing past it,
-            # since every choice below reads who is in room.sessions.
-            if await self._await_member_rebuilds(room) and (
+            # since every choice below reads who is in room.sessions; not when
+            # the participant has named somebody who is here.
+            if not (named_early and named_early in room.sessions) and (
+                    await self._await_member_rebuilds(room)) and (
                     self._closed or self.room is not room):
                 return
-
-            named_early = self._named_in(fresh)
             first = named_early
             # What used to be the lead's unprompted opener is its answer to
             # the participant now (_first_room_reply_note): an unnamed turn
@@ -9408,16 +9450,19 @@ class RealtimeVoiceSessionRunner:
                         rt_dbg.clear_response_state()
                 if self._closed or self.room is not room:
                     return
-                if first not in self._dropped_unanswered:
+                if self._dropped_unanswered.get(first) is not granted:
+                    # Nothing dropped, or a session this grant never went to.
+                    self._dropped_unanswered.pop(first, None)
                     break
                 # Its session went before any of its reply reached the page
                 # (pipeline 2026-10-14a). Given the floor again once it is
                 # back, once; otherwise the turn ends as one whose grant
                 # failed does: its beat goes back, no follow-up talks past a
                 # line nobody heard, and the participant's next line is routed.
-                if regranted or await self._regrant_after_drop(
-                        room, first, why="dropped_unanswered") is None:
-                    self._dropped_unanswered.discard(first)
+                again = None if regranted else await self._regrant_after_drop(
+                    room, first, why="dropped_unanswered")
+                if again is None:
+                    self._dropped_unanswered.pop(first, None)
                     if self._closed or self.room is not room:
                         return
                     if room.speaking == first:
@@ -9428,7 +9473,7 @@ class RealtimeVoiceSessionRunner:
                             reason="member_lost")
                     self._drop_undelivered_intent(first, "member_lost")
                     return
-                regranted = True
+                granted, regranted = again, True
 
             # The transcript arrived with that first commit; a direct address
             # we could not honour up front gets the next turn instead. Only a
@@ -9604,20 +9649,22 @@ class RealtimeVoiceSessionRunner:
                         self.session.store.event("group_turn_timeout", agent_id=aid)
                     if self._closed or self.room is not room:
                         return
-                    if aid not in self._dropped_unanswered:
+                    if self._dropped_unanswered.get(aid) is not follow:
+                        self._dropped_unanswered.pop(aid, None)
                         break
                     # Lost before its line reached the page, as the first
                     # speaker can be: once more once it is back, or not at all.
-                    if regranted or await self._regrant_after_drop(
-                            room, aid, why="dropped_unanswered") is None:
-                        self._dropped_unanswered.discard(aid)
+                    again = None if regranted else await self._regrant_after_drop(
+                        room, aid, why="dropped_unanswered")
+                    if again is None:
+                        self._dropped_unanswered.pop(aid, None)
                         if self._closed or self.room is not room:
                             return
                         if room.speaking == aid:
                             room.speaking = None
                         self._drop_undelivered_intent(aid, "member_lost")
                         break
-                    regranted = True
+                    follow, regranted = again, True
             room.speaking = None
         # The steering review, off the floor (issue #25): the next routed turn
         # no longer waits for it. See _spawn_room_steer.
@@ -10496,15 +10543,17 @@ class RealtimeVoiceSessionRunner:
             "speaker": agent.id, "name": agent.name, "rid": response_id,
             "text": text, "kept": kept or None, "told": told or None})
 
-    def _note_room_user_line(self, text: str, spoken_at: Optional[float]) -> None:
-        """An accepted participant line, in the room's conversation."""
+    def _note_room_user_line(self, text: str,
+                             spoken_at: Optional[float]) -> Optional[int]:
+        """An accepted participant line, in the room's conversation; its
+        number there (`seq`), or None outside a room."""
         if getattr(self, "_room_heard", None) is None or \
                 getattr(self, "room", None) is None or not text:
-            return
-        RealtimeVoiceSessionRunner._room_heard_append(
+            return None
+        return RealtimeVoiceSessionRunner._room_heard_append(
             self, {"speaker": "user", "text": text, "spoken_at": spoken_at})
 
-    def _room_heard_append(self, entry: dict) -> None:
+    def _room_heard_append(self, entry: dict) -> int:
         """One line onto _room_heard, numbered (`seq`), so a rebuild can tell
         the lines that came after its seed was taken however the front of the
         list has been trimmed meanwhile; bounded to twice what a seed takes."""
@@ -10512,6 +10561,7 @@ class RealtimeVoiceSessionRunner:
         seq = (heard[-1].get("seq", 0) if heard else 0) + 1
         heard.append({**entry, "seq": seq})
         del heard[:-2 * RealtimeVoiceSessionRunner._SEED_MAX_LINES]
+        return seq
 
     def _note_room_cut(self, agent_id, rid, heard_text: str, *, cut_mem: str,
                        told_mode: str) -> None:
@@ -10525,19 +10575,25 @@ class RealtimeVoiceSessionRunner:
                     e["told"] = heard_text or None
                 return
 
-    async def _tell_late_line(self, text: str, spoken_at: Optional[float]) -> None:
+    async def _tell_late_line(self, text: str, spoken_at: Optional[float],
+                              seq: Optional[int] = None) -> None:
         """A participant line that began before a rebuilt member was back in
         the room, and was written after it was seeded: the member heard none,
         or only the end, of its audio, so it is told the line as the seed
-        would have told it."""
+        would have told it. Not a line that is in what it was given (`seq`
+        at or under _member_seeded_seq): the line's own write can outlast a
+        whole rebuild, which then seeded it already."""
         room = getattr(self, "room", None)
         seated = getattr(self, "_member_seated_at", None) or {}
         if room is None or not text or spoken_at is None or not seated:
             return
+        given = getattr(self, "_member_seeded_seq", None) or {}
         for aid, at in list(seated.items()):
             # Strictly before: a line begun on the very tick the member was
             # seated (a coarse clock reads both the same) reached it as audio.
             if spoken_at >= at:
+                continue
+            if seq is not None and seq <= given.get(aid, 0):
                 continue
             rt = room.session_for(aid)
             seed = getattr(rt, "seed_item", None)
@@ -10612,11 +10668,18 @@ class RealtimeVoiceSessionRunner:
         closed by the bridge's own interrupted done, as before, and it is not
         asked again, as a 1:1 reply cut by a drop is not. A reply it was
         holding (suppressed) was never played and was in the conversation that
-        went away: it is dropped, and is in nothing the new session is given.
-        Then the rebuild, or, at the limit, the member is gone for good."""
+        went away: it is dropped, and is in nothing the new session is given;
+        the rest of its pump state (the playback clock of a line its socket
+        went in the middle of) is left for that line's finalize, and the new
+        session starts from a fresh one when it is seated. Then the rebuild,
+        or, at the limit, the member is gone for good.
+
+        At ROOM_RECONNECT_LIMIT 0 nothing here runs: the member is left to
+        10-01a's handling (in the room until a send to it fails)."""
         room = self.room
         lost = self._lost_sessions
-        if room is None or any(s is rt for s in lost):
+        limit = _realtime.room_reconnect_limit()
+        if room is None or limit <= 0 or any(s is rt for s in lost):
             return
         lost.append(rt)
         del lost[:-16]
@@ -10633,17 +10696,20 @@ class RealtimeVoiceSessionRunner:
         holder = getattr(room, "speaking", None) == agent_id
         unanswered = holder and not self._floor_reply_began
         if unanswered:
-            self._dropped_unanswered.add(agent_id)
-            # Nothing else will: there is no reply to finalize.
+            # For the turn waiting on a grant to THIS session (see
+            # _regrant_after_drop); nothing else will release it, as there is
+            # no reply to finalize.
+            self._dropped_unanswered[agent_id] = rt
             self._response_done.set()
         st = self._member_states.get(agent_id)
         held = None
         if st is not None and st.mode in ("holding", "held_done"):
             held = {"response_id": st.hold_id or getattr(st, "memory_rid", None),
                     "text": st.held_text()}
-        self._member_states[agent_id] = _MemberState()
+        if st is not None and st.mode in ("holding", "held_done", "discarding"):
+            st.drop("member_lost")
+            st.refused = False
         attempts = self._member_reconnects.get(agent_id, 0)
-        limit = _realtime.room_reconnect_limit()
         floor = "unanswered" if unanswered else ("answered" if holder else None)
         self.session.store.event(
             "room_member_dropped", agent_id=agent_id, agent_name=agent.name,
@@ -10652,7 +10718,7 @@ class RealtimeVoiceSessionRunner:
             attempts=attempts, limit=limit)
         if fatal or attempts >= limit:
             self._member_gone(agent_id, reason="fatal" if fatal else "limit",
-                              why=why, attempts=attempts, limit=limit)
+                              why=why, attempts=attempts, limit=limit, rt=rt)
             return
         task = asyncio.ensure_future(
             self._rebuild_member(agent_id, rt, why, floor=floor))
@@ -10675,15 +10741,18 @@ class RealtimeVoiceSessionRunner:
                 detail=redact_key(f"room_reconnect: {exc}"))
 
     def _member_gone(self, agent_id: str, *, reason: str, why: str,
-                     attempts: int, limit: int) -> None:
+                     attempts: int, limit: int, rt=None) -> None:
         """A member that will not be rebuilt: the limit is spent, the gateway
         refused the reconnects, or it refused the session itself (`fatal`, a
         voice it does not know, which a rebuild would only repeat). The room
         goes on with whoever is left, as it always did; when that is nobody,
-        the participant is told, as a 1:1 encounter past its limit is."""
+        the participant is told, as a 1:1 encounter past its limit is. `rt`,
+        the session that went, is closed: nothing else will close it now."""
         notes = getattr(self, "_member_notes", None)
         if notes is not None:
             notes.pop(agent_id, None)
+        if rt is not None:
+            self._spawn_console_frame(rt.close())
         room = self.room
         agent = next((a for a in (getattr(room, "agents", None) or [])
                       if a.id == agent_id), None)
@@ -10807,8 +10876,82 @@ class RealtimeVoiceSessionRunner:
                     note(speaker, rid, agent_id, iid, told)
                     keys.add((speaker, rid))
             out.append({"kind": kind, "speaker": speaker, "text": text,
+                        "item_id": iid or None,
                         **({"response_id": rid} if rid else {})})
         return out, keys
+
+    async def _tell_recap_tail(self, agent, rt, entries: List[dict]) -> List[dict]:
+        """Off the gpt route, the lines finished after a rebuilt member's
+        recap was written: a colleague's is told to it the way the room tells
+        any (GroupRoom.tell's note), where the family takes a colleague's line
+        as text at all (relays_colleagues_as_text: native-audio). Not a
+        participant line: on these routes a member hears the participant's
+        audio, and there is no measured frame for telling it one it missed.
+        Returns what was told, in _seed_member's shape."""
+        out: List[dict] = []
+        if not relays_colleagues_as_text(getattr(rt, "model", "") or ""):
+            return out
+        for e in entries:
+            speaker, told = e.get("speaker"), e.get("told") or ""
+            if speaker in ("user", agent.id) or not told:
+                continue
+            note = GroupRoom._told_note(e.get("name") or speaker, told)
+            failures = getattr(rt, "send_failures", 0)
+            try:
+                await rt.inject_text(note)
+                sent = (getattr(rt, "ws", True) is not None
+                        and getattr(rt, "send_failures", 0) == failures)
+            except Exception:  # noqa: BLE001 - said on the record below
+                sent = False
+            out.append({"kind": "told", "speaker": speaker, "text": note,
+                        "item_id": None, **({} if sent else {"sent": False})})
+        return out
+
+    async def _reconcile_seed(self, agent_id: str, rt, seeded: List[dict]) -> None:
+        """What the room's conversation says now, against what a rebuilt
+        member was given, line by line: a cut decided while the seed was
+        going out (the member was not in the room, so the cut could not reach
+        it) is applied to the seeded item now, as it would have been to the
+        session it replaces: its own line replaced by the heard words
+        (forget_reply, on the reply the item stands for), a colleague's told
+        note corrected (correct_item). Lines the seed did not name by reply
+        are left as given."""
+        if not getattr(rt, "track_items", False):
+            return
+        current = {(e.get("speaker"), e.get("rid")): e
+                   for e in self._room_heard if e.get("rid")}
+        told = getattr(self.room, "_told", None) or {}
+        for item in seeded:
+            rid, iid = item.get("response_id"), item.get("item_id")
+            entry = current.get((item.get("speaker"), rid))
+            if not (rid and iid) or item.get("sent") is False or entry is None:
+                continue
+            try:
+                if item["kind"] == "own":
+                    now = entry.get("kept") or ""
+                    # Not a reply something has already been done to.
+                    if now != item["text"] and rt.memory_done(rid) is None:
+                        await rt.forget_reply(
+                            rid, keep_text=now or None,
+                            context=self._memory_context(
+                                agent_id, reason="seed_reconciled", why=None,
+                                heard_text=now, heard_ms=None, heard_basis=None,
+                                generated_text=entry.get("text"), told=None,
+                                told_corrected=[]))
+                elif item["kind"] == "told":
+                    now = entry.get("told") or ""
+                    want = (GroupRoom._told_note(entry.get("name") or item["speaker"], now)
+                            if now else "")
+                    # Not a note the room has already corrected.
+                    note = (told.get((item["speaker"], rid)) or {}).get(agent_id) or {}
+                    if want != item["text"] and not note.get("corrected"):
+                        await rt.correct_item(
+                            iid, role="user", text=want or None,
+                            context={"kind": "told_correction",
+                                     "speaker_id": item["speaker"],
+                                     "response_id": rid, "text": now})
+            except Exception:  # noqa: BLE001 - memory must never cost the member
+                pass
 
     async def _rebuild_member(self, agent_id: str, old_rt, why: str, *,
                               floor: Optional[str] = None) -> None:
@@ -10843,11 +10986,23 @@ class RealtimeVoiceSessionRunner:
             except Exception:  # noqa: BLE001 - it is already gone
                 pass
             voice = getattr(old_rt, "voice", None) or None
+            if not items:
+                # Off the gpt route the conversation is the recap in the
+                # brief, which is read at connect and never again: the reply
+                # its socket went in the middle of is finished first, so the
+                # recap has it.
+                await self._settle_finalizes()
+                if self._closed or self.room is not room:
+                    return
+            upto = 0
             while True:
                 attempt = self._member_reconnects.get(agent_id, 0) + 1
                 self._member_reconnects[agent_id] = attempt
                 self._member_notes[agent_id] = self._member_reconnect_note(
                     agent, recap=not items)
+                # The last line that recap (or, below, the seed) gives it.
+                upto = (self._room_heard[-1].get("seq", 0)
+                        if self._room_heard else 0)
                 try:
                     new_rt = await room.reopen_member(
                         agent_id, instructions=self._instructions_for(agent),
@@ -10875,33 +11030,49 @@ class RealtimeVoiceSessionRunner:
                     await asyncio.sleep(self._REBUILD_BACKOFF_S)
             if self._closed or self.room is not room:
                 return
-            await self._settle_finalizes()
-            if self._closed or self.room is not room:
-                return
-            heard = list(self._room_heard)
-            upto = heard[-1].get("seq", 0) if heard else 0
-            window = heard[-self._SEED_MAX_LINES:]
-            truncated = bool(heard) and (len(heard) > len(window)
-                                         or heard[0].get("seq", 1) > 1)
-            seeded, keys = ([], set())
+            seeded, keys, truncated = [], set(), None
             if items:
+                await self._settle_finalizes()
+                if self._closed or self.room is not room:
+                    return
+                heard = list(self._room_heard)
+                upto = heard[-1].get("seq", 0) if heard else 0
+                window = heard[-self._SEED_MAX_LINES:]
+                truncated = bool(heard) and (len(heard) > len(window)
+                                             or heard[0].get("seq", 1) > 1)
                 seeded, keys = await self._seed_member(agent_id, new_rt, window)
-            if self._closed or self.room is not room:
-                return
+                if self._closed or self.room is not room:
+                    return
             # From here to the pump nothing is awaited: the lines that
-            # finished while the seed went out are given below, and anything
-            # after this reaches the member the way it reaches every member.
-            later = ([e for e in self._room_heard if e.get("seq", 0) > upto]
-                     if items else [])
+            # finished after what the member was given are given below, and
+            # anything after this reaches it the way it reaches every member.
+            later = [e for e in self._room_heard if e.get("seq", 0) > upto]
             room.seat_member(agent_id, new_rt, told_keys=keys)
             seated = True
             self._member_seated_at[agent_id] = time.time()
+            # Everything up to here is in what it was given: a participant
+            # line of these is not told to it again (_tell_late_line).
+            self._member_seeded_seq[agent_id] = (
+                self._room_heard[-1].get("seq", 0) if self._room_heard else 0)
+            # Its old pump state described the session that went (its
+            # playback clock was that line's, for its finalize, settled now).
+            self._member_states[agent_id] = _MemberState()
             if self.rt is old_rt:
                 self.rt = new_rt
             self._spawn_pump(self._pump_member(agent, new_rt))
-            if later:
+            before_seat = list(seeded)
+            if later and items:
                 more, _ = await self._seed_member(agent_id, new_rt, later)
                 seeded += more
+            elif later:
+                seeded += await self._tell_recap_tail(agent, new_rt, later)
+            if items and before_seat:
+                # A cut decided while the seed was going out changed what the
+                # character keeps of a line it was just given: put that right
+                # in the new conversation as on the old one. Only the lines
+                # given before the seat: a cut after it reaches the member
+                # the way it reaches every member.
+                await self._reconcile_seed(agent_id, new_rt, before_seat)
             counts = {k: sum(1 for s in seeded if s["kind"] == k
                              and s.get("sent", True))
                       for k in ("participant", "own", "told")}
@@ -10917,22 +11088,21 @@ class RealtimeVoiceSessionRunner:
                 seed_failed=any(s.get("sent") is False for s in seeded),
                 # Whether earlier lines of the room were left out of the seed
                 # (_SEED_MAX_LINES); None for a recap, which is always short.
-                seed_truncated=truncated if items else None,
+                seed_truncated=truncated,
                 seed=seeded)
             self._encounter_event_soon(
                 "voice_error", agent_id=agent_id, severity="warn",
                 detail=f"the gateway closed {agent.name}'s session; reconnected "
                        f"in the room (attempt {attempt} of {limit})")
-            if floor is not None:
-                # Only for the character the participant was waiting on: the
-                # others' drops are nothing they could hear. `replayed`: it is
-                # about to be given the floor again for what they said
-                # (_regrant_after_drop), so the page does not ask them to say
-                # it again.
+            if floor == "answered":
+                # Only for the character the participant was listening to:
+                # the others' drops are nothing they could hear, and a holder
+                # that had not begun to answer is spoken for where the turn
+                # decides whether it answers now (_regrant_after_drop).
                 await self._send({
                     "type": "voice_notice", "kind": "reconnected",
                     "agent_id": agent_id, "attempt": attempt,
-                    "replayed": floor == "unanswered"})
+                    "replayed": False})
         finally:
             if not seated:
                 self._member_notes.pop(agent_id, None)
@@ -10961,10 +11131,12 @@ class RealtimeVoiceSessionRunner:
         something since or are saying it now: that is routed afresh, as a
         follow-up yields. The direction the member was briefed with for this
         turn went to the session that is gone, and goes to the new one first
-        (stage_direction_redelivered). Returns the grant's session, or None
-        when it was not granted again (floor_regrant_skipped says why)."""
-        dropped = agent_id in self._dropped_unanswered
-        self._dropped_unanswered.discard(agent_id)
+        (stage_direction_redelivered). The participant is told the line
+        dropped here, where it is known whether the character is about to
+        answer them (`replayed`), and not before. Returns the grant's session,
+        or None when it was not granted again (floor_regrant_skipped says
+        why)."""
+        dropped = self._dropped_unanswered.pop(agent_id, None) is not None
         if not dropped and agent_id not in self._member_rebuilds:
             return None
         t0 = time.time()
@@ -10985,7 +11157,14 @@ class RealtimeVoiceSessionRunner:
                 "floor_regrant_skipped", agent_id=agent_id, why=why,
                 reason=skip, waited_s=waited, segment=self.segment,
                 interaction=self._interaction_id())
+            if rt is not None:
+                await self._send({"type": "voice_notice", "kind": "reconnected",
+                                  "agent_id": agent_id, "replayed": False,
+                                  "attempt": self._member_reconnects.get(agent_id)})
             return None
+        await self._send({"type": "voice_notice", "kind": "reconnected",
+                          "agent_id": agent_id, "replayed": True,
+                          "attempt": self._member_reconnects.get(agent_id)})
         pending = self._pending_direction or {}
         if pending.get("agent_id") == agent_id and pending.get("stage_direction"):
             agent = next((a for a in self._resolve_agents() if a.id == agent_id),

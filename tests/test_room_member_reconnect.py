@@ -546,8 +546,10 @@ async def test_a_floor_holder_lost_mid_reply_keeps_the_line_and_is_not_asked_aga
     (turn_ev,) = h.of("assistant_turn")
     assert turn_ev["agent_id"] == "dan" and turn_ev["interrupted"] is True
     assert turn_ev["text"] == "Week one is the pilot team,"
-    # Written with the room's memory policy although his session was gone.
+    # Written with the room's memory policy although his session was gone,
+    # and with the playback clock of the line it was (pump state kept for it).
     assert turn_ev["memory"] == "whole" and turn_ev["response_id"] == "R1"
+    assert "play_clock_start" in turn_ev and "play_clock_end" in turn_ev
     (drop,) = h.of("room_member_dropped")
     assert drop["floor"] == "answered"
     assert not h.of("floor_regranted") and not h.of("trigger_undelivered")
@@ -770,24 +772,29 @@ async def test_a_member_the_gateway_keeps_refusing_leaves_the_room(monkeypatch):
 
 
 @in_a_loop
-async def test_at_zero_a_closed_member_leaves_the_room_as_before(monkeypatch):
-    """ROOM_RECONNECT_LIMIT=0 is 10-01a: nothing is rebuilt. With nobody left
-    the participant is told, once, as a 1:1 encounter past its limit is."""
+async def test_at_zero_a_closed_member_is_handled_as_on_10_01a(monkeypatch):
+    """ROOM_RECONNECT_LIMIT=0 turns all of it off: a member whose socket
+    went stays in the room until a send to it fails, then leaves it (10-01a's
+    GroupRoom._went_deaf), and nothing of 10-14a is written or sent."""
     monkeypatch.setenv("ROOM_RECONNECT_LIMIT", "0")
     h = await Room(monkeypatch).open()
     try:
         for aid in CAST:
             h.rt(aid).ws.restart()
-        await h.wait_for("room_member_lost", 3)
-        await until(lambda: [f for f in h.page.json if f.get("type") == "error"])
+        await until(lambda: len(h.of("voice_error")) >= 3)
+        await settle(h.runner)
+        assert set(h.room.sessions) == set(CAST), "left in the room, as on 10-01a"
+        await h.room.hear(LOUD)               # the participant's next frame
+        assert not h.room.sessions and set(h.room.lost) == set(CAST)
         await h.participant("Is anybody still there? I can't hear any of you now.")
         await h.runner._run_group_turn()
     finally:
         await h.close()
-    assert len(h.gateway.sockets) == 4 and not h.of("room_member_reconnected")
-    assert {e["reason"] for e in h.of("room_member_lost")} == {"limit"}
-    assert len(h.of("room_members_lost")) == 1
-    assert len([f for f in h.page.json if f.get("type") == "error"]) == 1
+    assert len(h.gateway.sockets) == 4
+    for kind in ("room_member_dropped", "room_member_reconnected",
+                 "room_member_lost", "room_members_lost", "floor_regranted"):
+        assert not h.of(kind), kind
+    assert not [f for f in h.page.json if f.get("type") in ("error", "voice_notice")]
     assert h.of("group_turn_no_members")
 
 
@@ -1045,9 +1052,10 @@ async def test_a_follow_up_whose_grant_fails_does_not_wait_out_the_timeout(monke
     """Lost for good between the director's answer and its turn: nobody was
     asked to speak, and the turn goes on at once (it waited 45 s)."""
     monkeypatch.setenv("FOLLOWUP_GAP_S", "-1")
-    monkeypatch.setenv("ROOM_RECONNECT_LIMIT", "0")
+    monkeypatch.setenv("ROOM_RECONNECT_LIMIT", "1")
     h = await Room(monkeypatch).open()
     try:
+        h.runner._member_reconnects["priya"] = 1      # her budget is spent
         _unnamed_turn_room(h, [{"agent_id": "chris", "intent": None},
                                {"agent_id": "priya", "intent": "Point back to last year."}])
         commits = []
@@ -1114,3 +1122,249 @@ async def test_a_session_the_gateway_refuses_outright_is_not_rebuilt(monkeypatch
         await h.close()
     assert gone["agent_id"] == "chris" and gone["reason"] == "fatal"
     assert not h.of("room_member_reconnected") and len(h.gateway.sockets) == 4
+
+
+# --------------------------------------------------------------------------
+# 9. Found in review of the first cut
+# --------------------------------------------------------------------------
+
+@in_a_loop
+async def test_a_drop_while_the_grant_is_decided_is_not_granted_twice(monkeypatch):
+    """The holder's socket goes inside _grant's wait (a family that waits for
+    the gateway's own reply first) and it is back before the grant asks: the
+    grant goes to the new session, once. The drop's release of the floor and
+    its mark belonged to a grant that never went to the old session."""
+    monkeypatch.setenv("AUTOFIRE_WAIT", "1.0")
+    h = await Room(monkeypatch, model=NATIVE).open()
+    try:
+        await h.participant("Dan, can you walk me through the whole rollout plan, step by step?")
+        turn = asyncio.ensure_future(h.runner._run_group_turn())
+        await until(lambda: h.room.speaking == "dan")   # inside _grant's wait
+        h.rt("dan").ws.restart()
+        await h.wait_for("room_member_reconnected")
+        await until(lambda: h.of("fresh_reply_requested"))
+        await asyncio.sleep(1.0)
+        new_ws = h.rt("dan").ws
+        asks = [m["type"] for m in new_ws.sent if m.get("type") == "response.create"]
+        turn.cancel()
+        await asyncio.gather(turn, return_exceptions=True)
+    finally:
+        await h.close()
+    assert asks == ["response.create"], asks
+    assert len(h.of("fresh_reply_requested")) == 1 and not h.of("floor_regranted")
+
+
+@in_a_loop
+async def test_a_drop_no_turn_was_waiting_on_is_not_granted_again_later(monkeypatch):
+    """The floor still names a member nobody waits on (a turn's timeout leaves
+    it named while its follow-ups run) when its socket goes. Its next ordinary
+    grant is its next ordinary grant, once."""
+    h = await Room(monkeypatch).open()
+    try:
+        h.room.speaking = "dan"
+        h.runner._floor_reply_began = False
+        h.rt("dan").ws.restart()
+        await h.wait_for("room_member_reconnected")
+        h.room.speaking = None
+        commits = []
+
+        def on_commit(ws, f):
+            commits.append(ws)
+            return [created(f"E{len(commits)}")]
+        h.gateway.on_commit = on_commit
+        await h.participant("Dan, can you walk me through the whole rollout plan, step by step?")
+        turn = asyncio.ensure_future(h.runner._run_group_turn())
+        await until(lambda: commits)
+        commits[0].feed(reply("E1", "Week one is the pilot team, then everyone else."))
+        await asyncio.wait_for(turn, 10)
+    finally:
+        await h.close()
+    assert len(commits) == 1 and not h.of("floor_regranted")
+    assert [t["agent_id"] for t in h.of("assistant_turn")] == ["dan"]
+    assert not [f for f in h.page.json if f.get("type") == "voice_notice"]
+
+
+@in_a_loop
+async def test_the_reconnect_note_stays_with_its_room(monkeypatch):
+    """A member rebuilt and not heard from before its room closes does not
+    carry 'the line dropped' into a room of fresh sessions; nor, in a kept
+    room, on top of the continuation note."""
+    h = await Room(monkeypatch).open()
+    try:
+        h.rt("dan").ws.restart()
+        await h.wait_for("room_member_reconnected")
+        assert "The line dropped" in h.runner._instructions_for(h.agents["dan"])
+        await h.runner._advance_segment()          # S4A i1 -> i2: the room is kept
+        assert h.of("group_room_kept")
+        assert "The line dropped" not in h.runner._instructions_for(h.agents["dan"])
+        h.rt("priya").ws.restart()
+        await h.wait_for("room_member_reconnected", 2)
+        await h.runner._open_room()                # a room of fresh sessions
+        (brief,) = h.rt("priya").ws.instructions()
+    finally:
+        await h.close()
+    assert "The line dropped" not in brief and not h.runner._member_notes
+
+
+@in_a_loop
+async def test_the_old_sessions_last_line_does_not_spend_the_new_sessions_note(monkeypatch):
+    h = await Room(monkeypatch).open()
+    try:
+        h.gateway.on_commit = lambda ws, f: [created("R1")]
+        await h.participant("Dan, can you walk me through the whole rollout plan, step by step?")
+        old = h.rt("dan")
+        turn = asyncio.ensure_future(h.runner._run_group_turn())
+        await until(lambda: (h.room.last_grant or {}).get("via") == "commit")
+        old.ws.feed([item_added("R1", "i1"), adelta("R1", "i1"),
+                     tdelta("R1", "i1", "Week one is the pilot team,")])
+        await until(lambda: [f for f in h.page.json
+                             if f.get("type") == "assistant_started"])
+        old.ws.restart()
+        await asyncio.wait_for(turn, 10)
+        await h.wait_for("room_member_reconnected")
+        note_left = "The line dropped" in h.runner._instructions_for(h.agents["dan"])
+    finally:
+        await h.close()
+    (turn_ev,) = h.of("assistant_turn")
+    assert turn_ev["interrupted"] is True
+    assert note_left, "the interrupted line of the old session spent the note"
+
+
+@in_a_loop
+async def test_a_line_written_across_a_whole_rebuild_is_given_once(monkeypatch):
+    """The page is slow for a moment while a participant line is being
+    written, and a whole rebuild runs in that moment: it seeds the line, and
+    the line's own write does not tell it to the member again."""
+    h = await Room(monkeypatch).open()
+    try:
+        h.gateway.hold = asyncio.Event()
+        h.rt("chris").ws.restart()
+        await until(lambda: "chris" in h.runner._member_rebuilds)
+        gate = asyncio.Event()
+        send = h.page.send_json
+
+        async def slow(payload):
+            if payload.get("type") == "user_transcript":
+                await gate.wait()
+            return await send(payload)
+        h.page.send_json = slow
+        line = "So the pilot team goes first and everyone else follows after."
+        writing = asyncio.ensure_future(h.runner._record_user_turn(
+            line, voiced_ms=2400, voiced_span_ms=2400, spoken_at=time.time() - 1.0))
+        await until(lambda: any(e.get("text") == line for e in h.runner._room_heard))
+        h.gateway.hold.set()
+        await h.wait_for("room_member_reconnected")
+        gate.set()
+        await writing
+        chris_ws = h.rt("chris").ws
+    finally:
+        await h.close()
+    assert [t for t in seeded(chris_ws) if t[1] == line] == [("user", line)]
+    assert not h.of("room_member_line_late")
+
+
+@in_a_loop
+async def test_the_page_is_promised_an_answer_only_when_one_is_asked_for(monkeypatch):
+    """Two drops of the holder in one turn: the first is granted again and
+    the page says so; the second is not, and the page is not told the
+    character heard them."""
+    h = await Room(monkeypatch).open()
+    try:
+        commits = []
+
+        def on_commit(ws, f):
+            commits.append(ws)
+            return [created(f"H{len(commits)}")]
+        h.gateway.on_commit = on_commit
+        await h.participant("Dan, can you walk me through the whole rollout plan, step by step?")
+        turn = asyncio.ensure_future(h.runner._run_group_turn())
+        await until(lambda: (h.room.last_grant or {}).get("via") == "commit")
+        h.rt("dan").ws.restart()
+        await until(lambda: len(commits) == 2)
+        await until(lambda: (h.room.last_grant or {}).get("via") == "commit"
+                    and h.rt("dan").ws is commits[1])
+        h.rt("dan").ws.restart()
+        await asyncio.wait_for(turn, 10)
+        await h.wait_for("room_member_reconnected", 2)
+    finally:
+        await h.close()
+    notices = [f for f in h.page.json if f.get("type") == "voice_notice"]
+    assert [(n["agent_id"], n["replayed"]) for n in notices] == [("dan", True)]
+    assert len(h.of("floor_regranted")) == 1
+    assert [e["reason"] for e in h.of("trigger_undelivered")] == ["member_lost"]
+
+
+@in_a_loop
+async def test_off_the_gpt_route_a_line_finished_during_the_rebuild_is_told_after(monkeypatch):
+    h = await Room(monkeypatch, model=NATIVE).open()
+    try:
+        await h.participant("We need a date for the rollout before we leave today.")
+        h.gateway.hold = asyncio.Event()
+        h.rt("dan").ws.restart()
+        await until(lambda: "dan" in h.runner._member_rebuilds)
+        await h.speaks("priya", "RP", "Last year's rollout slipped twice, so I doubt it.")
+        h.gateway.hold.set()
+        (rec,) = await h.wait_for("room_member_reconnected")
+        dan_ws = h.rt("dan").ws
+    finally:
+        await h.close()
+    (brief,) = dan_ws.instructions()
+    assert "- Them: We need a date for the rollout before we leave today." in brief
+    assert seeded(dan_ws) == [
+        ("user", told("Priya", "Last year's rollout slipped twice, so I doubt it."))]
+    assert rec["seeded"]["told"] == 1
+
+
+@in_a_loop
+async def test_a_cut_decided_while_the_seed_went_out_is_applied_after_the_seat(monkeypatch):
+    """The cut cannot reach a member that is not in the room yet: once it is,
+    the line it was just given whole is put right in its new conversation."""
+    h = await Room(monkeypatch).open()
+    try:
+        await h.speaks("dan", "R1", LINE, item="d1")
+        seed = h.runner._seed_member
+        heard = "We slipped the date because the vendor…"
+
+        async def seed_then_cut(aid, rt, entries):
+            out = await seed(aid, rt, entries)
+            if aid == "dan" and any(e.get("rid") == "R1" for e in entries):
+                # The participant's cut, decided while the seed went out.
+                h.runner._note_room_cut("dan", "R1", heard, cut_mem="replace",
+                                        told_mode="heard")
+            return out
+        h.runner._seed_member = seed_then_cut
+        h.rt("dan").ws.restart()
+        await h.wait_for("room_member_reconnected")
+        (mem,) = await h.wait_for("member_memory_replaced")
+        dan_ws = h.rt("dan").ws
+    finally:
+        await h.close()
+    own = dan_ws.creates()[0]["item"]["id"]
+    assert seeded(dan_ws)[0] == ("assistant", LINE)
+    assert [m["item_id"] for m in dan_ws.sent
+            if m.get("type") == "conversation.item.delete"] == [own]
+    assert dan_ws.creates()[-1]["item"]["content"][0]["text"] == heard
+    assert mem["reason"] == "seed_reconciled" and mem["action"] == "replaced"
+
+
+@in_a_loop
+async def test_a_note_told_to_a_session_since_replaced_is_not_remembered():
+    """A tell going out while its member is rebuilt reaches the old session;
+    the room does not file that note under the member's new one."""
+    from test_room_memory_hygiene import tracked
+    room = gr.GroupRoom([type("A", (), {"id": a, "name": a.title()})() for a in CAST],
+                        instructions_for=lambda a: "", voice_for=lambda a: "",
+                        model=GPT)
+    for aid in CAST:
+        room.sessions[aid] = tracked()
+    old, new = room.sessions["priya"], tracked()
+    sent = old.inject_text
+
+    async def swapped(text, **kw):
+        out = await sent(text, **kw)
+        room.sessions["priya"] = new                 # rebuilt meanwhile
+        return out
+    old.inject_text = swapped
+    await room.tell("Dan", "We slipped the date.", exclude="dan", response_id="R1")
+    told_to = room._told.get(("dan", "R1")) or {}
+    assert "chris" in told_to and "priya" not in told_to
