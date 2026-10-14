@@ -6,7 +6,8 @@ served it as application/octet-stream: StaticFiles names a file's type from
 Python's mimetypes, which knows .woff2 only where the system's MIME table does.
 macOS has one and the python:3.12-slim image has none, so a test run on a Mac
 passed while production sent the wrong type. The first test empties the
-system tables to stand where production stands.
+system tables (and, on Windows, the registry) to stand where production
+stands.
 """
 from __future__ import annotations
 
@@ -24,6 +25,8 @@ def test_the_font_is_served_as_a_font_where_the_system_knows_no_mime_types():
     code = (
         "import mimetypes\n"
         "mimetypes.knownfiles[:] = []\n"   # the slim image: no /etc/mime.types
+        # and no registry either: on Windows init() reads the types from there
+        "mimetypes.MimeTypes.read_windows_registry = lambda self, strict=True: None\n"
         "mimetypes.init()\n"
         "assert mimetypes.guess_type('x.woff2')[0] is None, 'this stand-in still knows .woff2'\n"
         "import server.app\n"
