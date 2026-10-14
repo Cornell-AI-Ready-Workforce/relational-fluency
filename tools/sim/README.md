@@ -93,10 +93,13 @@ the 720 s ceiling where 24c ended it about 451 s in, and the count limits
 shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
-check fails for it, saying so, until it is recorded. None is pending as
-committed: all four are recorded on pipeline 2026-10-01a / room pacing 29b,
-build 0c271c7 (2026-10-02, `reports/0c271c7.json`), which is 30a's speech
-check (#67) with 10-01a's room memory hygiene (#72) on top.
+check fails for it, saying so, until it is recorded. All four are pending as
+committed: pipeline 2026-10-14a (room members the gateway closes are rebuilt
+inside the encounter) has not been recorded. The values it replaces were
+recorded on pipeline 2026-10-01a / room pacing 29b, build 0c271c7
+(2026-10-02, `reports/0c271c7.json`; `git show 01f10f0:tools/sim/baseline.json`),
+which is 30a's speech check (#67) with 10-01a's room memory hygiene (#72) on
+top. Record all four with `python -m tools.sim.check --write-baseline`.
 
 A baseline compares one `pipeline_version` with itself, so a merge that brings
 another version's change in under the same label needs a re-record that the
@@ -117,6 +120,16 @@ any `member_memory_late`, `member_memory_error` or `member_memory_skipped`
 not a baseline. 0c271c7's run answered 8 of 9 and 25 of 30, at 3.862 / 5.88
 and 4.027 / 6.379 s, with none of those events (7 lines replaced, 4 told lines
 corrected, no wait).
+
+For 10-14a, read the first run against those 10-01a values (`git show
+01f10f0:tools/sim/baseline.json`). A run in which the gateway closes nothing
+does not reach any of 10-14a's code, so it should match 10-01a within the
+tolerances; if a member's socket was closed, the sessions' events say what
+happened (`room_member_dropped`, then `room_member_reconnected` or
+`room_member_lost`, and `floor_regranted` for a holder that had not been
+heard), and S4A's 01f10f0 run, which lost all three members at 154.7 s and
+answered 5 of 47 lines, is the failure it replaces: a run that answers far
+fewer lines than 10-01a with any of those events in it is not a baseline.
 
 ## The stimulus
 

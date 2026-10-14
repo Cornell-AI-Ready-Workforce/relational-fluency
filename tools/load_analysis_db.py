@@ -219,6 +219,9 @@ PIPELINE_KEYS = ("pipeline_version", "room_pacing_version", "input_rate",
                  "cancelled_output", "agent_transcript_items",
                  # Room memory hygiene (pipeline 2026-10-01a).
                  "room_memory",
+                 # Sessions the gateway closes, room members' included
+                 # (pipeline 2026-10-14a).
+                 "reconnect",
                  # The serving image's commit (server/build_info.py); absent
                  # on encounters from images built before BUILD_SHA.
                  "build")
