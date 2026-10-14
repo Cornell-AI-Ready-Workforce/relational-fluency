@@ -76,9 +76,13 @@ def _paced_room(scenario_id="S4A", while_generating=None):
     granted = room.give_floor
 
     async def give_floor(agent_id):
+        # Given the floor as the room is asked for it, not once the room has
+        # waited for the reply these members never start (_short_waits): on a
+        # coarse clock (Windows before 3.13) that wait alone takes two polls.
+        given_at = time.time()
         rt = await granted(agent_id)
         now = time.time()
-        grants.append((agent_id, now))
+        grants.append((agent_id, given_at))
         seq = len(grants)
         # The page is playing this line now: the playback clock runs LINE_S
         # ahead, and the turn cue holds the line until the page acks its end.

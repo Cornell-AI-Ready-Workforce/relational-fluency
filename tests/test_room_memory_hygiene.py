@@ -1339,12 +1339,14 @@ async def test_a_hold_never_played_is_deleted(how, monkeypatch):
         st = await _suppressed_hold(h, finish=how not in (
             "refused_holding", "participant_speaking_holding"))
         if how == "stale":
-            runner._speech_started_at = time.time()
+            # The participant spoke after the hold began. Not time.time(): a
+            # clock in 15.6 ms steps (Windows before 3.13) reads it the same.
+            runner._speech_started_at = st.hold_started_at + 0.1
             assert await runner.adopt_member("priya") is False
         elif how == "expired":
             monkeypatch.setenv("HELD_REPLY_TTL", "0")
             monkeypatch.setenv("ROOM_ADOPT_GUARD", "0")
-            await asyncio.sleep(0.01)
+            st.done_at -= 1.0           # done a second ago, past a TTL of 0
             assert await runner.adopt_member("priya") is False
         elif how.startswith("refused"):
             assert st.cut_by_suppression
@@ -1411,8 +1413,8 @@ async def test_a_stale_hold_spliced_in_after_all_keeps_its_items():
     h = RoomHarness()
     h.start()
     try:
-        await _suppressed_hold(h, finish=False)
-        h.runner._speech_started_at = time.time()
+        st = await _suppressed_hold(h, finish=False)
+        h.runner._speech_started_at = st.hold_started_at + 0.1  # spoke after
         h.room.speaking = "priya"                   # _grant sets it first
         assert await h.runner.adopt_member("priya") is False
         assert h.rt("priya")._memory_ops, "no deletion was requested"
@@ -1435,7 +1437,12 @@ async def test_a_suppressed_reply_the_floor_reaches_only_at_its_end_is_deleted()
     h = RoomHarness()
     h.start()
     try:
-        await _suppressed_hold(h, finish=False)
+        st = await _suppressed_hold(h, finish=False)
+        # Both its audio deltas have gone past the pump suppressed before the
+        # floor moves, so the floor reaches it only at its done. The helper
+        # returns at the first suppressed frame; with the floor moved sooner
+        # the pump splices the rest in, and it was played.
+        await until(lambda: sum(k == "audio" for k, _ in st.held) == 2)
         h.room.speaking = "priya"
         h.rt("priya").ws.feed([done_out("R0", ["h1"], "cancelled")])
         await h.ack_deletes("priya", 1)
@@ -1673,8 +1680,8 @@ async def test_knobs_at_todays_values_send_todays_frames(monkeypatch):
     h = await harness()
     h.start()
     try:
-        await _suppressed_hold(h)
-        h.runner._speech_started_at = time.time()
+        hold = await _suppressed_hold(h)
+        h.runner._speech_started_at = hold.hold_started_at + 0.1  # spoke after
         assert await h.runner.adopt_member("priya") is False
         await asyncio.sleep(0.05)
     finally:
@@ -2502,8 +2509,8 @@ async def test_a_memory_failure_never_costs_the_turn_the_pump_or_the_room(broken
             await until(lambda: h.of("assistant_turn"))
         await until(lambda: h.runner._response_done.is_set())
         # A stale hold dropped, with the same failure inside.
-        await _suppressed_hold(h)
-        h.runner._speech_started_at = time.time()
+        hold = await _suppressed_hold(h)
+        h.runner._speech_started_at = hold.hold_started_at + 0.1  # spoke after
         assert await h.runner.adopt_member("priya") is False
         # The pump lives on.
         h.room.speaking = "dan"
@@ -2912,6 +2919,11 @@ async def test_a_grant_waits_one_settle_time_at_most_on_every_branch(
         dan.ws.feed([committed("p1", None)] + chain(reply_frames("R1", ["i1"]), "p1")
                     + [done_out("R1", ["i1"])])
         await c.wait("response_done")
+        # R1 is over well before this grant, as a played reply is. Stamped in
+        # the same clock step as the grant's commit (Windows' 15.6 ms before
+        # Python 3.13), its output read as the commit's answer, and the
+        # fallback create never went out.
+        await asyncio.sleep(0.1)
         if when == "reserved":
             assert dan.reserve_memory("R1")
         real_commit = dan.commit_input
