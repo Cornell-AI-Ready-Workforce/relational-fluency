@@ -285,9 +285,10 @@ def test_a_broken_survey_pipe_is_never_refused_and_still_gets_its_run(
                    follow_redirects=False)
     assert r.status_code == 200, r.text
     assert "Continue" in r.text
-    # Not blamed and not told a machine fetched it — this is the note written
-    # for the participant whose link lost its identifier.
-    assert "still take part" in r.text
+    # Not blamed and not told a machine fetched it: the participant whose link
+    # lost its identifier gets the page without a note.
+    assert "link preview" not in r.text
+    assert 'class="note"' not in r.text
     assert _runs(runs_mod) == []
 
     r = client.post(path, params={"pid": broken},

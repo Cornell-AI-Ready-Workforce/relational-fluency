@@ -232,13 +232,45 @@ def test_the_broken_pipe_participant_reaches_their_run_in_one_click(
 
 
 def test_the_page_the_broken_pipe_participant_gets_is_addressed_to_them(client):
-    """They are a participant, not a scanner, and the page they get says so —
-    including that they can still take part, and that somebody needs telling."""
+    """They are a participant, not a scanner, and the page they get treats them
+    as one: a Continue, and nothing for them to do about the link. They are not
+    asked to tell the research team (the run is recorded as unattributed with
+    the survey's response id, which is how it is matched; removed 2026-10-13 at
+    the researchers' request), and not told a machine fetched it."""
     r = client.get("/start", params={"pid": TEMPLATE_KEY},
                    headers={"User-Agent": BROWSER}, follow_redirects=False)
-    assert "still take part" in r.text
-    assert "research team" in r.text
+    assert "<form method=\"post\" action=\"\">" in r.text
+    assert "research team" not in r.text
+    assert "matched to your survey" not in r.text
+    assert 'class="note"' not in r.text
     assert "link preview, a scanner" not in r.text
+
+
+@pytest.mark.parametrize("ua", [BROWSER, SLACK_IN_APP])
+def test_the_entry_page_promises_no_consent_step(client, ua):
+    """Consent is taken in the survey, before the link. The page said the
+    microphone and camera stay off "until the consent step on the next screen
+    is complete", and there is no such step: they come on only when the
+    participant turns them on (the audio check's buttons, or Start)."""
+    r = client.get("/start", params={"pid": TEMPLATE_KEY},
+                   headers={"User-Agent": ua}, follow_redirects=False)
+    assert r.status_code == 200
+    assert "consent" not in r.text.lower()
+    assert "your microphone and camera stay off until you turn them on" in " ".join(r.text.split())
+
+
+@pytest.mark.parametrize("ua", [BROWSER, SLACK_IN_APP])
+def test_the_entry_page_opens_on_the_logo_and_the_study_name(client, ua):
+    """Both versions of the page open on the study's logo and name, as the
+    landing page does. The logo is decorative (alt=""), the name is beside it,
+    and it is served from /static like the landing page's."""
+    r = client.get("/start", params={"pid": TEMPLATE_KEY},
+                   headers={"User-Agent": ua}, follow_redirects=False)
+    body = r.text[r.text.index("<body>"):]
+    assert body.index('<img src="/static/logo.png" alt=""') < body.index("<h1>")
+    assert "<span>Relational Fluency</span>" in body
+    logo = client.get("/static/logo.png")
+    assert logo.status_code == 200 and logo.headers["content-type"] == "image/png"
 
 
 def test_the_probe_page_does_not_tell_a_participant_they_are_not_a_person(
