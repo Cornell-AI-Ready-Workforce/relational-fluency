@@ -904,6 +904,70 @@ def test_the_pinned_status_row_sits_under_the_banner_however_tall_it_is(tmp_path
     _run(tmp_path, BANNER, "BANNER OK")
 
 
+# The page's typeface (Inter, font-display: swap) arrives after the banner's
+# first reading, and no resize follows it: at 454-466px on a Mac or iPhone the
+# banner was one line in the fallback font and two in Inter, so --banner-h kept
+# 29px for a 46px banner and the banner covered the top of the pinned timer.
+BANNER_SWAP = RUN_VIEW + r"""
+  // Where the browser can watch the banner, it does.
+  const watched = [];
+  class RO { constructor(cb) { this.cb = cb; } observe(el) { watched.push({ cb: this.cb, el }); } }
+  const b = boot('?run=r_1&participant_id=p_rec', studyRoutes, { extra: { ResizeObserver: RO } });
+  await b.clock.advance(50);
+  assert.strictEqual(watched.length, 1, 'nothing watches the banner');
+  assert.strictEqual(watched[0].el, b.dom.$('aiBanner'), 'something other than the banner is watched');
+  const set = {};
+  b.dom.document.documentElement = { style: { setProperty: (k, v) => { set[k] = v; } } };
+  b.dom.$('aiBanner').offsetHeight = 46;   // Inter is in: two lines
+  watched[0].cb([]);
+  assert.strictEqual(set['--banner-h'], '46px', 'the status row was not told the banner grew');
+
+  // Where it cannot, once the fonts are in.
+  let fontsIn;
+  const fonts = { ready: new Promise((r) => { fontsIn = r; }) };
+  const c = boot('?run=r_1&participant_id=p_rec',
+                 (c) => { c.dom.document.fonts = fonts; return studyRoutes(c); });
+  await c.clock.advance(50);
+  const later = {};
+  c.dom.document.documentElement = { style: { setProperty: (k, v) => { later[k] = v; } } };
+  c.dom.$('aiBanner').offsetHeight = 46;
+  assert.strictEqual(later['--banner-h'], undefined);
+  fontsIn();
+  await c.clock.advance(10);
+  assert.strictEqual(later['--banner-h'], '46px', 'the banner is not measured again once Inter is in');
+"""
+
+
+def test_the_banner_is_measured_again_when_the_typeface_swaps_in(tmp_path):
+    _run(tmp_path, BANNER_SWAP, "BANNER SWAP OK")
+
+
+def test_a_focus_ring_has_room_inside_the_boxes_that_clip_it():
+    """The one focus ring is drawn outside a control (its width plus its
+    offset). A box that scrolls clips at its padding edge, so a control flush
+    with that edge lost a side of its ring: the audio check's buttons on a
+    phone, "I heard it" on a desktop, and the gate note's close on a phone. Each
+    of those boxes now leaves at least that much room."""
+    src = V2.read_text(encoding="utf-8")
+    css = src[src.index("<style>"):src.index("</style>")]
+    ring = re.search(r"button:focus-visible,[^{]*\{\s*outline: (\d+)px solid [^;]+; outline-offset: (\d+)px;", css)
+    assert ring, "the shared focus ring is gone or reshaped; re-check the room below"
+    reach = int(ring.group(1)) + int(ring.group(2))
+
+    scroll = re.search(r"\n  \.card-scroll \{([^}]*)\}", css).group(1)
+    for side in ("left", "right"):
+        pad = re.search(rf"padding-{side}: (\d+)px", scroll)
+        margin = re.search(rf"margin-{side}: -(\d+)px", scroll)
+        assert pad and int(pad.group(1)) >= reach, (side, scroll)
+        assert margin and margin.group(1) == pad.group(1), ("the text moved", side, scroll)
+
+    phone = _css_block(css, "/* ---------- Mobile / small screens ---------- */")
+    close = re.search(r"\.gate-note \.note-close \{([^}]*)\}", phone).group(1)
+    for side in ("top", "right"):
+        inset = re.search(rf"{side}: (\d+)px", close)
+        assert inset and int(inset.group(1)) >= reach, (side, close)
+
+
 def test_the_page_has_one_top_level_heading_and_it_is_the_scenario():
     """#43: 'the page has no top-level heading'. The header's title is it."""
     src = V2.read_text(encoding="utf-8")

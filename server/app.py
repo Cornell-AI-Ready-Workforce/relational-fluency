@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import functools
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -456,6 +457,11 @@ async def _no_store_html(request, call_next):
     return response
 
 
+# The page's typeface. StaticFiles names a file's type from Python's
+# mimetypes, which knows .woff2 only where the system's MIME table does: macOS
+# has one, the python:3.12-slim image has none, so production sent the font
+# as application/octet-stream.
+mimetypes.add_type("font/woff2", ".woff2")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
