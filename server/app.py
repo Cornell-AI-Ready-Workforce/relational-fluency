@@ -1082,9 +1082,9 @@ _NO_KEY_AT_ALL = "no participant key parameter on the link"
 _KEY_UNUSABLE = "the participant key on the link is not usable"
 
 #: Reasons that describe the LINK rather than the requester. The page says
-#: something different for these: whoever is reading it may well be a
-#: participant whose survey piping broke, and telling them a machine fetched
-#: the link would be both false and no help.
+#: nothing more for these: whoever is reading it may well be a participant
+#: whose survey piping broke, and telling them a machine fetched the link would
+#: be both false and no help.
 _LINK_FAULT_REASONS = (_NO_KEY_AT_ALL, _KEY_UNUSABLE)
 
 
@@ -1136,21 +1136,19 @@ _ENTRY_CHECK_PAGE = """<!doctype html>
 </style></head><body>
 <h1>You are about to start the study</h1>
 <p>Press Continue to open your session. Nothing is recorded until you do, and
-   your microphone and camera stay off until the consent step on the next
-   screen is complete.</p>
+   your microphone and camera stay off until you turn them on.</p>
 <form method="post" action=""><button type="submit">Continue</button></form>
-<p class="note">{note}</p>
+{note}
 </body></html>
 """
 
-#: Said to the participant whose link lost its key: enough to take part, and
-#: enough that they tell somebody, because their session will need a hand-join.
-_ENTRY_CHECK_NO_KEY_NOTE = (
-    "This link did not carry the identifier the survey normally adds to it. "
-    "You can still take part &mdash; press Continue &mdash; but please tell the "
-    "research team, because your session will have to be matched to your survey "
-    "response by hand."
-)
+# The participant whose link lost its key gets the page with no note. They
+# have consented in the survey already, and there is nothing for them to do but
+# press Continue: the run is recorded as cohort=unattributed, with the reason in
+# participant_key_status, what arrived in raw_participant_key and the survey's
+# response id, which is how the team matches it to the survey response
+# (docs/OPERATIONS.md, "unattributed"). The note that asked them to tell the
+# research team was removed on 2026-10-13, at the researchers' request.
 
 #: Said when the request looked like a link preview, a scanner or a prefetch.
 #:
@@ -1175,8 +1173,8 @@ _ENTRY_CHECK_PROBE_NOTE = (
 
 def _entry_check_page(reason: str) -> HTMLResponse:
     """200 and a Continue button. Never a refusal: see the block above."""
-    note = (_ENTRY_CHECK_NO_KEY_NOTE if reason in _LINK_FAULT_REASONS
-            else _ENTRY_CHECK_PROBE_NOTE)
+    note = ("" if reason in _LINK_FAULT_REASONS
+            else f'<p class="note">{_ENTRY_CHECK_PROBE_NOTE}</p>')
     return HTMLResponse(_ENTRY_CHECK_PAGE.format(note=note), status_code=200)
 
 
