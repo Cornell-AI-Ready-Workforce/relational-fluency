@@ -158,6 +158,13 @@ class _MemberState:
         # pump keeps the rest of that reply suppressed rather than splicing
         # it in when the floor arrives (see _pump_member).
         self.refused = False
+        # Room memory hygiene (pipeline 2026-10-01a). `line_rid` is the reply
+        # whose audio is on this turn's playback clock, so a cut and the
+        # played set can name it; `memory_rid` is the hold's reply, from the
+        # frame or the bridge, beside `hold_id` (which _pump_member compares
+        # as it always did and is left exactly as it was).
+        self.line_rid = None
+        self.memory_rid = None
 
     def begin_hold(self, response_id=None) -> None:
         self.mode = "holding"
@@ -177,6 +184,7 @@ class _MemberState:
         self.play_start = None
         self.play_end = None
         self.text = []
+        self.line_rid = None
 
     def hold(self, ev: dict) -> None:
         if ev["type"] == "agent_audio":
@@ -213,6 +221,118 @@ def _timer(owner):
     getattr because several runner methods are exercised on bare test doubles
     that never had one; instrumentation must not be what breaks them."""
     return getattr(owner, "_timing", None) or _NULL_TIMER
+
+
+# ── room memory hygiene (pipeline 2026-10-01a) ──────────────────────────────
+#
+# The runner's half: what was heard, and so what a room character's own
+# conversation may keep (the bridge's half is in voice/realtime.py, see
+# room_cut_memory). Module-level and reached through getattr, like _timer,
+# because adopt_member, _cancel_stale_holds and _advance_play_cursor are
+# exercised unbound on bare test doubles that have none of this state.
+
+# The reasons for which a reply is deleted as never played. Should it begin to
+# play after all (a stale hold the pump spliced in when the floor reached it),
+# the deletion still waiting for its done is withdrawn (_mark_played).
+_UNPLAYED_REASONS = ("hold_dropped", "rebrief_cancel", "unvoiced")
+
+# How long past the transcript grace a cut kept for a finalize waits for one
+# with the line's text before it is let go (_arm_cut_expiry).
+_CUT_EXPIRY_MARGIN_S = 2.0
+
+
+async def _memory_forget(owner, agent_id, rid, *, reason="hold_dropped",
+                         why="", text=None) -> Optional[str]:
+    """Delete reply `rid` from `agent_id`'s conversation: it was never
+    played. Returns the bridge's answer ("sent", "deferred", ...), None when
+    nothing was asked. Never raises; a double without the runner's memory
+    state is left alone."""
+    fn = getattr(owner, "_forget_unplayed", None)
+    if fn is None or not rid:
+        return None
+    try:
+        return await fn(agent_id, rid, reason=reason, why=why, text=text)
+    except Exception:  # noqa: BLE001 - memory hygiene must never cost a turn
+        return None
+
+
+def _mark_played(owner, agent_id, rid) -> None:
+    """Note that reply `rid`'s audio has begun to reach the page: from here
+    on it was heard, and is never deleted as unplayed. An unplayed-deletion
+    already requested for it and still waiting is withdrawn, and said so."""
+    played = getattr(owner, "_played_rids", None)
+    if played is None or not rid or rid in played:
+        return
+    played[rid] = time.time()
+    while len(played) > 256:
+        played.pop(next(iter(played)))
+    handled = getattr(owner, "_memory_handled", None) or {}
+    reason = handled.get(rid)
+    if reason not in _UNPLAYED_REASONS:
+        return
+    try:
+        room = getattr(owner, "room", None)
+        rt = room.session_for(agent_id) if room is not None else None
+        cancel = getattr(rt, "cancel_memory_op", None)
+        withdrawn = bool(cancel(rid)) if cancel is not None else False
+        if withdrawn:
+            handled.pop(rid, None)
+        owner.session.store.event(
+            "member_memory_skipped", agent_id=agent_id,
+            segment=getattr(owner, "segment", None), response_id=rid,
+            reason=reason,
+            why="played_after_request" if withdrawn else "played_after_delete")
+    except Exception:  # noqa: BLE001 - never on the audio path's account
+        pass
+
+
+def _heard_share(text: str, heard_s: float, total_s: float) -> tuple:
+    """(heard_text, heard_words, words): playback_cut's own share of a line's
+    words for `heard_s` of its `total_s` on the playback clock, with "…"
+    when the tail was cut. The formula _cut_last_played has always written."""
+    words = (text or "").split()
+    n = (len(words) if total_s <= 0
+         else min(len(words), int(len(words) * heard_s / total_s)))
+    return (" ".join(words[:n]) + ("\u2026" if n < len(words) else "")), n, len(words)
+
+
+def _memory_turn_fields(response_id: Optional[str], plan: dict) -> dict:
+    """assistant_turn's memory hygiene fields (pipeline 2026-10-01a): the
+    reply, what the character kept of it ("whole", or "replaced" by /
+    "deleted" for want of the heard words) and what the others were told
+    ("generated", "heard", "none"), as decided when the turn is written;
+    `memory_text` the words kept and `told_text` the words told, from the
+    playback clock (`memory_estimate` says how)."""
+    return {"response_id": response_id, "memory": plan["memory"],
+            "told": plan["told"],
+            **({"memory_text": plan["mem_text"]}
+               if plan["memory"] == "replaced" else {}),
+            **({"told_text": plan["told_text"]}
+               if plan["told"] == "heard" else {}),
+            **({"memory_estimate": plan["estimate"]}
+               if plan["cut"] is not None else {})}
+
+
+def _cut_share(text: str, reason: Optional[str], heard_s: float,
+               total_s: float) -> tuple:
+    """_heard_share for a cut's line, except a line queued behind the one
+    cut (`cut_queued`): the page dropped it before any of it played, so
+    nothing of it was heard, whatever its length on the clock."""
+    if reason == "cut_queued":
+        words = len((text or "").split())
+        return ("\u2026" if words else ""), 0, words
+    return _heard_share(text, heard_s, total_s)
+
+
+def _accepts_kw(fn, name: str) -> bool:
+    """Whether `fn` takes keyword `name`, as _ask_again asks of a bridge that
+    may be a test's fake."""
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 def _reply_end(ev: Optional[dict]) -> dict:
@@ -1106,6 +1226,18 @@ class RealtimeVoiceSessionRunner:
         # record. The room never tells a member its own line (exclude=), so
         # neither does this check.
         self._recent_told: List[tuple] = []
+        # Room memory hygiene (pipeline 2026-10-01a; see _memory_forget).
+        # `_played_rids`: reply id -> when its audio first reached the page,
+        # so a reply that was heard is never deleted as unplayed.
+        # `_lines`: (agent id, reply id) -> a finalized line (text, what its
+        # colleagues were told, what its character kept), for a cut that
+        # lands after the turn was written. `_line_cuts`: a cut that landed
+        # BEFORE it was, for the finalize to apply. `_memory_handled`: reply
+        # id -> reason, so one reply gets one operation.
+        self._played_rids: Dict[str, float] = {}
+        self._lines: Dict[tuple, dict] = {}
+        self._line_cuts: Dict[tuple, dict] = {}
+        self._memory_handled: Dict[str, str] = {}
         self._floor = asyncio.Lock()
         # Set when the room's scribe pump ends under a live encounter. The
         # scribe is the ONLY participant transcript channel in a room, so past
@@ -2387,6 +2519,23 @@ class RealtimeVoiceSessionRunner:
         try:
             async for ev in rt.events():
                 etype = ev["type"]
+                if etype in ("memory_op", "memory_op_error", "memory_op_late",
+                             "memory_op_waited", "memory_op_skipped"):
+                    # Room memory hygiene (pipeline 2026-10-01a): the outcome
+                    # of an operation on this member's conversation, written
+                    # down and nothing else. First, like cancelled_output
+                    # below: none of it is output, and the floor branch
+                    # further down would read any non-output frame arriving
+                    # with the floor as the end of a held reply.
+                    self._record_memory_event(agent.id, ev)
+                    continue
+                if etype == "memory_reply_unplayed":
+                    # A reply the bridge discarded as it was named (a cut in
+                    # a retry's window): never relayed, never a hold.
+                    await _memory_forget(self, agent.id, ev.get("response_id"),
+                                         reason="cut_floor_holder",
+                                         why=ev.get("why") or "cut_before_named")
+                    continue
                 if etype == "cancelled_output":
                     # See _pump_events. Handled before everything below: it is
                     # not output of the reply now streaming, and the floor and
@@ -2471,6 +2620,9 @@ class RealtimeVoiceSessionRunner:
                 # the room for the full turn timeout.
                 if state["suppressing"] and has_floor:
                     state["suppressing"] = False
+                    # The hold's reply, named before the drop (memory, below).
+                    out_rid = st.hold_id or st.memory_rid
+                    out_text = "".join(state["held"]) or st.held_text()
                     # Ours is about to splice this hold in itself (below), so
                     # the mirror is spent. Left at "holding" it would be
                     # adopted a second time by the next _grant and the
@@ -2485,6 +2637,16 @@ class RealtimeVoiceSessionRunner:
                         # belong to, and announcing one here would put a line
                         # the participant never heard into the transcript.
                         state["held"] = []
+                        # ...nor a line in the character's own memory: a grant
+                        # that did not come through adopt_member (the silence
+                        # probe's give_floor) reached a suppressed reply only
+                        # at its end, and none of it was played (pipeline
+                        # 2026-10-01a). Only at its done, when nothing more of
+                        # it can be relayed; refused if any of it was played.
+                        if etype == "response_done":
+                            await _memory_forget(self, agent.id, out_rid,
+                                                 why="floor_at_end",
+                                                 text=out_text)
                     # The head of this line, spoken before the floor reached it.
                     # It used to be dropped, and the turn was then written with
                     # text="" and transcript_missing True while 1.5 s of the
@@ -2513,6 +2675,10 @@ class RealtimeVoiceSessionRunner:
                                 "agent_id": agent.id,
                                 "agent_name": agent.name,
                             })
+                        # The spliced reply is the hold's (memory hygiene:
+                        # the played set and a cut name it by this).
+                        st.line_rid = (out_rid or ev.get("response_id")
+                                       or st.line_rid)
                     if held:
                         buf.append(held)
                         await self._send({
@@ -2561,6 +2727,20 @@ class RealtimeVoiceSessionRunner:
                              "agent_transcript") and not has_floor:
                     if not state["suppressing"]:
                         state["suppressing"] = True
+                        # Memory hygiene (pipeline 2026-10-01a): this reply,
+                        # by name, from the frame or else the bridge's reply
+                        # in flight (a whole-line transcript names none).
+                        crid = getattr(rt, "_response_created_id", None)
+                        new_rid = ev.get("response_id") or (
+                            crid if isinstance(crid, str) else None)
+                        old_rid = st.hold_id or st.memory_rid
+                        if (st.mode in ("holding", "held_done") and old_rid
+                                and old_rid != new_rid):
+                            # A hold nobody adopted or dropped, overwritten
+                            # by this one: it was never played either.
+                            await _memory_forget(self, agent.id, old_rid,
+                                                 why="superseded",
+                                                 text=st.held_text())
                         # The same moment, in origin/main's vocabulary: this
                         # member is HOLDING a reply nobody asked for. _grant
                         # and _cancel_stale_holds read that, and
@@ -2568,6 +2748,7 @@ class RealtimeVoiceSessionRunner:
                         # is an answer to the participant's current utterance
                         # or a stale reaction to a colleague.
                         st.begin_hold(ev.get("response_id"))
+                        st.memory_rid = new_rid
                         self.session.store.event(
                             "unsolicited_response_suppressed", agent_id=agent.id
                         )
@@ -2639,6 +2820,8 @@ class RealtimeVoiceSessionRunner:
                             "agent_id": agent.id,
                             "agent_name": agent.name,
                         })
+                    # The reply this audio is (memory hygiene, 10-01a).
+                    st.line_rid = ev.get("response_id") or st.line_rid
                     self.session.store.append_assistant_audio(ev["pcm"], agent_id=agent.id)
                     state["audio_bytes"] = state.get("audio_bytes", 0) + len(ev["pcm"])
                     self._advance_play_cursor(agent.id, st, ev["pcm"])
@@ -2699,6 +2882,7 @@ class RealtimeVoiceSessionRunner:
                         state["finalized"] = False   # see agent_audio above
                         state["settled"] = asyncio.Event()   # see agent_audio above
                         st.new_turn()   # see the agent_audio branch below
+                        st.line_rid = ev.get("response_id")   # see agent_audio
                         await self._send({
                             "type": "assistant_started",
                             "agent_id": agent.id,
@@ -2959,6 +3143,10 @@ class RealtimeVoiceSessionRunner:
                                 ev.get("audio_unterminated")),
                             retried=bool(ev.get("retried")),
                             reply_end=_reply_end(ev),
+                            # The reply this turn is, for memory hygiene: the
+                            # bridge names it on a current done; a synthetic
+                            # done names none, and the clock's does.
+                            response_id=ev.get("response_id") or st.line_rid,
                         )
                     )
 
@@ -3030,9 +3218,18 @@ class RealtimeVoiceSessionRunner:
                                      audio_unterminated: bool = False,
                                      retried: bool = False,
                                      reply_end: Optional[dict] = None,
-                                     cut_response_id: Optional[str] = None
+                                     cut_response_id: Optional[str] = None,
+                                     response_id: Optional[str] = None
                                      ) -> None:
         """Grace-wait for a member's transcript, then close the turn.
+
+        `cut_response_id` is the reply a barge-in cut off as the bridge
+        named it, and is what the turn's text may be recovered from
+        (_text_from_cancelled_output) exactly as before; `response_id` is
+        the reply this turn is, for memory hygiene (pipeline 2026-10-01a),
+        which a barge-in in the window after the reply's done can know only
+        from the playback clock. Kept apart so the text recovery never sees
+        an id it did not see before.
 
         Runs as its own task so the pump's async-for keeps advancing and can
         deliver the late transcript deltas this loop is waiting for.
@@ -3106,7 +3303,8 @@ class RealtimeVoiceSessionRunner:
         await self._finalize_member(agent, text, interrupted=interrupted,
                                     audio_bytes=audio_bytes,
                                     audio_unterminated=audio_unterminated,
-                                    retried=retried, reply_end=reply_end)
+                                    retried=retried, reply_end=reply_end,
+                                    response_id=response_id or cut_response_id)
 
     async def _advance_from_tool(self, agent_id: Optional[str] = None, rt=None,
                                  ev: Optional[dict] = None) -> None:
@@ -3166,12 +3364,18 @@ class RealtimeVoiceSessionRunner:
         RealtimeVoiceSessionRunner._note_play_span(self, start, self._play_cursor)
         if st is not None:
             st.play_end = self._play_cursor
+            # Room memory hygiene: this reply has been heard from now on.
+            _mark_played(self, agent_id, getattr(st, "line_rid", None))
         self._note_played({
             "agent_id": agent_id,
             "start": st.play_start if st is not None else start,
             "end": self._play_cursor,
             "text": "".join(st.text) if st is not None and st.text else
                     (self._last_played or {}).get("text", ""),
+            # Which reply is playing, so a cut after its turn can name it
+            # (rooms only; a 1:1 turn passes no member state).
+            **({"response_id": getattr(st, "line_rid", None)}
+               if st is not None else {}),
         })
 
     def _note_played(self, line: dict) -> None:
@@ -3225,6 +3429,8 @@ class RealtimeVoiceSessionRunner:
             self._play_cursor = start + len(pcm) / 32000.0
             RealtimeVoiceSessionRunner._note_play_span(self, start, self._play_cursor)
             st.play_end = self._play_cursor
+            # The adopt path's play clock: heard from now on (10-01a).
+            _mark_played(self, agent.id, getattr(st, "line_rid", None))
             self.session.store.append_assistant_audio(pcm, agent_id=agent.id)
             await self._send_bytes(pcm)
             if self.room:
@@ -3240,6 +3446,8 @@ class RealtimeVoiceSessionRunner:
         held = st.take_held()
         st.mode = "live"
         await self._announce(agent, st)
+        # The adopted reply is the hold's (memory hygiene, 10-01a).
+        st.line_rid = st.hold_id or getattr(st, "memory_rid", None)
         self.session.store.event(
             "held_reply_adopted", agent_id=agent.id,
             held_seconds=round(len(b"".join(c for k, c in held if k == "audio")) / 32000, 1),
@@ -3254,6 +3462,12 @@ class RealtimeVoiceSessionRunner:
         agent = next((a for a in self._resolve_agents() if a.id == agent_id), None)
         if st is None or agent is None:
             return False
+        # The hold's reply and words, named before any drop below clears them:
+        # a hold that is not adopted was never played, and is deleted from
+        # the character's conversation (memory hygiene, pipeline 2026-10-01a;
+        # _memory_forget, which refuses a reply that was played after all).
+        hold_rid = st.hold_id or getattr(st, "memory_rid", None)
+        hold_text = st.held_text()
         if st.mode in ("holding", "held_done") and st.hold_started_at < self._speech_started_at:
             # Began before the participant's current utterance: it is a
             # reaction to a colleague's audio, not an answer to the question.
@@ -3261,8 +3475,15 @@ class RealtimeVoiceSessionRunner:
             if st.mode == "holding":
                 st.mode = "discarding"
             self.session.store.event("stale_held_reply_dropped", agent_id=agent_id)
+            # A hold still streaming may yet be spliced in by the pump once
+            # the floor reaches it; the delete then waits for its done, and
+            # is withdrawn if any of it plays first (_mark_played).
+            await _memory_forget(self, agent_id, hold_rid, why="stale",
+                                 text=hold_text)
             return False
         if st.mode in ("holding", "held_done") and self._refuse_hold(agent_id, st):
+            await _memory_forget(self, agent_id, hold_rid, why="refused",
+                                 text=hold_text)
             return False
         if st.mode == "holding":
             await self._flush_held(agent, st)
@@ -3271,6 +3492,8 @@ class RealtimeVoiceSessionRunner:
             if time.time() - st.done_at > float(os.getenv("HELD_REPLY_TTL", "12")):
                 st.drop("stale")
                 self.session.store.event("unsolicited_response_suppressed", agent_id=agent_id)
+                await _memory_forget(self, agent_id, hold_rid, why="expired",
+                                     text=hold_text)
                 return False
             await self._flush_held(agent, st)
             await self._finish_live(agent, st)
@@ -3320,15 +3543,18 @@ class RealtimeVoiceSessionRunner:
         text = "".join(st.text).strip()
         st.text = []
         st.announced = False
+        rid = getattr(st, "line_rid", None) or st.hold_id
         self._note_played({
             "agent_id": agent.id, "start": st.play_start, "end": st.play_end, "text": text,
+            "response_id": rid,
         })
         # The audio that was relayed for it (_flush_held counted it on the
         # same clock). Omitted, this path wrote audio_ms 0 for every adopted
         # completed reply, however much of it the participant heard.
-        await self._finalize_member(agent, text, audio_bytes=st.relayed_bytes)
+        await self._finalize_member(agent, text, audio_bytes=st.relayed_bytes,
+                                    response_id=rid)
 
-    def _cut_last_played(self) -> None:
+    def _cut_last_played(self, now: Optional[float] = None) -> Optional[dict]:
         """Write a playback_cut for the line still playing on the page
         (_last_played, on the playback clock): heard_seconds / total_seconds
         of that turn, and roughly the words that fit in what was heard, BESIDE
@@ -3337,8 +3563,14 @@ class RealtimeVoiceSessionRunner:
         The latest line is not always the one playing: one not yet begun is
         queued behind an earlier line, and that earlier line is the one the
         participant cut off (issue #48 (c): it was written as the queued
-        line, heard 0.0, and the line actually cut had no cut at all)."""
-        now = time.time()
+        line, heard 0.0, and the line actually cut had no cut at all).
+
+        Returns that cut, with the unrounded seconds and the reply it names,
+        for memory hygiene (_memory_after_cut, pipeline 2026-10-01a); None
+        when nothing has played. The event is exactly what it always was.
+        `now` is the barge-in's instant, so the lines queued behind this one
+        (_queued_cuts) are read on the same clock reading."""
+        now = time.time() if now is None else now
         lp = self._last_played or {}
         if (lp.get("start") or 0.0) > now:
             lp = next((line for line in reversed(self._played_lines)
@@ -3348,17 +3580,19 @@ class RealtimeVoiceSessionRunner:
         if lp.get("start") is not None:
             heard = max(0.0, now - lp["start"])
         total = (lp.get("end") or 0) - (lp.get("start") or 0)
-        words = (lp.get("text") or "").split()
-        heard_words = (len(words) if total <= 0
-                       else min(len(words), int(len(words) * heard / total)))
+        heard_text, _n, _words = _heard_share(lp.get("text") or "", heard, total)
         self.session.store.event(
             "playback_cut", agent_id=lp.get("agent_id"),
             segment=self.segment,
             heard_seconds=round(heard, 1),
             total_seconds=round(total, 1),
-            heard_text=" ".join(words[:heard_words])
-                       + ("\u2026" if heard_words < len(words) else ""),
+            heard_text=heard_text,
         )
+        if not lp:
+            return None
+        return {"agent_id": lp.get("agent_id"),
+                "response_id": lp.get("response_id"),
+                "heard_s": heard, "total_s": total}
 
     def _play_clock_fields(self, st) -> dict:
         """This turn's span on the server's playback clock, for a room's
@@ -3376,12 +3610,14 @@ class RealtimeVoiceSessionRunner:
         return {"play_clock_start": round(st.play_start - started, 3),
                 "play_clock_end": round(end - started, 3)}
 
-    def _heard_seconds(self, st) -> float:
-        """How much of this turn's audio the participant has actually heard."""
+    def _heard_seconds(self, st, now: Optional[float] = None) -> float:
+        """How much of this turn's audio the participant has actually heard
+        (by `now`, the moment of a cut, when given)."""
         if st.play_start is None:
             return 0.0
         end = st.play_end if st.play_end is not None else st.play_start
-        return max(0.0, min(end, time.time()) - st.play_start)
+        now = time.time() if now is None else now
+        return max(0.0, min(end, now) - st.play_start)
 
     async def _finish_interrupted(self, agent, st) -> None:
         """Close a turn the participant cut off, keeping only what was heard.
@@ -3403,6 +3639,555 @@ class RealtimeVoiceSessionRunner:
             "assistant_interrupted", agent_id=agent.id, heard_seconds=round(heard_s, 1),
         )
         await self._finalize_member(agent, text, interrupted=True)
+
+    # ── room memory hygiene (pipeline 2026-10-01a) ─────────────────────────
+    #
+    # The policy half (the bridge's RealtimeVoiceSession.forget_reply is the
+    # mechanism): which replies a room character's own conversation must lose
+    # because the participant never heard them, and which words of a cut line
+    # it keeps. Every entry point is guarded the way the room's own calls are
+    # ("a dead member must not eat a turn"): a failure here is written down at
+    # most, and never costs a turn, the pump, the microphone or the floor.
+
+    def _memory_policy(self, rt) -> tuple:
+        """(cut_memory, told_text) for a line of `rt`'s character: the knobs,
+        in a room on the gpt route; 30a's ("keep", "generated") anywhere
+        else, every 1:1 encounter included."""
+        if getattr(self, "room", None) is None or rt is None:
+            return "keep", "generated"
+        if not _realtime.room_memory_active(getattr(rt, "model", "") or ""):
+            return "keep", "generated"
+        return _realtime.room_cut_memory(), _realtime.room_told_text()
+
+    def _memory_effective(self, rt) -> bool:
+        """Whether this room member runs anything other than 30a
+        (room_memory_effective on its model). Only then do its records carry
+        the 10-01a fields (assistant_turn response_id / memory / told / ...,
+        nudge_role on a retry), so that at keep / generated / user a room's
+        records are 30a's as well as its frames, and on native-audio and
+        Gemini rooms they always are."""
+        if getattr(self, "room", None) is None or rt is None:
+            return False
+        try:
+            return _realtime.room_memory_effective(getattr(rt, "model", "") or "")
+        except Exception:  # noqa: BLE001 - a record field must never cost a turn
+            return False
+
+    def _memory_skip(self, agent_id, rid, reason, why, **extra) -> None:
+        try:
+            self.session.store.event(
+                "member_memory_skipped", agent_id=agent_id,
+                segment=self.segment, response_id=rid, reason=reason, why=why,
+                **extra)
+        except Exception:  # noqa: BLE001
+            pass
+
+    @staticmethod
+    def _memory_release(rt, rid) -> None:
+        fn = getattr(rt, "release_memory", None)
+        if fn is not None and rid:
+            try:
+                fn(rid)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _memory_context(self, agent_id, **fields) -> dict:
+        """What the bridge echoes back on the outcome, so the record is
+        written in one place (_record_memory_event)."""
+        try:
+            interaction = self._interaction_id()
+        except Exception:  # noqa: BLE001
+            interaction = None
+        return {"agent_id": agent_id, "segment": self.segment,
+                "interaction": interaction, **fields}
+
+    def _sweep_line_cuts(self) -> None:
+        """A cut that waited a minute for a finalize that never came (a stale
+        done for a reply already announced does not finalize it) is written
+        down rather than kept. The backstop: _arm_cut_expiry normally lets
+        such a cut go within seconds."""
+        cuts = getattr(self, "_line_cuts", None)
+        if not cuts:
+            return
+        now = time.time()
+        for key, cut in list(cuts.items()):
+            if now - cut.get("at", now) > 60.0:
+                cuts.pop(key, None)
+                self._memory_skip(key[0], key[1], cut.get("reason"),
+                                  "never_finalized")
+        while len(cuts) > 32:
+            key = next(iter(cuts))
+            cut = cuts.pop(key)
+            self._memory_skip(key[0], key[1], cut.get("reason"), "never_finalized")
+
+    def _arm_cut_expiry(self, key, cut) -> None:
+        """Let a cut kept for a finalize go, with the reservation that holds
+        its member's reply-starts, if no finalize with the line's text has
+        taken it within the transcript grace and two seconds more: a line
+        written without text (`no_text`, once an empty finalize was seen) or
+        never written at all (`no_finalize`, a finalize that found nothing
+        and returned early) must not hold the member for
+        REALTIME_MEMORY_OP_TTL_S, nor lie in _line_cuts for a minute."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        delay = (float(os.getenv("TRANSCRIPT_GRACE_SECONDS", "3"))
+                 + _CUT_EXPIRY_MARGIN_S)
+
+        def fire():
+            try:
+                cuts = getattr(self, "_line_cuts", None) or {}
+                if cuts.get(key) is not cut:
+                    return
+                cuts.pop(key, None)
+                rt = (self.room.session_for(key[0])
+                      if self.room is not None else None)
+                self._memory_release(rt, key[1])
+                self._memory_skip(key[0], key[1], cut.get("reason"),
+                                  "no_text" if cut.get("empty_seen")
+                                  else "no_finalize")
+            except Exception:  # noqa: BLE001 - never on the loop's account
+                pass
+
+        loop.call_later(max(0.0, delay), fire)
+
+    async def _forget_unplayed(self, agent_id, rid, *, reason, why,
+                               text=None) -> Optional[str]:
+        """Delete reply `rid`, which was never played, from `agent_id`'s own
+        conversation: a suppressed hold refused, stale, expired, superseded
+        or dropped when the participant spoke (`hold_dropped`); a reply a
+        re-brief cancelled (`rebrief_cancel`); a line blanked as narration
+        with no audio relayed (`unvoiced`); a floor holder's reply cut off
+        before any of it reached the page (`cut_floor_holder`). `text` is the
+        generated text as the runner held it, for the record. Returns the
+        bridge's answer, or None when nothing was asked of it."""
+        rt = self.room.session_for(agent_id) if self.room is not None else None
+        if self._memory_policy(rt)[0] != "replace":
+            return None
+        if rid in self._played_rids:
+            self._memory_skip(agent_id, rid, reason, "played", dropped_why=why or None)
+            return "played"
+        if rid in self._memory_handled:
+            return "already"
+        fn = getattr(rt, "forget_reply", None)
+        if fn is None:
+            return None
+        self._memory_handled[rid] = reason
+        while len(self._memory_handled) > 256:
+            self._memory_handled.pop(next(iter(self._memory_handled)))
+        state = await fn(rid, keep_text=None, context=self._memory_context(
+            agent_id, reason=reason, why=why or None, heard_text="",
+            heard_ms=0 if reason == "cut_floor_holder" else None,
+            heard_basis=None, generated_text=text or None, told="none",
+            told_corrected=[]))
+        if state in ("untracked", "unknown", "closed"):
+            self._memory_skip(agent_id, rid, reason, state, dropped_why=why or None)
+        return state
+
+    async def _apply_line_memory(self, agent_id, rid, *, heard_text, heard_ms,
+                                 basis, reason, generated_text, told,
+                                 told_corrected, wpm=None, wpm_source=None) -> None:
+        """Replace a cut line in its character's conversation by the words
+        the participant heard, or delete it when they heard none."""
+        while len(self._memory_handled) > 256:
+            self._memory_handled.pop(next(iter(self._memory_handled)))
+        rt = self.room.session_for(agent_id) if self.room is not None else None
+        fn = getattr(rt, "forget_reply", None)
+        if fn is None:
+            self._memory_skip(agent_id, rid, reason, "untracked")
+            return
+        state = await fn(rid, keep_text=heard_text or None,
+                         context=self._memory_context(
+                             agent_id, reason=reason, why=None,
+                             heard_text=heard_text or "", heard_ms=heard_ms,
+                             heard_basis=basis, wpm=wpm, wpm_source=wpm_source,
+                             generated_text=generated_text, told=told,
+                             told_corrected=sorted(told_corrected or [])))
+        if state in ("untracked", "unknown", "closed", "already"):
+            # "already": its items are being, or were, handled by another
+            # operation (an unplayed-reply deletion that got there first);
+            # this cut's heard words are not put back on top of it.
+            self._memory_skip(agent_id, rid, reason, state)
+
+    async def _correct_told(self, agent_id, rid, line, heard_text, *,
+                            reason=None) -> List[str]:
+        """Correct a line its colleagues were told in full (GroupRoom
+        .correct_told); _strip_context_echo learns the heard version too.
+        Returns the colleagues a correction was sent (or queued) for; every
+        other colleague is written down with why (member_memory_skipped,
+        reason told_correction): it keeps the line as told."""
+        fn = getattr(self.room, "correct_told", None) if self.room is not None else None
+        if fn is None:
+            return []
+        try:
+            states = await fn(line.get("agent_name") or agent_id,
+                              agent_id, rid, heard_text)
+        except Exception as exc:  # noqa: BLE001 - a dead member must not eat a turn
+            states = {}
+            self._memory_skip(None, rid, "told_correction", "raised",
+                              speaker_id=agent_id, cut_reason=reason,
+                              message=redact_key(repr(exc))[:200])
+        if isinstance(states, dict):
+            corrected = sorted(a for a, s in states.items()
+                               if s in ("sent", "deferred"))
+            for aid, s in sorted(states.items()):
+                if s not in ("sent", "deferred"):
+                    self._memory_skip(aid, rid, "told_correction", s,
+                                      speaker_id=agent_id, cut_reason=reason)
+        else:
+            corrected = sorted(states or [])
+        if heard_text:
+            self._recent_told = (self._recent_told + [(agent_id, heard_text)])[-6:]
+        return corrected
+
+    async def _memory_cut_floor_holder(self, speaking_id, speaker, cut_rid,
+                                       fin_rid, holder_heard, cut_st,
+                                       heard_s: Optional[float] = None) -> None:
+        """Case 1: the participant cut off the floor holder. Called from the
+        barge-in itself, before the turn's finalize is spawned.
+
+        Nothing of its reply reached the page (`cut_rid` named, nothing
+        announced: grant to first audio was 5.09 s on gpt in the P5 S4A sim):
+        the reply is deleted outright, here, since no finalize would ever
+        reach it (an empty reply returns before _finalize_member_inner).
+
+        Some of it did: the cut is kept for the finalize (_line_cuts), with
+        the milliseconds heard on the playback clock at the instant of the
+        cut, `heard_s`, the same reading the playback_cut beside it writes
+        (0 for a reply still queued behind the line in front); and the reply
+        is RESERVED on the speaker's bridge, synchronously, because the floor
+        can come back before the finalize decides: the cancelled reply's
+        stale response_done releases it at once (_pump_member's barged_in
+        branch) while the finalize is still waiting for the transcript and
+        telling the colleagues. A reply-start to this member waits for the
+        decision (REALTIME_MEMORY_SETTLE_S at most)."""
+        cut_mem, told_mode = self._memory_policy(speaker)
+        if cut_mem == "keep" and told_mode == "generated":
+            return
+        if cut_rid and not holder_heard:
+            if cut_mem == "replace":
+                await self._forget_unplayed(speaking_id, cut_rid,
+                                            reason="cut_floor_holder",
+                                            why="not_relayed")
+            return
+        if not holder_heard:
+            return
+        if not fin_rid:
+            self._memory_skip(speaking_id, None, "cut_floor_holder",
+                              "no_response_id")
+            return
+        if heard_s is None:
+            heard_s = 0.0
+            if (cut_st is not None and cut_st.play_start is not None
+                    and cut_st.play_start <= time.time()):
+                heard_s = self._heard_seconds(cut_st)
+        heard_ms = int(round(max(0.0, heard_s) * 1000))
+        self._sweep_line_cuts()
+        key = (speaking_id, fin_rid)
+        cut = self._line_cuts[key] = {
+            "reason": "cut_floor_holder", "heard_ms": heard_ms,
+            "basis": "play_clock_wpm", "at": time.time(), "single": True}
+        if cut_mem == "replace":
+            reserve = getattr(speaker, "reserve_memory", None)
+            if reserve is not None:
+                reserve(fin_rid, context=self._memory_context(
+                    speaking_id, reason="cut_floor_holder"))
+        self._arm_cut_expiry(key, cut)
+
+    def _queued_cuts(self, now: float, exclude=()) -> List[dict]:
+        """The lines on the playback clock that had not begun to play when
+        the participant cut in: queued on the page behind the line cut (a
+        routed turn's first reply granted while the last turn's line was
+        still playing, finished at ~5x real time; issue #48's shape). The
+        page drops them all at assistant_interrupted, so nobody heard any of
+        them, and each is a cut with nothing heard (`cut_queued`): deleted
+        from its character's conversation, its told notes deleted. The floor
+        holder's own reply (case 1's, by `exclude`) is never one of these."""
+        out: List[dict] = []
+        seen = {r for r in (exclude or ()) if r}
+        for line in list(self._played_lines) + [self._last_played or {}]:
+            rid = line.get("response_id")
+            start, end = line.get("start"), line.get("end")
+            if (not rid or rid in seen or not line.get("agent_id")
+                    or start is None or start <= now):
+                continue
+            seen.add(rid)
+            out.append({"agent_id": line["agent_id"], "response_id": rid,
+                        "heard_s": 0.0,
+                        "total_s": max(0.0, (end or start) - start)})
+        return out
+
+    def _queued_cuts_safe(self, now: float, cut=None, *exclude) -> List[dict]:
+        """_queued_cuts at a barge-in, never at the microphone's cost: the
+        line cut and the floor holder's own reply are never among them."""
+        try:
+            return self._queued_cuts(
+                now, exclude=((cut or {}).get("response_id"),) + exclude)
+        except Exception:  # noqa: BLE001
+            return []
+
+    async def _memory_after_cuts(self, cut, queued) -> None:
+        """Cases 2 and 2b at one barge-in: the line playing, then each line
+        queued behind it, every one guarded on its own."""
+        for c, reason in ([(cut, "cut_still_playing")]
+                          + [(q, "cut_queued") for q in queued or ()]):
+            if not c:
+                continue
+            try:
+                await self._memory_after_cut(c, reason=reason)
+            except Exception:  # noqa: BLE001 - never at the microphone's cost
+                pass
+
+    async def _memory_after_cut(self, cut, *, reason) -> None:
+        """Case 2: the participant talked over a line still playing on the
+        page after its turn was over on the server (_cut_last_played's cut),
+        or a line queued behind it (`cut_queued`, nothing heard). The line
+        keeps playback_cut's share of its words in its character's
+        conversation, and a colleague already told it in full has the told
+        note corrected in place (deleted, when nothing was heard). A line not
+        yet finalized (a barge-in between its response.done and the end of
+        its finalize) gets the cut kept for that finalize, and a reservation
+        as in case 1."""
+        if not cut or not cut.get("agent_id") or self.room is None:
+            return
+        aid, rid = cut["agent_id"], cut.get("response_id")
+        rt = self.room.session_for(aid)
+        cut_mem, told_mode = self._memory_policy(rt)
+        if cut_mem == "keep" and told_mode == "generated":
+            return
+        if not rid:
+            self._memory_skip(aid, None, reason, "no_response_id")
+            return
+        heard_s = float(cut.get("heard_s") or 0.0)
+        total_s = float(cut.get("total_s") or 0.0)
+        queued = reason == "cut_queued"
+        if not queued and (total_s <= 0 or heard_s >= total_s):
+            self._memory_skip(aid, rid, reason, "heard_whole")
+            return
+        key = (aid, rid)
+        line = self._lines.get(key)
+        if line is not None and not line.get("text"):
+            self._memory_skip(aid, rid, reason, "no_text")
+            return
+        if line is None:
+            self._sweep_line_cuts()
+            kept = self._line_cuts[key] = {
+                "reason": reason, "heard_s": heard_s, "total_s": total_s,
+                "basis": "play_clock_share", "at": time.time(), "single": False}
+            if cut_mem == "replace":
+                reserve = getattr(rt, "reserve_memory", None)
+                if reserve is not None:
+                    reserve(rid, context=self._memory_context(aid, reason=reason))
+            self._arm_cut_expiry(key, kept)
+            return
+        heard_text, n, words = _cut_share(line.get("text") or "", reason,
+                                          heard_s, total_s)
+        if n >= words:
+            self._memory_skip(aid, rid, reason, "heard_whole")
+            return
+        heard_text = heard_text if n else ""
+        corrected: List[str] = []
+        if told_mode == "heard" and line.get("told") == "generated":
+            if line.get("telling"):
+                # Its tell is still going out; corrected the moment it is.
+                line["correct_after_tell"] = heard_text
+                line["correct_reason"] = reason
+            else:
+                corrected = await self._correct_told(aid, rid, line, heard_text,
+                                                     reason=reason)
+                line["told_corrected"] = corrected
+            line["told"] = "heard" if heard_text else "none"
+        if cut_mem == "replace" and rid not in self._memory_handled:
+            self._memory_handled[rid] = reason
+            await self._apply_line_memory(
+                aid, rid, heard_text=heard_text,
+                heard_ms=int(round(heard_s * 1000)), basis="play_clock_share",
+                reason=reason, generated_text=line.get("text"),
+                told=line.get("told"), told_corrected=corrected)
+
+    def _memory_plan(self, agent, text, response_id, retry_head, *,
+                     unvoiced: bool = False) -> dict:
+        """What a finalized line leaves in its character's conversation and
+        tells its colleagues: synchronous, consuming a cut that landed before
+        this finalize, and keeping the line for one that lands after.
+
+        The heard words of a floor holder's line are the words of the line
+        that fit in the playback clock's milliseconds at the moment of the
+        cut (the reading its playback_cut writes), at the character's own
+        speaking rate: turn_audio.heard_estimate with _heard_wpm, the
+        estimator and rate of assistant_turn's heard_text, on the playback
+        clock instead of the bytes relayed (the gateway delivers about five
+        times faster than real time, so the relayed bytes are most of the
+        line by the time a participant cuts in, and assistant_turn's
+        heard_text is the upper bound it always was). A line cut while still
+        playing keeps playback_cut's own share; a queued one keeps nothing.
+        What a character keeps is on the record as memory_text here and
+        heard_text / heard_ms on member_memory_replaced. Any failure keeps
+        the line whole and tells it as before.
+
+        `unvoiced`: the line was blanked as narration with no audio and its
+        reply deleted from the character's conversation (_finalize_member),
+        so the turn says memory "deleted"."""
+        told0 = "generated" if (getattr(self, "room", None) is not None
+                                and text) else "none"
+        plan = {"memory": "whole", "told_text": text, "told": told0,
+                "mem_text": None, "heard_ms": None, "basis": None,
+                "cut": None, "estimate": {}, "effective": False}
+        try:
+            rt = self.room.session_for(agent.id) if self.room is not None else None
+            plan["effective"] = self._memory_effective(rt)
+            cut_mem, told_mode = self._memory_policy(rt)
+            key = (agent.id, response_id) if response_id else None
+            cuts = getattr(self, "_line_cuts", None)
+            cut = cuts.get(key) if (key and cuts) else None
+            if cut is not None and not text and not cut.get("single"):
+                # Written without text, and the other finalize of this line
+                # (the barge-in's and the pump's share one buffer) may still
+                # bring it: left for that one, and let go by _arm_cut_expiry
+                # if none does.
+                cut["empty_seen"] = True
+                cut = None
+            elif cut is not None:
+                cuts.pop(key, None)
+                why = "no_text" if not text else ("retry_head" if retry_head else None)
+                if why:
+                    self._memory_release(rt, response_id)
+                    self._memory_skip(agent.id, response_id, cut["reason"], why)
+                    cut = None
+            if cut is not None:
+                if cut["reason"] == "cut_floor_holder":
+                    wpm, src = self._heard_wpm(agent.id)
+                    est = turn_audio.heard_estimate(text, cut["heard_ms"], wpm)
+                    mem_text, n, total = (est["heard_text"], est["heard_words"],
+                                          est["generated_words"])
+                    heard_ms = int(cut["heard_ms"])
+                    estimate = {"basis": "play_clock_wpm", "heard_ms": heard_ms,
+                                "heard_words": n, "generated_words": total,
+                                "wpm": est["wpm"], "wpm_source": src}
+                else:
+                    mem_text, n, total = _cut_share(text, cut["reason"],
+                                                    cut["heard_s"], cut["total_s"])
+                    heard_ms = int(round(cut["heard_s"] * 1000))
+                    estimate = {"basis": "play_clock_share", "heard_ms": heard_ms,
+                                "total_ms": int(round(cut["total_s"] * 1000)),
+                                "heard_words": n, "generated_words": total}
+                if n >= total:
+                    self._memory_release(rt, response_id)
+                    self._memory_skip(agent.id, response_id, cut["reason"],
+                                      "heard_whole")
+                else:
+                    mem_text = mem_text if n else ""
+                    plan.update(cut=cut, heard_ms=heard_ms,
+                                basis=estimate["basis"], estimate=estimate)
+                    if cut_mem == "replace":
+                        plan["memory"] = "replaced" if mem_text else "deleted"
+                        plan["mem_text"] = mem_text
+                    else:
+                        self._memory_release(rt, response_id)
+                    if told_mode == "heard":
+                        plan["told_text"] = mem_text
+            elif unvoiced and cut_mem == "replace":
+                plan["memory"] = "deleted"
+            told_text = plan["told_text"]
+            plan["told"] = ("none" if not (self.room is not None and told_text)
+                            else ("heard" if told_text != text else "generated"))
+            lines = self._lines
+            if key and text:
+                lines.pop(key, None)
+                lines[key] = {"text": text, "told": plan["told"],
+                              "memory": plan["memory"], "agent_name": agent.name,
+                              "telling": bool(self.room is not None and told_text)}
+            elif key and key not in lines:
+                # Written with no text: a later cut has no words to keep, and
+                # says so (never over a line that has its text).
+                lines[key] = {"text": "", "told": "none", "memory": plan["memory"],
+                              "agent_name": agent.name, "telling": False}
+            while len(lines) > 32:
+                lines.pop(next(iter(lines)))
+        except Exception:  # noqa: BLE001 - the turn is written whatever happens here
+            plan = {"memory": "whole", "told_text": text, "told": told0,
+                    "mem_text": None, "heard_ms": None, "basis": None,
+                    "cut": None, "estimate": {}, "effective": plan.get("effective", False)}
+        return plan
+
+    def _record_memory_event(self, agent_id, ev) -> None:
+        """A bridge memory outcome (see RealtimeVoiceSession.events), as the
+        record's event. Never raises: this runs inside the member pump."""
+        try:
+            etype = ev.get("type")
+            ctx = ev.get("context") or {}
+            store = self.session.store
+            if etype == "memory_op" and ev.get("kind") == "reply":
+                store.event(
+                    "member_memory_replaced",
+                    agent_id=ctx.get("agent_id") or agent_id,
+                    segment=ctx.get("segment", self.segment),
+                    interaction=ctx.get("interaction"),
+                    response_id=ev.get("response_id"),
+                    reason=ctx.get("reason"), why=ctx.get("why"),
+                    action=ev.get("action"),
+                    items_deleted=ev.get("items_deleted") or [],
+                    items_refused=ev.get("items_refused") or [],
+                    items_kept=ev.get("items_kept") or [],
+                    partial=bool(ev.get("partial")),
+                    inserted_item_id=ev.get("inserted_item_id"),
+                    previous_item_id=ev.get("previous_item_id"),
+                    placement=ev.get("placement"),
+                    insert_skipped=ev.get("insert_skipped"),
+                    heard_text=ctx.get("heard_text") or "",
+                    heard_ms=ctx.get("heard_ms"),
+                    heard_basis=ctx.get("heard_basis"),
+                    wpm=ctx.get("wpm"), wpm_source=ctx.get("wpm_source"),
+                    generated_text=ctx.get("generated_text"),
+                    deleted_text=ev.get("deleted_text") or "",
+                    told=ctx.get("told"),
+                    told_corrected=ctx.get("told_corrected") or [],
+                    deferred=bool(ev.get("deferred")),
+                    waited_s=ev.get("waited_s"))
+            elif etype == "memory_op":
+                deleted = ev.get("items_deleted") or ev.get("items_refused") or [None]
+                store.event(
+                    "told_line_corrected", agent_id=agent_id,
+                    segment=self.segment, speaker_id=ctx.get("speaker_id"),
+                    response_id=ev.get("response_id"), action=ev.get("action"),
+                    deleted_item_id=deleted[0],
+                    refused=bool(ev.get("items_refused")),
+                    inserted_item_id=ev.get("inserted_item_id"),
+                    previous_item_id=ev.get("previous_item_id"),
+                    placement=ev.get("placement"),
+                    insert_skipped=ev.get("insert_skipped"),
+                    text=ctx.get("text") or "")
+            elif etype == "memory_op_error":
+                store.event(
+                    "member_memory_error", agent_id=agent_id,
+                    segment=self.segment, op=ev.get("op"),
+                    item_id=ev.get("item_id"), response_id=ev.get("response_id"),
+                    reason=ctx.get("reason") or ctx.get("kind"),
+                    code=ev.get("code"), param=ev.get("param"),
+                    message=redact_key(str(ev.get("message") or "")),
+                    recovery=ev.get("recovery"),
+                    retry_item_id=ev.get("retry_item_id"))
+            elif etype == "memory_op_skipped":
+                store.event(
+                    "member_memory_skipped", agent_id=agent_id,
+                    segment=self.segment, response_id=ev.get("response_id"),
+                    reason=ctx.get("reason") or ev.get("kind"),
+                    why=ev.get("why"), items_sent=ev.get("items_sent") or [])
+            elif etype == "memory_op_late":
+                store.event(
+                    "member_memory_late", agent_id=agent_id,
+                    segment=self.segment, before=ev.get("before"),
+                    pending=ev.get("pending") or [],
+                    waited_s=ev.get("waited_s"),
+                    own_task=bool(ev.get("own_task")))
+            elif etype == "memory_op_waited":
+                store.event(
+                    "member_memory_waited", agent_id=agent_id,
+                    segment=self.segment, before=ev.get("before"),
+                    waited_s=ev.get("waited_s"))
+        except Exception:  # noqa: BLE001 - a record must never end the pump
+            pass
 
     async def _pump_scribe(self, rt) -> None:
         """Relay the scribe's participant transcripts; swallow everything else.
@@ -3550,8 +4335,10 @@ class RealtimeVoiceSessionRunner:
                                audio_bytes: int = 0,
                                audio_unterminated: bool = False,
                                retried: bool = False,
-                               reply_end: Optional[dict] = None) -> None:
+                               reply_end: Optional[dict] = None,
+                               response_id: Optional[str] = None) -> None:
         """Close one character's turn in a group room."""
+        raw_text = text
         text = _clean_agent_text(text)
         # origin/main df1ab83, and taken unconditionally: both are cheap, both
         # only fire on text, and both are the visible symptom of the deployed
@@ -3568,6 +4355,7 @@ class RealtimeVoiceSessionRunner:
         before_narration = text
         text = _strip_narration(text)
         deferral = False
+        blanked = None
         if _is_deferral(text):
             ms = turn_audio.audio_ms(audio_bytes)
             deferral = _keep_deferral(ms)
@@ -3575,6 +4363,7 @@ class RealtimeVoiceSessionRunner:
                                      text=text, audio_ms=ms, kept=deferral)
             if not deferral:
                 text = ""
+                blanked = "deferral"
         # A standalone direction may have been stripped in full. Retain its
         # original text for the diagnostic, while recording no spoken reply.
         direction_text = text or before_narration
@@ -3582,11 +4371,27 @@ class RealtimeVoiceSessionRunner:
             self.session.store.event("stage_direction_output",
                                      agent_id=agent.id, text=direction_text)
             text = ""
+            blanked = "stage_direction"
+        if (blanked and response_id and self.room is not None
+                and turn_audio.audio_ms(audio_bytes) <= 0):
+            # A line the record blanks as narration nobody heard (a deferral
+            # with no audio relayed, a stage direction) was still generated
+            # into the character's own conversation; none of it was played,
+            # so it is deleted there too (pipeline 2026-10-01a). One whose
+            # audio was relayed was heard, and stays.
+            forgot = await _memory_forget(self, agent.id, response_id,
+                                          reason="unvoiced", why=blanked,
+                                          text=(raw_text or "").strip())
+            unvoiced = forgot in ("sent", "deferred")
+        else:
+            unvoiced = False
         await self._finalize_member_inner(agent, text, interrupted=interrupted,
                                           audio_bytes=audio_bytes,
                                           audio_unterminated=audio_unterminated,
                                           retried=retried, reply_end=reply_end,
-                                          deferral=deferral)
+                                          deferral=deferral,
+                                          response_id=response_id,
+                                          unvoiced=unvoiced)
 
     async def _finalize_member_inner(self, agent, text: str,
                                      *, interrupted: bool = False,
@@ -3594,7 +4399,9 @@ class RealtimeVoiceSessionRunner:
                                      audio_unterminated: bool = False,
                                      retried: bool = False,
                                      reply_end: Optional[dict] = None,
-                                     deferral: bool = False) -> None:
+                                     deferral: bool = False,
+                                     response_id: Optional[str] = None,
+                                     unvoiced: bool = False) -> None:
         """Close one character's turn in a group room.
 
         This was lost in a refactor once, and the symptom was total: every pump
@@ -3603,6 +4410,14 @@ class RealtimeVoiceSessionRunner:
 
         `interrupted` marks a turn the participant talked over, exactly as
         _finalize_turn marks it in a 1:1 encounter.
+
+        `response_id` is the reply this turn is. On a room on the gpt route
+        it is what memory hygiene (pipeline 2026-10-01a) works on: a cut that
+        landed before this finalize (_line_cuts) is applied here, the
+        character keeping only the heard words and its colleagues being told
+        only those; the line is kept (_lines) for a cut that lands after.
+        The director's history, the transcript broadcast, steering_pair and
+        assistant_turn `text` keep the full generated line, as before.
         """
         text, retry_head = self._retry_head_if_empty(agent.id, text, retried)
         # Read the slot ONCE. It used to be read here for the `opening` test and
@@ -3731,6 +4546,11 @@ class RealtimeVoiceSessionRunner:
         # known; the cursor itself was advanced chunk by chunk as it was sent.
         if (self._last_played or {}).get("agent_id") == agent.id:
             self._last_played["text"] = text
+        # What this character's own conversation keeps of the line, and what
+        # its colleagues are told (memory hygiene, pipeline 2026-10-01a).
+        # Decided here, synchronously, before anything below awaits.
+        plan = self._memory_plan(agent, text, response_id, retry_head,
+                                 unvoiced=unvoiced)
         self.session.store.event(
             "assistant_turn", agent_id=agent.id, text=text,
             segment=self.segment, transcript_missing=not text,
@@ -3744,6 +4564,19 @@ class RealtimeVoiceSessionRunner:
             # clock's estimate, and the two are kept apart on purpose.
             **heard,
             deferral=deferral,
+            # The reply, what the character kept of it ("whole", or
+            # "replaced" by / "deleted" for want of the heard words) and what
+            # the others were told ("generated", "heard", "none"), as decided
+            # now; a cut that lands after this, while the line is still
+            # playing, is a later member_memory_replaced for the same
+            # response_id. `memory_text` is the words kept and `told_text` the
+            # words told, from the playback clock (`memory_estimate` says
+            # how), never the relayed-audio `heard_text` above, which is an
+            # upper bound. Only where the room runs anything but 30a
+            # (_memory_effective): at keep / generated / user, and on every
+            # native-audio and Gemini room, the turn is 30a's.
+            **(_memory_turn_fields(response_id, plan)
+               if plan.get("effective") else {}),
         )
         if not retry_head:
             self._note_speech_rate(agent.id, text, delivered_ms,
@@ -3761,13 +4594,59 @@ class RealtimeVoiceSessionRunner:
         # (where colleagues are still fanned as audio) this is a no-op and the
         # measurement our fan-out counters were taken on is unchanged.
         # _recent_told is what _strip_context_echo checks a reply against.
-        if self.room is not None and text:
-            self._recent_told = (self._recent_told + [(agent.id, text)])[-6:]
+        # What is told is plan["told_text"]: the line, or, for a line the
+        # participant cut off, the words they heard (ROOM_TOLD_TEXT), and
+        # nothing at all when they heard none of it.
+        told_text = plan["told_text"]
+        if self.room is not None and told_text:
+            self._recent_told = (self._recent_told + [(agent.id, told_text)])[-6:]
             try:
-                await self.room.tell(agent.name, text, exclude=agent.id)
+                tell = self.room.tell
+                if response_id and _accepts_kw(tell, "response_id"):
+                    await tell(agent.name, told_text, exclude=agent.id,
+                               response_id=response_id)
+                else:
+                    await tell(agent.name, told_text, exclude=agent.id)
             except Exception:  # noqa: BLE001 - a dead member must not eat a turn
                 pass
+        line = (getattr(self, "_lines", None) or {}).get(
+            (agent.id, response_id)) if response_id else None
+        if line is not None and line.get("telling"):
+            line["telling"] = False
+            pending = line.pop("correct_after_tell", None)
+            if pending is not None:
+                # Cut while still playing during the tell above: the note
+                # just told in full is corrected now (_memory_after_cut).
+                try:
+                    corrected = await self._correct_told(
+                        agent.id, response_id, line, pending,
+                        reason=line.pop("correct_reason", None))
+                    line["told_corrected"] = corrected
+                except Exception:  # noqa: BLE001 - see the tell above
+                    pass
+        if (plan["cut"] is not None and response_id
+                and plan["memory"] in ("replaced", "deleted")):
+            # Before the floor can move (_response_done below); the bridge
+            # sends it at the reply's response.done, and holds this member's
+            # next reply-start until then (the reservation the barge-in made).
+            try:
+                self._memory_handled[response_id] = plan["cut"]["reason"]
+                await self._apply_line_memory(
+                    agent.id, response_id, heard_text=plan["mem_text"],
+                    heard_ms=plan["heard_ms"], basis=plan["basis"],
+                    reason=plan["cut"]["reason"], generated_text=text,
+                    told=plan["told"], told_corrected=[],
+                    wpm=plan["estimate"].get("wpm"),
+                    wpm_source=plan["estimate"].get("wpm_source"))
+            except Exception:  # noqa: BLE001 - memory must never cost a turn
+                pass
         st = self._member_states.get(agent.id)
+        if st is not None and st.mode in ("held_done", "discarding"):
+            # A hold left over beside this turn was never played (10-01a).
+            hrid = st.hold_id or getattr(st, "memory_rid", None)
+            if hrid and hrid != response_id:
+                await _memory_forget(self, agent.id, hrid, why="turn_finalized",
+                                     text=st.held_text())
         if st is not None and st.mode in ("live", "held_done", "discarding"):
             st.drop("turn_finalized")
         await self._send({"type": "assistant_done", "agent_id": agent.id})
@@ -4595,6 +5474,14 @@ class RealtimeVoiceSessionRunner:
                     await self.room.rebrief(
                         instructions_for=lambda a: self._instructions_for(a)
                     )
+                    # A reply the re-brief cancelled was never played: it is
+                    # not the character's either (memory hygiene, pipeline
+                    # 2026-10-01a; one that was played is kept and said so).
+                    for aid, crid in dict(getattr(
+                            self.room, "last_rebrief_cancelled", None) or {}).items():
+                        await _memory_forget(self, aid, crid,
+                                             reason="rebrief_cancel",
+                                             why="rebrief")
                     # A kept room keeps its sessions, but not necessarily its
                     # relay pumps: a member whose own end_conversation ended its
                     # pump would be mute for the whole of the next interaction
@@ -4813,8 +5700,11 @@ class RealtimeVoiceSessionRunner:
                 voices_offered=realtime_voices(),
                 # For the model this session opened, not only the configured
                 # one: input rate, transcriber, reply cap and resamplers are
-                # per family (see voice.realtime.audio_provenance).
-                **provenance(self.rt.model)
+                # per family (see voice.realtime.audio_provenance). `room`:
+                # whether this encounter has a room at all, so that
+                # room_memory.effective is False on every 1:1 encounter,
+                # where nothing of 10-01a runs (see room_memory_provenance).
+                **provenance(self.rt.model, room=bool(self._scenario_is_group))
             )
             # FIRST_COMPLETED + cancel, not gather: the watchdog loops on
             # _closed and _client_to_model's return paths do not set it, so a
@@ -5228,10 +6118,19 @@ class RealtimeVoiceSessionRunner:
                     # the model's whole reply and flags the shortfall, so a
                     # rater can tell a truncated DELIVERY from a bad reply.
                     self._barged = True
-                    self._cut_last_played()
+                    cut_now = time.time()
+                    cut = self._cut_last_played(now=cut_now)
+                    queued = self._queued_cuts_safe(cut_now, cut)
                     self._play_cursor = time.time()
                     RealtimeVoiceSessionRunner._cut_play_spans(self, self._play_cursor)
                     await self._send({"type": "assistant_interrupted"})
+                    # The line cut off keeps only what was heard of it, in its
+                    # character's conversation and as its colleagues were told
+                    # it, and a line queued behind it on the page, which the
+                    # page has just dropped unheard, keeps nothing (memory
+                    # hygiene, pipeline 2026-10-01a). After the page has been
+                    # told, and never at the microphone's expense.
+                    await self._memory_after_cuts(cut, queued)
                 if barged:
                     if self.room is not None and self.room.speaking:
                         # A real meeting yields to an interjection: stop the
@@ -5239,6 +6138,10 @@ class RealtimeVoiceSessionRunner:
                         # talked over.
                         speaking_id = self.room.speaking
                         speaker = self.room.session_for(speaking_id)
+                        # The instant of the cut: what the participant had
+                        # heard is read at it, once, for the playback_cut
+                        # below and for memory hygiene alike.
+                        cut_now = time.time()
                         # The reply being cut off, named before the cancel
                         # forgets it (see _text_from_cancelled_output).
                         cut_rid = getattr(speaker, "_response_created_id", None)
@@ -5249,6 +6152,9 @@ class RealtimeVoiceSessionRunner:
                                 await speaker.cancel_response()
                             except Exception:  # noqa: BLE001
                                 pass
+                        # Moved up from the playback_cut below, which still
+                        # reads it: memory hygiene needs it first.
+                        cut_st = self._member_states.get(speaking_id)
                         # Cancelling is only the first half, and for a long
                         # time it was the only half here. A cancelled response
                         # may never produce a response.done, and the member
@@ -5279,6 +6185,23 @@ class RealtimeVoiceSessionRunner:
                             (a for a in self._resolve_agents()
                              if a.id == speaking_id), None
                         )
+                        # The reply this turn is, for memory hygiene: the one
+                        # cut, or, in the window after its done when the
+                        # bridge has forgotten it, the one on the playback
+                        # clock. Kept apart from cut_rid, which alone feeds the
+                        # text recovery (unchanged).
+                        fin_rid = cut_rid or (getattr(cut_st, "line_rid", None)
+                                              if cut_st is not None else None)
+                        # Whether the floor holder's reply has begun to PLAY
+                        # (it can be queued behind the line in front), and
+                        # how much of it was heard at the cut: the figure the
+                        # playback_cut below writes and the character keeps.
+                        holder_playing = bool(
+                            holder_heard and cut_st is not None
+                            and cut_st.play_start is not None
+                            and cut_st.play_start <= cut_now)
+                        holder_heard_s = (self._heard_seconds(cut_st, now=cut_now)
+                                          if holder_playing else 0.0)
                         if entry is not None and agent is not None:
                             buf, state = entry
                             announced_now = state["announced"]
@@ -5302,6 +6225,7 @@ class RealtimeVoiceSessionRunner:
                                     retried=bool(getattr(
                                         speaker, "_retry_in_flight", False)),
                                     cut_response_id=cut_rid,
+                                    response_id=fin_rid,
                                 )
                             )
                         else:
@@ -5310,6 +6234,18 @@ class RealtimeVoiceSessionRunner:
                             # There is no turn to write, but the floor still
                             # has to come back or the room goes quiet.
                             self._response_done.set()
+                        # Case 1 of memory hygiene (pipeline 2026-10-01a):
+                        # after the latches above, and with the finalize
+                        # spawned but not yet run, so what it reads
+                        # (_line_cuts) and what holds this member's next reply
+                        # (the bridge's reservation) are in place before it,
+                        # or anything else, can run.
+                        try:
+                            await self._memory_cut_floor_holder(
+                                speaking_id, speaker, cut_rid, fin_rid,
+                                holder_heard, cut_st, heard_s=holder_heard_s)
+                        except Exception:  # noqa: BLE001 - never the mic's cost
+                            pass
                         # What the participant had actually heard of the line
                         # they cut off, from the playback clock. Recorded
                         # beside the turn, not in place of it.
@@ -5332,23 +6268,32 @@ class RealtimeVoiceSessionRunner:
                         # line the participant actually cut had none (issue
                         # #48 (c), s_1790278989_77ee7e at 182 s and 214 s).
                         # _cut_last_played names the line playing.
-                        cut_st = self._member_states.get(speaking_id)
-                        if (holder_heard and cut_st is not None
-                                and cut_st.play_start is not None
-                                and cut_st.play_start <= time.time()):
+                        cut = None
+                        if holder_playing:
                             self.session.store.event(
                                 "playback_cut", agent_id=speaking_id,
                                 segment=self.segment,
-                                heard_seconds=round(
-                                    self._heard_seconds(cut_st), 1),
+                                heard_seconds=round(holder_heard_s, 1),
                                 total_seconds=round(
                                     (cut_st.play_end or cut_st.play_start)
                                     - cut_st.play_start, 1),
                             )
-                        elif (time.time() < self._play_cursor
+                        elif (cut_now < self._play_cursor
                                 and (self._last_played or {}).get("agent_id")
                                 is not None):
-                            self._cut_last_played()
+                            cut = self._cut_last_played(now=cut_now)
+                        # The floor holder's reply is left out of the queued
+                        # lines only where case 1 above owns it: its reply
+                        # named (cut_rid) or announced (holder_heard). With
+                        # neither, fin_rid is the playback clock's line_rid,
+                        # which until the new reply is announced still names
+                        # the holder's PREVIOUS line; queued behind the line
+                        # cut, the page has just dropped it unheard, and left
+                        # out here it stayed whole in the holder's own
+                        # conversation (review of 2026-10-01).
+                        queued = self._queued_cuts_safe(
+                            cut_now, cut,
+                            fin_rid if (cut_rid or holder_heard) else None)
                         if cut_st is not None:
                             # This turn is closed now; see the pump's
                             # response_done finalize for why the mark must
@@ -5358,6 +6303,11 @@ class RealtimeVoiceSessionRunner:
                         self._play_cursor = time.time()
                         RealtimeVoiceSessionRunner._cut_play_spans(self, self._play_cursor)
                         await self._send({"type": "assistant_interrupted"})
+                        # The line playing, when it was not the floor
+                        # holder's (or its turn was already over), and the
+                        # lines queued behind it: see the no-floor branch
+                        # above.
+                        await self._memory_after_cuts(cut, queued)
                     elif self._speaking:
                         # Barge-in: stop the agent's remaining audio, but RECORD
                         # the turn as far as it got. The words already spoken
@@ -7696,9 +8646,13 @@ class RealtimeVoiceSessionRunner:
         absorbed into the running response and the fallback request comes
         back empty. Cancelling frees the model for the participant's turn.
         """
-        for aid, st in self._member_states.items():
+        for aid, st in list(self._member_states.items()):
             if self.room is None or self.room.speaking == aid:
                 continue
+            # Never played, so never the character's (memory hygiene,
+            # pipeline 2026-10-01a): named before the drop clears the hold.
+            hold_rid = st.hold_id or getattr(st, "memory_rid", None)
+            hold_text = st.held_text()
             if st.mode == "holding":
                 st.drop("participant_speaking")
                 st.mode = "discarding"
@@ -7709,8 +8663,12 @@ class RealtimeVoiceSessionRunner:
                     except Exception:  # noqa: BLE001
                         pass
                 self.session.store.event("hold_cancelled_participant_speaking", agent_id=aid)
+                await _memory_forget(self, aid, hold_rid,
+                                     why="participant_speaking", text=hold_text)
             elif st.mode == "held_done":
                 st.drop("participant_speaking")
+                await _memory_forget(self, aid, hold_rid,
+                                     why="participant_speaking", text=hold_text)
 
     def _split_turn_continues(self) -> bool:
         """True when a barge-in is the participant resuming their own turn
@@ -9013,9 +9971,19 @@ class RealtimeVoiceSessionRunner:
             return False
         # The prompt the model was given in place of the participant's voice,
         # on the record: the line that follows answers it, not the participant.
+        # In a room, with the role it was given (ROOM_NUDGE_ROLE, 10-01a).
+        room_fields = ({"nudge_role": getattr(rt, "nudge_role", None) or "user"}
+                       if self._memory_effective(rt) else {})
         self.session.store.event(
             "audio_retry", nudge=getattr(_realtime, "AUDIO_RETRY_NUDGE", None),
-            **fields)
+            **room_fields, **fields)
+        if (self.room is not None
+                and self._memory_policy(rt)[0] == "replace"):
+            # The reply being re-asked keeps its unheard tail in the
+            # character's conversation: not one of the cases memory hygiene
+            # handles (pipeline 2026-10-01a), and said so rather than silent.
+            self._memory_skip(agent_id, ev.get("response_id"), "retry_head",
+                              "retry_head")
         # Kept until the retried turn closes, so the outcome can say whether
         # what came back was THIS line again or merely a line.
         self._retry_lost[agent_id] = {"text": ev.get("text") or "",
@@ -9116,6 +10084,11 @@ class RealtimeVoiceSessionRunner:
                 fields["replay_ms"] = len(speech) // 32
             elif not await rt.retry_response(nudge=nudge):
                 why = "bridge_refused"
+        if self._memory_effective(rt) and why is None and how == "nudge":
+            # The role the room member's nudge went as (ROOM_NUDGE_ROLE,
+            # pipeline 2026-10-01a), where the room runs anything but 30a; a
+            # 1:1 record, and a 30a room's, are unchanged.
+            fields["nudge_role"] = getattr(rt, "nudge_role", None) or "user"
         self.session.store.event(
             "reply_retry", why=why, asked=why is None, how=how,
             nudge=nudge if why is None else None, **fields)

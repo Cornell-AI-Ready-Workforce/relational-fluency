@@ -469,6 +469,10 @@ def build(session_dir: Path) -> Dict[str, Any]:
             "cancelled_output": realtime.get("cancelled_output"),
             "agent_transcript_items": realtime.get("agent_transcript_items"),
             "record": realtime.get("record"),
+            # Room memory hygiene (pipeline 2026-10-01a): what a gpt room
+            # character's own conversation keeps of lines nobody heard; None
+            # before it.
+            "room_memory": realtime.get("room_memory"),
             # Who opens a conversation and which clock each limit counts on
             # (pipeline 2026-09-28b: the participant); None before it.
             "opening": realtime.get("opening"),

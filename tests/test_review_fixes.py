@@ -398,7 +398,7 @@ def test_the_record_carries_every_knob_block(tmp_path):
     record = encounter_record.build(sdir)
     rp = record["provenance"]
     for key in ("turn_gate", "pacing", "record", "cancelled_output",
-                "agent_transcript_items", "pipeline_version",
+                "agent_transcript_items", "room_memory", "pipeline_version",
                 "room_pacing_version"):
         assert rp[key] == prov[key], key
 
@@ -570,9 +570,11 @@ def _gemini_turn(model, *, old_before_speech):
         session.director.route = route
         session.append_agent("dan", "The date is locked.")
         if old_before_speech:
-            # A transcript that landed after its own turn gave up waiting.
+            # A transcript that landed after its own turn gave up waiting,
+            # a second before this turn's speech began. Dated back rather
+            # than slept for: Windows' clock reads 10 ms apart as one instant.
             await runner._record_user_turn("Old words.")
-            await asyncio.sleep(0.01)
+            runner._last_unrouted_at -= 1.0
         runner._speech_started_at = time.time()      # this turn's speech
         if not old_before_speech:
             # Transcribed while the participant was still talking.

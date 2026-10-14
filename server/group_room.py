@@ -247,6 +247,18 @@ class GroupRoom:
         # True acked, False refused or never sent, None unknowable, or the
         # exception. gather(return_exceptions=True) used to drop all of it.
         self.last_rebrief: Dict[str, object] = {}
+        # agent id -> the reply the last rebrief() cancelled on that member,
+        # where the session had named it. The runner deletes each from that
+        # character's conversation unless it was played (pipeline 2026-10-01a,
+        # ROOM_CUT_MEMORY): nobody heard it, and it is not the character's.
+        self.last_rebrief_cancelled: Dict[str, str] = {}
+        # (speaker id, response id) -> {member id: {"item_id", "text"}}: the
+        # told notes of a line, by the id each member's note was created
+        # under, so a line cut while still playing after it was told in full
+        # can be corrected in each colleague's conversation (correct_told).
+        # Only where ROOM_TOLD_TEXT is "heard" and the member tracks items;
+        # bounded to the last 32 lines.
+        self._told: Dict[tuple, Dict[str, dict]] = {}
 
     # ── what the family can do ─────────────────────────────────────────────
     @property
@@ -401,6 +413,24 @@ class GroupRoom:
         model = self._model or _configured_model()
         return self._tools if member_tools_allowed(model) else []
 
+    def _configure_memory(self, rt) -> None:
+        """Room memory hygiene on one MEMBER (pipeline 2026-10-01a; see
+        voice/realtime.py room_cut_memory). On the gpt route the member's
+        bridge mirrors its conversation's items, which is what lets the
+        runner delete a reply nobody heard and put back the heard words of
+        one cut off, and its retry nudges become system items. Only where a
+        knob asks for it: with ROOM_CUT_MEMORY=keep, ROOM_TOLD_TEXT=generated
+        and ROOM_NUDGE_ROLE=user the member is exactly the 30a session, and
+        off the gpt route it always is. Assigned like `model` is in
+        _new_session, so a test factory's session takes it harmlessly. The
+        scribe is never configured: it holds nothing a character remembers."""
+        model = getattr(rt, "model", "") or self._model or _configured_model()
+        active = _realtime.room_memory_active(model)
+        rt.nudge_role = _realtime.room_nudge_role() if active else "user"
+        rt.track_items = bool(active and (
+            _realtime.room_cut_memory() == "replace"
+            or _realtime.room_told_text() == "heard"))
+
     async def open(self) -> None:
         async def start(agent):
             rt = self._new_session(
@@ -408,6 +438,8 @@ class GroupRoom:
                 voice=self._voice_for_agent(agent),
                 tools=self._member_tools(),
             )
+            # Before connect(): every item from the first one on is mirrored.
+            self._configure_memory(rt)
             await rt.connect(open_conversation=False)
             self.sessions[agent.id] = rt
 
@@ -600,8 +632,15 @@ class GroupRoom:
                     f"{getattr(rt, 'last_send_error', '') or 'send failed'}",
                 )
 
+    @staticmethod
+    def _told_note(speaker_name: str, text: str) -> str:
+        """The context note a colleague's line is told as (see tell)."""
+        return (f"(Context, not for you to repeat: {speaker_name} just said "
+                f"out loud to the group: \"{text}\")")
+
     async def tell(self, speaker_name: str, text: str, *,
-                   exclude: Optional[str] = None) -> None:
+                   exclude: Optional[str] = None,
+                   response_id: Optional[str] = None) -> None:
         """Give the text-relay members a colleague's FINISHED line, as text.
 
         The other half of hear()'s family gate. Where a member's row says
@@ -623,24 +662,98 @@ class GroupRoom:
         relay family NOTHING is ever fanned, so without counting a tell() the
         answer would be "no" on every single grant and every grant would take
         the scene-open branch. A told line is something heard.
+
+        `response_id` (the speaker's reply, pipeline 2026-10-01a) has each
+        member's note remembered under a name of the bridge's, on a member
+        that tracks its items and only while ROOM_TOLD_TEXT is "heard": the
+        line may yet turn out to have been cut off while it was still
+        playing, and the note is then corrected in place (correct_told). The
+        frame itself is 28b's either way, with no id and no event_id (see
+        RealtimeVoiceSession.inject_text).
         """
         if not text:
             return
-        note = (f"(Context, not for you to repeat: {speaker_name} just said "
-                f"out loud to the group: \"{text}\")")
+        note = self._told_note(speaker_name, text)
         targets = [
             (aid, rt) for aid, rt in self.sessions.items()
             if aid != exclude and relays_colleagues_as_text(
                 getattr(rt, "model", ""))
         ]
+        key = (exclude, response_id) if response_id else None
+        named = bool(key) and _realtime.room_told_text() == "heard"
+        # Only to a member that tracks items: a session that does not (a test
+        # double whose inject_text takes the text alone, among others) is
+        # never handed the keyword, or the tell would raise inside the gather
+        # below, go uncounted, and turn every later grant into a scene open.
+        ids = {aid: (_realtime.new_item_id("t")
+                     if named and getattr(rt, "track_items", False) else None)
+               for aid, rt in targets}
         results = await asyncio.gather(*(
-            rt.inject_text(note) for _, rt in targets
+            (rt.inject_text(note, item_id=ids[aid]) if ids[aid]
+             else rt.inject_text(note))
+            for aid, rt in targets
         ), return_exceptions=True)
         for (channel_id, _rt), result in zip(targets, results):
             if not isinstance(result, BaseException):
                 self._fanned_since_grant[channel_id] = (
                     self._fanned_since_grant.get(channel_id, 0) + len(note)
                 )
+                if ids[channel_id] and result:
+                    self._told.setdefault(key, {})[channel_id] = {
+                        "item_id": ids[channel_id], "text": text}
+        while len(self._told) > 32:
+            self._told.pop(next(iter(self._told)))
+
+    async def correct_told(self, speaker_name: str, speaker_id: str,
+                           response_id: Optional[str],
+                           heard_text: str) -> Dict[str, str]:
+        """Correct a line already told in full (pipeline 2026-10-01a): in each
+        colleague's conversation the told note of `response_id` is deleted
+        and the heard words told in its place, or nothing when nothing was
+        heard. Returns what happened per colleague told that line: the
+        bridge's state ("sent", "deferred" when it goes out at that member's
+        next quiet moment; "already", "closed", "unknown", "untracked"),
+        "gone" for a member whose session has left the room, "raised" for a
+        call that raised. Every colleague of the speaker this room tells as
+        text is in it: one of which no note of this line is known (told
+        without a name for it, by a member that does not track items or a
+        tell with no reply id, or never told, its socket gone) is "no_note",
+        so the runner can say so. Only the note of this one line is touched;
+        never a participant item, never another colleague's note, never the
+        same note twice; no failure here costs the turn."""
+        states: Dict[str, str] = {}
+        entries = self._told.get((speaker_id, response_id)) or {}
+        for aid, entry in sorted(entries.items()):
+            rt = self.sessions.get(aid)
+            fn = getattr(rt, "correct_item", None) if rt is not None else None
+            if rt is None:
+                states[aid] = "gone"
+                continue
+            if fn is None:
+                states[aid] = "untracked"
+                continue
+            if entry.get("corrected"):
+                states[aid] = "already"
+                continue
+            try:
+                state = await fn(
+                    entry["item_id"], role="user",
+                    text=(self._told_note(speaker_name, heard_text)
+                          if heard_text else None),
+                    context={"kind": "told_correction", "speaker_id": speaker_id,
+                             "response_id": response_id, "text": heard_text})
+            except Exception:  # noqa: BLE001 - a dead member must not kill the turn
+                states[aid] = "raised"
+                continue
+            states[aid] = str(state)
+            if state in ("sent", "deferred"):
+                entry["corrected"] = True
+                entry["text"] = heard_text
+        for aid, rt in sorted(self.sessions.items()):
+            if (aid != speaker_id and aid not in states
+                    and relays_colleagues_as_text(getattr(rt, "model", ""))):
+                states[aid] = "no_note"
+        return states
 
     # -- the floor ----------------------------------------------------------
     @staticmethod
@@ -1036,6 +1149,7 @@ class GroupRoom:
         # _note_grant in the runner). Replaced on every grant.
         self.last_grant = None
         failures_before = getattr(rt, "send_failures", 0)
+        settled = None      # the bridge memory_settled gated this grant on
         heard_something = self._fanned_since_grant.pop(agent_id, 0) > 0
         model = getattr(rt, "model", "") or self._model or _configured_model()
         try:
@@ -1091,6 +1205,21 @@ class GroupRoom:
                 await rt.request_response()
                 self.last_grant = {"agent_id": agent_id, "via": "text_prompt"}
             else:
+                # (The class through the module: tests replace this module's
+                # RealtimeVoiceSession name with session factories.)
+                if isinstance(rt, _realtime.RealtimeVoiceSession):
+                    # Room memory hygiene (pipeline 2026-10-01a): a memory
+                    # operation still owed on this member goes out before its
+                    # next reply, and the wait for it (REALTIME_MEMORY_SETTLE_S
+                    # at most) is taken HERE, ahead of the pad, not inside
+                    # commit_input between the pad and the commit, where what
+                    # the participant said meanwhile would be committed
+                    # behind the pad. Nothing pending, nothing waits. It is
+                    # the grant's only wait: neither its commit nor any
+                    # response.create below waits again, until the finally
+                    # after the grant's last frame (memory_grant_over).
+                    settled = rt
+                    await rt.memory_settled("commit")
                 await rt.send_audio(_SILENCE_PAD)
                 # A prior reply whose response.done was lost leaves
                 # _response_active stuck True; request_response() would then
@@ -1179,6 +1308,9 @@ class GroupRoom:
         except Exception:  # noqa: BLE001, a dead session must not kill the turn
             self.sessions.pop(agent_id, None)
             return None
+        finally:
+            if settled is not None:
+                settled.memory_grant_over()
         if (getattr(rt, "ws", True) is None
                 or getattr(rt, "send_failures", 0) > failures_before):
             await self._went_deaf(
@@ -1227,11 +1359,17 @@ class GroupRoom:
         # suppress unsolicited replies, which is the correct resting state
         # between turns and the state give_floor expects to start from.
         self.speaking = None
+        # What each cancel below stopped, named before the cancel forgets it
+        # (see last_rebrief_cancelled).
+        cancelled: Dict[str, str] = {}
 
         async def one(agent):
             rt = self.sessions.get(agent.id)
             if rt is None:
                 return None
+            crid = getattr(rt, "_response_created_id", None)
+            if isinstance(crid, str) and crid:
+                cancelled[agent.id] = crid
             await rt.cancel_response()
             return await rt.update_instructions(build(agent))
 
@@ -1244,6 +1382,7 @@ class GroupRoom:
             a.id: r for a, r in zip(self.agents, results)
             if a.id in self.sessions
         }
+        self.last_rebrief_cancelled = cancelled
 
     def session_for(self, agent_id: str) -> Optional[RealtimeVoiceSession]:
         return self.sessions.get(agent_id)

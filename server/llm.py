@@ -596,7 +596,38 @@ def text_client() -> AsyncAnthropic:
 #                text is kept otherwise, except a line in another script the
 #                check heard in English. A room routes only once the line is
 #                decided. Provenance turn_gate.participant_speech_check.
-PIPELINE_VERSION = "2026-09-30a"
+#   2026-10-01a  room memory hygiene, gpt route (the researchers' decision of
+#                2026-10-01: no generated-but-unheard reply stays in a
+#                character's own conversation). A line the participant cut
+#                off, on the floor or still playing after its turn, is
+#                replaced in that character's conversation by the words heard
+#                on the playback clock (every message item of the reply
+#                deleted after its response.done, function_call items kept;
+#                the heard words re-inserted in place once the deletes are
+#                answered; only deleted when nothing was heard); a line
+#                queued on the page behind the one cut, and so dropped
+#                unheard, is deleted; a reply that was never played (a
+#                suppressed hold refused, stale, expired, superseded or
+#                dropped; a reply a re-brief cancelled; a floor holder's reply
+#                cut before any of it reached the page; a line blanked as
+#                narration with no audio) is deleted; colleagues are told the
+#                heard words, and a line already told in full is corrected in
+#                place; retry and unanswered nudges to room members are system
+#                items. Item operations wait for any reply open on that member
+#                to end; a reply-start to a member waits up to
+#                REALTIME_MEMORY_SETTLE_S for an operation still pending
+#                there. Told notes keep 28b's frame (no item id).
+#                member_memory_replaced, told_line_corrected,
+#                member_memory_error / _skipped / _late / _waited;
+#                assistant_turn response_id, memory, told, memory_text,
+#                told_text, memory_estimate and nudge_role on a room's
+#                audio_retry / reply_retry, written only where a room runs
+#                anything but 30a. The director's history and assistant_turn
+#                text and heard_text are unchanged. ROOM_CUT_MEMORY=keep,
+#                ROOM_TOLD_TEXT=generated, ROOM_NUDGE_ROLE=user restore 30a's
+#                frames, behaviour and records (the speech check included);
+#                only provenance `room_memory` (`effective` false) says so.
+PIPELINE_VERSION = "2026-10-01a"
 ROOM_PACING_VERSION = "2026-09-29b"
 
 
@@ -608,18 +639,21 @@ def _voice_style_provenance():
         return None
 
 
-def provenance(model: Optional[str] = None) -> dict:
+def provenance(model: Optional[str] = None,
+               room: Optional[bool] = None) -> dict:
     """Recorded with each session so the record shows what served it.
 
     `model` is the realtime model the session actually opened; the audio
     fields (input rate, transcriber, reply cap, resamplers) are read for it
     from the bridge's own capability table. Omitted, they are read for the
-    configured REALTIME_MODEL, which is what /health reports.
+    configured REALTIME_MODEL, which is what /health reports. `room` is
+    whether the encounter has a room in it (the runner says; see
+    room_memory_provenance): False makes `room_memory.effective` False.
     """
     # Imported here, not at the top: server.voice.realtime imports this module.
     from .voice.realtime import (audio_provenance, bridge_provenance,
                                  pacing_provenance, record_provenance,
-                                 turn_gate_provenance)
+                                 room_memory_provenance, turn_gate_provenance)
 
     realtime = _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio")
     return {
@@ -651,6 +685,11 @@ def provenance(model: Optional[str] = None) -> dict:
         # The deferral rule and the heard_text estimate (pipeline
         # 2026-09-23f); see record_provenance.
         "record": record_provenance(),
+        # What a room character's own conversation keeps of lines nobody
+        # heard, and the role of a room's retry nudges (pipeline 2026-10-01a);
+        # see room_memory_provenance. `active` is False off the gpt route;
+        # `effective` is False there and on every encounter without a room.
+        "room_memory": room_memory_provenance(model or realtime, room=room),
         # Who opens a conversation, and which clock each limit counts on
         # (pipeline 2026-09-28b; see realtime_voice_session's "the
         # participant opens"). Before 28b a room's lead opened the scene and

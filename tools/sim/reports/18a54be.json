@@ -1,0 +1,237 @@
+{
+ "baseline": {
+  "realtime_model": "gpt-realtime-2.1",
+  "recorded": {
+   "build": "8c188a6",
+   "date": "2026-09-29",
+   "pipeline_version": "2026-09-28b",
+   "room_pacing_version": "2026-09-29b"
+  }
+ },
+ "build": "18a54be",
+ "build_from": "HEAD (its image contents differ from the pinned tag)",
+ "failures": [
+  "S1A: no baseline yet: not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790701657_de9f10) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes group rooms only and this is a 1:1 scenario, so its numbers are expected to hold, but a baseline compares one pipeline_version with itself. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline",
+  "S2A: no baseline yet: not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790701886_2a49cd) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes group rooms only and this is a 1:1 scenario, so its numbers are expected to hold, but a baseline compares one pipeline_version with itself. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline",
+  "S3A: no baseline yet: not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790702608_f13b59) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes what a gpt room character's own conversation keeps of lines nobody heard (cut lines replaced by their heard words, unplayed replies deleted, told lines corrected, system-role nudges) and can hold a member's reply-start for up to REALTIME_MEMORY_SETTLE_S, so these room numbers are a different experiment. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline",
+  "S4A: no baseline yet: not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790702824_ebffd3) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes what a gpt room character's own conversation keeps of lines nobody heard (cut lines replaced by their heard words, unplayed replies deleted, told lines corrected, system-role nudges) and can hold a member's reply-start for up to REALTIME_MEMORY_SETTLE_S, so these room numbers are a different experiment. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline"
+ ],
+ "generated_at": "2026-10-01T23:54:24Z",
+ "health": {
+  "build": "18a54be",
+  "pipeline_version": "2026-10-01a",
+  "realtime_model": "gpt-realtime-2.1",
+  "room_pacing_version": "2026-09-29b"
+ },
+ "passed": false,
+ "scenarios": {
+  "S1A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790701657_de9f10) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes group rooms only and this is a 1:1 scenario, so its numbers are expected to hold, but a baseline compares one pipeline_version with itself. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 11,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 8,
+    "lines_said": 8,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "18a54be",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-10-01a",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1790896956_a05abb",
+    "speech_end_to_first_played_s": {
+     "n": 9,
+     "p50": 1.993,
+     "p90": 2.427
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_retaliation_fork",
+     "t2_the_opening",
+     "t3_defensiveness",
+     "t4_half_concession"
+    ],
+    "triggers_fired": 4,
+    "turns_suppressed": {
+     "probe_pad": 2
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1790896956_a05abb"
+  },
+  "S2A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790701886_2a49cd) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes group rooms only and this is a 1:1 scenario, so its numbers are expected to hold, but a baseline compares one pipeline_version with itself. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 26,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 25,
+    "lines_heard": 25,
+    "lines_said": 25,
+    "participant_turns": 25,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "18a54be",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-10-01a",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1790897182_73d030",
+    "speech_end_to_first_played_s": {
+     "n": 25,
+     "p50": 1.775,
+     "p90": 2.153
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_the_opening",
+     "t2_rung1_no_budget",
+     "t3_rung2_everyone_stretched",
+     "t4_rung3_no_precedent",
+     "t5_rung4_the_package",
+     "t6_rung4_fairness"
+    ],
+    "triggers_fired": 6,
+    "turns_suppressed": {
+     "probe_pad": 1
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 1,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1790897182_73d030"
+  },
+  "S3A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790702608_f13b59) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes what a gpt room character's own conversation keeps of lines nobody heard (cut lines replaced by their heard words, unplayed replies deleted, told lines corrected, system-role nudges) and can hold a member's reply-start for up to REALTIME_MEMORY_SETTLE_S, so these room numbers are a different experiment. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 11,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 9,
+    "lines_said": 9,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "18a54be",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-10-01a",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1790897904_f2d436",
+    "speech_end_to_first_played_s": {
+     "n": 9,
+     "p50": 4.281,
+     "p90": 8.351
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_public_challenge",
+     "t2_jordans_flat_fine",
+     "t3_caseys_overload"
+    ],
+    "triggers_fired": 3,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 1,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1790897904_f2d436"
+  },
+  "S4A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on 2026-10-01a yet: the committed values (build 8c188a6, session s_1790702824_ebffd3) were recorded on pipeline 2026-09-28b / room pacing 2026-09-29b, and 10-01a changes what a gpt room character's own conversation keeps of lines nobody heard (cut lines replaced by their heard words, unplayed replies deleted, told lines corrected, system-role nudges) and can hold a member's reply-start for up to REALTIME_MEMORY_SETTLE_S, so these room numbers are a different experiment. The change was made offline, without a gateway run. Record it with: python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 29,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 23,
+    "lines_heard": 31,
+    "lines_said": 31,
+    "participant_turns": 31,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "18a54be",
+     "director_model": "nto.gemini-3.5-flash-lite",
+     "pipeline_version": "2026-10-01a",
+     "realtime_model": "gpt-realtime-2.1",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 1,
+    "session_id": "s_1790898142_2ce4ec",
+    "speech_end_to_first_played_s": {
+     "n": 27,
+     "p50": 4.476,
+     "p90": 11.772
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_priya_interrupted",
+     "t2_idea_relabelled",
+     "t3_decisions_close_with_priya_silent",
+     "t4_dan_claims_the_writeup"
+    ],
+    "triggers_fired": 4,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 1,
+    "voice_error_benign_cancel": 4,
+    "voice_error_messages": [
+     "room:chris: the gateway did not answer the retry for 8s; the turn was abandoned"
+    ]
+   },
+   "passed": false,
+   "session_id": "s_1790898142_2ce4ec"
+  }
+ },
+ "server": "http://127.0.0.1:57953"
+}

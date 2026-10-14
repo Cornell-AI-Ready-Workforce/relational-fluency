@@ -120,8 +120,9 @@ simultaneity is the instrument.
 
 Triggers fire in a fixed order and each maps to specific ESCI items. Examples:
 
-- **S1-A, interaction 1** — Riley: *"Sam presented your analysis again — third
-  time. Reply-all with the original file."* On hesitation: *"Or just let it go.
+- **S1-A, interaction 1** — Riley, gossiping rather than upset: *"Did you see
+  Sam this morning? Your analysis again, third time. You could just reply-all
+  with the original file."* On hesitation: *"Or just let it go.
   Not worth the drama."* Observe: retaliate, avoid, or commit to raising it.
 - **S1-A, interaction 2** — if the participant stays quiet, Sam probes; when
   raised, Sam turns defensive (*"I did most of the legwork anyway"*), then
