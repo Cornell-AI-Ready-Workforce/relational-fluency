@@ -1113,7 +1113,9 @@ def _link_probe_reason(request: Optional[Request]) -> Optional[str]:
 
 # The page both cases get. A whole self-contained document deliberately: it is
 # served to whatever fetched the link, so it may not depend on /static, on the
-# gateway, or on anything else this process might be failing at.
+# gateway, or on anything else this process might be failing at. The logo is
+# the one thing it asks /static for, and it is decorative (alt="", the study's
+# name is beside it): if /static fails, the page reads the same without it.
 #
 # action="" posts to the current URL, query string and all, which is what
 # carries ?variant=, ?qid= and the rest through to the POST — and it means no
@@ -1129,11 +1131,16 @@ _ENTRY_CHECK_PAGE = """<!doctype html>
 <style>
  body {{ font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
         max-width: 34rem; margin: 12vh auto; padding: 0 1.25rem; color: #1a1a1a; }}
+ .brand {{ display: flex; align-items: center; gap: .7rem; margin-bottom: 2.25rem; }}
+ .brand img {{ height: 2.5rem; width: auto; }}
+ .brand span {{ font-weight: 600; font-size: 1.05rem; letter-spacing: -.01em; }}
  h1 {{ font-size: 1.35rem; margin-bottom: .75rem; }}
  button {{ font: inherit; padding: .7rem 1.4rem; border: 0; border-radius: .4rem;
           background: #b31b1b; color: #fff; cursor: pointer; }}
  .note {{ color: #555; font-size: .9rem; margin-top: 1.75rem; }}
 </style></head><body>
+<div class="brand"><img src="/static/logo.png" alt="" width="839" height="850">
+  <span>Relational Fluency</span></div>
 <h1>You are about to start the study</h1>
 <p>Press Continue to open your session. Nothing is recorded until you do, and
    your microphone and camera stay off until you turn them on.</p>

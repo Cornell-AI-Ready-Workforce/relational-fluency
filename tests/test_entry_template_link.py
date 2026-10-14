@@ -259,6 +259,20 @@ def test_the_entry_page_promises_no_consent_step(client, ua):
     assert "your microphone and camera stay off until you turn them on" in " ".join(r.text.split())
 
 
+@pytest.mark.parametrize("ua", [BROWSER, SLACK_IN_APP])
+def test_the_entry_page_opens_on_the_logo_and_the_study_name(client, ua):
+    """Both versions of the page open on the study's logo and name, as the
+    landing page does. The logo is decorative (alt=""), the name is beside it,
+    and it is served from /static like the landing page's."""
+    r = client.get("/start", params={"pid": TEMPLATE_KEY},
+                   headers={"User-Agent": ua}, follow_redirects=False)
+    body = r.text[r.text.index("<body>"):]
+    assert body.index('<img src="/static/logo.png" alt=""') < body.index("<h1>")
+    assert "<span>Relational Fluency</span>" in body
+    logo = client.get("/static/logo.png")
+    assert logo.status_code == 200 and logo.headers["content-type"] == "image/png"
+
+
 def test_the_probe_page_does_not_tell_a_participant_they_are_not_a_person(
         client, runs_mod):
     """Slack's iOS in-app browser is a PARTICIPANT tapping the link in a Slack
