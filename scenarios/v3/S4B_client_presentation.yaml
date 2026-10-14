@@ -66,7 +66,8 @@ setup: >-
 # what makes the two catalogues comparable at all; they agree with the earlier
 # per-family numbers on Gemini and read the gpt voices higher. Every gpt name
 # below was confirmed on the gateway that day: session.updated acked and audio
-# returned.
+# returned. The names cast on 2026-10-14 were confirmed the same way that day,
+# with production's own session payload.
 #
 # These three share a room, so they are cast to stay apart by ear and not by
 # name badge alone, and the counterparts hold the same gaps on the other
@@ -92,12 +93,13 @@ setup: >-
 # scored against each other, so the voices have to be as parallel as the beats.
 #
 # The gaps do hold here. On Gemini the room is Chris 100 (Charon), Dan 115
-# (Fenrir), Priya 166 (Aoede); on gpt it is Chris 130 (ash), Dan 160 (verse),
-# Priya 190 (coral) — same order, same rough spread. One collision is worth
-# knowing about anyway: `coral` is also S2's voice, because Aoede at 166 Hz
-# and Kore at 220 Hz both land nearest coral on gpt. S2 and S4 are different
-# encounters and nobody meets both characters in one room, so nothing inside a
-# scene is lost by it.
+# (Fenrir), Priya 166 (Aoede); on gpt it is Chris 120 (echo), Dan 150 (verse),
+# Priya 208 (coral), on the 2026-10-01 measurement — same order, a wider spread.
+# Chris was ash until 2026-10-14 (docs/OPERATIONS.md, 2026-10-14), when the gpt casting was made
+# so that no voice is shared between scenarios: until then ash was also S1's
+# and S3's voice and coral S1's and S2's, and a participant heard the same
+# voices from one encounter to the next. A run of four encounters now hears
+# nine different gpt voices.
 # ── MEASURED AFTER THIS ROUND ─────────────────────────────────────
 # Both forms driven through the real composed prompt stack with the SAME
 # participant script, on the text model of the configured family, with NO
@@ -518,7 +520,7 @@ agents:
     display_role: project teammate
     realtime_voice:
       gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
-      gpt-realtime: ash    # ~89 Hz earlier; 130 Hz re-measured 2026-09-12
+      gpt-realtime: echo   # 120 Hz measured 2026-10-01 (ash until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
     voice: Charon
     system_prompt: |
       You are Chris. You are here, you are reasonable, and you are not

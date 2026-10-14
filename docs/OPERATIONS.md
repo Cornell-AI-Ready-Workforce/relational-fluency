@@ -640,6 +640,45 @@ of 3, as the user-role one did; replies stayed voiced 3 of 3 after an
 `output_text` replacement; a cancel's `response.done` lands 0.10-0.24 s after
 the cancel.
 
+## What changed on 2026-10-14, the gpt voices (casting; no version change)
+
+On gpt-realtime the 18 characters of the bank were cast in four voices, and a
+run of four encounters heard the same voices from one encounter to the next:
+coral was Riley, Morgan and Priya, ash was Sam, Jordan and Chris, verse was
+Alex and Dan. The roster has ten voices and a run meets nine characters, so the
+gpt casting now gives every character a run can meet a voice of its own. The
+A/B pairs share their casting, as before, so whichever forms a run draws it
+hears the same nine voices. Each character keeps the register its Gemini voice
+gives it (female or male), and the two rooms keep the order and gaps they were
+cast for. Pitches are the 2026-10-01 measurement (median F0 over voiced 45 ms
+frames on two fixed lines): echo 120, ash 129, cedar 129, alloy 132,
+shimmer 148, verse 150, ballad 160, marin 182, sage 187, coral 208 Hz.
+
+| Character (A / B form) | Gemini (unchanged) | gpt until 2026-10-14 | gpt from 2026-10-14 |
+|---|---|---|---|
+| S1 Riley / Mel | Aoede | coral | marin (182) |
+| S1 Sam / Drew | Charon | ash | ash (129) |
+| S2 Morgan / Sasha | Kore | coral | shimmer (148) |
+| S3 Alex / Toni | Fenrir | verse | ballad (~160) |
+| S3 Jordan / Lee | Charon | ash | cedar (129) |
+| S3 Casey / Ari | Leda | marin | sage (187) |
+| S4 Dan | Fenrir | verse | verse (150) |
+| S4 Priya | Aoede | coral | coral (208) |
+| S4 Chris | Charon | ash | echo (120) |
+
+The S3 room is now Jordan 129, Alex ~160, Casey 187 (it was Alex and Casey
+2 Hz apart), and the S4 room Chris 120, Dan 150, Priya 208. Ballad's pitch read
+125-195 Hz between the two lines, so it is the voice to listen for if the S3
+room is reported hard to tell apart. tests/test_voice_casting.py holds the
+casting, the A/B parity and that no run hears a voice twice.
+
+Caveats for analysis: from 2026-10-14 a gpt encounter is played in different
+voices than the same scenario before it, for every character except S1's
+Sam/Drew and S4's Dan and Priya. The voice an actor spoke with is in every
+`steering_pair` (`actor.voice`), so encounters can be split by casting rather
+than by date. `pipeline_version` does not move: what the pipeline does is
+unchanged, only who it sounds like.
+
 ## The seven-minute floor, and the twelve-minute stop
 
 Every encounter runs **at least 7:00** and **at most 12:00**. Since `28b` the
