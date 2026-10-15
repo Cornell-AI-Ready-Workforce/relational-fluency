@@ -94,7 +94,6 @@ LIBRARY_VOICES = {
     "alexandra": "kdmDKE6EkgrWrrykO9Qt",    # Alexandra - Conversational and Natural
     "ivanna": "yM93hbw8Qtvdma2wCnJG",       # Ivanna - Young, Versatile and Casual
     "mark": "1SM7GgM6IMuvQlz2BwM3",         # Mark - Casual, Relaxed and Light
-    "elise": "EST9Ui6982FZPSi7gCHi",        # Elise - Warm, Natural and Engaging
 }
 PREMADE_VOICES.update(LIBRARY_VOICES)
 VOICE_ROSTER = tuple(PREMADE_VOICES)
