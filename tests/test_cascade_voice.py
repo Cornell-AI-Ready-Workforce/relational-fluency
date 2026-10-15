@@ -2,7 +2,8 @@
 
 Driven through the real RealtimeVoiceSession with httpx's MockTransport in
 place of the gateway and ElevenLabs, so every frame the bridge reads is one the
-cascade socket really produced.
+cascade socket really produced. Pipecat's ElevenLabs service speaks aiohttp,
+so the same handler is served to it through a session-shaped shim.
 """
 import asyncio
 import base64
@@ -29,7 +30,9 @@ def _handler(seen):
         body = json.loads(req.content)
         if "elevenlabs" in req.url.host:
             seen.setdefault("tts", []).append((str(req.url), body, req.headers["xi-api-key"]))
-            return httpx.Response(200, content=b"\x01\x00" * 4800)
+            # The with-timestamps stream: JSON lines of base64 PCM.
+            chunk = base64.b64encode(b"\x01\x00" * 4800).decode()
+            return httpx.Response(200, content=json.dumps({"audio_base64": chunk}).encode() + b"\n")
         if body.get("stream"):
             seen["chat"] = body
             return _sse("Sure, I hear you. ", "Tell me more about ", "what happened.")
@@ -39,16 +42,71 @@ def _handler(seen):
     return handle
 
 
+class _Session:
+    """aiohttp.ClientSession.post as Pipecat's ElevenLabs service calls it,
+    served by the httpx handler."""
+
+    def __init__(self, handler):
+        self._handler = handler
+
+    def post(self, url, *, json=None, headers=None, params=None):
+        req = httpx.Request("POST", httpx.URL(url, params=params or {}),
+                            json=json, headers=headers)
+        return _Request(self._handler, req)
+
+    async def close(self):
+        pass
+
+
+class _Request:
+    def __init__(self, handler, req):
+        self._handler, self._req = handler, req
+
+    def __await__(self):
+        return self._send().__await__()
+
+    async def _send(self):
+        return _Response(self._handler(self._req))
+
+    async def __aenter__(self):
+        return await self._send()
+
+    async def __aexit__(self, *exc):
+        pass
+
+
+class _Response:
+    def __init__(self, r):
+        self.status, self.headers, self._body = r.status_code, r.headers, r.content
+
+    @property
+    def content(self):
+        async def lines():
+            for line in self._body.splitlines(keepends=True):
+                yield line
+        return lines()
+
+    async def text(self):
+        return self._body.decode()
+
+    def release(self):
+        pass
+
+
+def _sock(seen, **kw):
+    handler = _handler(seen)
+    return cascade.CascadeSocket(
+        http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        tts_session=_Session(handler), **kw)
+
+
 async def _drive(monkeypatch, *, key="k"):
     seen = {}
     monkeypatch.setenv("ELEVENLABS_API_KEY", key)
     monkeypatch.setattr(cascade, "eleven_key", lambda: key)
-    transport = httpx.MockTransport(_handler(seen))
     s = rt.RealtimeVoiceSession("You are Riley.", model=MODEL, voice="Puck",
                                 api_key="gw")
-    real = cascade.CascadeSocket
-    monkeypatch.setattr(rt, "CascadeSocket", lambda **kw: real(
-        http=httpx.AsyncClient(transport=transport), **kw))
+    monkeypatch.setattr(rt, "CascadeSocket", lambda **kw: _sock(seen, **kw))
     await s.connect()
     await s.send_audio(PCM)
     await s.commit_turn()
@@ -117,9 +175,7 @@ def test_a_missing_elevenlabs_key_is_an_error_not_silence(monkeypatch):
 
 def test_cancel_stops_the_reply_and_says_so():
     async def go():
-        seen = {}
-        sock = cascade.CascadeSocket(api_key="gw", http=httpx.AsyncClient(
-            transport=httpx.MockTransport(_handler(seen))))
+        sock = _sock({}, api_key="gw")
         await sock.send(json.dumps({"type": "response.create"}))
         await sock.send(json.dumps({"type": "response.cancel"}))
         frames = []
@@ -127,6 +183,7 @@ def test_cancel_stops_the_reply_and_says_so():
             f = json.loads(await asyncio.wait_for(sock.recv(), 5))
             frames.append(f["type"])
             if f["type"] == "response.done":
+                await sock.close()
                 return f, frames
     done, frames = asyncio.run(go())
     assert done["response"]["status"] == "cancelled"
@@ -134,15 +191,16 @@ def test_cancel_stops_the_reply_and_says_so():
 
 def test_item_create_and_delete_are_acknowledged():
     async def go():
-        sock = cascade.CascadeSocket(api_key="gw", http=httpx.AsyncClient(
-            transport=httpx.MockTransport(_handler({}))))
+        sock = _sock({}, api_key="gw")
         await sock.send(json.dumps({"type": "conversation.item.create", "event_id": "e1",
             "item": {"type": "message", "role": "user",
                      "content": [{"type": "input_text", "text": "note"}]}}))
         added = json.loads(await sock.recv())
         await sock.send(json.dumps({"type": "conversation.item.delete",
                                     "item_id": added["item"]["id"]}))
-        return added, json.loads(await sock.recv())
+        deleted = json.loads(await sock.recv())
+        await sock.close()
+        return added, deleted
     added, deleted = asyncio.run(go())
     assert added["type"] == "conversation.item.added"
     assert deleted["type"] == "conversation.item.deleted"
