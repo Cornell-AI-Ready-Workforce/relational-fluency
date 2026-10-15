@@ -293,14 +293,6 @@ resource "aws_secretsmanager_secret" "elevenlabs_key" {
   name = "${var.project}/elevenlabs-api-key"
 }
 
-# The secret was created by hand on 2026-10-15, value first, so the task that
-# this apply switches to the cascade can start. This adopts it instead of
-# failing on "already exists"; once applied, the block can go.
-import {
-  to = aws_secretsmanager_secret.elevenlabs_key
-  id = "arn:aws:secretsmanager:us-east-1:540586745717:secret:relational-fluency/elevenlabs-api-key-rJj6bL"
-}
-
 # Browser-direct webcam upload (IRB 6a: video goes straight to storage and
 # never transits the model path). Presigned PUTs come from the app origins.
 resource "aws_s3_bucket_cors_configuration" "study_data" {
