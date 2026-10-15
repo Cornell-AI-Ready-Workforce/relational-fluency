@@ -627,7 +627,23 @@ def text_client() -> AsyncAnthropic:
 #                ROOM_TOLD_TEXT=generated, ROOM_NUDGE_ROLE=user restore 30a's
 #                frames, behaviour and records (the speech check included);
 #                only provenance `room_memory` (`effective` false) says so.
-PIPELINE_VERSION = "2026-10-01a"
+#   2026-10-12a  two more participant-transcript gates
+#                (voice/transcript_gates.py), beside the speech check, not
+#                instead of it. The gpt route asks the transcriber for its
+#                per-token logprobs (session `include`, probed live on
+#                gpt-realtime-2.1), and a line whose mean word log-probability
+#                is under PARTICIPANT_MIN_WORD_LOGPROB (-2.0) is
+#                user_turn_suppressed{low_transcriber_confidence}, before the
+#                speech check (whose hearing is then cancelled). On every
+#                route, a line of up to PARTICIPANT_LANGUAGE_GATE_MAX_WORDS (6)
+#                words with no English word in it, after the speech check, is
+#                written as the English the check heard where it heard some,
+#                and is otherwise user_turn_suppressed{not_english}. Both
+#                withdraw the 1:1 reply their commit started, as the other
+#                gates do. user_turn carries transcriber_confidence where the
+#                transcriber gave scores. TRANSCRIPTION_LOGPROBS=0 and
+#                PARTICIPANT_LANGUAGE_GATE=0 restore 10-01a.
+PIPELINE_VERSION = "2026-10-12a"
 ROOM_PACING_VERSION = "2026-09-29b"
 
 
