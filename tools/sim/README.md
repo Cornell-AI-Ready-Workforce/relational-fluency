@@ -23,7 +23,7 @@ python -m tools.sim.check --scenarios S2A     # one, about 13 minutes
 It starts its own server from this checkout (`tools/sim/serve.py`) on a free
 port, configured the way production is: the task definition's environment
 from `infra/terraform/ecs.tf`, with `var.*` resolved from `terraform.tfvars`,
-and only the two credentials taken from `.env`. AWS credentials are stripped
+and only the credentials (the task's `secrets`) taken from `.env`. AWS credentials are stripped
 and archiving is off, so nothing it records reaches the study bucket; sessions
 go to a temporary directory that the command prints, with `server.log` and a
 `<scenario>.timeline.json` per run beside them.

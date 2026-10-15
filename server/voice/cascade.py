@@ -600,12 +600,16 @@ class CascadeSocket:
             url = (f"{ELEVEN_BASE}/v1/text-to-speech/{voice_id_for(self.voice)}/stream"
                    f"?output_format=pcm_{OUTPUT_RATE}")
             async with _tts_slot():
-                # A 429 (the plan's concurrency, or a burst) is waited out,
-                # three times with a growing pause, before it costs the line.
+                # A 429 (the plan's concurrency, or a burst) and a 409
+                # `already_running` (the first use of a library voice adds it
+                # to the account, and three sentences of its first line asked
+                # at once raced that add; measured 2026-10-15, S3A sim) are
+                # waited out, three times with a growing pause, before either
+                # costs the line.
                 for attempt in range(4):
                     async with self._http.stream("POST", url, json=body,
                                                  headers={"xi-api-key": key}) as r:
-                        if r.status_code == 429 and attempt < 3:
+                        if r.status_code in (429, 409) and attempt < 3:
                             await r.aread()
                             await asyncio.sleep(0.4 * (2 ** attempt))
                             continue
