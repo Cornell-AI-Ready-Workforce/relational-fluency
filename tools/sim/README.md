@@ -93,13 +93,15 @@ the 720 s ceiling where 24c ended it about 451 s in, and the count limits
 shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
-check fails for it, saying so, until it is recorded. All four are pending as
-committed: pipeline 2026-10-14a (room members the gateway closes are rebuilt
-inside the encounter) has not been recorded. The values it replaces were
-recorded on pipeline 2026-10-01a / room pacing 29b, build 0c271c7
-(2026-10-02, `reports/0c271c7.json`; `git show 01f10f0:tools/sim/baseline.json`),
-which is 30a's speech check (#67) with 10-01a's room memory hygiene (#72) on
-top. Record all four with `python -m tools.sim.check --write-baseline`.
+check fails for it, saying so, until it is recorded. None is pending as
+committed: all four are recorded on pipeline 2026-10-14a (room members the
+gateway closes are rebuilt inside the encounter) / room pacing 29b, build
+4216d0a, in runs the gateway closed nothing in: S1A on 2026-10-14 (session
+s_1791989429_86dd07), S2A and S3A on 2026-10-14 (s_1791990139_357daa,
+s_1791990861_943e93), S4A on 2026-10-15 (s_1792074518_5c9541). Each is within
+10-01a's tolerances, the values they replace (build 0c271c7, `git show
+01f10f0:tools/sim/baseline.json`), which are 30a's speech check (#67) with
+10-01a's room memory hygiene (#72) on top.
 
 A baseline compares one `pipeline_version` with itself, so a merge that brings
 another version's change in under the same label needs a re-record that the
