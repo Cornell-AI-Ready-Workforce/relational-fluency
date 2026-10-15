@@ -207,6 +207,9 @@ COMMIT_AUDIO_TAGS = 4
 GATEWAY_OUTPUT_RATE = int(setting("REALTIME_OUTPUT_RATE", "24000"))
 
 
+from .cascade import VOICE_ROSTER as _CASCADE_VOICES, CascadeSocket
+
+
 class UnknownRealtimeModel(RuntimeError):
     """REALTIME_MODEL names a model no row in the table covers."""
 
@@ -603,6 +606,45 @@ REALTIME_FAMILIES = {
             "orus": "verse", "zephyr": "marin",
         },
     ),
+    "cascade": RealtimeCapabilities(
+        family="cascade",
+        # Argon hears, Argon thinks, ElevenLabs speaks (server/voice/cascade.py).
+        # The roster is ElevenLabs default voice names; a scenario's Gemini
+        # names alias onto it below. ELEVENLABS_VOICE_IDS adds cast voices.
+        voices=_CASCADE_VOICES,
+        # The cascade's own STT step always writes the participant transcript.
+        needs_input_transcription=False,
+        input_transcription_model="",
+        # The runner's VAD is the only end-of-turn; nothing server-side decides.
+        needs_turn_detection_null=True,
+        # A session.update is simply stored and acked, and the next reply is
+        # built from it, so a director's direction lands on the very next turn.
+        honours_session_update=True,
+        end_of_turn=None,
+        end_of_turn_silence_ms=0,
+        # The browser's 16 kHz goes straight to the STT step (WAV header).
+        input_rate=CLIENT_RATE,
+        # Nothing is ever auto-fired: a reply exists only for a response.create.
+        autofire_wait=0.0,
+        accepts_text_items=True,
+        relay_colleagues_as_text=True,
+        grant_via_text_prompt=True,
+        member_tools=True,
+        tool_output="request",
+        autofire_at_created=False,
+        transcription_language_hint=False,
+        # The cascade's STT already is the second hearing a check would make.
+        participant_speech_check=False,
+        voice_aliases={
+            "puck": "will", "charon": "brian", "kore": "sarah",
+            "fenrir": "chris", "aoede": "jessica", "leda": "matilda",
+            "orus": "eric", "zephyr": "bella",
+        },
+        # Its own casting column: every character in scenarios/v3 names a
+        # `cascade:` voice (library clones chosen by ear, 2026-10-15). The
+        # aliases above stay for an unqualified Gemini name (the scribe).
+        casting_family="",
+    ),
 }
 
 
@@ -633,6 +675,10 @@ def family_of(model: str) -> str:
     a study ends up running a model whose behaviour nobody checked.
     """
     name = (model or "").lower()
+    if name.startswith("cascade"):
+        # REALTIME_MODEL=cascade-argon-elevenlabs: not a gateway model at all
+        # but the three-step pipeline in server/voice/cascade.py.
+        return "cascade"
     if "gemini" in name and "live" in name:
         # ORDER MATTERS. The native-audio sibling matches the gemini-live test
         # too, and answering "gemini-live" for it is not a near-miss: it feeds
@@ -2561,6 +2607,13 @@ class RealtimeVoiceSession:
         # websockets renamed extra_headers -> additional_headers when the new
         # asyncio client became the top-level default in 14.0; requirements
         # allow >=12, so pick the kwarg the installed version actually accepts.
+        if self.capabilities.family == "cascade":
+            # No socket to dial: the stand-in answers as a realtime server.
+            self.ws = CascadeSocket(voice=self.voice, api_key=self.api_key)
+            await self._send({
+                "type": "session.update", "session": self._session_payload(),
+            })
+            return
         header_kwarg = "additional_headers"
         try:
             if int(websockets.__version__.split(".")[0]) < 14:

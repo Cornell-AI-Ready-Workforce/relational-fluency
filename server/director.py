@@ -69,7 +69,7 @@ log = logging.getLogger(__name__)
 # character only to tell them to stay silent (3 of 77), is caught below by
 # _is_silence_intent. Recorded per encounter as provenance.director_model and
 # per stage_direction. DIRECTOR_MODEL=nto.gemini-3.1-flash-lite restores it.
-DIRECTOR_MODEL = setting("DIRECTOR_MODEL", "nto.gemini-3.5-flash-lite")
+DIRECTOR_MODEL = setting("DIRECTOR_MODEL", "nto.gemini-4-argon")
 DIRECTOR_MAX_SPEAKERS = 3
 
 # A routed entry whose intent asks the speaker to say nothing. The hard rules
@@ -533,6 +533,11 @@ class Director:
         latest_user_text: str,
     ) -> List[dict]:
         """Return [{agent_id, intent?}], possibly empty."""
+        if setting("DIRECTOR_ROUTE", "1").lower() in ("0", "off", "false", "no"):
+            # No director on the participant's critical path: an empty list is
+            # "no signal", and the runner rotates the floor in cast order (or
+            # to whoever was addressed by name) without an LLM call.
+            return []
         # Fast path: the very first reaction (no agent has spoken yet) is the
         # configured opener. Skip the director LLM call so the meeting opens fast.
         opener = getattr(self.scenario, "opener", None)

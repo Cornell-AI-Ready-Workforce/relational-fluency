@@ -288,8 +288,11 @@ def test_every_named_voice_is_on_its_family_roster():
     marin, shimmer, ballad, cedar, sage, echo, verse, coral and ash each came
     back in session.updated, acked in 0.50-0.87 s, and a whole reply's audio
     returned on every one."""
+    # The family that OWNS a column: one that casts from another's column (the
+    # cascade, which aliases the Gemini names) does not redefine its roster.
     rosters = {caps.casting_key: set(caps.voices)
-               for caps in rt_mod.REALTIME_FAMILIES.values()}
+               for caps in rt_mod.REALTIME_FAMILIES.values()
+               if not caps.casting_family}
     columns = set(rt_mod.casting_families())
     for sid in v3.available():
         spec = v3.load_spec(sid)

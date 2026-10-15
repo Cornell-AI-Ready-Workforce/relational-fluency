@@ -371,6 +371,15 @@
     color: var(--muted, #6b6b68); margin: 10px 0 5px; }
   .situation-text ul { margin: 0; padding-left: 18px; font-size: 15px; line-height: 1.5; }
   .sit-note { font-size: 13px; color: var(--muted, #6b6b68); margin: 6px 0 0; }
+  /* The participant's goal: on the situation card, and as a strip under the
+     header for the whole conversation (showGoalStrip), so what they are there
+     to do is in view while they talk and not only on a card they closed. */
+  .sit-goal { font-size: 15px; line-height: 1.5; margin: 0 0 14px; padding: 10px 14px;
+    border-left: 3px solid var(--accent, #b3181b); background: #f6f6f4; border-radius: 0 6px 6px 0; }
+  .goal-strip { margin: 10px 20px 0; padding: 8px 14px; font-size: 14px; line-height: 1.5;
+    border-left: 3px solid var(--accent, #b3181b); background: var(--surface, #f6f6f4);
+    color: var(--fg); border-radius: 0 6px 6px 0; }
+  @media (max-width: 640px) { .goal-strip { margin: 8px 14px 0; font-size: 13.5px; } }
   .sit-assets { background: #f6f6f4; border-left: 3px solid var(--accent, #b3181b);
     padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 14px; }
   .sit-assets h4 { margin-top: 0; }
@@ -604,9 +613,9 @@
            this is shown (describeEncounterLength). It said "You can end a
            conversation at any time", which the 7:00 hold on End has made
            untrue on every link type (#34). -->
-      <p>Each conversation lasts at least <span id="fictionMin">7</span> minutes.
+      <p>Each conversation lasts at least <span id="fictionMin">5</span> minutes.
       After that you can move on whenever you are ready, or keep talking until it
-      ends by itself at <span id="fictionMax">12</span> minutes.<span id="fictionLeave"
+      ends by itself at <span id="fictionMax">10</span> minutes.<span id="fictionLeave"
       style="display:none"> You can stop taking part in the study at any time with
       “Stop and leave the study”.</span></p>
     </div>
@@ -649,8 +658,8 @@
       headphones also work.</div>
       <!-- From the page's clock, as the first screen's is (describeEncounterLength):
            "about 10 minutes" was neither the 7:00 floor nor the 12:00 stop. -->
-      <p>You will be talking out loud with AI characters for <span id="checkMin">7</span> to
-      <span id="checkMax">12</span> minutes at a time. Please use <b>headphones</b> if you have them.</p>
+      <p>You will be talking out loud with AI characters for <span id="checkMin">5</span> to
+      <span id="checkMax">10</span> minutes at a time. Please use <b>headphones</b> if you have them.</p>
       <!-- Each verdict is live (role=status) and describes its button. The
            help under a row is not in that description: a description is read
            even while its paragraph is hidden, and "We can't hear anything
@@ -767,6 +776,8 @@
      (showCaptureFailure): under the header, next to the Start button whose
      press it answers. -->
 <div class="capture-slot" id="captureSlot" aria-live="polite"></div>
+<!-- The participant's goal, in view for the whole conversation (showGoalStrip). -->
+<div class="goal-strip" id="goalStrip" role="note" style="display:none"></div>
 
 <main>
   <div class="grid" id="grid"></div>
@@ -1684,6 +1695,7 @@
     const dur = b.duration ? `${b.duration[0]}–${b.duration[1]} minutes` : '';
     return `
       <p class="sit-lead">${esc(b.situation || d.intro || '')}</p>
+      ${b.goal ? `<p class="sit-goal"><b>Your goal:</b> ${esc(b.goal)}</p>` : ''}
       ${(b.assets || []).length ? `<div class="sit-assets">
         <h4>What you have</h4>
         <ul>${b.assets.map(a => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
@@ -2056,7 +2068,9 @@
   //           by itself (the researchers' end policy of 2026-09-28, #34).
   // Stopping the STUDY ("Stop and leave the study") is never gated: that is
   // the consent promise, and it is a different control from End.
-  let MIN_S = 7 * 60, WRAP_S = 11 * 60, MAX_S = 12 * 60;
+  // The study's clock (storage.encounter_timing); a run link overwrites these
+  // from its encounter_clock frame, a direct link shows them as they are.
+  let MIN_S = 5 * 60, WRAP_S = 9 * 60, MAX_S = 10 * 60;
   let ceilingFired = false;
   // Said once per conversation each: the move-on notice at the floor and the
   // warning before the stop (from the page's clock or the server's frame,
@@ -4325,6 +4339,7 @@
           : 'End conversation (finish)';
     }
     started = true;
+    showGoalStrip();
     intentionalClose = false;
     frameErrorNoted = false;
     // Per attempt, not per page: a retry that succeeds must not inherit the
@@ -4874,10 +4889,20 @@
     if (d && d.title) $('title').textContent = d.title;
   }
 
+  // The goal from the brief, kept for the strip the conversation shows.
+  let goalText = '';
+  function showGoalStrip() {
+    const el = $('goalStrip');
+    if (!goalText) { el.style.display = 'none'; return; }
+    el.innerHTML = `<b>Your goal:</b> ${esc(goalText)}`;
+    el.style.display = 'block';
+  }
+
   async function loadBrief() {
     try {
       const d = await fetchBrief();
       showTitle(d);
+      goalText = (d.briefing && d.briefing.goal) || '';
       const refHtml = briefingHtml(d, true);
       if (refHtml) {
         $('briefBody').classList.add('rich');

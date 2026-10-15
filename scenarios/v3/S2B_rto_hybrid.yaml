@@ -38,7 +38,7 @@ construct: influence
 variant: B
 parallel_form: S2A
 title: "Hybrid under an RTO mandate"
-duration_minutes: [7, 12]
+duration_minutes: [5, 10]
 
 skill_measured: >-
   Persuading by anticipating objections, using multiple strategies, and
@@ -57,6 +57,12 @@ setup: >-
   keep your two remote days, on which your output is the team's strongest.
   Rivera's team kept hybrid by making a productivity case. You are meeting
   your manager, Sasha.
+
+# What the participant is told they are there to do. Shown on the situation
+# card and kept on screen under the header for the whole conversation. It is
+# the task, in their terms; never the construct or what the raters look for.
+goal: >-
+  Keep your two remote days, or leave with a clear path to keeping them, while staying on good terms with Sasha.
 
 # Same declaration as S2A, and the parallel form needs it in the same place or
 # the two variants stop being interchangeable: the participant's leverage is
@@ -158,6 +164,7 @@ agents:
     realtime_voice:
       gemini-live: Kore    # ~222 Hz earlier; 220 Hz re-measured 2026-09-12
       gpt-realtime: shimmer  # 148 Hz measured 2026-10-01 (coral until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
+      cascade: eryn  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Kore
     # Sasha and Morgan used to be one manager with two names. Measured on the
     # gateway with matched participant scripts: both opened "I appreciate you
@@ -376,7 +383,7 @@ agents:
       - Late on, once something concrete and dated is actually on the table,
         stop adding obstacles. Go quieter, say back what you are taking upward
         and when, and let it settle. Do not announce that the meeting is over.
-      - This runs seven to twelve minutes. If they are racing, slow it down:
+      - This runs five to ten minutes. If they are racing, slow it down:
         make them say the concrete version of a point before you answer it.
 
       If they are lost:

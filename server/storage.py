@@ -601,9 +601,9 @@ class SessionStore:
 # to it, so the number the participant watches is the number the server
 # enforces. Internal-cohort runs are exempt from the floor at /advance only.
 # The wrap was 12:00 and the stop 13:00 until 2026-09-28.
-ENCOUNTER_MIN_SECONDS_DEFAULT = 420.0
-ENCOUNTER_WRAP_SECONDS_DEFAULT = 660.0
-ENCOUNTER_MAX_SECONDS_DEFAULT = 720.0
+ENCOUNTER_MIN_SECONDS_DEFAULT = 300.0
+ENCOUNTER_WRAP_SECONDS_DEFAULT = 540.0
+ENCOUNTER_MAX_SECONDS_DEFAULT = 600.0
 
 
 def encounter_timing() -> Dict[str, float]:

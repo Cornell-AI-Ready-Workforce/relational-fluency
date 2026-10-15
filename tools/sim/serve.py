@@ -34,8 +34,9 @@ from typing import Dict
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TF_DIR = REPO_ROOT / "infra" / "terraform"
 
-# From .env, and only these.
-CREDENTIALS = ("ANTHROPIC_API_KEY", "SESSION_KEY")
+# From .env, and only these: the task definition's `secrets`, which production
+# reads from Secrets Manager. ELEVENLABS_API_KEY is read only on the cascade.
+CREDENTIALS = ("ANTHROPIC_API_KEY", "SESSION_KEY", "ELEVENLABS_API_KEY")
 
 # Task-definition entries that describe the AWS deployment rather than the
 # code's behaviour, and are replaced or dropped locally.

@@ -1272,7 +1272,7 @@ def test_no_duration_is_typed_into_the_audio_check_or_the_ring():
     src = V2.read_text(encoding="utf-8")
     check = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", _overlay(src, "audioCheckOverlay")))
     assert "about 10 minutes" not in check, check
-    assert "7 to 12 minutes at a time" in check, check
+    assert "5 to 10 minutes at a time" in check, check
     assert "title" not in _attrs(_open_tag(src[:src.index("<script>")], "gate")), (
         "the ring's tooltip is typed into the markup again")
 

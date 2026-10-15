@@ -58,7 +58,7 @@ Knobs, read per call:
   SPEECH_CHECK                    default on; "0" turns the check off (the
                                   route's family row must also carry
                                   participant_speech_check: the gpt rows)
-  SPEECH_CHECK_MODEL              default nto.gemini-3.1-flash-lite
+  SPEECH_CHECK_MODEL              default nto.gemini-4-argon
   SPEECH_CHECK_TIMEOUT_S          default 2.5
   SPEECH_CHECK_MAX_WORDS          default 3
   SPEECH_CHECK_PLAYBACK_MAX_WORDS default 7
@@ -122,7 +122,7 @@ def enabled() -> bool:
 def check_model() -> str:
     # The literal is what tests/test_final_preflight.py pins against
     # llm._MODEL_ROLES.
-    return setting("SPEECH_CHECK_MODEL", "nto.gemini-3.1-flash-lite")
+    return setting("SPEECH_CHECK_MODEL", "nto.gemini-4-argon")
 
 
 def timeout_s() -> float:

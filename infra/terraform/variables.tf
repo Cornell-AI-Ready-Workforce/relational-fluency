@@ -48,7 +48,35 @@ variable "actor_model" {
 variable "director_model" {
   description = "Text model that reads each turn and writes one stage direction (LiteLLM alias). Recorded per stage_direction event as director_model; it is NOT the deployment's text engine — see text_model."
   type        = string
+  default     = "nto.gemini-4-argon"
+}
+
+# The cascade voice (server/voice/cascade.py), read only when actor_model is a
+# `cascade-...` name: the model that hears the participant and writes each
+# reply, the one that writes the transcript, and the ElevenLabs model that
+# speaks. Defaults match the code's (tests/test_final_preflight.py pins those).
+variable "cascade_llm_model" {
+  description = "Cascade: hears the participant's audio and writes the reply (LiteLLM alias)."
+  type        = string
+  default     = "nto.gemini-4-argon"
+}
+
+variable "cascade_stt_model" {
+  description = "Cascade: writes the participant transcript (LiteLLM alias). A room waits on it before granting the floor."
+  type        = string
   default     = "nto.gemini-3.5-flash-lite"
+}
+
+variable "elevenlabs_tts_id" {
+  description = "Cascade: the ElevenLabs model that speaks each sentence."
+  type        = string
+  default     = "eleven_v4"
+}
+
+variable "director_route" {
+  description = "\"1\": the director's LLM picks who answers in a group room (on the participant's critical path). \"0\": the floor rotates in cast order or to whoever was named, with no call."
+  type        = string
+  default     = "1"
 }
 
 # The director and the text engine are two different jobs and there is no reason
@@ -69,7 +97,7 @@ variable "director_model" {
 variable "text_model" {
   description = "Text model for the text-mode engine, and the default in the researcher's pre-start model picker. Reported as provenance.text_model on every encounter record."
   type        = string
-  default     = "nto.gemini-3.1-flash-lite"
+  default     = "nto.gemini-4-argon"
 }
 
 # UNUSED, and left declared only so a `terraform apply` against an existing

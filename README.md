@@ -1,6 +1,6 @@
 # Relational Fluency
 
-Relational Fluency is a research platform from the Cornell **AI-Ready Workforce Initiative** (PI Kizilcec, IRB0151104). A participant has four voice conversations with AI characters in workplace situations, each lasting 7–12 minutes. The platform records the participant's audio, transcript and webcam video. The recordings are used to measure **relational fluency**: how well a person handles the relationship side of work. This repository holds the voice app, the scenario specs and the AWS deployment.
+Relational Fluency is a research platform from the Cornell **AI-Ready Workforce Initiative** (PI Kizilcec, IRB0151104). A participant has four voice conversations with AI characters in workplace situations, each lasting 5–10 minutes. The platform records the participant's audio, transcript and webcam video. The recordings are used to measure **relational fluency**: how well a person handles the relationship side of work. This repository holds the voice app, the scenario specs and the AWS deployment.
 
 **Status (2026-09-23):** the platform is built and the pilot has not run yet. Live app: <https://rf.ai-ready-workforce.ai.cornell.edu> (`/health` shows the status and the live model). Contact: the study team (PI Kizilcec).
 

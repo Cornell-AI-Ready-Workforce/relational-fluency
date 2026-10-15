@@ -15,7 +15,7 @@ construct: conflict_management
 variant: A
 parallel_form: S1B
 title: "Taken credit"
-duration_minutes: [7, 12]
+duration_minutes: [5, 10]
 
 skill_measured: >-
   Bringing disagreement into the open, de-escalating emotion, and resolving
@@ -33,6 +33,12 @@ setup: >-
   Sam has twice presented your analysis in leadership meetings as his own
   work. You asked him privately to credit you; it happened again last week.
 
+# What the participant is told they are there to do. Shown on the situation
+# card and kept on screen under the header for the whole conversation. It is
+# the task, in their terms; never the construct or what the raters look for.
+goal: >-
+  Decide how to handle it, then raise it with Sam so that your work is credited from now on and the two of you can still work together.
+
 # Casting per model family: `realtime_voice` maps family -> voice name; the
 # families keep disjoint rosters, so a character is the same person on either
 # model. `voice` is the Gemini fallback (Agent.voice_id).
@@ -44,6 +50,7 @@ agents:
     realtime_voice:
       gemini-live: Aoede  # Riley is a woman; ~170 Hz (was Fenrir, 2026-09-23)
       gpt-realtime: marin  # 182 Hz measured 2026-10-01 (coral until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
+      cascade: hope  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Aoede
     system_prompt: |
       You are Riley. You sit two desks from the participant on the analytics team, you started the same month, and you are the one who always knows what happened in the room. You are not upset. You are a little thrilled: this is good gossip, Sam is the villain of it, and you have come over to talk about him behind his back.
@@ -115,6 +122,7 @@ agents:
     realtime_voice:
       gemini-live: Charon
       gpt-realtime: ash
+      cascade: joseph  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Charon
     system_prompt: |
       You are Sam, on the analytics team, the same level as the participant. Two hours ago you stood up in a leadership meeting and walked through their analysis saying "I" the whole way through. It is the third time.
