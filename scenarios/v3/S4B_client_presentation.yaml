@@ -147,6 +147,7 @@ agents:
     realtime_voice:
       gemini-live: Fenrir  # ~116 Hz earlier; 115 Hz re-measured 2026-09-12
       gpt-realtime: verse  # ~120 Hz earlier; 160 Hz re-measured 2026-09-12
+      cascade: joseph  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Fenrir
     # The identical three repairs S4A's Dan carries, in the same three places,
     # because the forms are scored against each other and a fix that lands on
@@ -438,6 +439,7 @@ agents:
     realtime_voice:
       gemini-live: Aoede   # ~170 Hz earlier; 166 Hz re-measured 2026-09-12
       gpt-realtime: coral  # ~198 Hz earlier; 190 Hz re-measured 2026-09-12
+      cascade: ivanna  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Aoede
     system_prompt: |
       You are Priya. You were on the last client call. Their CFO said plainly
@@ -536,6 +538,7 @@ agents:
     realtime_voice:
       gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
       gpt-realtime: echo   # 120 Hz measured 2026-10-01 (ash until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
+      cascade: mark  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Charon
     system_prompt: |
       You are Chris. You are here, you are reasonable, and you are not

@@ -70,7 +70,7 @@ async def _drive(monkeypatch, *, key="k"):
 def test_family_voice_and_casting():
     assert rt.family_of(MODEL) == "cascade"
     assert rt.voice_for_model("Puck", MODEL) == "will"
-    assert rt.capabilities_for(MODEL).casting_key == "gemini-live"
+    assert rt.capabilities_for(MODEL).casting_key == "cascade"
     assert not rt.is_openai_realtime(MODEL)
 
 

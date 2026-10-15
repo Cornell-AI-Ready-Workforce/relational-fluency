@@ -640,7 +640,10 @@ REALTIME_FAMILIES = {
             "fenrir": "chris", "aoede": "jessica", "leda": "matilda",
             "orus": "eric", "zephyr": "bella",
         },
-        casting_family="gemini-live",
+        # Its own casting column: every character in scenarios/v3 names a
+        # `cascade:` voice (library clones chosen by ear, 2026-10-15). The
+        # aliases above stay for an unqualified Gemini name (the scribe).
+        casting_family="",
     ),
 }
 

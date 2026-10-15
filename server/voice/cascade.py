@@ -78,6 +78,24 @@ PREMADE_VOICES = {
     "alice": "Xb7hH8MSUJpSbSDYk0k2",      # clear, engaging (British)
     "george": "JBFqnCBsd6RMkjVDRZzb",     # warm (British)
 }
+# Voice Library clones the study casts (2026-10-15, chosen by ear from the
+# most-used conversational clones; see scenarios/v3/*.yaml `cascade:`). A
+# library voice speaks on this account without being added to it (measured).
+LIBRARY_VOICES = {
+    "hope": "uYXf8XasLslADfZ2MB4u",         # Hope - Bubbly, Gossipy and Girly
+    "joseph": "J5iaaqzR5zn6HFG4jV3b",       # Joseph - Nasally and Steady
+    "armando": "TWUKKXAylkYxxlPe4gx0",      # Armando - Forthright and Stentorian
+    "zuri": "C3x1TEM7scV4p2AXJyrp",         # Zuri - Casual, Calm and Clear
+    "eryn": "kdnRe2koJdOK4Ovxn2DI",         # Eryn - Genuine, Friendly and Natural
+    "hale": "wWWn96OtTHu1sn8SRGEr",         # Hale - Expressive, Deep and Emotive
+    "lucius": "HaUDdkOAoitiVjpiet1i",       # Lucius - Calm, Pleasant and Reassuring
+    "callie": "7YaUDeaStRuoYg3FKsmU",       # Callie - Playful, Inviting and Friendly
+    "jessica_anne": "g6xIsTj2HwM6VR4iXFCw", # Jessica Anne Bogart - Chatty and Friendly
+    "alexandra": "kdmDKE6EkgrWrrykO9Qt",    # Alexandra - Conversational and Natural
+    "ivanna": "yM93hbw8Qtvdma2wCnJG",       # Ivanna - Young, Versatile and Casual
+    "mark": "1SM7GgM6IMuvQlz2BwM3",         # Mark - Casual, Relaxed and Light
+}
+PREMADE_VOICES.update(LIBRARY_VOICES)
 VOICE_ROSTER = tuple(PREMADE_VOICES)
 
 # Cut a streamed reply into speakable pieces at sentence ends. The first piece

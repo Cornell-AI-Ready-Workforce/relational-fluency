@@ -437,6 +437,7 @@ agents:
     realtime_voice:
       gemini-live: Fenrir  # ~116 Hz earlier; 115 Hz re-measured 2026-09-12
       gpt-realtime: ballad  # ~160 Hz measured 2026-10-01, unstable 125-195 (verse until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
+      cascade: hale  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Fenrir
     system_prompt: |
       You are Toni, and you close more than anyone else on this floor. The
@@ -504,6 +505,7 @@ agents:
     realtime_voice:
       gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
       gpt-realtime: cedar  # 129 Hz measured 2026-10-01 (ash until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
+      cascade: jessica_anne  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Charon
     system_prompt: |
       You are Lee. Your three enterprise accounts carried this team through
@@ -601,6 +603,7 @@ agents:
     realtime_voice:
       gemini-live: Leda    # ~224 Hz earlier; 181 Hz re-measured 2026-09-12
       gpt-realtime: sage   # 187 Hz measured 2026-10-01 (marin until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
+      cascade: alexandra  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Leda
     system_prompt: |
       You are Ari, the newest person on this team and the most junior. Your

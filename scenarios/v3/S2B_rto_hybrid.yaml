@@ -164,6 +164,7 @@ agents:
     realtime_voice:
       gemini-live: Kore    # ~222 Hz earlier; 220 Hz re-measured 2026-09-12
       gpt-realtime: shimmer  # 148 Hz measured 2026-10-01 (coral until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
+      cascade: eryn  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Kore
     # Sasha and Morgan used to be one manager with two names. Measured on the
     # gateway with matched participant scripts: both opened "I appreciate you
