@@ -135,6 +135,30 @@ def eleven_key() -> str:
     return setting("ELEVENLABS_API_KEY", "")
 
 
+def tts_concurrency() -> int:
+    """How many ElevenLabs requests this process keeps in flight at once.
+    The account's limit is per plan (a 429 `concurrent_limit_exceeded` came
+    back live on 2026-10-15 with one sentence per request fanned out as fast
+    as the reply streamed); a sentence waits for a slot rather than failing."""
+    try:
+        return max(1, int(setting("ELEVENLABS_CONCURRENCY", "3")))
+    except ValueError:
+        return 3
+
+
+_TTS_SLOTS: dict = {}
+
+
+def _tts_slot() -> asyncio.Semaphore:
+    """One semaphore per event loop (a Semaphore belongs to the loop it was
+    first used on; tests and workers run their own)."""
+    loop = asyncio.get_running_loop()
+    sem = _TTS_SLOTS.get(loop)
+    if sem is None:
+        sem = _TTS_SLOTS[loop] = asyncio.Semaphore(tts_concurrency())
+    return sem
+
+
 def voice_ids() -> dict:
     ids = dict(PREMADE_VOICES)
     extra = setting("ELEVENLABS_VOICE_IDS", "")
@@ -575,15 +599,24 @@ class CascadeSocket:
                 body["previous_text"] = context
             url = (f"{ELEVEN_BASE}/v1/text-to-speech/{voice_id_for(self.voice)}/stream"
                    f"?output_format=pcm_{OUTPUT_RATE}")
-            async with self._http.stream("POST", url, json=body,
-                                         headers={"xi-api-key": key}) as r:
-                if r.status_code >= 400:
-                    detail = (await r.aread()).decode("utf-8", "replace")[:300]
-                    raise RuntimeError(f"elevenlabs {r.status_code}: {detail}")
-                async for chunk in r.aiter_bytes(AUDIO_FRAME_BYTES):
-                    if "tts_first_byte_ms" not in self.timings:
-                        self.timings["tts_first_byte_ms"] = int((time.time() - started) * 1000)
-                    chunks.put_nowait(chunk)
+            async with _tts_slot():
+                # A 429 (the plan's concurrency, or a burst) is waited out,
+                # three times with a growing pause, before it costs the line.
+                for attempt in range(4):
+                    async with self._http.stream("POST", url, json=body,
+                                                 headers={"xi-api-key": key}) as r:
+                        if r.status_code == 429 and attempt < 3:
+                            await r.aread()
+                            await asyncio.sleep(0.4 * (2 ** attempt))
+                            continue
+                        if r.status_code >= 400:
+                            detail = (await r.aread()).decode("utf-8", "replace")[:300]
+                            raise RuntimeError(f"elevenlabs {r.status_code}: {detail}")
+                        async for chunk in r.aiter_bytes(AUDIO_FRAME_BYTES):
+                            if "tts_first_byte_ms" not in self.timings:
+                                self.timings["tts_first_byte_ms"] = int((time.time() - started) * 1000)
+                            chunks.put_nowait(chunk)
+                    break
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - handed to the speaker
