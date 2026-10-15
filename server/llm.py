@@ -627,7 +627,42 @@ def text_client() -> AsyncAnthropic:
 #                ROOM_TOLD_TEXT=generated, ROOM_NUDGE_ROLE=user restore 30a's
 #                frames, behaviour and records (the speech check included);
 #                only provenance `room_memory` (`effective` false) says so.
-PIPELINE_VERSION = "2026-10-01a"
+#   2026-10-14a  room members the gateway closed are rebuilt inside the
+#                encounter, as a 1:1 session already was (the S4A sim on
+#                01f10f0 lost all three members to a WebSocket 1012 "service
+#                restart" at 154.7 s and answered 5 of 47 lines). The member
+#                is reconnected as the same character, voice and brief, under
+#                a one-reply note that the line dropped, and on the gpt route
+#                seeded with the room's conversation as that character held
+#                it, as items of its new conversation: the participant's
+#                accepted lines, its own lines as room memory left them, its
+#                colleagues' lines as it was told them (nothing the
+#                participant did not hear, as 10-01a decides it); off the gpt
+#                route as a recap in that brief (lines finished after it
+#                told as colleagues' notes where the family takes them).
+#                Seeded first, then put back in the room; a cut decided while
+#                the seed went out is applied once it is seated. A floor holder
+#                whose session went before any of its reply reached the page
+#                is given the floor again once it is back, if that grant went
+#                to the session that went (floor_regranted; its beat or
+#                direction redelivered; the page told it heard them), unless
+#                the participant has spoken since; otherwise its beat goes
+#                back (trigger_undelivered member_lost). A hold it had is
+#                dropped. A room turn, a routing decision and a boundary that
+#                can keep the room wait up to 10 s for a member being rebuilt
+#                instead of finding nobody (group_turn_no_members); a probe
+#                waits a tick for its beat's character. ROOM_RECONNECT_LIMIT
+#                (2, per member per encounter; every connect attempt counts)
+#                bounds it, and 0 turns all of it off (10-01a's handling);
+#                when no member is left the page is told, as a 1:1 encounter
+#                past its limit is. No knob: a follow-up whose grant failed no
+#                longer waits out the 45 s timeout, and a commit-only grant
+#                stops waiting on a socket that is gone. room_member_dropped,
+#                _reconnected, _lost, room_members_lost, room_member_line_late,
+#                floor_regranted, floor_regrant_skipped,
+#                stage_direction_redelivered; provenance `reconnect`. The
+#                scribe is untouched.
+PIPELINE_VERSION = "2026-10-14a"
 ROOM_PACING_VERSION = "2026-09-29b"
 
 
@@ -652,8 +687,9 @@ def provenance(model: Optional[str] = None,
     """
     # Imported here, not at the top: server.voice.realtime imports this module.
     from .voice.realtime import (audio_provenance, bridge_provenance,
-                                 pacing_provenance, record_provenance,
-                                 room_memory_provenance, turn_gate_provenance)
+                                 pacing_provenance, reconnect_provenance,
+                                 record_provenance, room_memory_provenance,
+                                 turn_gate_provenance)
 
     realtime = _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio")
     return {
@@ -690,6 +726,11 @@ def provenance(model: Optional[str] = None,
         # see room_memory_provenance. `active` is False off the gpt route;
         # `effective` is False there and on every encounter without a room.
         "room_memory": room_memory_provenance(model or realtime, room=room),
+        # What happens to a session the gateway closes: a 1:1 session's
+        # rebuild budget, a room member's (pipeline 2026-10-14a), and how a
+        # rebuilt member is given the conversation so far; see
+        # reconnect_provenance.
+        "reconnect": reconnect_provenance(model or realtime),
         # Who opens a conversation, and which clock each limit counts on
         # (pipeline 2026-09-28b; see realtime_voice_session's "the
         # participant opens"). Before 28b a room's lead opened the scene and

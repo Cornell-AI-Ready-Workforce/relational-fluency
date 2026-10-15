@@ -2,9 +2,9 @@
  "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
  "realtime_model": "gpt-realtime-2.1",
  "recorded": {
-  "build": "0c271c7",
-  "date": "2026-10-02",
-  "pipeline_version": "2026-10-01a",
+  "build": "4216d0a",
+  "date": "2026-10-15",
+  "pipeline_version": "2026-10-14a",
   "room_pacing_version": "2026-09-29b"
  },
  "scenarios": {
@@ -15,43 +15,43 @@
    "lines_said": 8,
    "phantom_turns": 0,
    "recorded": {
-    "build": "0c271c7",
-    "date": "2026-10-02",
-    "pipeline_version": "2026-10-01a",
+    "build": "4216d0a",
+    "date": "2026-10-14",
+    "pipeline_version": "2026-10-14a",
     "room_pacing_version": "2026-09-29b",
-    "session_id": "s_1790914679_86d338"
+    "session_id": "s_1791989429_86dd07"
    },
    "refused_creates": 0,
    "reply_missing": 0,
    "sequence_sha256": "a4b2d90dd4da7ac2",
    "speech_end_to_first_played_s": {
-    "n": 9,
-    "p50": 2.467,
-    "p90": 3.902
+    "n": 8,
+    "p50": 2.431,
+    "p90": 3.002
    },
    "triggers_fired": 4,
    "voice_error": 0
   },
   "S2A": {
    "error_frames": 0,
-   "lines_answered": 26,
-   "lines_heard": 26,
-   "lines_said": 26,
+   "lines_answered": 27,
+   "lines_heard": 27,
+   "lines_said": 27,
    "phantom_turns": 0,
    "recorded": {
-    "build": "0c271c7",
-    "date": "2026-10-02",
-    "pipeline_version": "2026-10-01a",
+    "build": "4216d0a",
+    "date": "2026-10-14",
+    "pipeline_version": "2026-10-14a",
     "room_pacing_version": "2026-09-29b",
-    "session_id": "s_1790914913_37e4ea"
+    "session_id": "s_1791990139_357daa"
    },
    "refused_creates": 0,
    "reply_missing": 0,
    "sequence_sha256": "4ae8133b9c6e2fef",
    "speech_end_to_first_played_s": {
-    "n": 26,
-    "p50": 1.628,
-    "p90": 2.07
+    "n": 27,
+    "p50": 1.753,
+    "p90": 2.436
    },
    "triggers_fired": 6,
    "voice_error": 0
@@ -63,43 +63,43 @@
    "lines_said": 9,
    "phantom_turns": 0,
    "recorded": {
-    "build": "0c271c7",
-    "date": "2026-10-02",
-    "pipeline_version": "2026-10-01a",
+    "build": "4216d0a",
+    "date": "2026-10-14",
+    "pipeline_version": "2026-10-14a",
     "room_pacing_version": "2026-09-29b",
-    "session_id": "s_1790915635_d39944"
+    "session_id": "s_1791990861_943e93"
    },
    "refused_creates": 0,
    "reply_missing": 0,
    "sequence_sha256": "b839d60a54bb1537",
    "speech_end_to_first_played_s": {
     "n": 9,
-    "p50": 3.862,
-    "p90": 5.88
+    "p50": 3.738,
+    "p90": 5.891
    },
    "triggers_fired": 3,
    "voice_error": 0
   },
   "S4A": {
    "error_frames": 0,
-   "lines_answered": 25,
-   "lines_heard": 30,
-   "lines_said": 30,
+   "lines_answered": 23,
+   "lines_heard": 32,
+   "lines_said": 32,
    "phantom_turns": 0,
    "recorded": {
-    "build": "0c271c7",
-    "date": "2026-10-02",
-    "pipeline_version": "2026-10-01a",
+    "build": "4216d0a",
+    "date": "2026-10-15",
+    "pipeline_version": "2026-10-14a",
     "room_pacing_version": "2026-09-29b",
-    "session_id": "s_1790915872_f893d7"
+    "session_id": "s_1792074518_5c9541"
    },
-   "refused_creates": 0,
+   "refused_creates": 1,
    "reply_missing": 0,
    "sequence_sha256": "8efdc0004450ad17",
    "speech_end_to_first_played_s": {
-    "n": 29,
-    "p50": 4.027,
-    "p90": 6.379
+    "n": 27,
+    "p50": 4.425,
+    "p90": 8.327
    },
    "triggers_fired": 4,
    "voice_error": 0

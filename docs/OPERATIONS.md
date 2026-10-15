@@ -332,8 +332,8 @@ Fixes for issues #21-#25, landed mid-study. Every record carries
 `pipeline_version` and `room_pacing_version` (on `realtime_session_started`,
 and in `/health` under `gateway`), plus the knob values that ran (`turn_gate`,
 `pacing`, `record`, `cancelled_output`, `input_rate`,
-`input_transcription_model`, `max_output_tokens`, and `room_memory` from
-10-01a). From `23g` record.json's
+`input_transcription_model`, `max_output_tokens`, `room_memory` from
+10-01a, and `reconnect` from 10-14a). From `23g` record.json's
 `provenance` carries all of them too, and the analysis DB's `encounter` row
 has `pipeline_version`, `room_pacing_version` and `pipeline_provenance` (the
 loader adds the columns to an older database). Split the archive on those
@@ -678,6 +678,66 @@ Sam/Drew and S4's Dan and Priya. The voice an actor spoke with is in every
 `steering_pair` (`actor.voice`), so encounters can be split by casting rather
 than by date. `pipeline_version` does not move: what the pipeline does is
 unchanged, only who it sounds like.
+
+## What changed on 2026-10-14, room members the gateway closes (pipeline_version 2026-10-14a)
+
+A 1:1 session the gateway closes under an encounter has been rebuilt inside it
+since 2026-09-14 (`RECONNECT_LIMIT`, see [What a wave sounds
+like](#what-a-wave-sounds-like-lost-audio-and-the-retry)). A room member's was
+not: it left the room for good and the room went on with whoever was left. The
+release sim check of 2026-10-14 on main 01f10f0 showed what that costs when the
+gateway restarts. In S4A, at 154.7 s, the gateway closed all three members'
+sockets with WebSocket code 1012 (service restart): `voice_error` `where`
+`room:dan` / `room:chris` / `room:priya`, "realtime connection lost: received
+1012 (service restart)". The scribe survived. Every one of the next 39
+participant turns was written as `group_turn_no_members`, and nobody answered
+for the remaining ~565 s: 47 lines said, 5 answered. The same build's S2A lost
+its 1:1 connection at 312.9 s and recovered. Production (ccd4678, task
+definition :55) runs the same room code.
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 10-14a | A room member whose session the gateway closes (its socket ends under a live room, or a send to it fails) is rebuilt in the room, member by member: a fresh session as the same character, with the voice it was speaking with and the brief it would be given now, plus a note for its next reply that the line dropped (do not greet again, do not restart, do not mention it). `room_member_dropped` when it goes (`floor`, `held_reply`), `room_member_reconnected` when it is back (`attempt`, `reconnect_s`, `seed_route`, `seeded`, `seed`), and a `voice_error` `where` `room_reconnect` for each refused connect, tried again after 1 s. Past the limit, or for a session the gateway refused outright (a voice it does not know), `room_member_lost`, its session is closed, and the room goes on without it, as before. | `ROOM_RECONNECT_LIMIT` (2 per member per encounter; every connect attempt counts; `0` turns all of this off: a closed member is handled as on 10-01a, in the room until a send to it fails and then gone; only the two no-knob fixes below still apply) |
+| 10-14a | On the gpt route the rebuilt member is seeded, before it is back in the room, with the room's conversation as that character held it, as items of its new conversation, the 120 latest lines at most: the participant's accepted lines as user items, its own lines as room memory left them (assistant items: the heard words of a line cut off, nothing of a line nobody heard), and its colleagues' lines as the told notes it was given (the heard words likewise). Its own seeded line stands for the old reply and a seeded told note is remembered, so a line still playing when the socket went and cut afterwards is replaced or corrected in place, as on the old session. A cut decided while the seed was going out, which could not reach a member not yet in the room, is applied once it is (`member_memory_replaced` / `told_line_corrected`, reason `seed_reconciled`). A participant line begun before the member was back and written after it was seeded is told to it (`room_member_line_late`), unless the seed already gave it. Off the gpt route (native-audio and Gemini rooms) the conversation is recapped in that one-reply note instead, the 12 latest lines, written once the line its socket went in the middle of is finished, as a rebuilt 1:1 session's is; a colleague's line finished after the recap is told to it as the room tells any (native-audio), and a participant line spoken while it was away is not. | follows `ROOM_RECONNECT_LIMIT` |
+| 10-14a | A floor holder whose session goes before any of its reply has reached the page releases the floor at once (it held it until the participant spoke again, or for 45 s). Once it is back it is given the floor again for the same turn (`floor_regranted`, `why` `dropped_unanswered`, or `grant_failed` when the session went during the grant), with the beat or direction it was briefed with delivered to the new session first (`stage_direction_redelivered`; the steering pair's direction says `redelivered`), and only then does the page say it heard them (`voice_notice` `reconnected`, `replayed` true). Only a grant that went to the session that went is given again: a grant decided after the drop went to whatever session the member had by then, once. Not when the participant has spoken since or is speaking (`floor_regrant_skipped`, and the page's notice says `replayed` false), and not twice: then its beat goes back (`trigger_undelivered` reason `member_lost`) and the turn ends there; the silence probe and a follow-up speaker are handled the same way, and a probe whose beat's character is being rebuilt waits for it, a tick at a time. A holder whose reply had begun to play keeps that line, closed as interrupted by the bridge as before (with its playback clock), is not asked again, as a 1:1 reply cut by a drop is not, and the page says the line dropped (`replayed` false). A reply a dropped member was holding (suppressed, never played) is dropped with the session. | follows `ROOM_RECONNECT_LIMIT` |
+| 10-14a | A room turn that finds no member, a turn about to be routed (unless the participant named somebody who is there), and an interaction boundary at which the room can be kept wait up to 10 s for members being rebuilt, instead of finding nobody (`group_turn_no_members`) or, at the boundary, rebuilding the whole room. When no member is left and none is coming back, the page is told once (`room_members_lost` and an `error` frame), as a 1:1 encounter past its limit is. | follows `ROOM_RECONNECT_LIMIT` |
+| 10-14a | A follow-up speaker whose grant failed no longer waits out the 45 s group-turn timeout, and a commit-only grant stops waiting on a socket that is gone (`via` `commit_lost`). | no knob (defects) |
+| 10-14a | Provenance `reconnect` (`one_to_one_limit`, `room_member_limit`, `room_seed`: `conversation_items` on the gpt route, else `brief_recap`), in record.json and the analysis DB's `pipeline_provenance`; `tools/encounter_health.py` reports room members dropped, rebuilt and lost. | record only |
+
+The scribe, the room's participant channel, is not touched: a scribe the
+gateway closes still ends the participant transcript as it did
+(`scribe_pump_ended`).
+
+**The sim baselines need re-recording.** All four scenarios are `pending` in
+`tools/sim/baseline.json` until `python -m tools.sim.check --write-baseline`
+has run against the gateway on this version; `tools/sim/README.md` says what
+the first run is to be read against.
+
+Caveats for analysis:
+
+- A rebuilt member's conversation is not the one it replaced. The
+  participant's lines are text in it, where the old one held their audio
+  (committed at that member's grants), so it has their words but not their
+  voice or tone. What it holds of its own and its colleagues' lines is what
+  10-01a decided before the drop, given as text. `room_member_reconnected`
+  `seed` lists every item it was given, in order.
+- A reply after `floor_regranted` answers a line said before the drop: the
+  participant waited through the rebuild (`reconnect_s`) as well as the
+  reply's own time to first audio.
+- `stage_direction_redelivered` `acked` can be the gateway's answer to the
+  rebuilt session's own connect frame rather than to the redelivery: the
+  bridge does not tell one `session.updated` from another, and the new pump
+  starts reading at the seat. The same holds for the first brief after a 1:1
+  rebuild.
+- An interaction boundary that waits for a member being rebuilt waits on
+  whatever called it, which for the participant's own move-on is the
+  microphone's loop: up to 10 s in which their audio is held.
+- None of this has run against the live gateway yet. It rests on the frames
+  measured for 10-01a (client item ids, assistant output_text items) and on
+  the 1:1 rebuild. That a gpt character keeps answering in voice after an
+  output_text item was measured for one such item (3 of 3), not for a
+  conversation seeded with dozens of them. Read the first re-recorded S4A
+  run, or a run with a forced close, before a wave.
 
 ## The seven-minute floor, and the twelve-minute stop
 
@@ -1257,6 +1317,7 @@ of that encounter does not. That is what `active_sessions` 0 is for.
 | Yesterday's encounters are gone | The task has no persistent volume and something redeployed or restarted it — see [Read this before collecting anything](#read-this-before-collecting-anything) |
 | A character goes quiet for ~8 s and then starts the line again, or its reply answers "could you say it again" | The gateway dropped that reply's audio and the bridge retried it once — `audio_retry` on the turn. Expected on the configured model at a few per 145 replies; a wave doing much worse than that is the gateway, and `python tools/encounter_health.py` will say how often — see [What a wave sounds like](#what-a-wave-sounds-like-lost-audio-and-the-retry) |
 | A character goes quiet for 45 s | A turn the gateway never answered at all; the watchdog closes it. Seen after one-word utterances. Nothing to fix on the task |
+| Room characters show "realtime connection lost" on the console, and then the room goes quiet | The gateway closed their sessions; a gateway restart (WebSocket 1012) closes every member at once. From 10-14a each is rebuilt in the room: `room_member_reconnected` per member, `room_member_lost` once one is past `ROOM_RECONNECT_LIMIT`. On an earlier build the room stays mute (`group_turn_no_members`) — see [What changed on 2026-10-14, room members the gateway closes](#what-changed-on-2026-10-14-room-members-the-gateway-closes-pipeline_version-2026-10-14a) |
 | Characters keep stopping mid-sentence | Room noise or loudspeaker bleed being read as the participant. Headset first; the end-of-turn floor adapts to steady noise, not to the character's own voice coming back through the mic |
 | Qualtrics export fails while `whoami` succeeds | `QUALTRICS_BASE_URL` is the brand host, not the datacenter host — see [Pulling the survey responses out of Qualtrics](#pulling-the-survey-responses-out-of-qualtrics) |
 

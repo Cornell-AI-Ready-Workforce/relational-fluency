@@ -473,6 +473,9 @@ def build(session_dir: Path) -> Dict[str, Any]:
             # character's own conversation keeps of lines nobody heard; None
             # before it.
             "room_memory": realtime.get("room_memory"),
+            # What happens to a session the gateway closes, a room member's
+            # included (pipeline 2026-10-14a); None before it.
+            "reconnect": realtime.get("reconnect"),
             # Who opens a conversation and which clock each limit counts on
             # (pipeline 2026-09-28b: the participant); None before it.
             "opening": realtime.get("opening"),

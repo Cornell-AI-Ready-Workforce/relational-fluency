@@ -546,7 +546,9 @@ def realtime_row_defaults(monkeypatch):
                  # Room memory hygiene (pipeline 2026-10-01a). Not
                  # REALTIME_MEMORY_SETTLE_S / _OP_TTL_S: those are read at
                  # import, like REALTIME_UPDATE_ACK_S.
-                 "ROOM_CUT_MEMORY", "ROOM_TOLD_TEXT", "ROOM_NUDGE_ROLE"):
+                 "ROOM_CUT_MEMORY", "ROOM_TOLD_TEXT", "ROOM_NUDGE_ROLE",
+                 # Room members the gateway closed (pipeline 2026-10-14a).
+                 "ROOM_RECONNECT_LIMIT"):
         monkeypatch.delenv(knob, raising=False)
 
 
