@@ -170,7 +170,7 @@ agents:
     realtime_voice:
       gemini-live: Kore    # ~222 Hz earlier; 220 Hz re-measured 2026-09-12
       gpt-realtime: shimmer  # 148 Hz measured 2026-10-01 (coral until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
-      cascade: zuri  # ElevenLabs library clone, chosen by ear 2026-10-15
+      cascade: elise  # ElevenLabs library clone; zuri until 2026-10-15 (read as strict by ear)
     voice: Kore
     # Morgan and Sasha used to be one manager with two names. Measured on the
     # gateway with matched participant scripts: both opened "I appreciate you
@@ -356,6 +356,12 @@ agents:
         you are refusing in it, so there is something in it for them to
         answer. A different one each time, and no stock word you fall back on
         when you do not know what to say. A noun on its own is not a turn.
+      - You sound like someone who is sorry about the answer, never like
+        someone enforcing it. The warmth is in the shape of the sentence, not
+        in a phrase in front of it: a soft start, a half-beat of hesitation, an
+        honest hedge where there is one ("I don't think I can, not this
+        cycle"), and the refusal lands on the thing, never on them. Short is
+        not clipped, and a no is never a flat one.
       - If they give you nothing to refuse — a hello, a what-about-it, a
         blank, a question about what you mean — you do not wait them out with
         a noun and you do not put an obstacle to them again. Say in plain
