@@ -94,14 +94,18 @@ shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
 check fails for it, saying so, until it is recorded. None is pending as
-committed: all four are recorded on pipeline 2026-10-14a (room members the
-gateway closes are rebuilt inside the encounter) / room pacing 29b, build
-4216d0a, in runs the gateway closed nothing in: S1A on 2026-10-14 (session
-s_1791989429_86dd07), S2A and S3A on 2026-10-14 (s_1791990139_357daa,
-s_1791990861_943e93), S4A on 2026-10-15 (s_1792074518_5c9541). Each is within
-10-01a's tolerances, the values they replace (build 0c271c7, `git show
-01f10f0:tools/sim/baseline.json`), which are 30a's speech check (#67) with
-10-01a's room memory hygiene (#72) on top.
+committed: all four are recorded on the cascade (`cascade-argon-elevenlabs`:
+Argon hears and replies, flash-lite transcribes, ElevenLabs eleven_v4 speaks),
+pipeline 2026-10-14a / room pacing 29b, on 2026-10-15: S1A, S2A and S4A from
+build ac5e5c9 (s_1792090452_90b16a, s_1792090674_44dec7, s_1792091509_666571)
+and S3A from 488ad6b (s_1792092205_0207e6), re-run alone because the first S3A
+run's one voice_error was ElevenLabs adding a never-used library voice to the
+account under three concurrent requests (409 already_running, now retried).
+The gateway closed nothing in any of them. The gpt-realtime-2.1 values these
+replace are at `git show 9361af6:tools/sim/baseline.json`; against them the
+cascade answers about two seconds later per turn one-to-one (p50 4.1 / 3.8 s
+against 2.4 / 1.8 s) and about level in rooms, with every line heard, no
+phantom turns and every trigger fired.
 
 A baseline compares one `pipeline_version` with itself, so a merge that brings
 another version's change in under the same label needs a re-record that the
