@@ -124,9 +124,9 @@ def test_what_it_heard_comes_back_with_the_prompt_and_the_audio(answers):
     a = answers("Hi Morgan.")
     out = asyncio.run(sc.hear(PCM, names=["Morgan"]))
     assert out["outcome"] == "heard" and out["text"] == "Hi Morgan."
-    assert out["audio_ms"] == 1000 and out["model"] == "nto.gemini-3.1-flash-lite"
+    assert out["audio_ms"] == 1000 and out["model"] == "nto.gemini-4-argon"
     (payload,) = a.payloads
-    assert payload["model"] == "nto.gemini-3.1-flash-lite"
+    assert payload["model"] == "nto.gemini-4-argon"
     assert payload["temperature"] == 0
     prompt, audio = payload["messages"][0]["content"]
     assert "[no speech]" in prompt["text"] and "Morgan" in prompt["text"]

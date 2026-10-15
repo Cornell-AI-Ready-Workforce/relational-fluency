@@ -509,7 +509,7 @@ def test_the_gate_is_in_provenance_with_its_defaults():
         "participant_drop_annotations": True,
         # 2026-09-30a: the speech check, on the gpt row.
         "participant_speech_check": {
-            "enabled": True, "model": "nto.gemini-3.1-flash-lite",
+            "enabled": True, "model": "nto.gemini-4-argon",
             "timeout_s": 2.5, "max_words": 3, "playback_max_words": 7,
             "playback_tail_s": 1.0, "at_commit": True,
             "room_route_during_check": True},

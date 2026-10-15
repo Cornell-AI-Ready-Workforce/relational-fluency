@@ -8,7 +8,7 @@ construct: teamwork
 variant: B
 parallel_form: S4A
 title: "Preparing a client presentation"
-duration_minutes: [7, 12]
+duration_minutes: [5, 10]
 
 skill_measured: >-
   Cooperating, soliciting input, sharing credit, and encouraging everyone's
@@ -27,9 +27,24 @@ esci_items:
 # personality, and the two forms have to hand him the same standing or one of
 # them is the easier room to push back in.
 setup: >-
-  You are part of a four-person group preparing tomorrow's client
-  presentation. Dan has already built the deck. The session is already
-  underway, and the running order is meant to be agreed before it ends.
+  You are one of four people on a project team preparing tomorrow's
+  presentation to a client. Dan has already built the deck, and his draft
+  has him presenting it on his own. The others are Priya and Chris. Nobody
+  here outranks anyone, and no manager is in the room. The working session
+  is already underway, and the group is meant to leave it with a running
+  order, and who presents what, that everyone has agreed to.
+
+# What the participant is told they are there to do. Shown on the situation
+# card and kept on screen under the header for the whole conversation. It is
+# the task, in their terms; never the construct or what the raters look for.
+goal: >-
+  Leave the session with a running order for tomorrow, and who presents what, that all four of you genuinely agree to.
+
+# Participant-only (the "What you have" card; actors never see this list).
+# The parallel of S4A's, so the two forms give the participant the same
+# footing: the artefact Dan brought, and nothing about anyone's history.
+assets:
+  - "Dan's deck, circulated before the session, with him down to present all of it"
 
 # Casting, per model family. `realtime_voice` is a MAP from model family to the
 # voice that family speaks this character with, and server/scenarios_v3.py
@@ -128,7 +143,7 @@ agents:
   dan:
     name: Dan
     role: pre-built the deck, plans to present solo
-    display_role: project teammate
+    display_role: project teammate, built the deck
     realtime_voice:
       gemini-live: Fenrir  # ~116 Hz earlier; 115 Hz re-measured 2026-09-12
       gpt-realtime: verse  # ~120 Hz earlier; 160 Hz re-measured 2026-09-12

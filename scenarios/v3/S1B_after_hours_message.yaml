@@ -9,7 +9,7 @@ construct: conflict_management
 variant: B
 parallel_form: S1A
 title: "Hostile after-hours message"
-duration_minutes: [7, 12]
+duration_minutes: [5, 10]
 
 skill_measured: >-
   Bringing disagreement into the open, de-escalating emotion, and resolving
@@ -26,6 +26,12 @@ setup: >-
   You are a {role} at {org}. Late last night your colleague Drew sent
   a blunt message criticising your handoff, copying two teammates. The handoff
   point may be fair; the way it was raised was not.
+
+# What the participant is told they are there to do. Shown on the situation
+# card and kept on screen under the header for the whole conversation. It is
+# the task, in their terms; never the construct or what the raters look for.
+goal: >-
+  Settle the handoff point with Drew, and how things like this get raised in future, without it turning into a fight.
 
 # Casting, per model family. `realtime_voice` is a MAP from model family to the
 # voice that family speaks this character with, and server/scenarios_v3.py

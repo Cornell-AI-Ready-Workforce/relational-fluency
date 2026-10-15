@@ -83,7 +83,7 @@ def _spent(runner, monkeypatch):
 # 1. Nothing automatic ends the last interaction before the ceiling
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("ago", [100, 425, 700])
+@pytest.mark.parametrize("ago", [100, 305, 570])
 def test_spent_beats_no_longer_end_the_last_interaction(monkeypatch, ago):
     runner, session, ws = harness.make_runner("S2A")
     _last(runner, ago=ago)
@@ -156,7 +156,7 @@ def test_the_row_says_how_a_held_call_is_answered():
     assert R.tool_output_for("no-such-model") is None
 
 
-@pytest.mark.parametrize("ago", [300, 500, 700])
+@pytest.mark.parametrize("ago", [200, 400, 570])
 def test_a_call_before_the_ceiling_is_answered_and_the_character_goes_on(ago):
     async def go():
         runner, session, ws, rt = _gpt_runner(ago=ago)
@@ -181,7 +181,7 @@ def test_a_call_before_the_ceiling_is_answered_and_the_character_goes_on(ago):
     assert rep["requested"] is True
     (held,) = session.store.of("auto_end_held")
     assert held["reason"] == "end_conversation"
-    assert bool(ws.frames("floor_held")) is (ago < 420), (
+    assert bool(ws.frames("floor_held")) is (ago < 300), (
         "'keep going' before the floor, and nothing after it")
 
 
@@ -285,16 +285,16 @@ def test_the_clock_announces_the_floor_the_warning_and_the_stop():
     runner._encounter_started_at = runner._first_line_at = time.time() - 100
     assert _run(runner._encounter_clock_tick()) is False
     assert not ws.frames("move_on_open")
-    runner._encounter_started_at = runner._first_line_at = time.time() - 421
+    runner._encounter_started_at = runner._first_line_at = time.time() - 301
     assert _run(runner._encounter_clock_tick()) is False
     assert _run(runner._encounter_clock_tick()) is False
     assert len(ws.frames("move_on_open")) == 1 and len(session.store.of("move_on_open")) == 1
     assert not ws.frames("wrap_up")
-    runner._encounter_started_at = time.time() - 661
+    runner._encounter_started_at = time.time() - 541
     assert _run(runner._encounter_clock_tick()) is False
     (wrap,) = ws.frames("wrap_up")
     assert 50 <= wrap["seconds_left"] <= 60
-    runner._encounter_started_at = time.time() - 721
+    runner._encounter_started_at = time.time() - 601
     assert _run(runner._encounter_clock_tick()) is True
     assert _run(runner._encounter_clock_tick()) is True
     (done,) = ws.frames("encounter_complete")
@@ -306,7 +306,7 @@ def test_the_watchdog_ends_a_silent_encounter_at_the_ceiling(monkeypatch):
     link; the stop waited for a turn to finish."""
     monkeypatch.setattr(R, "probe_tick_s", lambda: 0.01)
     runner, session, ws = harness.make_runner("S2A")
-    runner._encounter_started_at = time.time() - 721
+    runner._encounter_started_at = time.time() - 601
     _run(asyncio.wait_for(runner._silence_watchdog(), timeout=2))
     assert ws.frames("encounter_complete")
 
@@ -317,7 +317,7 @@ def test_the_page_is_told_the_clock_on_every_link(monkeypatch):
     runner._encounter_started_at = time.time() - 1.5
     _run(runner._announce_clock())
     (clock,) = ws.frames("encounter_clock")
-    assert clock["min_seconds"] == 60.0 and clock["max_seconds"] == 720.0
+    assert clock["min_seconds"] == 60.0 and clock["max_seconds"] == 600.0
     assert 1.4 <= clock["elapsed_s"] <= 3
     src = (ROOT / "server" / "realtime_voice_session.py").read_text(encoding="utf-8")
     run_src = src[src.index("    async def run(self)"):src.index("    async def _on_turn_ended")]
@@ -378,12 +378,12 @@ function page(search, runObj) {
     // Worded as when they CAN move on, never as the conversation ending: it
     // runs to 12:00 unless they choose to (review of 850b08e).
     const early = $('gateNote').textContent;
-    assert(/can (move on to the next conversation|end this conversation) in about 6 minutes/.test(early),
+    assert(/can (move on to the next conversation|end this conversation) in about 4 minutes/.test(early),
       label + ': ' + early);
     assert(!/more minutes|runs about/.test(early), label + ': counts down to an end: ' + early);
     $('stopBtn').click();
     assert.strictEqual(p.notices().length, 1, label + ': a second press stacked the same reply');
-    assert(/can move on in about 6 minutes/.test($('gateLabel').textContent),
+    assert(/can move on in about 4 minutes/.test($('gateLabel').textContent),
       label + ': ' + $('gateLabel').textContent);
     // The character saying goodbye early: the conversation carries on.
     p.frame({ type: 'floor_held', seconds_left: 180 });
@@ -395,8 +395,8 @@ function page(search, runObj) {
     assert.deepStrictEqual(p.notices(), [early, held], label + ': ' + JSON.stringify(p.notices()));
 
     // At the floor: unlocked, and told once, neutrally.
-    p.at(421);
-    p.at(430);
+    p.at(301);
+    p.at(310);
     assert(!$('stopBtn').classList.contains('locked'), label + ': End still held after 7:00');
     const said = p.moveOns();
     assert.strictEqual(said.length, 1, label + ': move-on notice ' + JSON.stringify(said));
@@ -409,10 +409,10 @@ function page(search, runObj) {
     // The server's wrap_up and the page's own clock both reach it; the
     // filter matches either wording, so a second notice would be counted.
     p.frame({ type: 'wrap_up', seconds_left: 60 });
-    p.at(662);
-    p.at(663);
+    p.at(542);
+    p.at(543);
     const warned = p.notices().filter(t => /automatically|left\./.test(t));
-    assert.deepStrictEqual(warned, ['1 minute left. This conversation will end automatically at 12:00.'],
+    assert.deepStrictEqual(warned, ['1 minute left. This conversation will end automatically at 10:00.'],
       label + ': warning ' + JSON.stringify(p.notices()));
     assert.strictEqual($('gateNote').textContent, warned[0], label + ': ' + $('gateNote').textContent);
     assert.strictEqual($('gateLabel').textContent, 'Wrapping up');
@@ -629,7 +629,7 @@ def test_the_first_screen_says_how_long_a_conversation_runs():
     text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", card))
     assert "end a conversation at any" not in text and "at any time." not in text.replace(
         "stop taking part in the study at any time", ""), text
-    assert "at least 7 minutes" in text and "at 12 minutes" in text, text
+    assert "at least 5 minutes" in text and "at 10 minutes" in text, text
     for span in ('id="fictionMin"', 'id="fictionMax"', 'id="fictionLeave"'):
         assert span in card
     boot = src[src.index("if (needsFictionAck()) {"):][:200]
@@ -638,7 +638,7 @@ def test_the_first_screen_says_how_long_a_conversation_runs():
 
 def test_the_page_defaults_are_the_new_numbers():
     src = V2.read_text(encoding="utf-8")
-    assert "let MIN_S = 7 * 60, WRAP_S = 11 * 60, MAX_S = 12 * 60;" in src
+    assert "let MIN_S = 5 * 60, WRAP_S = 9 * 60, MAX_S = 10 * 60;" in src
     gate = src[src.index("function renderGate(s)"):src.index("let gateNoteTimer")]
     assert "gateActive()" not in gate, "the 7:00 gate is back to study links only"
 

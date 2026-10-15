@@ -69,7 +69,7 @@ variable "director_model" {
 variable "text_model" {
   description = "Text model for the text-mode engine, and the default in the researcher's pre-start model picker. Reported as provenance.text_model on every encounter record."
   type        = string
-  default     = "nto.gemini-3.1-flash-lite"
+  default     = "nto.gemini-4-argon"
 }
 
 # UNUSED, and left declared only so a `terraform apply` against an existing

@@ -87,7 +87,7 @@ from .scenarios import Scenario
 # this is a change to the stimulus: every encounter records the model that
 # steered it as provenance.steering_model, and STEERING_MODEL=
 # nto.gemini-3.1-flash-lite restores the old controller exactly.
-STEERING_MODEL = setting("STEERING_MODEL", "nto.gemini-3.5-flash-lite")
+STEERING_MODEL = setting("STEERING_MODEL", "nto.gemini-4-argon")
 MAX_ADJUSTMENTS_PER_TURN = 2
 STEERABLE_KNOBS = TONE_KNOBS + INCIVILITY_KNOBS  # cognition is not auto-steered
 

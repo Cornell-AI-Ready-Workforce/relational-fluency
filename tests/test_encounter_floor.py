@@ -1,6 +1,6 @@
-"""The encounter clock: a seven-minute floor, an eleven-minute warning, a
-twelve-minute stop (docs/study1-plan.md, E4; the end policy of 2026-09-28,
-issue #34, which moved the wrap from 12:00 and the stop from 13:00).
+"""The encounter clock: a five-minute floor, a nine-minute warning, a
+ten-minute stop (5:00 / 9:00 / 10:00 since 2026-10-15; 7:00 / 11:00 / 12:00
+before, and docs/study1-plan.md E4 still describes those).
 
 The floor is enforced in two places and this file holds both to the same
 numbers: the runner (the participant's move-on) and POST /api/run/{id}/advance,
@@ -36,7 +36,7 @@ import test_lost_participant_round as harness  # noqa: E402  (FakeSession / make
 def test_the_defaults_are_the_studys_numbers(monkeypatch):
     for k in ("ENCOUNTER_MIN_SECONDS", "ENCOUNTER_WRAP_SECONDS", "ENCOUNTER_MAX_SECONDS"):
         monkeypatch.delenv(k, raising=False)
-    assert storage.encounter_timing() == {"min_seconds": 420.0, "wrap_seconds": 660.0, "max_seconds": 720.0}
+    assert storage.encounter_timing() == {"min_seconds": 300.0, "wrap_seconds": 540.0, "max_seconds": 600.0}
 
 
 def test_the_environment_overrides_them(monkeypatch):
@@ -48,7 +48,7 @@ def test_the_environment_overrides_them(monkeypatch):
 
 def test_an_unusable_value_falls_back_rather_than_zeroing_the_floor(monkeypatch, capsys):
     monkeypatch.setenv("ENCOUNTER_MIN_SECONDS", "seven minutes")
-    assert storage.encounter_timing()["min_seconds"] == 420.0
+    assert storage.encounter_timing()["min_seconds"] == 300.0
     assert "ENCOUNTER_MIN_SECONDS" in capsys.readouterr().out
 
 
@@ -219,7 +219,7 @@ def test_the_last_interaction_is_held_until_the_floor_and_says_so_once():
     assert _run(runner._hold_at_floor("move_on")) is True
     assert _run(runner._hold_at_floor("end_conversation")) is True
     held = session.store.of("floor_held")
-    assert len(held) == 1 and held[0]["reason"] == "move_on" and held[0]["seconds_left"] > 400
+    assert len(held) == 1 and held[0]["reason"] == "move_on" and held[0]["seconds_left"] > 280
     assert len(ws.frames("floor_held")) == 2, "the page is told each time; the record once"
 
 
@@ -389,11 +389,11 @@ def test_automatic_advance_keeps_the_final_segment_open_until_the_ceiling(monkey
 
 def test_the_wrap_is_called_once_and_the_stop_completes_the_encounter():
     runner, session, ws = harness.make_runner("S1A")
-    runner._encounter_started_at = time.time() - 670       # past 11:00, before 12:00
+    runner._encounter_started_at = time.time() - 560       # past 9:00, before 10:00
     assert _run(runner._at_ceiling()) is False
     assert _run(runner._at_ceiling()) is False
     assert len(session.store.of("ceiling_wrap")) == 1 and len(ws.frames("wrap_up")) == 1
-    runner._encounter_started_at = time.time() - 730       # past 12:00
+    runner._encounter_started_at = time.time() - 610       # past 10:00
     assert _run(runner._at_ceiling()) is True
     assert _run(runner._at_ceiling()) is True
     done = ws.frames("encounter_complete")
@@ -417,7 +417,7 @@ def test_the_stop_outranks_planted_beats_still_waiting(monkeypatch):
 def test_the_page_takes_its_clock_from_the_run_and_holds_end_until_the_floor():
     src = (ROOT / "static" / "v2.html").read_text(encoding="utf-8")
     assert "applyTiming(run.timing)" in src
-    assert "let MIN_S = 7 * 60, WRAP_S = 11 * 60, MAX_S = 12 * 60;" in src
+    assert "let MIN_S = 5 * 60, WRAP_S = 9 * 60, MAX_S = 10 * 60;" in src
     early = src[src.index("$('stopBtn').addEventListener('click'"):]
     early = early[:early.index("if (!confirm('Finish this conversation and move on?'))")]
     assert "return;" in early and "endSession()" not in early, \

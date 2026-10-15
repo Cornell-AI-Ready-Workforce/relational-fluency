@@ -12,7 +12,7 @@ construct: inspirational_leadership
 variant: A
 parallel_form: S3B
 title: "After resignations over a pay dispute"
-duration_minutes: [7, 12]
+duration_minutes: [5, 10]
 
 skill_measured: >-
   Articulating a credible vision, building group pride, and bringing out
@@ -29,6 +29,12 @@ setup: >-
   You are the interim lead of a three-person team after two colleagues
   resigned over pay. You must lead the team through a quarter with no new
   resources. Leadership above you will not discuss compensation.
+
+# What the participant is told they are there to do. Shown on the situation
+# card and kept on screen under the header for the whole conversation. It is
+# the task, in their terms; never the construct or what the raters look for.
+goal: >-
+  Leave the meeting with a team that knows where it stands and a plan for the quarter they can live with, having promised nothing you cannot deliver.
 
 # Two short notes stand in for the briefing, context lands in-scene.
 pre_reading:

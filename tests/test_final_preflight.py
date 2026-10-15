@@ -69,6 +69,7 @@ LIVE_MODELS = {
         {"id": "nto.gemini-2.5-flash", "mode": None},
         {"id": "nto.gemini-2.5-flash-lite", "mode": None},
         {"id": "nto.gemini-3.1-flash-lite", "mode": None},
+        {"id": "nto.gemini-4-argon", "mode": None},
     ],
 }
 
@@ -84,12 +85,14 @@ TYPO = "nto.gemini-3.6-flsah"
 # fixed. Stated independently, a change to either side has to be a change to
 # both.
 EXPECTED_ROLES = (
-    ("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite", "the actor's text engine", True),
-    ("DIRECTOR_MODEL", "nto.gemini-3.5-flash-lite", "the director", True),
-    ("STEERING_MODEL", "nto.gemini-3.5-flash-lite", "the steering reviewer", True),
+    ("CLAUDE_MODEL", "nto.gemini-4-argon", "the actor's text engine", True),
+    ("DIRECTOR_MODEL", "nto.gemini-4-argon", "the director", True),
+    ("STEERING_MODEL", "nto.gemini-4-argon", "the steering reviewer", True),
     ("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio", "the voice socket", True),
-    ("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash", "the re-transcriber, offline", False),
-    ("SPEECH_CHECK_MODEL", "nto.gemini-3.1-flash-lite", "the participant speech check", False),
+    ("CASCADE_LLM_MODEL", "nto.gemini-4-argon", "the cascade's hearing and reply model", True),
+    ("CASCADE_STT_MODEL", "nto.gemini-3.5-flash-lite", "the cascade's transcriber", True),
+    ("TRANSCRIBE_MODEL", "nto.gemini-4-argon", "the re-transcriber, offline", False),
+    ("SPEECH_CHECK_MODEL", "nto.gemini-4-argon", "the participant speech check", False),
 )
 ROLE_OF = {name: role for name, _, role, _ in EXPECTED_ROLES}
 ON_THE_ENCOUNTER_PATH = [name for name, _, _, blocks in EXPECTED_ROLES if blocks]

@@ -24,7 +24,7 @@ from server.llm import gateway_api_key, gateway_base_url, setting  # noqa: E402
 from server.retranscribe import _completion_text  # noqa: E402
 
 # Same default as server/retranscribe.py (nto.gemini-3.8-flash since 2026-09-23).
-MODEL = setting("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash")
+MODEL = setting("TRANSCRIBE_MODEL", "nto.gemini-4-argon")
 
 CAST = {
     "S1A": "Riley, Sam", "S1B": "Mel, Drew", "S2A": "Morgan", "S2B": "Sasha",

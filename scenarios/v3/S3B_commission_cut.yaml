@@ -10,7 +10,7 @@ construct: inspirational_leadership
 variant: B
 parallel_form: S3A
 title: "After a commission cut"
-duration_minutes: [7, 12]
+duration_minutes: [5, 10]
 
 skill_measured: >-
   Articulating a credible vision, building group pride, and bringing out
@@ -27,6 +27,12 @@ setup: >-
   You are the interim lead of a three-person sales team. A restructuring
   decided two levels above you has cut your team's take-home pay and cannot be
   reversed. Leadership above you will not revisit it.
+
+# What the participant is told they are there to do. Shown on the situation
+# card and kept on screen under the header for the whole conversation. It is
+# the task, in their terms; never the construct or what the raters look for.
+goal: >-
+  Help the team absorb the cut: be straight about what has changed, and leave with commitments you can actually keep.
 
 pre_reading:
   - "Lee, carried last year's enterprise deals; quietest since the plan changed."

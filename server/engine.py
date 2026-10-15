@@ -23,7 +23,7 @@ from .scenarios import Agent, Branch, Scenario
 
 # Resolved via the shared .env-first accessor so the model actually used matches
 # the one recorded in provenance() (os.getenv would ignore the .env file).
-DEFAULT_MODEL = setting("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite")
+DEFAULT_MODEL = setting("CLAUDE_MODEL", "nto.gemini-4-argon")
 # Headroom for natural-length single-mode (voice/text-chat) replies. The group
 # one-sentence mode is constrained by the system prompt, not this cap.
 DEFAULT_MAX_TOKENS = 400

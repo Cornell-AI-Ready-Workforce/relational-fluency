@@ -676,17 +676,17 @@ async def test_the_floor_counts_from_the_first_line_and_the_ceiling_does_not_mov
     runner._awaiting_participant = False
     runner._first_line_at = now - 100                   # they opened at 6:40
     assert await runner._hold_at_floor("participant") is True
-    # The floor is 320 s off and the ceiling 220 s: the ceiling comes first.
-    assert page.frames("floor_held")[-1]["seconds_left"] == pytest.approx(220, abs=2)
-    runner._first_line_at = now - 400
+    # The floor is 200 s off and the ceiling 100 s: the ceiling comes first.
+    assert page.frames("floor_held")[-1]["seconds_left"] == pytest.approx(100, abs=2)
+    runner._first_line_at = now - 280
     assert await runner._hold_at_floor("participant") is True
     assert page.frames("floor_held")[-1]["seconds_left"] == pytest.approx(20, abs=2)
     await runner._encounter_clock_tick()
     assert not session.store.of("move_on_open")
-    runner._first_line_at = now - 421
+    runner._first_line_at = now - 301
     await runner._encounter_clock_tick()
     (mo,) = session.store.of("move_on_open")
-    assert mo["floor_elapsed_s"] >= 420 and mo["elapsed_s"] >= 500
+    assert mo["floor_elapsed_s"] >= 300 and mo["elapsed_s"] >= 500
 
     # The ceiling is the encounter's own: 12:00 from the socket opening,
     # whenever they first spoke.

@@ -316,7 +316,7 @@ resource "aws_ecs_task_definition" "agent" {
       # about the director depends on this line. That frees provenance's single
       # text_model field to mean what its readers assume — the text engine that
       # this deployment would actually run — which is exactly var.text_model,
-      # whose default is the same nto.gemini-3.1-flash-lite the code and
+      # whose default is the same nto.gemini-4-argon the code and
       # .env.example already use. Set the two independently; do not re-pin them.
       { name = "CLAUDE_MODEL", value = var.text_model },
       { name = "LLM_BASE_URL", value = var.llm_base_url },

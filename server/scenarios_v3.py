@@ -135,6 +135,12 @@ def _cast_voice_for(spec_id: str, agent_id: str, agent_spec: dict, caps) -> str:
             )
         return ""
     if not caps.accepts_voice(named):
+        # A family cast from another family's column (the cascade: ElevenLabs
+        # names, the Gemini column) plays the bank's name through its alias.
+        aliased = (getattr(caps, "voice_aliases", None) or {}).get(named.lower())
+        if aliased and caps.accepts_voice(aliased) and key != caps.family:
+            return aliased
+    if not caps.accepts_voice(named):
         msg = (
             f"{spec_id}/{agent_id} is cast in voice {named!r}, which the "
             f"{caps.family} family does not accept; it accepts "
@@ -840,6 +846,9 @@ def _briefing(spec: dict) -> dict:
     return {
         "identity": spec.get("_identity", {}),
         "situation": spec.get("setup", "").strip(),
+        # The task in the participant's own terms (the spec's `goal`): on the
+        # situation card, and kept under the header while they talk.
+        "goal": spec.get("goal", "").strip(),
         # Facts the participant holds. S2's ladder is only winnable if they know
         # they have the precedent, so withholding these does not test skill,
         # it tests whether they guessed.
@@ -851,7 +860,7 @@ def _briefing(spec: dict) -> dict:
                       ([i["agent"]] if isinstance(i.get("agent"), str) else i.get("agents", []))]}
             for i in interactions
         ],
-        "duration": spec.get("duration_minutes", [7, 12]),
+        "duration": spec.get("duration_minutes", [5, 10]),
         "howto": [
             talk,
             "There are no right answers, say what you would actually say.",

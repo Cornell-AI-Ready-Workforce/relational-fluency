@@ -15,7 +15,7 @@ construct: conflict_management
 variant: A
 parallel_form: S1B
 title: "Taken credit"
-duration_minutes: [7, 12]
+duration_minutes: [5, 10]
 
 skill_measured: >-
   Bringing disagreement into the open, de-escalating emotion, and resolving
@@ -32,6 +32,12 @@ setup: >-
   You are a {role} at {org}. Over the past two months your colleague
   Sam has twice presented your analysis in leadership meetings as his own
   work. You asked him privately to credit you; it happened again last week.
+
+# What the participant is told they are there to do. Shown on the situation
+# card and kept on screen under the header for the whole conversation. It is
+# the task, in their terms; never the construct or what the raters look for.
+goal: >-
+  Decide how to handle it, then raise it with Sam so that your work is credited from now on and the two of you can still work together.
 
 # Casting per model family: `realtime_voice` maps family -> voice name; the
 # families keep disjoint rosters, so a character is the same person on either

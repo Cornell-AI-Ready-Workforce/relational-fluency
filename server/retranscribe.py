@@ -41,7 +41,7 @@ from .storage import SESSIONS_DIR
 # Dan without them). gpt-6-astra cannot do this job: the gateway rejects audio
 # input for it with a 400. TRANSCRIBE_MODEL=nto.gemini-2.5-pro restores the old
 # default exactly.
-MODEL = setting("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash")
+MODEL = setting("TRANSCRIBE_MODEL", "nto.gemini-4-argon")
 
 PROMPT = (
     "Transcribe this audio verbatim. It is one side of a workplace conversation "
