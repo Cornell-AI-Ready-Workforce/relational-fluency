@@ -40,6 +40,7 @@ data "aws_iam_policy_document" "read_secrets" {
       aws_secretsmanager_secret.anthropic_key.arn,
       aws_secretsmanager_secret.agent_api_key.arn,
       aws_secretsmanager_secret.survey_completion_code.arn,
+      aws_secretsmanager_secret.elevenlabs_key.arn,
     ]
   }
 }
@@ -296,6 +297,11 @@ resource "aws_ecs_task_definition" "agent" {
       # permanent silence — see docs/migration-plan.md).
       { name = "REALTIME_MODEL", value = var.actor_model },
       { name = "DIRECTOR_MODEL", value = var.director_model },
+      # Read only on the cascade route (see variables.tf); harmless otherwise.
+      { name = "CASCADE_LLM_MODEL", value = var.cascade_llm_model },
+      { name = "CASCADE_STT_MODEL", value = var.cascade_stt_model },
+      { name = "ELEVENLABS_TTS_ID", value = var.elevenlabs_tts_id },
+      { name = "DIRECTOR_ROUTE", value = var.director_route },
       # CLAUDE_MODEL is NOT a provenance-only label. Three readers take it:
       # server/engine.py:26 and server/claude_engine.py:20 as DEFAULT_MODEL (the
       # text-mode engine), server/app.py:670 as `sc.model or DEFAULT_MODEL` (the
@@ -362,6 +368,10 @@ resource "aws_ecs_task_definition" "agent" {
       # Conditional because ECS refuses to start a task whose secret has no value:
       # put the value first, then enable (docs/OPERATIONS.md).
       { name = "SURVEY_COMPLETION_CODE", valueFrom = aws_secretsmanager_secret.survey_completion_code.arn },
+      ] : [], startswith(var.actor_model, "cascade") ? [
+      # Only the cascade speaks through ElevenLabs. Same rule as above: put the
+      # value in Secrets Manager first, then point actor_model at the cascade.
+      { name = "ELEVENLABS_API_KEY", valueFrom = aws_secretsmanager_secret.elevenlabs_key.arn },
     ] : [])
     logConfiguration = {
       logDriver = "awslogs"

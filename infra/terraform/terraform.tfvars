@@ -45,7 +45,16 @@ container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluen
 # set this line; do not change one without the other.
 #
 # The fallback for the deprecation is `gpt-realtime-2.1`, which also has a row.
-actor_model = "gpt-realtime-2.1"
+# 2026-10-15: the cascade (server/voice/cascade.py), which has its own row:
+# nto.gemini-4-argon hears and replies, nto.gemini-3.5-flash-lite writes the
+# transcript, ElevenLabs eleven_v4 speaks. It needs the ElevenLabs key in
+# Secrets Manager (relational-fluency/elevenlabs-api-key) BEFORE the apply: the
+# task reads that secret only when actor_model starts with `cascade`, and ECS
+# refuses to start a task whose secret has no value.
+actor_model = "cascade-argon-elevenlabs"
+# The director's routing call is off the room's critical path (DIRECTOR_ROUTE
+# in .env.example); 1:1 steering never waited on it.
+director_route = "0"
 
 # Retention: study_data_retention_days defaults to 0 = no expiration rule
 # (PI decision, 2026-09-17: recordings are kept until deleted by hand). To
@@ -67,7 +76,8 @@ actor_model = "gpt-realtime-2.1"
 # nto.gemini-3.5-flash-lite since 2026-09-23 (was nto.gemini-3.1-flash-lite);
 # see docs/model-benchmark-2026-09-23.md. Recorded per encounter as
 # provenance.director_model.
-director_model            = "nto.gemini-3.5-flash-lite"
+# nto.gemini-4-argon since 2026-10-15, with every other text role.
+director_model            = "nto.gemini-4-argon"
 analysis_db_allowed_cidrs = ["128.84.125.179/32"]
 
 # The study-wide code a participant enters in Qualtrics after finishing all four
