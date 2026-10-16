@@ -1394,7 +1394,7 @@ class RealtimeVoiceSessionRunner:
         return (
             "\n\nFIRST REPLY, for you alone — never say any of this out loud:\n"
             "The person you are all meeting with speaks first. "
-            "Begin with a greeting of one short sentence, as yourself, that says who you are to them and what this conversation is for, in plain words they can act on (so that a person who walked in knowing nothing would know what you want from them). Then, in the same reply, make your opening move. "
+            "Begin with a greeting of one short sentence, the kind two people who work together actually exchange: a hello and a how-are-you. Never introduce yourself or recap the situation to someone who already knows it; say only what they could not know, in plain words, if there is such a thing. Then, in the same reply, make your opening move. "
             "Your FIRST "
             "reply in this meeting, whatever they opened with, is where the "
             f"scene is found: «{opening}». If that quotes a line of dialogue, "
@@ -1439,7 +1439,7 @@ class RealtimeVoiceSessionRunner:
             return (
                 "\n\nFIRST REPLY, for you alone — never say any of this out loud:\n"
                 "The other person speaks first. "
-                "Begin with a greeting of one short sentence, as yourself, that says who you are to them and what this conversation is for, in plain words they can act on (so that a person who walked in knowing nothing would know what you want from them). Then, in the same reply, make your opening move. "
+                "Begin with a greeting of one short sentence, the kind two people who work together actually exchange: a hello and a how-are-you. Never introduce yourself or recap the situation to someone who already knows it; say only what they could not know, in plain words, if there is such a thing. Then, in the same reply, make your opening move. "
                 "Whatever they open with — a "
                 "greeting, a false start, half a sentence, or not much at all — "
                 "your FIRST reply is your own opening move, the one your brief "
@@ -1463,7 +1463,7 @@ class RealtimeVoiceSessionRunner:
         return (
             "\n\nFIRST REPLY, for you alone — never say any of this out loud:\n"
             "The other person speaks first. "
-            "Begin with a greeting of one short sentence, as yourself, that says who you are to them and what this conversation is for, in plain words they can act on (so that a person who walked in knowing nothing would know what you want from them). Then, in the same reply, make your opening move. "
+            "Begin with a greeting of one short sentence, the kind two people who work together actually exchange: a hello and a how-are-you. Never introduce yourself or recap the situation to someone who already knows it; say only what they could not know, in plain words, if there is such a thing. Then, in the same reply, make your opening move. "
             "Whatever they open with — a "
             "greeting, a false start, half a sentence, or not much at all — "
             f"your FIRST reply is where this scene is found: «{opening}». If "
