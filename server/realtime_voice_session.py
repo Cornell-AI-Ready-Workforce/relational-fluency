@@ -1978,6 +1978,12 @@ class RealtimeVoiceSessionRunner:
                     "label": self._interaction().get("label", "")}
         if self.segment + 1 < len(self.interactions):
             nxt_i = self.interactions[self.segment + 1]
+            if self._continues_scene(nxt_i):
+                # The same conversation moving to its next beat (S2's
+                # deflection ladder with the same Morgan, S4's close with the
+                # same three): nothing to "move on" to from where the
+                # participant sits. The pacing advances it; they only see End.
+                return None
             spec = nxt_i.get("agents") or nxt_i.get("agent")
             spec = [spec] if isinstance(spec, str) else (spec or [])
             by_id = {a.id: a for a in self.cast}
