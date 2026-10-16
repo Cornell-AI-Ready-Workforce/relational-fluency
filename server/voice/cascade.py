@@ -14,7 +14,7 @@ they did.
 
     participant PCM  -->  Argon (chat input_audio)  -->  user transcript
     history + brief  -->  Argon (streamed text)     -->  sentences
-    each sentence    -->  ElevenLabs (streamed PCM) -->  agent audio
+    each sentence    -->  ElevenLabs (one websocket per reply) --> agent audio
 
 Both model ids are settings (CASCADE_LLM_MODEL, ELEVENLABS_TTS_ID), and the
 ElevenLabs key is ELEVENLABS_API_KEY. What this stand-in does NOT have, because
@@ -47,13 +47,17 @@ from ..llm import gateway_api_key, gateway_base_url, setting
 # What the cascade calls, read at use so a test or an operator can change them.
 DEFAULT_TTS_MODEL = "eleven_v4"
 ELEVEN_BASE = "https://api.elevenlabs.io"
+# One websocket per reply. The text-to-dialogue stream is the one that takes
+# eleven_v3/v4 (the text-to-speech websocket refuses them, measured
+# 2026-10-15); sentences sent into one stream keep one delivery, where one
+# HTTP request per sentence re-decided pitch and tone every sentence (the same
+# reply came back at 273, 180, 174 and 226 Hz).
+TTS_WS = "wss://api.elevenlabs.io/v1/text-to-dialogue/stream-input"
 
 # ElevenLabs returns raw PCM at the rate named in output_format. 24 kHz is the
 # rate the rest of the bridge already treats the gateway's audio as
 # (GATEWAY_OUTPUT_RATE), so nothing downstream resamples differently.
 OUTPUT_RATE = 24000
-# Bytes per streamed audio frame handed to the bridge: 100 ms.
-AUDIO_FRAME_BYTES = OUTPUT_RATE * 2 // 10
 
 # The roster. These names are what a scenario's gemini casting maps onto (see
 # the `cascade` row's voice_aliases); the ids are ElevenLabs' current default
@@ -174,6 +178,17 @@ def voice_ids() -> dict:
 def voice_id_for(name: str) -> str:
     ids = voice_ids()
     return ids.get((name or "").lower()) or ids[VOICE_ROSTER[0]]
+
+
+def open_tts():
+    """Connect one ElevenLabs stream. Looked up on the module at call time so
+    a test can stand in a fake."""
+    key = eleven_key()
+    if not key:
+        raise RuntimeError("ELEVENLABS_API_KEY is not set")
+    url = f"{TTS_WS}?model_id={tts_model()}&output_format=pcm_{OUTPUT_RATE}"
+    return websockets.connect(url, additional_headers={"xi-api-key": key},
+                              max_size=None)
 
 
 def wav_bytes(pcm16: bytes, rate: int) -> bytes:
@@ -475,14 +490,13 @@ class CascadeSocket:
                 "id": rid, "status": "cancelled", "output": []}})
 
     async def _respond(self, rid: str) -> None:
-        """One reply: stream Argon's words, speak each sentence as it lands."""
+        """One reply: stream Argon's words into one ElevenLabs stream."""
         self.timings = {k: v for k, v in self.timings.items() if k == "stt_ms"}
         started = time.time()
         spoken: list = []
         item = self._add_item("assistant", "")
         iid = item["id"]
-        order: asyncio.Queue = asyncio.Queue()
-        pump = None
+        ws = reader = None
         cancelled = False
         try:
             # The turn is not awaited: the model hears the audio itself (see
@@ -492,22 +506,26 @@ class CascadeSocket:
             self._emit({"type": "response.output_item.added", "response_id": rid,
                         "output_index": 0, "item": {"id": iid, "type": "message",
                                                     "role": "assistant", "content": []}})
-            pump = self._spawn(self._speak_in_order(rid, iid, order, spoken, started))
-            call = await self._stream_llm(order, started)
-            await order.put(None)
-            await pump
-            pump = None
+            async with _tts_slot():
+                voice_id = voice_id_for(self.voice)
+                ws = await self._connect_tts()
+                await ws.send(json.dumps({"voices": [voice_id]}))
+                reader = self._spawn(self._relay_audio(ws, rid, iid, started))
+                call = await self._stream_llm(ws, voice_id, spoken, rid, iid, started)
+                await ws.send(json.dumps({"close_socket": True}))
+                await reader
+                reader = None
             if call:
                 await self._finish_call(rid, call)
         except asyncio.CancelledError:
             cancelled = True
-            if pump is not None:
-                pump.cancel()
         except Exception as exc:  # noqa: BLE001 - one reply, not the session
-            if pump is not None:
-                pump.cancel()
             self._error("cascade_failed", f"{type(exc).__name__}: {exc}"[:300])
         finally:
+            if reader is not None:
+                reader.cancel()
+            if ws is not None:
+                await ws.close()
             text = " ".join(spoken).strip()
             for it in self.items:
                 if it["id"] == iid:
@@ -527,127 +545,98 @@ class CascadeSocket:
         if cancelled:
             raise asyncio.CancelledError
 
-    async def _stream_llm(self, order: asyncio.Queue, started: float) -> Optional[dict]:
-        """Stream the reply; each sentence goes to TTS the moment it is whole.
-        Returns a function call if the model made one."""
+    async def _connect_tts(self):
+        """Open the reply's stream; a 429 (the plan's concurrency) or 409 (the
+        first use of a library voice being added to the account) is waited out
+        three times with a growing pause."""
+        for attempt in range(4):
+            try:
+                return await open_tts()
+            except websockets.exceptions.InvalidStatus as exc:
+                if exc.response.status_code in (429, 409) and attempt < 3:
+                    await asyncio.sleep(0.4 * (2 ** attempt))
+                    continue
+                raise RuntimeError(
+                    f"elevenlabs {exc.response.status_code}: "
+                    f"{exc.response.body.decode('utf-8', 'replace')[:300]}")
+
+    async def _stream_llm(self, ws, voice_id: str, spoken: list,
+                          rid: str, iid: str, started: float) -> Optional[dict]:
+        """Stream the reply; each sentence goes into the stream the moment it
+        is whole. Returns a function call if the model made one."""
         payload = {"model": llm_model(), "messages": self._messages(),
                    "stream": True, "max_tokens": 1200}
         if reasoning_effort():
             payload["reasoning_effort"] = reasoning_effort()
         if self.tools:
             payload["tools"] = self.tools
-        buffer, first, call, said = "", True, None, []
-        async with self._http.stream(
-                "POST", f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"}, json=payload) as r:
-            if r.status_code >= 400:
-                body = (await r.aread()).decode("utf-8", "replace")[:300]
-                raise RuntimeError(f"llm {r.status_code}: {body}")
-            async for line in r.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    delta = ((json.loads(data).get("choices") or [{}])[0]
-                             .get("delta") or {})
-                except ValueError:
-                    continue
-                for tc in delta.get("tool_calls") or []:
-                    fn = tc.get("function") or {}
-                    call = call or {"call_id": tc.get("id") or self._id("call"),
-                                    "name": "", "arguments": ""}
-                    call["name"] += fn.get("name") or ""
-                    call["arguments"] += fn.get("arguments") or ""
-                piece = delta.get("content") or ""
-                if not piece:
-                    continue
-                if first:
-                    self.timings["llm_first_token_ms"] = int((time.time() - started) * 1000)
-                buffer += piece
-                sentences, buffer = split_sentences(buffer, first=first)
-                for s in sentences:
-                    first = False
-                    await self._queue_sentence(order, s, said, started)
-        sentences, buffer = split_sentences(buffer, first=first, final=True)
-        for s in sentences:
-            await self._queue_sentence(order, s, said, started)
+
+        async def say(sentence: str) -> None:
+            spoken.append(sentence)
+            self._emit({"type": "response.output_audio_transcript.delta",
+                        "response_id": rid, "item_id": iid, "delta": sentence + " "})
+            await ws.send(json.dumps({"inputs": [{"text": sentence + " ", "voice_id": voice_id}],
+                                      "flush": True}))
+
+        # The stream closes itself after 20 s without a message; Argon can
+        # think for longer than that on a slow turn.
+        async def keep_alive() -> None:
+            while True:
+                await asyncio.sleep(10)
+                await ws.send(json.dumps({"keep_alive": True}))
+        alive = self._spawn(keep_alive())
+        buffer, first, call = "", True, None
+        try:
+            async with self._http.stream(
+                    "POST", f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}"}, json=payload) as r:
+                if r.status_code >= 400:
+                    body = (await r.aread()).decode("utf-8", "replace")[:300]
+                    raise RuntimeError(f"llm {r.status_code}: {body}")
+                async for line in r.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        delta = ((json.loads(data).get("choices") or [{}])[0]
+                                 .get("delta") or {})
+                    except ValueError:
+                        continue
+                    for tc in delta.get("tool_calls") or []:
+                        fn = tc.get("function") or {}
+                        call = call or {"call_id": tc.get("id") or self._id("call"),
+                                        "name": "", "arguments": ""}
+                        call["name"] += fn.get("name") or ""
+                        call["arguments"] += fn.get("arguments") or ""
+                    piece = delta.get("content") or ""
+                    if not piece:
+                        continue
+                    if first:
+                        self.timings["llm_first_token_ms"] = int((time.time() - started) * 1000)
+                    buffer += piece
+                    sentences, buffer = split_sentences(buffer, first=first)
+                    for sentence in sentences:
+                        first = False
+                        await say(sentence)
+            sentences, buffer = split_sentences(buffer, first=first, final=True)
+            for sentence in sentences:
+                await say(sentence)
+        finally:
+            alive.cancel()
         self.timings["llm_total_ms"] = int((time.time() - started) * 1000)
         return call
 
-    async def _queue_sentence(self, order: asyncio.Queue, text: str,
-                              said: list, started: float) -> None:
-        """Start speaking `text` now, so sentence N+1 is already being voiced
-        while N plays; the order queue keeps them in sequence."""
-        chunks: asyncio.Queue = asyncio.Queue()
-        context = " ".join(said)[-400:]
-        said.append(text)
-        self._spawn(self._tts_into(text, context, chunks, started))
-        await order.put((text, chunks))
-
-    async def _tts_into(self, text: str, context: str,
-                        chunks: asyncio.Queue, started: float) -> None:
-        """ElevenLabs streaming PCM for one sentence, into `chunks`, closed
-        with None. A failure is put in the queue as the exception."""
-        try:
-            key = eleven_key()
-            if not key:
-                raise RuntimeError("ELEVENLABS_API_KEY is not set")
-            body = {"text": text, "model_id": tts_model()}
-            if context:
-                body["previous_text"] = context
-            url = (f"{ELEVEN_BASE}/v1/text-to-speech/{voice_id_for(self.voice)}/stream"
-                   f"?output_format=pcm_{OUTPUT_RATE}")
-            async with _tts_slot():
-                # A 429 (the plan's concurrency, or a burst) and a 409
-                # `already_running` (the first use of a library voice adds it
-                # to the account, and three sentences of its first line asked
-                # at once raced that add; measured 2026-10-15, S3A sim) are
-                # waited out, three times with a growing pause, before either
-                # costs the line.
-                for attempt in range(4):
-                    async with self._http.stream("POST", url, json=body,
-                                                 headers={"xi-api-key": key}) as r:
-                        if r.status_code in (429, 409) and attempt < 3:
-                            await r.aread()
-                            await asyncio.sleep(0.4 * (2 ** attempt))
-                            continue
-                        if r.status_code >= 400:
-                            detail = (await r.aread()).decode("utf-8", "replace")[:300]
-                            raise RuntimeError(f"elevenlabs {r.status_code}: {detail}")
-                        async for chunk in r.aiter_bytes(AUDIO_FRAME_BYTES):
-                            if "tts_first_byte_ms" not in self.timings:
-                                self.timings["tts_first_byte_ms"] = int((time.time() - started) * 1000)
-                            chunks.put_nowait(chunk)
-                    break
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - handed to the speaker
-            chunks.put_nowait(exc)
-        finally:
-            chunks.put_nowait(None)
-
-    async def _speak_in_order(self, rid: str, iid: str, order: asyncio.Queue,
-                              spoken: list, started: float) -> None:
-        """Emit each sentence's words and voice in sequence."""
+    async def _relay_audio(self, ws, rid: str, iid: str, started: float) -> None:
+        """Hand the stream's audio on as it arrives, until its final message."""
         carry = b""
-        while True:
-            entry = await order.get()
-            if entry is None:
-                break
-            text, chunks = entry
-            spoken.append(text)
-            self._emit({"type": "response.output_audio_transcript.delta",
-                        "response_id": rid, "item_id": iid,
-                        "delta": text + " "})
-            while True:
-                chunk = await chunks.get()
-                if chunk is None:
-                    break
-                if isinstance(chunk, Exception):
-                    raise chunk
-                chunk = carry + chunk
+        async for raw in ws:
+            m = json.loads(raw)
+            if m.get("error"):
+                raise RuntimeError(f"elevenlabs: {m.get('message') or m['error']}")
+            if m.get("audio"):
+                chunk = carry + base64.b64decode(m["audio"])
                 # PCM16 frames are two bytes; never split a sample.
                 carry = chunk[-1:] if len(chunk) % 2 else b""
                 chunk = chunk[:len(chunk) - len(carry)]
@@ -656,6 +645,8 @@ class CascadeSocket:
                 self._emit({"type": "response.output_audio.delta",
                             "response_id": rid, "item_id": iid,
                             "delta": base64.b64encode(chunk).decode("ascii")})
+            if m.get("is_final"):
+                return
 
     async def _finish_call(self, rid: str, call: dict) -> None:
         cid = call["call_id"]

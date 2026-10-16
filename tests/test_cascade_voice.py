@@ -1,8 +1,8 @@
 """The cascade family: Argon hears and writes, ElevenLabs speaks.
 
 Driven through the real RealtimeVoiceSession with httpx's MockTransport in
-place of the gateway and ElevenLabs, so every frame the bridge reads is one the
-cascade socket really produced.
+place of the gateway and a fake websocket in place of ElevenLabs, so every
+frame the bridge reads is one the cascade socket really produced.
 """
 import asyncio
 import base64
@@ -24,12 +24,45 @@ def _sse(*pieces):
                           headers={"content-type": "text/event-stream"})
 
 
+class FakeTTS:
+    """ElevenLabs' dialogue stream: one audio message per input, is_final on
+    close_socket. Everything sent is kept on `sent`."""
+
+    def __init__(self, seen):
+        self.sent = seen.setdefault("tts", [])
+        self._out = asyncio.Queue()
+
+    async def send(self, raw):
+        m = json.loads(raw)
+        self.sent.append(m)
+        for _ in m.get("inputs") or []:
+            self._out.put_nowait(json.dumps({"audio": base64.b64encode(b"\x01\x00" * 4800).decode()}))
+        if m.get("close_socket"):
+            self._out.put_nowait(json.dumps({"is_final": True}))
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        return await self._out.get()
+
+    async def close(self):
+        pass
+
+
+def _fake_tts(monkeypatch, seen, key="k"):
+    monkeypatch.setattr(cascade, "eleven_key", lambda: key)
+
+    async def opener():
+        if not key:
+            raise RuntimeError("ELEVENLABS_API_KEY is not set")
+        return FakeTTS(seen)
+    monkeypatch.setattr(cascade, "open_tts", opener)
+
+
 def _handler(seen):
     def handle(req: httpx.Request) -> httpx.Response:
         body = json.loads(req.content)
-        if "elevenlabs" in req.url.host:
-            seen.setdefault("tts", []).append((str(req.url), body, req.headers["xi-api-key"]))
-            return httpx.Response(200, content=b"\x01\x00" * 4800)
         if body.get("stream"):
             seen["chat"] = body
             return _sse("Sure, I hear you. ", "Tell me more about ", "what happened.")
@@ -41,8 +74,7 @@ def _handler(seen):
 
 async def _drive(monkeypatch, *, key="k"):
     seen = {}
-    monkeypatch.setenv("ELEVENLABS_API_KEY", key)
-    monkeypatch.setattr(cascade, "eleven_key", lambda: key)
+    _fake_tts(monkeypatch, seen, key)
     transport = httpx.MockTransport(_handler(seen))
     s = rt.RealtimeVoiceSession("You are Riley.", model=MODEL, voice="Puck",
                                 api_key="gw")
@@ -101,12 +133,15 @@ def test_a_turn_is_heard_answered_and_spoken(monkeypatch):
     assert last["role"] == "user" and (
         last["content"] == "I missed the deadline."
         or last["content"][0]["type"] == "input_audio")
-    # ElevenLabs: per-sentence, pcm at the bridge's rate, the cast voice, a key.
-    urls = [t[0] for t in seen["tts"]]
-    assert len(urls) == 2 and all("output_format=pcm_24000" in u for u in urls)
-    assert cascade.PREMADE_VOICES["will"] in urls[0]
-    assert seen["tts"][0][1]["model_id"] == cascade.tts_model()
-    assert seen["tts"][1][1]["previous_text"].startswith("Sure, I hear you.")
+    # ElevenLabs: ONE stream for the reply; the cast voice registered first,
+    # each sentence flushed into it as it lands, closed at the end.
+    sent = seen["tts"]
+    assert sent[0] == {"voices": [cascade.PREMADE_VOICES["will"]]}
+    inputs = [m["inputs"][0] for m in sent if m.get("inputs")]
+    assert [i["text"].strip() for i in inputs] == ["Sure, I hear you.", "Tell me more about what happened."]
+    assert all(i["voice_id"] == cascade.PREMADE_VOICES["will"] for i in inputs)
+    assert all(m.get("flush") for m in sent if m.get("inputs"))
+    assert sent[-1] == {"close_socket": True}
 
 
 def test_a_missing_elevenlabs_key_is_an_error_not_silence(monkeypatch):
@@ -115,9 +150,10 @@ def test_a_missing_elevenlabs_key_is_an_error_not_silence(monkeypatch):
     assert errors and "ELEVENLABS_API_KEY" in json.dumps(errors)
 
 
-def test_cancel_stops_the_reply_and_says_so():
+def test_cancel_stops_the_reply_and_says_so(monkeypatch):
     async def go():
         seen = {}
+        _fake_tts(monkeypatch, seen)
         sock = cascade.CascadeSocket(api_key="gw", http=httpx.AsyncClient(
             transport=httpx.MockTransport(_handler(seen))))
         await sock.send(json.dumps({"type": "response.create"}))
