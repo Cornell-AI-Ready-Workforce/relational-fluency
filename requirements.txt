@@ -76,15 +76,15 @@ botocore==1.43.91
 # service, its pipeline, sentence and interruption machinery. Installed WITHOUT
 # the `[openai]`/`[elevenlabs]` extras on purpose: those only add
 # `websockets<16` for Pipecat's websocket-based services, which this code does
-# not use, and would conflict with the websockets pin above. Pipecat's base
-# install already brings openai and aiohttp, and the three below are imported
+# not use, and would conflict with the websockets pin above (the ElevenLabs
+# dialogue stream the cascade opens itself rides on that same websockets).
+# Pipecat's base install already brings openai, and the two below are imported
 # directly by server/voice/cascade.py (the openai client for the gateway,
-# aiohttp's session for ElevenLabs, loguru to quieten Pipecat's logging), so
-# they are declared and pinned here for the reason given above anyio.
+# loguru to quieten Pipecat's logging), so they are declared and pinned here
+# for the reason given above anyio.
 # Resolved and verified 2026-10-15 on the project venv; CI's matrix confirms
 # the other interpreters. Bumping pipecat-ai is a deliberate re-test of the
 # cascade (tests/test_cascade_voice.py and a live reply).
 pipecat-ai==0.0.108
 openai==2.54.0
-aiohttp==3.14.0
 loguru==0.7.3

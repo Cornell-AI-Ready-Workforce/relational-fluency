@@ -17,7 +17,7 @@ a one-line swap (a different TTS is a different service class on the same
 line; a different STT or LLM likewise):
 
     hearing   [GatewayAudioSTTService] -> transcript sink
-    speaking  [GatewayLLMService] -> [LLMTextProcessor] -> [ElevenLabsHttpTTSService] -> reply sink
+    speaking  [GatewayLLMService] -> [LLMTextProcessor] -> [ElevenLabsDialogueTTSService] -> reply sink
 
 The socket owns the conversation (items, instructions, tools), as the runner
 expects of a realtime server, and hands the speaking pipeline a fresh LLM
@@ -29,7 +29,7 @@ reply, can never lose the participant's transcript.
 
     participant PCM  -->  flash-lite (chat input_audio) -->  user transcript
     history + brief  -->  Argon (streamed text)         -->  sentences
-    each sentence    -->  ElevenLabs (streamed PCM)     -->  agent audio
+    each sentence    -->  ElevenLabs (one websocket per reply) --> agent audio
 
 The model ids are settings (CASCADE_STT_MODEL, CASCADE_LLM_MODEL,
 ELEVENLABS_TTS_ID), and the ElevenLabs key is ELEVENLABS_API_KEY. What this
@@ -56,7 +56,6 @@ import wave
 from dataclasses import dataclass
 from typing import Any, Optional
 
-import aiohttp
 import httpx
 import websockets
 from loguru import logger as _pipecat_logger
@@ -96,10 +95,10 @@ from pipecat.pipeline.task import PipelineParams, PipelineTask  # noqa: E402
 from pipecat.processors.aggregators.llm_context import LLMContext  # noqa: E402
 from pipecat.processors.aggregators.llm_text_processor import LLMTextProcessor  # noqa: E402
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor  # noqa: E402
-from pipecat.services.elevenlabs.tts import ElevenLabsHttpTTSService  # noqa: E402
 from pipecat.services.openai.llm import OpenAILLMService  # noqa: E402
-from pipecat.services.settings import STTSettings  # noqa: E402
+from pipecat.services.settings import STTSettings, TTSSettings  # noqa: E402
 from pipecat.services.stt_service import SegmentedSTTService  # noqa: E402
+from pipecat.services.tts_service import TTSService  # noqa: E402
 from pipecat.utils.text.base_text_aggregator import (  # noqa: E402
     Aggregation,
     AggregationType,
@@ -110,6 +109,13 @@ from pipecat.utils.time import time_now_iso8601  # noqa: E402
 # What the cascade calls, read at use so a test or an operator can change them.
 DEFAULT_TTS_MODEL = "eleven_v4"
 ELEVEN_BASE = "https://api.elevenlabs.io"
+# One websocket per reply. The text-to-dialogue stream is the one that takes
+# eleven_v3/v4 (the text-to-speech websocket, which Pipecat's own ElevenLabs
+# service uses, refuses them; measured 2026-10-15); sentences sent into one
+# stream keep one delivery, where one HTTP request per sentence re-decided
+# pitch and tone every sentence (the same reply came back at 273, 180, 174 and
+# 226 Hz).
+TTS_WS = "wss://api.elevenlabs.io/v1/text-to-dialogue/stream-input"
 
 # ElevenLabs returns raw PCM at the rate named in output_format. 24 kHz is the
 # rate the rest of the bridge already treats the gateway's audio as
@@ -199,12 +205,12 @@ def eleven_key() -> str:
 
 
 def tts_concurrency() -> int:
-    """How many ElevenLabs requests this process keeps in flight at once.
-    The account's limit is per plan (a 429 `concurrent_limit_exceeded` came
-    back live on 2026-10-15 with one sentence per request fanned out as fast
-    as the reply streamed); a sentence waits for a slot rather than failing.
-    One pipeline speaks one sentence at a time, so the slots are shared by
-    the sockets of one process (a room's characters, several participants)."""
+    """How many ElevenLabs streams this process keeps open at once. The
+    account's limit is per plan (a 429 `concurrent_limit_exceeded` came back
+    live on 2026-10-15 with one sentence per request fanned out as fast as
+    the reply streamed); a reply waits for a slot rather than failing. One
+    reply is one stream, so the slots are shared by the sockets of one
+    process (a room's characters, several participants)."""
     try:
         return max(1, int(setting("ELEVENLABS_CONCURRENCY", "3")))
     except ValueError:
@@ -239,6 +245,17 @@ def voice_ids() -> dict:
 def voice_id_for(name: str) -> str:
     ids = voice_ids()
     return ids.get((name or "").lower()) or ids[VOICE_ROSTER[0]]
+
+
+def open_tts():
+    """Connect one ElevenLabs stream. Looked up on the module at call time so
+    a test can stand in a fake."""
+    key = eleven_key()
+    if not key:
+        raise RuntimeError("ELEVENLABS_API_KEY is not set")
+    url = f"{TTS_WS}?model_id={tts_model()}&output_format=pcm_{OUTPUT_RATE}"
+    return websockets.connect(url, additional_headers={"xi-api-key": key},
+                              max_size=None)
 
 
 def wav_bytes(pcm16: bytes, rate: int) -> bytes:
@@ -392,56 +409,165 @@ class GatewayAudioSTTService(SegmentedSTTService):
             yield TranscriptionFrame("", self._user_id, time_now_iso8601(), result=exc)
 
 
-class _ElevenLabsSession:
-    """The slice of aiohttp.ClientSession the TTS service uses (post), with the
-    cascade's own patience around it. A 429 (the plan's concurrency, or a
-    burst) and a 409 `already_running` (the first use of a library voice adds
-    it to the account, and the sentences of its first line raced that add;
-    measured 2026-10-15, S3A sim) are waited out, three times with a growing
-    pause, before either costs the line; and at most tts_concurrency()
-    requests are in flight per process."""
+class _Stream:
+    """One reply's ElevenLabs stream and what holds it open."""
+    __slots__ = ("ws", "slot", "context", "alive", "reader")
 
-    def __init__(self, session) -> None:
-        self._session = session
-
-    def post(self, url: str, **kwargs):
-        return _ElevenLabsRequest(self._session, url, kwargs)
-
-    async def close(self) -> None:
-        await self._session.close()
+    def __init__(self, ws, slot: asyncio.Semaphore, context: str) -> None:
+        self.ws, self.slot, self.context = ws, slot, context
+        self.alive: Optional[asyncio.Task] = None
+        self.reader: Optional[asyncio.Task] = None
 
 
-class _ElevenLabsRequest:
-    def __init__(self, session, url: str, kwargs: dict) -> None:
-        self._session, self._url, self._kwargs = session, url, kwargs
-        self._slot: Optional[asyncio.Semaphore] = None
-        self._response = None
+class ElevenLabsDialogueTTSService(TTSService):
+    """ElevenLabs as one text-to-dialogue stream per reply, as a Pipecat TTS
+    service.
 
-    async def __aenter__(self):
-        self._slot = _tts_slot()
-        await self._slot.acquire()
-        try:
-            for attempt in range(4):
-                response = await self._session.post(self._url, **self._kwargs)
-                if response.status in (429, 409) and attempt < 3:
-                    response.release()
+    Pipecat's own ElevenLabs services are one HTTP request per sentence or
+    the text-to-speech websocket; eleven_v4 re-decides pitch and tone per
+    request on the first and is refused by the second. So this one opens
+    the dialogue stream when a reply begins (Pipecat's turn context, created
+    on LLMFullResponseStartFrame, before the model has answered), registers
+    the voice, flushes each sentence into it as the LLMTextProcessor hands
+    it over, and closes the stream at the end of the turn; a reader relays
+    the stream's audio into the turn's audio context, which is how Pipecat
+    keeps it in order behind the sentence text and ahead of the frames that
+    follow the reply. A 429 (the plan's concurrency) or 409 (the first use of
+    a library voice being added to the account) on connect is waited out
+    three times with a growing pause, and at most tts_concurrency() streams
+    are open per process."""
+
+    Settings = TTSSettings
+
+    def __init__(self, *, voice_id: str, sample_rate: int, **kwargs) -> None:
+        super().__init__(
+            sample_rate=sample_rate, push_start_frame=True,
+            reuse_context_id_within_turn=True,
+            settings=TTSSettings(model=tts_model(), voice=voice_id, language=None),
+            **kwargs)
+        self._stream: Optional[_Stream] = None
+
+    # -- the stream ----------------------------------------------------------
+    async def _connect(self):
+        for attempt in range(4):
+            try:
+                return await open_tts()
+            except websockets.exceptions.InvalidStatus as exc:
+                if exc.response.status_code in (429, 409) and attempt < 3:
                     await asyncio.sleep(0.4 * (2 ** attempt))
                     continue
-                self._response = response
-                return response
-        except BaseException:
-            self._slot.release()
-            self._slot = None
-            raise
+                raise RuntimeError(
+                    f"elevenlabs {exc.response.status_code}: "
+                    f"{exc.response.body.decode('utf-8', 'replace')[:300]}")
 
-    async def __aexit__(self, *exc) -> None:
+    async def _open(self, context_id: str) -> bool:
+        """Open the reply's stream; False (and an ErrorFrame upstream) when
+        it could not be, so the reply still ends rather than stalls."""
+        if self._stream is not None:
+            return True
+        slot = _tts_slot()
+        await slot.acquire()
         try:
-            if self._response is not None:
-                self._response.release()
+            ws = await self._connect()
+            await ws.send(json.dumps({"voices": [self._settings.voice]}))
+        except asyncio.CancelledError:
+            slot.release()
+            raise
+        except Exception as exc:  # noqa: BLE001 - one reply, not the session
+            slot.release()
+            await self.push_error(f"{type(exc).__name__}: {exc}"[:300])
+            return False
+        stream = self._stream = _Stream(ws, slot, context_id)
+        stream.alive = self.create_task(self._keep_alive(ws))
+        stream.reader = self.create_task(self._relay(stream))
+        return True
+
+    async def _teardown(self, stream: "_Stream") -> None:
+        """Close one stream, once: its tasks, its socket, its slot. Safe from
+        inside its own reader, and never touches a newer stream."""
+        if self._stream is stream:
+            self._stream = None
+        for task in (stream.alive, stream.reader):
+            if task is not None and task is not asyncio.current_task():
+                await self.cancel_task(task)
+        stream.alive = stream.reader = None
+        try:
+            await stream.ws.close()
+        except Exception:  # noqa: BLE001
+            pass
+        if stream.slot is not None:
+            stream.slot.release()
+            stream.slot = None
+
+    async def _close(self) -> None:
+        if self._stream is not None:
+            await self._teardown(self._stream)
+
+    async def _keep_alive(self, ws) -> None:
+        # The stream closes itself after 20 s without a message; Argon can
+        # think for longer than that on a slow turn.
+        while True:
+            await asyncio.sleep(10)
+            await ws.send(json.dumps({"keep_alive": True}))
+
+    async def _relay(self, stream: "_Stream") -> None:
+        """Hand the stream's audio into the turn's context as it arrives,
+        until its final message closes the context."""
+        context_id = stream.context
+        try:
+            async for raw in stream.ws:
+                m = json.loads(raw)
+                if m.get("error"):
+                    await self.append_to_audio_context(context_id, ErrorFrame(
+                        error=f"elevenlabs: {m.get('message') or m['error']}"))
+                elif m.get("audio"):
+                    await self.stop_ttfb_metrics()
+                    await self.append_to_audio_context(context_id, TTSAudioRawFrame(
+                        base64.b64decode(m["audio"]), self.sample_rate, 1,
+                        context_id=context_id))
+                if m.get("is_final"):
+                    break
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the stream broke mid-reply
+            await self.append_to_audio_context(context_id, ErrorFrame(
+                error=f"elevenlabs: {type(exc).__name__}: {exc}"[:300]))
         finally:
-            if self._slot is not None:
-                self._slot.release()
-                self._slot = None
+            if self.audio_context_available(context_id):
+                await self.remove_audio_context(context_id)
+            await self._teardown(stream)
+
+    # -- Pipecat's hooks -------------------------------------------------------
+    async def on_turn_context_created(self, context_id: str) -> None:
+        await self._open(context_id)
+
+    async def run_tts(self, text: str, context_id: str):
+        if self._stream is None and not await self._open(context_id):
+            return
+        await self._stream.ws.send(json.dumps({
+            "inputs": [{"text": text + " ", "voice_id": self._settings.voice}],
+            "flush": True}))
+        yield None
+
+    async def on_turn_context_completed(self) -> None:
+        if self._stream is not None:
+            try:
+                await self._stream.ws.send(json.dumps({"close_socket": True}))
+            except Exception:  # noqa: BLE001 - the reader reports the break
+                pass
+        await super().on_turn_context_completed()
+
+    async def _handle_interruption(self, frame: InterruptionFrame, direction: FrameDirection) -> None:
+        await self._close()
+        await super()._handle_interruption(frame, direction)
+
+    async def stop(self, frame) -> None:
+        await self._close()
+        await super().stop(frame)
+
+    async def cancel(self, frame) -> None:
+        await self._close()
+        await super().cancel(frame)
 
 
 @dataclass
@@ -540,8 +666,7 @@ class CascadeSocket:
     answering as a realtime server would. One socket is one conversation."""
 
     def __init__(self, *, voice: str = "", api_key: str = "",
-                 http: Optional[httpx.AsyncClient] = None,
-                 tts_session: Optional[Any] = None) -> None:
+                 http: Optional[httpx.AsyncClient] = None) -> None:
         self.api_key = api_key or gateway_api_key()
         self.voice = voice
         self.instructions = ""
@@ -550,9 +675,6 @@ class CascadeSocket:
         self._http = http
         self._owns_http = http is None
         self._client: Optional[AsyncOpenAI] = None
-        # ElevenLabs; a test hands in something shaped like aiohttp's session.
-        self._tts_session = tts_session
-        self._owns_tts_session = tts_session is None
         self._out: asyncio.Queue = asyncio.Queue()
         self._closed = False
         self._audio = bytearray()
@@ -561,7 +683,7 @@ class CascadeSocket:
         self.items: list = []
         self._hearing: Optional[PipelineTask] = None
         self._speaking: Optional[PipelineTask] = None
-        self._tts: Optional[ElevenLabsHttpTTSService] = None
+        self._tts: Optional[ElevenLabsDialogueTTSService] = None
         self._runs: list = []
         self._active: Optional[_Reply] = None
         # Latencies of the latest turn, for the record and the benchmark.
@@ -603,11 +725,6 @@ class CascadeSocket:
         if self._client is not None and self._owns_http:
             try:
                 await self._client.close()
-            except Exception:  # noqa: BLE001
-                pass
-        if self._tts_session is not None and self._owns_tts_session:
-            try:
-                await self._tts_session.close()
             except Exception:  # noqa: BLE001
                 pass
 
@@ -706,14 +823,8 @@ class CascadeSocket:
         # registered for Pipecat to announce the call, and this one does
         # nothing more.
         llm.register_function(None, self._on_function_call)
-        if self._tts_session is None:
-            self._tts_session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=60, connect=10))
-        self._tts = ElevenLabsHttpTTSService(
-            api_key=eleven_key(), aiohttp_session=_ElevenLabsSession(self._tts_session),
-            base_url=ELEVEN_BASE, sample_rate=OUTPUT_RATE,
-            settings=ElevenLabsHttpTTSService.Settings(
-                model=tts_model(), voice=voice_id_for(self.voice)))
+        self._tts = ElevenLabsDialogueTTSService(
+            voice_id=voice_id_for(self.voice), sample_rate=OUTPUT_RATE)
         # Swapping a provider is this line: another LLM service in llm's
         # place, another TTS service in self._tts's.
         self._speaking = self._task(Pipeline([
@@ -743,7 +854,7 @@ class CascadeSocket:
             if self._speaking is not None:
                 # In order with the replies: the next one speaks in it.
                 await self._speaking.queue_frame(TTSUpdateSettingsFrame(
-                    delta=ElevenLabsHttpTTSService.Settings(voice=voice_id_for(self.voice))))
+                    delta=ElevenLabsDialogueTTSService.Settings(voice=voice_id_for(self.voice))))
         if "tools" in s:
             self.tools = _rt_tools(s["tools"])
         self._emit({"type": "session.updated", "session": {}})
@@ -826,6 +937,7 @@ class CascadeSocket:
                     "output_index": 0, "item": {"id": reply.iid, "type": "message",
                                                 "role": "assistant", "content": []}})
         if not eleven_key():
+            # Said here, plainly, rather than as the stream's refusal later.
             reply.errored = True
             self._error("cascade_failed", "ELEVENLABS_API_KEY is not set")
         await self._ensure_speaking()
