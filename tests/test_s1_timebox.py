@@ -91,7 +91,11 @@ def test_the_gate_paced_forms_are_untouched(on_model):
     on_model(GPT)
     runner, _ = make_runner("S2A")
     assert runner._timebox_seconds() is None
-    assert runner._next_beat_hint() is not None
+    # No Move-on control either: S2A's second beat is the same conversation
+    # with the same Morgan (no `opening:`), so the pacing advances it and the
+    # participant is offered only End (2026-10-15).
+    assert runner._continues_scene(runner.interactions[1])
+    assert runner._next_beat_hint() is None
 
 
 # --------------------------------------------------------------------------
