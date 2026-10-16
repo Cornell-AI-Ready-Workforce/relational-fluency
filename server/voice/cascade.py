@@ -1,5 +1,5 @@
-"""Cascaded voice: Argon hears and thinks, ElevenLabs speaks, a fast Gemini
-writes the transcript.
+"""Cascaded voice on Pipecat: Argon hears and thinks, ElevenLabs speaks, a fast
+Gemini writes the transcript.
 
 The study's voice used to be ONE speech-to-speech model behind the gateway's
 realtime socket. This module replaces that model with three steps, and does it
@@ -12,13 +12,29 @@ with the frames a realtime server would send, so the bridge's turn handling,
 audio-recovery, cancellation and the runner and room above them all run as
 they did.
 
-    participant PCM  -->  Argon (chat input_audio)  -->  user transcript
-    history + brief  -->  Argon (streamed text)     -->  sentences
+The three steps run as two Pipecat pipelines per socket, so that a provider is
+a one-line swap (a different TTS is a different service class on the same
+line; a different STT or LLM likewise):
+
+    hearing   [GatewayAudioSTTService] -> transcript sink
+    speaking  [GatewayLLMService] -> [LLMTextProcessor] -> [ElevenLabsDialogueTTSService] -> reply sink
+
+The socket owns the conversation (items, instructions, tools), as the runner
+expects of a realtime server, and hands the speaking pipeline a fresh LLM
+context per reply; Pipecat runs the model stream, cuts it into sentences
+(with this module's own splitter, see SentenceAggregator), voices each one in
+order and tears the reply down on an InterruptionFrame when the bridge
+cancels. Hearing is its own pipeline so that a barge-in, which interrupts the
+reply, can never lose the participant's transcript.
+
+    participant PCM  -->  flash-lite (chat input_audio) -->  user transcript
+    history + brief  -->  Argon (streamed text)         -->  sentences
     each sentence    -->  ElevenLabs (one websocket per reply) --> agent audio
 
-Both model ids are settings (CASCADE_LLM_MODEL, ELEVENLABS_TTS_ID), and the
-ElevenLabs key is ELEVENLABS_API_KEY. What this stand-in does NOT have, because
-a cascade has no server-side conversation to edit:
+The model ids are settings (CASCADE_STT_MODEL, CASCADE_LLM_MODEL,
+ELEVENLABS_TTS_ID), and the ElevenLabs key is ELEVENLABS_API_KEY. What this
+stand-in does NOT have, because a cascade has no server-side conversation to
+edit:
 
   * Server-side turn detection. The runner's own VAD owns end-of-turn, as on the
     gpt route (needs_turn_detection_null).
@@ -32,32 +48,81 @@ import asyncio
 import base64
 import io
 import json
-import os
 import re
+import sys
 import time
 import uuid
 import wave
-from typing import Optional
+from dataclasses import dataclass
+from typing import Any, Optional
 
 import httpx
 import websockets
+from loguru import logger as _pipecat_logger
+from openai import AsyncOpenAI
 
 from ..llm import gateway_api_key, gateway_base_url, setting
+
+# Pipecat logs through loguru, at DEBUG by default and a line or more per
+# frame, including the context it hands the model. That is not this server's
+# log. Quieten it to warnings BEFORE pipecat is imported (its import banner is
+# an INFO line); PIPECAT_LOG_LEVEL=DEBUG turns it back on for a debugging run.
+_pipecat_logger.remove()
+_pipecat_logger.add(sys.stderr, level=setting("PIPECAT_LOG_LEVEL", "WARNING") or "WARNING")
+
+from pipecat.adapters.schemas.function_schema import FunctionSchema  # noqa: E402
+from pipecat.adapters.schemas.tools_schema import ToolsSchema  # noqa: E402
+from pipecat.frames.frames import (  # noqa: E402
+    AggregatedTextFrame,
+    DataFrame,
+    ErrorFrame,
+    Frame,
+    FunctionCallInProgressFrame,
+    InterruptionFrame,
+    LLMContextFrame,
+    LLMTextFrame,
+    TranscriptionFrame,
+    TTSAudioRawFrame,
+    TTSTextFrame,
+    TTSUpdateSettingsFrame,
+    UserAudioRawFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
+)
+from pipecat.pipeline.pipeline import Pipeline  # noqa: E402
+from pipecat.pipeline.runner import PipelineRunner  # noqa: E402
+from pipecat.pipeline.task import PipelineParams, PipelineTask  # noqa: E402
+from pipecat.processors.aggregators.llm_context import LLMContext  # noqa: E402
+from pipecat.processors.aggregators.llm_text_processor import LLMTextProcessor  # noqa: E402
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor  # noqa: E402
+from pipecat.services.openai.llm import OpenAILLMService  # noqa: E402
+from pipecat.services.settings import STTSettings, TTSSettings  # noqa: E402
+from pipecat.services.stt_service import SegmentedSTTService  # noqa: E402
+from pipecat.services.tts_service import TTSService  # noqa: E402
+from pipecat.utils.text.base_text_aggregator import (  # noqa: E402
+    Aggregation,
+    AggregationType,
+    BaseTextAggregator,
+)
+from pipecat.utils.time import time_now_iso8601  # noqa: E402
 
 # What the cascade calls, read at use so a test or an operator can change them.
 DEFAULT_TTS_MODEL = "eleven_v4"
 ELEVEN_BASE = "https://api.elevenlabs.io"
 # One websocket per reply. The text-to-dialogue stream is the one that takes
-# eleven_v3/v4 (the text-to-speech websocket refuses them, measured
-# 2026-10-15); sentences sent into one stream keep one delivery, where one
-# HTTP request per sentence re-decided pitch and tone every sentence (the same
-# reply came back at 273, 180, 174 and 226 Hz).
+# eleven_v3/v4 (the text-to-speech websocket, which Pipecat's own ElevenLabs
+# service uses, refuses them; measured 2026-10-15); sentences sent into one
+# stream keep one delivery, where one HTTP request per sentence re-decided
+# pitch and tone every sentence (the same reply came back at 273, 180, 174 and
+# 226 Hz).
 TTS_WS = "wss://api.elevenlabs.io/v1/text-to-dialogue/stream-input"
 
 # ElevenLabs returns raw PCM at the rate named in output_format. 24 kHz is the
 # rate the rest of the bridge already treats the gateway's audio as
 # (GATEWAY_OUTPUT_RATE), so nothing downstream resamples differently.
 OUTPUT_RATE = 24000
+# Bytes per streamed audio frame handed to the bridge: 100 ms.
+AUDIO_FRAME_BYTES = OUTPUT_RATE * 2 // 10
 
 # The roster. These names are what a scenario's gemini casting maps onto (see
 # the `cascade` row's voice_aliases); the ids are ElevenLabs' current default
@@ -142,10 +207,12 @@ def eleven_key() -> str:
 
 
 def tts_concurrency() -> int:
-    """How many ElevenLabs requests this process keeps in flight at once.
-    The account's limit is per plan (a 429 `concurrent_limit_exceeded` came
-    back live on 2026-10-15 with one sentence per request fanned out as fast
-    as the reply streamed); a sentence waits for a slot rather than failing."""
+    """How many ElevenLabs streams this process keeps open at once. The
+    account's limit is per plan (a 429 `concurrent_limit_exceeded` came back
+    live on 2026-10-15 with one sentence per request fanned out as fast as
+    the reply streamed); a reply waits for a slot rather than failing. One
+    reply is one stream, so the slots are shared by the sockets of one
+    process (a room's characters, several participants)."""
     try:
         return max(1, int(setting("ELEVENLABS_CONCURRENCY", "3")))
     except ValueError:
@@ -237,6 +304,365 @@ def _rt_tools(tools: list) -> list:
     return out
 
 
+def _tools_schema(tools: list):
+    """Chat-shaped tools as the ToolsSchema a Pipecat LLM context takes
+    (NOT_GIVEN when there are none)."""
+    schemas = []
+    for t in tools or []:
+        fn = t.get("function") or {}
+        if not fn.get("name"):
+            continue
+        params = fn.get("parameters") or {}
+        schemas.append(FunctionSchema(
+            name=fn["name"], description=fn.get("description") or "",
+            properties=params.get("properties") or {},
+            required=params.get("required") or []))
+    return ToolsSchema(standard_tools=schemas) if schemas else LLMContext().tools
+
+
+# -- the Pipecat pieces -------------------------------------------------------
+
+class SentenceAggregator(BaseTextAggregator):
+    """split_sentences as the text aggregator of the LLMTextProcessor that
+    sits between the model and the TTS.
+
+    Pipecat's default aggregator asks NLTK where sentences end; this one keeps
+    the cascade's own measured policy instead (a short first sentence for
+    time-to-first-audio, later ones merged to a few words so a stray "Mr."
+    never costs its own ElevenLabs request), and needs no tokenizer data."""
+
+    def __init__(self) -> None:
+        super().__init__(aggregation_type=AggregationType.SENTENCE)
+        self._buffer = ""
+        self._first = True
+
+    @property
+    def text(self) -> Aggregation:
+        return Aggregation(text=self._buffer.strip(), type=AggregationType.SENTENCE)
+
+    async def aggregate(self, text: str):
+        self._buffer += text
+        sentences, self._buffer = split_sentences(self._buffer, first=self._first)
+        for sentence in sentences:
+            self._first = False
+            yield Aggregation(text=sentence, type=AggregationType.SENTENCE)
+
+    async def flush(self) -> Optional[Aggregation]:
+        sentences, self._buffer = split_sentences(self._buffer, first=self._first, final=True)
+        self._first = True
+        if not sentences:
+            return None
+        return Aggregation(text=" ".join(sentences), type=AggregationType.SENTENCE)
+
+    async def handle_interruption(self) -> None:
+        await self.reset()
+
+    async def reset(self) -> None:
+        self._buffer = ""
+        self._first = True
+
+
+class GatewayLLMService(OpenAILLMService):
+    """Pipecat's OpenAI-compatible chat service, on a client of ours: the
+    Cornell gateway speaks the OpenAI dialect, and a test hands in an httpx
+    MockTransport through the same client."""
+
+    def __init__(self, *, client: AsyncOpenAI, **kwargs) -> None:
+        self._gateway_client = client
+        super().__init__(**kwargs)
+
+    def create_client(self, *args, **kwargs):
+        return self._gateway_client
+
+
+class GatewayAudioSTTService(SegmentedSTTService):
+    """Hearing as a chat completion with input_audio against the gateway, the
+    shape Pipecat has no service for. Exactly one TranscriptionFrame per
+    segment, always: on failure its text is empty and `result` carries the
+    exception, so the socket can say the transcription failed rather than
+    leave the item waiting."""
+
+    def __init__(self, *, client: AsyncOpenAI, model: str, prompt: str,
+                 sample_rate: int, **kwargs) -> None:
+        # ttfs_p99_latency: speech end to transcript, flash-lite measured
+        # 1.0-1.5 s a clip (2026-10-15); Pipecat only broadcasts it.
+        super().__init__(sample_rate=sample_rate, audio_passthrough=False,
+                         settings=STTSettings(model=model, language=None),
+                         ttfs_p99_latency=1.5, **kwargs)
+        self._client = client
+        self._model = model
+        self._prompt = prompt
+
+    async def run_stt(self, audio: bytes):
+        try:
+            r = await self._client.chat.completions.create(
+                model=self._model, max_tokens=400, temperature=0,
+                messages=[{"role": "user", "content": [
+                    {"type": "text", "text": self._prompt},
+                    {"type": "input_audio", "input_audio": {
+                        "data": base64.b64encode(audio).decode("ascii"),
+                        "format": "wav"}}]}])
+            content = (r.choices[0].message.content if r.choices else "") or ""
+            yield TranscriptionFrame(content.strip(), self._user_id,
+                                     time_now_iso8601(), result=r)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a failed hearing is an event
+            yield TranscriptionFrame("", self._user_id, time_now_iso8601(), result=exc)
+
+
+class _Stream:
+    """One reply's ElevenLabs stream and what holds it open."""
+    __slots__ = ("ws", "slot", "context", "alive", "reader")
+
+    def __init__(self, ws, slot: asyncio.Semaphore, context: str) -> None:
+        self.ws, self.slot, self.context = ws, slot, context
+        self.alive: Optional[asyncio.Task] = None
+        self.reader: Optional[asyncio.Task] = None
+
+
+class ElevenLabsDialogueTTSService(TTSService):
+    """ElevenLabs as one text-to-dialogue stream per reply, as a Pipecat TTS
+    service.
+
+    Pipecat's own ElevenLabs services are one HTTP request per sentence or
+    the text-to-speech websocket; eleven_v4 re-decides pitch and tone per
+    request on the first and is refused by the second. So this one opens
+    the dialogue stream when a reply begins (Pipecat's turn context, created
+    on LLMFullResponseStartFrame, before the model has answered), registers
+    the voice, flushes each sentence into it as the LLMTextProcessor hands
+    it over, and closes the stream at the end of the turn; a reader relays
+    the stream's audio into the turn's audio context, which is how Pipecat
+    keeps it in order behind the sentence text and ahead of the frames that
+    follow the reply. A 429 (the plan's concurrency) or 409 (the first use of
+    a library voice being added to the account) on connect is waited out
+    three times with a growing pause, and at most tts_concurrency() streams
+    are open per process."""
+
+    Settings = TTSSettings
+
+    def __init__(self, *, voice_id: str, sample_rate: int, **kwargs) -> None:
+        super().__init__(
+            sample_rate=sample_rate, push_start_frame=True,
+            reuse_context_id_within_turn=True,
+            settings=TTSSettings(model=tts_model(), voice=voice_id, language=None),
+            **kwargs)
+        self._stream: Optional[_Stream] = None
+
+    # -- the stream ----------------------------------------------------------
+    async def _connect(self):
+        for attempt in range(4):
+            try:
+                return await open_tts()
+            except websockets.exceptions.InvalidStatus as exc:
+                if exc.response.status_code in (429, 409) and attempt < 3:
+                    await asyncio.sleep(0.4 * (2 ** attempt))
+                    continue
+                raise RuntimeError(
+                    f"elevenlabs {exc.response.status_code}: "
+                    f"{exc.response.body.decode('utf-8', 'replace')[:300]}")
+
+    async def _open(self, context_id: str) -> bool:
+        """Open the reply's stream; False (and an ErrorFrame upstream) when
+        it could not be, so the reply still ends rather than stalls."""
+        if self._stream is not None:
+            return True
+        slot = _tts_slot()
+        await slot.acquire()
+        try:
+            ws = await self._connect()
+            await ws.send(json.dumps({"voices": [self._settings.voice]}))
+        except asyncio.CancelledError:
+            slot.release()
+            raise
+        except Exception as exc:  # noqa: BLE001 - one reply, not the session
+            slot.release()
+            await self.push_error(f"{type(exc).__name__}: {exc}"[:300])
+            return False
+        stream = self._stream = _Stream(ws, slot, context_id)
+        stream.alive = self.create_task(self._keep_alive(ws))
+        stream.reader = self.create_task(self._relay(stream))
+        return True
+
+    async def _teardown(self, stream: "_Stream") -> None:
+        """Close one stream, once: its tasks, its socket, its slot. Safe from
+        inside its own reader, and never touches a newer stream."""
+        if self._stream is stream:
+            self._stream = None
+        for task in (stream.alive, stream.reader):
+            if task is not None and task is not asyncio.current_task():
+                await self.cancel_task(task)
+        stream.alive = stream.reader = None
+        try:
+            await stream.ws.close()
+        except Exception:  # noqa: BLE001
+            pass
+        if stream.slot is not None:
+            stream.slot.release()
+            stream.slot = None
+
+    async def _close(self) -> None:
+        if self._stream is not None:
+            await self._teardown(self._stream)
+
+    async def _keep_alive(self, ws) -> None:
+        # The stream closes itself after 20 s without a message; Argon can
+        # think for longer than that on a slow turn.
+        while True:
+            await asyncio.sleep(10)
+            await ws.send(json.dumps({"keep_alive": True}))
+
+    async def _relay(self, stream: "_Stream") -> None:
+        """Hand the stream's audio into the turn's context as it arrives,
+        until its final message closes the context."""
+        context_id = stream.context
+        try:
+            async for raw in stream.ws:
+                m = json.loads(raw)
+                if m.get("error"):
+                    await self.append_to_audio_context(context_id, ErrorFrame(
+                        error=f"elevenlabs: {m.get('message') or m['error']}"))
+                elif m.get("audio"):
+                    await self.stop_ttfb_metrics()
+                    await self.append_to_audio_context(context_id, TTSAudioRawFrame(
+                        base64.b64decode(m["audio"]), self.sample_rate, 1,
+                        context_id=context_id))
+                if m.get("is_final"):
+                    break
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the stream broke mid-reply
+            await self.append_to_audio_context(context_id, ErrorFrame(
+                error=f"elevenlabs: {type(exc).__name__}: {exc}"[:300]))
+        finally:
+            if self.audio_context_available(context_id):
+                await self.remove_audio_context(context_id)
+            await self._teardown(stream)
+
+    # -- Pipecat's hooks -------------------------------------------------------
+    async def on_turn_context_created(self, context_id: str) -> None:
+        await self._open(context_id)
+
+    async def run_tts(self, text: str, context_id: str):
+        if self._stream is None and not await self._open(context_id):
+            return
+        await self._stream.ws.send(json.dumps({
+            "inputs": [{"text": text + " ", "voice_id": self._settings.voice}],
+            "flush": True}))
+        yield None
+
+    async def on_turn_context_completed(self) -> None:
+        if self._stream is not None:
+            try:
+                await self._stream.ws.send(json.dumps({"close_socket": True}))
+            except Exception:  # noqa: BLE001 - the reader reports the break
+                pass
+        await super().on_turn_context_completed()
+
+    async def _handle_interruption(self, frame: InterruptionFrame, direction: FrameDirection) -> None:
+        await self._close()
+        await super()._handle_interruption(frame, direction)
+
+    async def stop(self, frame) -> None:
+        await self._close()
+        await super().stop(frame)
+
+    async def cancel(self, frame) -> None:
+        await self._close()
+        await super().cancel(frame)
+
+
+@dataclass
+class ReplyStartFrame(DataFrame):
+    """Travels down the speaking pipeline ahead of a reply's LLM context: from
+    here the sink's frames belong to reply `rid`."""
+    rid: str
+
+
+@dataclass
+class ReplyEndFrame(DataFrame):
+    """Travels behind a reply's LLM context, so it reaches the sink after the
+    reply's last sentence has been voiced (Pipecat keeps data frames in order
+    behind the audio they follow). An interruption drops it, and the
+    InterruptionFrame closes the reply instead."""
+    rid: str
+
+
+class _FirstToken(FrameProcessor):
+    """Between the LLM and the TTS, only to time the first token (the TTS
+    consumes the LLM's text frames, so the sink never sees one)."""
+
+    def __init__(self, socket: "CascadeSocket") -> None:
+        super().__init__(name="cascade-first-token")
+        self._socket = socket
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if isinstance(frame, LLMTextFrame):
+            self._socket._reply_first_token()
+        await self.push_frame(frame, direction)
+
+
+class _ReplySink(FrameProcessor):
+    """The end of the speaking pipeline: turns Pipecat's frames into the
+    realtime server frames the bridge reads."""
+
+    def __init__(self, socket: "CascadeSocket") -> None:
+        super().__init__(name="cascade-reply")
+        self._socket = socket
+        self._rid: Optional[str] = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        sock = self._socket
+        if isinstance(frame, ReplyStartFrame):
+            self._rid = frame.rid
+        elif isinstance(frame, ReplyEndFrame):
+            sock._reply_finish(frame.rid, "completed")
+            self._rid = None
+        elif isinstance(frame, InterruptionFrame):
+            sock._reply_finish(self._rid, "cancelled")
+            self._rid = None
+        elif isinstance(frame, TTSTextFrame):
+            pass  # the sentence again (or its words), once voiced
+        elif isinstance(frame, AggregatedTextFrame):
+            sock._reply_text(self._rid, frame.text)
+        elif isinstance(frame, TTSAudioRawFrame):
+            sock._reply_audio(self._rid, frame.audio)
+        elif isinstance(frame, FunctionCallInProgressFrame):
+            sock._reply_call(self._rid, frame)
+        await self.push_frame(frame, direction)
+
+
+class _HearingSink(FrameProcessor):
+    """The end of the hearing pipeline: a transcript back to its item."""
+
+    def __init__(self, socket: "CascadeSocket") -> None:
+        super().__init__(name="cascade-hearing")
+        self._socket = socket
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TranscriptionFrame):
+            self._socket._heard(frame.user_id, frame.text, frame.result)
+        await self.push_frame(frame, direction)
+
+
+class _Reply:
+    __slots__ = ("rid", "iid", "started", "spoken", "call", "carry", "closed", "errored")
+
+    def __init__(self, rid: str, iid: str) -> None:
+        self.rid, self.iid = rid, iid
+        self.started = time.time()
+        self.spoken: list = []
+        self.call: Optional[dict] = None
+        self.carry = b""
+        self.closed = False
+        self.errored = False
+
+
+# -- the socket ---------------------------------------------------------------
+
 class CascadeSocket:
     """The slice of a websockets client the bridge uses (send, recv, close),
     answering as a realtime server would. One socket is one conversation."""
@@ -247,21 +673,21 @@ class CascadeSocket:
         self.voice = voice
         self.instructions = ""
         self.tools: list = []
-        self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+        # The gateway client (STT and LLM share it); a test hands in httpx.
+        self._http = http
         self._owns_http = http is None
+        self._client: Optional[AsyncOpenAI] = None
         self._out: asyncio.Queue = asyncio.Queue()
         self._closed = False
         self._audio = bytearray()
         self._rate = 16000
         # Conversation: [{"id", "role", "text"}] and function calls/outputs.
         self.items: list = []
-        self._tasks: set = set()
-        self._reply: Optional[asyncio.Task] = None
-        self._stt: dict = {}
-        # Pending transcription tasks, awaited before a reply is generated so
-        # the model never answers a turn it has not yet read.
-        self._pending_stt: list = []
-        self._finished: set = set()
+        self._hearing: Optional[PipelineTask] = None
+        self._speaking: Optional[PipelineTask] = None
+        self._tts: Optional[ElevenLabsDialogueTTSService] = None
+        self._runs: list = []
+        self._active: Optional[_Reply] = None
         # Latencies of the latest turn, for the record and the benchmark.
         self.timings: dict = {}
 
@@ -287,12 +713,20 @@ class CascadeSocket:
         if self._closed:
             return
         self._closed = True
-        for t in list(self._tasks):
-            t.cancel()
         self._out.put_nowait(None)
-        if self._owns_http:
+        for task in (self._speaking, self._hearing):
+            if task is not None:
+                try:
+                    await task.cancel()
+                except Exception:  # noqa: BLE001
+                    pass
+        if self._runs:
+            done, pending = await asyncio.wait(self._runs, timeout=3)
+            for run in pending:
+                run.cancel()
+        if self._client is not None and self._owns_http:
             try:
-                await self._http.aclose()
+                await self._client.close()
             except Exception:  # noqa: BLE001
                 pass
 
@@ -300,12 +734,6 @@ class CascadeSocket:
     def _emit(self, ev: dict) -> None:
         if not self._closed:
             self._out.put_nowait(json.dumps(ev))
-
-    def _spawn(self, coro) -> asyncio.Task:
-        task = asyncio.ensure_future(coro)
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-        return task
 
     def _error(self, code: str, message: str, *, event_id: str = "") -> None:
         self._emit({"type": "error", "event_id": event_id, "error": {
@@ -337,13 +765,98 @@ class CascadeSocket:
         return {"id": item["id"], "type": "message", "role": item["role"],
                 "content": [{"type": kind, "text": item["text"]}]}
 
+    def _gateway_client(self) -> AsyncOpenAI:
+        if self._client is None:
+            http = self._http or httpx.AsyncClient(
+                timeout=httpx.Timeout(60.0, connect=10.0),
+                limits=httpx.Limits(max_keepalive_connections=8, max_connections=16))
+            # No SDK retries: the hand-rolled cascade had none, and a silent
+            # second attempt would double a turn's latency unseen.
+            self._client = AsyncOpenAI(
+                api_key=self.api_key, base_url=f"{gateway_base_url().rstrip('/')}/v1",
+                http_client=http, max_retries=0)
+        return self._client
+
+    def _task(self, pipeline: Pipeline) -> PipelineTask:
+        """A pipeline task with nothing a transport would bring: no idle
+        timeout (a character listening for ten minutes is not idle to us),
+        no RTVI, no metrics, no heartbeats."""
+        task = PipelineTask(
+            pipeline,
+            params=PipelineParams(
+                allow_interruptions=True,
+                audio_in_sample_rate=self._rate,
+                audio_out_sample_rate=OUTPUT_RATE,
+                enable_metrics=False, enable_usage_metrics=False,
+                send_initial_empty_metrics=False),
+            idle_timeout_secs=None, enable_rtvi=False, enable_turn_tracking=False,
+            check_dangling_tasks=False)
+        runner = PipelineRunner(handle_sigint=False)
+        self._runs.append(asyncio.ensure_future(runner.run(task)))
+        return task
+
+    async def _ensure_hearing(self) -> None:
+        if self._hearing is not None:
+            return
+        from ..speech_check import _prompt as hear_prompt
+        stt = GatewayAudioSTTService(client=self._gateway_client(), model=stt_model(),
+                                     prompt=hear_prompt(()), sample_rate=self._rate)
+        self._hearing = self._task(Pipeline([stt, _HearingSink(self)]))
+
+        @self._hearing.event_handler("on_pipeline_error")
+        async def _on_error(_task, frame: ErrorFrame) -> None:
+            # A hearing that fails outside run_stt (a service that reports
+            # by ErrorFrame instead): the oldest unheard turn is the one.
+            for it in self.items:
+                if it.get("audio") and it["role"] == "user":
+                    self._heard(it["id"], "", RuntimeError(str(frame.error)))
+                    break
+
+    async def _ensure_speaking(self) -> None:
+        if self._speaking is not None:
+            return
+        extra = {"reasoning_effort": reasoning_effort()} if reasoning_effort() else {}
+        llm = GatewayLLMService(
+            client=self._gateway_client(),
+            settings=GatewayLLMService.Settings(model=llm_model(), max_tokens=1200,
+                                                extra=extra))
+        # The runner answers a function call itself (it is the one that ends
+        # a conversation), so the pipeline only reports it: a handler must be
+        # registered for Pipecat to announce the call, and this one does
+        # nothing more.
+        llm.register_function(None, self._on_function_call)
+        self._tts = ElevenLabsDialogueTTSService(
+            voice_id=voice_id_for(self.voice), sample_rate=OUTPUT_RATE)
+        # Swapping a provider is this line: another LLM service in llm's
+        # place, another TTS service in self._tts's.
+        self._speaking = self._task(Pipeline([
+            llm, _FirstToken(self),
+            LLMTextProcessor(text_aggregator=SentenceAggregator()),
+            self._tts, _ReplySink(self)]))
+
+        @self._speaking.event_handler("on_pipeline_error")
+        async def _on_error(_task, frame: ErrorFrame) -> None:
+            # One error per reply, not one per sentence that could not be
+            # voiced; outside a reply there is nobody to tell.
+            reply = self._active
+            if reply is not None and not reply.closed and not reply.errored:
+                reply.errored = True
+                self._error("cascade_failed", str(frame.error)[:300])
+
+    async def _on_function_call(self, params) -> None:
+        return None
+
     # -- client events ---------------------------------------------------------
     async def _on_session_update(self, ev: dict) -> None:
         s = ev.get("session") or {}
         if "instructions" in s:
             self.instructions = s["instructions"] or ""
-        if s.get("voice"):
+        if s.get("voice") and s["voice"] != self.voice:
             self.voice = s["voice"]
+            if self._speaking is not None:
+                # In order with the replies: the next one speaks in it.
+                await self._speaking.queue_frame(TTSUpdateSettingsFrame(
+                    delta=ElevenLabsDialogueTTSService.Settings(voice=voice_id_for(self.voice))))
         if "tools" in s:
             self.tools = _rt_tools(s["tools"])
         self._emit({"type": "session.updated", "session": {}})
@@ -371,10 +884,18 @@ class CascadeSocket:
         # Until its transcript lands the model is handed the AUDIO itself, so
         # the reply does not wait for the transcription round trip.
         item["audio"] = pcm
+        item["committed_at"] = time.time()
         self._emit({"type": "input_audio_buffer.committed", "item_id": iid,
                     "previous_item_id": prev})
-        task = self._spawn(self._transcribe(iid, pcm))
-        self._pending_stt.append(task)
+        await self._ensure_hearing()
+        # One segment, as a VAD would hand it over; the item id rides on the
+        # audio and comes back on the transcript.
+        await self._hearing.queue_frames([
+            VADUserStartedSpeakingFrame(),
+            UserAudioRawFrame(audio=pcm, sample_rate=self._rate, num_channels=1,
+                              user_id=iid),
+            VADUserStoppedSpeakingFrame(),
+        ])
 
     async def _on_conversation_item_create(self, ev: dict) -> None:
         item = ev.get("item") or {}
@@ -404,65 +925,150 @@ class CascadeSocket:
                     "event_id": ev.get("event_id", "")})
 
     async def _on_response_create(self, ev: dict) -> None:
-        if self._reply is not None and not self._reply.done():
+        if self._active is not None and not self._active.closed:
             self._error("conversation_already_has_active_response",
                         "a reply is already in progress",
                         event_id=ev.get("event_id", ""))
             return
-        rid = self._id("resp")
-        task = self._spawn(self._respond(rid))
-        self._reply = task
-        # A reply cancelled before its first step never runs its own cleanup,
-        # so the done that closes it is guaranteed from here.
-        task.add_done_callback(lambda _t, rid=rid: self._ensure_done(rid))
+        self.timings = {k: v for k, v in self.timings.items() if k == "stt_ms"}
+        reply = _Reply(self._id("resp"), self._add_item("assistant", "")["id"])
+        self._active = reply
+        self._emit({"type": "response.created",
+                    "response": {"id": reply.rid, "status": "in_progress"}})
+        self._emit({"type": "response.output_item.added", "response_id": reply.rid,
+                    "output_index": 0, "item": {"id": reply.iid, "type": "message",
+                                                "role": "assistant", "content": []}})
+        if not eleven_key():
+            # Said here, plainly, rather than as the stream's refusal later.
+            reply.errored = True
+            self._error("cascade_failed", "ELEVENLABS_API_KEY is not set")
+        await self._ensure_speaking()
+        # The turn is not awaited: the model hears the audio itself (see
+        # _messages) while the transcript is written in parallel.
+        context = LLMContext(messages=self._messages(), tools=_tools_schema(self.tools))
+        await self._speaking.queue_frames([
+            ReplyStartFrame(reply.rid), LLMContextFrame(context), ReplyEndFrame(reply.rid)])
 
     async def _on_response_cancel(self, ev: dict) -> None:
-        if self._reply is None or self._reply.done():
+        reply = self._active
+        if reply is None or reply.closed:
             self._error("response_cancel_not_active",
                         "no response is active", event_id=ev.get("event_id", ""))
             return
-        self._reply.cancel()
+        # Closed here and now, so the bridge's next create is not refused
+        # while the pipeline is still winding the old reply down; whatever of
+        # it still reaches the sink belongs to a closed reply and is dropped.
+        self._close_reply(reply, "cancelled")
+        await self._speaking.queue_frame(InterruptionFrame())
 
-    # -- steps -----------------------------------------------------------------
-    async def _transcribe(self, iid: str, pcm: bytes) -> None:
-        started = time.time()
-        text = ""
-        try:
-            text = await self._hear(pcm)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - a failed hearing is an event
+    # -- what the pipelines report ---------------------------------------------
+    def _heard(self, iid: str, text: str, result: Any) -> None:
+        item = next((it for it in self.items if it["id"] == iid), None)
+        if item is None or "audio" not in item:
+            return
+        started = item.pop("committed_at", None)
+        if started:
+            self.timings["stt_ms"] = int((time.time() - started) * 1000)
+        if isinstance(result, BaseException):
+            item.pop("audio", None)
             self._emit({"type": "conversation.item.input_audio_transcription.failed",
                         "item_id": iid, "error": {
                             "type": "server_error", "code": "stt_failed",
-                            "message": f"{type(exc).__name__}: {exc}"[:200]}})
+                            "message": f"{type(result).__name__}: {result}"[:200]}})
             return
-        finally:
-            self.timings["stt_ms"] = int((time.time() - started) * 1000)
-        for it in self.items:
-            if it["id"] == iid:
-                it["text"] = text
-                it.pop("audio", None)
+        item["text"] = text
+        item.pop("audio", None)
         self._emit({"type": "conversation.item.input_audio_transcription.completed",
                     "item_id": iid, "transcript": text})
 
-    async def _hear(self, pcm: bytes) -> str:
-        from ..speech_check import _prompt as hear_prompt
-        payload = {
-            "model": stt_model(), "max_tokens": 400, "temperature": 0,
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": hear_prompt(())},
-                {"type": "input_audio", "input_audio": {
-                    "data": base64.b64encode(wav_bytes(pcm, self._rate)).decode("ascii"),
-                    "format": "wav"}}]}],
-        }
-        r = await self._http.post(
-            f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {self.api_key}"}, json=payload)
-        r.raise_for_status()
-        content = (r.json().get("choices") or [{}])[0].get("message", {}).get("content")
-        return (content or "").strip()
+    def _reply_for(self, rid: Optional[str]) -> Optional[_Reply]:
+        reply = self._active
+        if reply is None or reply.closed or rid != reply.rid:
+            return None
+        return reply
 
+    def _reply_first_token(self) -> None:
+        reply = self._active
+        if reply is not None and not reply.closed and "llm_first_token_ms" not in self.timings:
+            self.timings["llm_first_token_ms"] = int((time.time() - reply.started) * 1000)
+
+    def _reply_text(self, rid: Optional[str], text: str) -> None:
+        reply = self._reply_for(rid)
+        if reply is None or not text.strip():
+            return
+        reply.spoken.append(text.strip())
+        self._emit({"type": "response.output_audio_transcript.delta",
+                    "response_id": rid, "item_id": reply.iid,
+                    "delta": text.strip() + " "})
+
+    def _reply_audio(self, rid: Optional[str], audio: bytes) -> None:
+        reply = self._reply_for(rid)
+        if reply is None:
+            return
+        audio = reply.carry + audio
+        # PCM16 frames are two bytes; never split a sample.
+        reply.carry = audio[-1:] if len(audio) % 2 else b""
+        audio = audio[:len(audio) - len(reply.carry)]
+        if not audio:
+            return
+        if "first_audio_ms" not in self.timings:
+            self.timings["first_audio_ms"] = int((time.time() - reply.started) * 1000)
+        for at in range(0, len(audio), AUDIO_FRAME_BYTES):
+            self._emit({"type": "response.output_audio.delta",
+                        "response_id": rid, "item_id": reply.iid,
+                        "delta": base64.b64encode(audio[at:at + AUDIO_FRAME_BYTES]).decode("ascii")})
+
+    def _reply_call(self, rid: Optional[str], frame: FunctionCallInProgressFrame) -> None:
+        reply = self._reply_for(rid)
+        if reply is None:
+            return
+        arguments = frame.arguments
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments or {})
+        reply.call = {"call_id": frame.tool_call_id or self._id("call"),
+                      "name": frame.function_name, "arguments": arguments}
+
+    def _reply_finish(self, rid: Optional[str], status: str) -> None:
+        reply = self._reply_for(rid)
+        if reply is not None:
+            self._close_reply(reply, status)
+
+    def _close_reply(self, reply: _Reply, status: str) -> None:
+        """The end of one reply, however it ended: the words that were
+        spoken become the item, a function call is reported, and the done
+        frames close it for the bridge."""
+        reply.closed = True
+        self.timings["reply_total_ms"] = int((time.time() - reply.started) * 1000)
+        text = " ".join(reply.spoken).strip()
+        for it in self.items:
+            if it["id"] == reply.iid:
+                it["text"] = text
+        if not text:
+            self.items = [i for i in self.items if i["id"] != reply.iid]
+        if reply.call and status == "completed":
+            self._finish_call(reply.rid, reply.call)
+        if not self._closed:
+            if text:
+                self._emit({"type": "response.output_audio_transcript.done",
+                            "response_id": reply.rid, "item_id": reply.iid, "transcript": text})
+            self._emit({"type": "response.output_audio.done",
+                        "response_id": reply.rid, "item_id": reply.iid})
+            self._emit({"type": "response.done", "response": {
+                "id": reply.rid, "status": status,
+                "output": [{"id": reply.iid, "type": "message", "role": "assistant"}] if text else [],
+                "metadata": {"timings": dict(self.timings)}}})
+        if self._active is reply:
+            self._active = None
+
+    def _finish_call(self, rid: str, call: dict) -> None:
+        cid = call["call_id"]
+        self._add_item("assistant", call["arguments"], iid=self._id("item"),
+                       kind="function_call", call_id=cid, name=call["name"])
+        self._emit({"type": "response.function_call_arguments.done",
+                    "response_id": rid, "call_id": cid,
+                    "name": call["name"], "arguments": call["arguments"]})
+
+    # -- the model's view of the conversation ----------------------------------
     def _messages(self) -> list:
         msgs = [{"role": "system", "content": self.instructions or "You are a helpful voice assistant."}]
         for it in self.items:
@@ -483,177 +1089,3 @@ class CascadeSocket:
                 role = it["role"] if it["role"] in ("user", "assistant", "system") else "user"
                 msgs.append({"role": role, "content": it["text"]})
         return msgs
-
-    def _ensure_done(self, rid: str) -> None:
-        if rid not in self._finished and not self._closed:
-            self._finished.add(rid)
-            self._emit({"type": "response.created", "response": {"id": rid}})
-            self._emit({"type": "response.done", "response": {
-                "id": rid, "status": "cancelled", "output": []}})
-
-    async def _respond(self, rid: str) -> None:
-        """One reply: stream Argon's words into one ElevenLabs stream."""
-        self.timings = {k: v for k, v in self.timings.items() if k == "stt_ms"}
-        started = time.time()
-        spoken: list = []
-        item = self._add_item("assistant", "")
-        iid = item["id"]
-        ws = reader = None
-        cancelled = False
-        try:
-            # The turn is not awaited: the model hears the audio itself (see
-            # _messages) while the transcript is written in parallel.
-            self._pending_stt = [t for t in self._pending_stt if not t.done()]
-            self._emit({"type": "response.created", "response": {"id": rid, "status": "in_progress"}})
-            self._emit({"type": "response.output_item.added", "response_id": rid,
-                        "output_index": 0, "item": {"id": iid, "type": "message",
-                                                    "role": "assistant", "content": []}})
-            async with _tts_slot():
-                voice_id = voice_id_for(self.voice)
-                ws = await self._connect_tts()
-                await ws.send(json.dumps({"voices": [voice_id]}))
-                reader = self._spawn(self._relay_audio(ws, rid, iid, started))
-                call = await self._stream_llm(ws, voice_id, spoken, rid, iid, started)
-                await ws.send(json.dumps({"close_socket": True}))
-                await reader
-                reader = None
-            if call:
-                await self._finish_call(rid, call)
-        except asyncio.CancelledError:
-            cancelled = True
-        except Exception as exc:  # noqa: BLE001 - one reply, not the session
-            self._error("cascade_failed", f"{type(exc).__name__}: {exc}"[:300])
-        finally:
-            if reader is not None:
-                reader.cancel()
-            if ws is not None:
-                await ws.close()
-            text = " ".join(spoken).strip()
-            for it in self.items:
-                if it["id"] == iid:
-                    it["text"] = text
-            if not text:
-                self.items = [i for i in self.items if i["id"] != iid]
-            self._finished.add(rid)
-            if not self._closed:
-                if text:
-                    self._emit({"type": "response.output_audio_transcript.done",
-                                "response_id": rid, "item_id": iid, "transcript": text})
-                self._emit({"type": "response.output_audio.done", "response_id": rid, "item_id": iid})
-                self._emit({"type": "response.done", "response": {
-                    "id": rid, "status": "cancelled" if cancelled else "completed",
-                    "output": [{"id": iid, "type": "message", "role": "assistant"}] if text else [],
-                    "metadata": {"timings": dict(self.timings)}}})
-        if cancelled:
-            raise asyncio.CancelledError
-
-    async def _connect_tts(self):
-        """Open the reply's stream; a 429 (the plan's concurrency) or 409 (the
-        first use of a library voice being added to the account) is waited out
-        three times with a growing pause."""
-        for attempt in range(4):
-            try:
-                return await open_tts()
-            except websockets.exceptions.InvalidStatus as exc:
-                if exc.response.status_code in (429, 409) and attempt < 3:
-                    await asyncio.sleep(0.4 * (2 ** attempt))
-                    continue
-                raise RuntimeError(
-                    f"elevenlabs {exc.response.status_code}: "
-                    f"{exc.response.body.decode('utf-8', 'replace')[:300]}")
-
-    async def _stream_llm(self, ws, voice_id: str, spoken: list,
-                          rid: str, iid: str, started: float) -> Optional[dict]:
-        """Stream the reply; each sentence goes into the stream the moment it
-        is whole. Returns a function call if the model made one."""
-        payload = {"model": llm_model(), "messages": self._messages(),
-                   "stream": True, "max_tokens": 1200}
-        if reasoning_effort():
-            payload["reasoning_effort"] = reasoning_effort()
-        if self.tools:
-            payload["tools"] = self.tools
-
-        async def say(sentence: str) -> None:
-            spoken.append(sentence)
-            self._emit({"type": "response.output_audio_transcript.delta",
-                        "response_id": rid, "item_id": iid, "delta": sentence + " "})
-            await ws.send(json.dumps({"inputs": [{"text": sentence + " ", "voice_id": voice_id}],
-                                      "flush": True}))
-
-        # The stream closes itself after 20 s without a message; Argon can
-        # think for longer than that on a slow turn.
-        async def keep_alive() -> None:
-            while True:
-                await asyncio.sleep(10)
-                await ws.send(json.dumps({"keep_alive": True}))
-        alive = self._spawn(keep_alive())
-        buffer, first, call = "", True, None
-        try:
-            async with self._http.stream(
-                    "POST", f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {self.api_key}"}, json=payload) as r:
-                if r.status_code >= 400:
-                    body = (await r.aread()).decode("utf-8", "replace")[:300]
-                    raise RuntimeError(f"llm {r.status_code}: {body}")
-                async for line in r.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        delta = ((json.loads(data).get("choices") or [{}])[0]
-                                 .get("delta") or {})
-                    except ValueError:
-                        continue
-                    for tc in delta.get("tool_calls") or []:
-                        fn = tc.get("function") or {}
-                        call = call or {"call_id": tc.get("id") or self._id("call"),
-                                        "name": "", "arguments": ""}
-                        call["name"] += fn.get("name") or ""
-                        call["arguments"] += fn.get("arguments") or ""
-                    piece = delta.get("content") or ""
-                    if not piece:
-                        continue
-                    if first:
-                        self.timings["llm_first_token_ms"] = int((time.time() - started) * 1000)
-                    buffer += piece
-                    sentences, buffer = split_sentences(buffer, first=first)
-                    for sentence in sentences:
-                        first = False
-                        await say(sentence)
-            sentences, buffer = split_sentences(buffer, first=first, final=True)
-            for sentence in sentences:
-                await say(sentence)
-        finally:
-            alive.cancel()
-        self.timings["llm_total_ms"] = int((time.time() - started) * 1000)
-        return call
-
-    async def _relay_audio(self, ws, rid: str, iid: str, started: float) -> None:
-        """Hand the stream's audio on as it arrives, until its final message."""
-        carry = b""
-        async for raw in ws:
-            m = json.loads(raw)
-            if m.get("error"):
-                raise RuntimeError(f"elevenlabs: {m.get('message') or m['error']}")
-            if m.get("audio"):
-                chunk = carry + base64.b64decode(m["audio"])
-                # PCM16 frames are two bytes; never split a sample.
-                carry = chunk[-1:] if len(chunk) % 2 else b""
-                chunk = chunk[:len(chunk) - len(carry)]
-                if "first_audio_ms" not in self.timings:
-                    self.timings["first_audio_ms"] = int((time.time() - started) * 1000)
-                self._emit({"type": "response.output_audio.delta",
-                            "response_id": rid, "item_id": iid,
-                            "delta": base64.b64encode(chunk).decode("ascii")})
-            if m.get("is_final"):
-                return
-
-    async def _finish_call(self, rid: str, call: dict) -> None:
-        cid = call["call_id"]
-        self._add_item("assistant", call["arguments"], iid=self._id("item"),
-                       kind="function_call", call_id=cid, name=call["name"])
-        self._emit({"type": "response.function_call_arguments.done",
-                    "response_id": rid, "call_id": cid,
-                    "name": call["name"], "arguments": call["arguments"]})

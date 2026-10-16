@@ -27,11 +27,10 @@
 #           NOT been checked is that these exact wheel pins resolve on 3.13;
 #           the CI leg is what confirms that.
 #
-# NOT YET DONE, needs a version check with network access before committing:
-# adding `audioop-lts; python_version >= "3.13"` here would restore the C path
-# on 3.13 and make the choice moot. The package name is right but the pin is
-# not verifiable offline, and every other line in this file is exact — see the
-# paragraph below. Do not add it unpinned.
+#           Since the cascade moved onto Pipecat (below), pipecat-ai itself
+#           declares `audioop-lts~=0.2.1; python_version >= "3.13"`, so a 3.13
+#           install gets the C implementation back through that dependency;
+#           the pure-Python fallback stays for an interpreter that lacks both.
 #
 # Exact pins for reproducible production images. The instrument is frozen per
 # study wave (immutable ECR tags, pinned terraform image tag), so builds of the
@@ -71,3 +70,21 @@ boto3==1.43.78
 anyio==4.15.1
 starlette==1.6.0
 botocore==1.43.91
+
+# The voice cascade (server/voice/cascade.py) runs on Pipecat: its
+# OpenAI-compatible LLM service against the gateway, its ElevenLabs HTTP TTS
+# service, its pipeline, sentence and interruption machinery. Installed WITHOUT
+# the `[openai]`/`[elevenlabs]` extras on purpose: those only add
+# `websockets<16` for Pipecat's websocket-based services, which this code does
+# not use, and would conflict with the websockets pin above (the ElevenLabs
+# dialogue stream the cascade opens itself rides on that same websockets).
+# Pipecat's base install already brings openai, and the two below are imported
+# directly by server/voice/cascade.py (the openai client for the gateway,
+# loguru to quieten Pipecat's logging), so they are declared and pinned here
+# for the reason given above anyio.
+# Resolved and verified 2026-10-15 on the project venv; CI's matrix confirms
+# the other interpreters. Bumping pipecat-ai is a deliberate re-test of the
+# cascade (tests/test_cascade_voice.py and a live reply).
+pipecat-ai==0.0.108
+openai==2.54.0
+loguru==0.7.3

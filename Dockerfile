@@ -36,6 +36,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pipecat's text utilities look for NLTK's punkt_tab tokenizer data when they
+# are imported and download it if it is missing. The cascade cuts sentences
+# with its own splitter and never asks NLTK, but the lookup still runs at
+# import, so bake the data into the image: otherwise every container start
+# spends up to half a minute on that download (measured 2026-10-15) and needs
+# nltk's servers to be reachable. /usr/local/share/nltk_data is on NLTK's
+# default search path.
+RUN python -m nltk.downloader -q -d /usr/local/share/nltk_data punkt_tab
+
 # Application code (scenarios travel with the image; data is mounted).
 COPY server ./server
 COPY static ./static

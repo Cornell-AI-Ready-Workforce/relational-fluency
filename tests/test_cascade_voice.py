@@ -163,6 +163,7 @@ def test_cancel_stops_the_reply_and_says_so(monkeypatch):
             f = json.loads(await asyncio.wait_for(sock.recv(), 5))
             frames.append(f["type"])
             if f["type"] == "response.done":
+                await sock.close()
                 return f, frames
     done, frames = asyncio.run(go())
     assert done["response"]["status"] == "cancelled"
@@ -178,7 +179,9 @@ def test_item_create_and_delete_are_acknowledged():
         added = json.loads(await sock.recv())
         await sock.send(json.dumps({"type": "conversation.item.delete",
                                     "item_id": added["item"]["id"]}))
-        return added, json.loads(await sock.recv())
+        deleted = json.loads(await sock.recv())
+        await sock.close()
+        return added, deleted
     added, deleted = asyncio.run(go())
     assert added["type"] == "conversation.item.added"
     assert deleted["type"] == "conversation.item.deleted"
