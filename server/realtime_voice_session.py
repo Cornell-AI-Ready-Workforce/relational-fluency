@@ -1393,7 +1393,9 @@ class RealtimeVoiceSessionRunner:
         """
         return (
             "\n\nFIRST REPLY, for you alone — never say any of this out loud:\n"
-            "The person you are all meeting with speaks first. Your FIRST "
+            "The person you are all meeting with speaks first. "
+            "Begin with a greeting of one short sentence, as yourself, that says who you are to them and what this conversation is for, in plain words they can act on (so that a person who walked in knowing nothing would know what you want from them). Then, in the same reply, make your opening move. "
+            "Your FIRST "
             "reply in this meeting, whatever they opened with, is where the "
             f"scene is found: «{opening}». If that quotes a line of dialogue, "
             "say that line, in your own words if you like, as your answer to "
@@ -1436,7 +1438,9 @@ class RealtimeVoiceSessionRunner:
             # the first reply is sent to the brief's own opening move instead.
             return (
                 "\n\nFIRST REPLY, for you alone — never say any of this out loud:\n"
-                "The other person speaks first. Whatever they open with — a "
+                "The other person speaks first. "
+                "Begin with a greeting of one short sentence, as yourself, that says who you are to them and what this conversation is for, in plain words they can act on (so that a person who walked in knowing nothing would know what you want from them). Then, in the same reply, make your opening move. "
+                "Whatever they open with — a "
                 "greeting, a false start, half a sentence, or not much at all — "
                 "your FIRST reply is your own opening move, the one your brief "
                 "describes under how you behave, said in the first person as "
@@ -1458,7 +1462,9 @@ class RealtimeVoiceSessionRunner:
             )
         return (
             "\n\nFIRST REPLY, for you alone — never say any of this out loud:\n"
-            "The other person speaks first. Whatever they open with — a "
+            "The other person speaks first. "
+            "Begin with a greeting of one short sentence, as yourself, that says who you are to them and what this conversation is for, in plain words they can act on (so that a person who walked in knowing nothing would know what you want from them). Then, in the same reply, make your opening move. "
+            "Whatever they open with — a "
             "greeting, a false start, half a sentence, or not much at all — "
             f"your FIRST reply is where this scene is found: «{opening}». If "
             "that quotes a line of dialogue, say that line, in your own words "
