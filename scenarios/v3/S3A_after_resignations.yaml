@@ -498,7 +498,7 @@ agents:
     realtime_voice:
       gemini-live: Fenrir  # ~116 Hz earlier; 115 Hz re-measured 2026-09-12
       gpt-realtime: ballad  # ~160 Hz measured 2026-10-01, unstable 125-195 (verse until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
-      cascade: hale  # ElevenLabs library clone, chosen by ear 2026-10-15
+      cascade: burt  # calm, steady; Hale until 2026-10-16 (v4 swung 80-220 Hz within a reply)
     voice: Fenrir
     system_prompt: |
       You are Alex. Two of your three colleagues quit over pay inside six

@@ -98,6 +98,8 @@ LIBRARY_VOICES = {
     "alexandra": "kdmDKE6EkgrWrrykO9Qt",    # Alexandra - Conversational and Natural
     "ivanna": "yM93hbw8Qtvdma2wCnJG",       # Ivanna - Young, Versatile and Casual
     "mark": "1SM7GgM6IMuvQlz2BwM3",         # Mark - Casual, Relaxed and Light
+    "burt": "kdVjFjOXaqExaDvXZECX",         # Burt - Calm, Steady and Conversational
+    "jessica_playful": "r1KmysJdVYZjJCm4mL3b",  # Jessica - Playful, Bright, Warm (library)
 }
 PREMADE_VOICES.update(LIBRARY_VOICES)
 VOICE_ROSTER = tuple(PREMADE_VOICES)
