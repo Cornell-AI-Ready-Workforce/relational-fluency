@@ -7,7 +7,7 @@ construct: teamwork
 variant: A
 parallel_form: S4B
 title: "Planning an internal rollout"
-duration_minutes: [7, 12]
+duration_minutes: [5, 10]
 
 skill_measured: >-
   Cooperating, soliciting input, sharing credit, and encouraging everyone's
@@ -26,9 +26,25 @@ esci_items:
 # the two forms have to give him the same amount of standing or A is the easier
 # room to push back in.
 setup: >-
-  You are part of a four-person group planning the rollout of a new
-  internal process. Dan has already drafted the schedule. The session is
-  already underway, and the plan is meant to be agreed before it ends.
+  You are one of four people on a project team rolling out a new internal
+  process to every team in the company. Nothing has gone live yet. Dan has
+  already drafted the schedule, and his draft puts every team live on the
+  same day. The others are Priya and Chris. Nobody here outranks anyone,
+  and no manager is in the room. The working session is already underway,
+  and the group is meant to leave it with a rollout plan, and a go-live
+  date, that everyone has agreed to.
+
+# What the participant is told they are there to do. Shown on the situation
+# card and kept on screen under the header for the whole conversation. It is
+# the task, in their terms; never the construct or what the raters look for.
+goal: >-
+  Leave the session with a rollout plan and a go-live date that all four of you genuinely agree to.
+
+# Participant-only (the "What you have" card; actors never see this list).
+# Kept to what the setup already says, so the instrument is unchanged: nothing
+# here points at Priya's history or at whose idea the pilot is.
+assets:
+  - "Dan's draft schedule, circulated before the session: every team live on one date"
 
 # Casting, per model family. `realtime_voice` is a MAP from model family to the
 # voice that family speaks this character with, and server/scenarios_v3.py
@@ -65,7 +81,8 @@ setup: >-
 # what makes the two catalogues comparable at all; they agree with the earlier
 # per-family numbers on Gemini and read the gpt voices higher. Every gpt name
 # below was confirmed on the gateway that day: session.updated acked and audio
-# returned.
+# returned. The names cast on 2026-10-14 were confirmed the same way that day,
+# with production's own session payload.
 #
 # These three share a room, so they are cast to stay apart by ear and not by
 # name badge alone, and the counterparts hold the same gaps on the other
@@ -89,12 +106,13 @@ setup: >-
 # participation of everyone present" is being asked to hear a room.
 #
 # The gaps do hold here. On Gemini the room is Chris 100 (Charon), Dan 115
-# (Fenrir), Priya 166 (Aoede); on gpt it is Chris 130 (ash), Dan 160 (verse),
-# Priya 190 (coral) — same order, same rough spread. One collision is worth
-# knowing about anyway: `coral` is also S2's voice, because Aoede at 166 Hz
-# and Kore at 220 Hz both land nearest coral on gpt. S2 and S4 are different
-# encounters and nobody meets both characters in one room, so nothing inside a
-# scene is lost by it.
+# (Fenrir), Priya 166 (Aoede); on gpt it is Chris 120 (echo), Dan 150 (verse),
+# Priya 208 (coral), on the 2026-10-01 measurement — same order, a wider spread.
+# Chris was ash until 2026-10-14 (docs/OPERATIONS.md, 2026-10-14), when the gpt casting was made
+# so that no voice is shared between scenarios: until then ash was also S1's
+# and S3's voice and coral S1's and S2's, and a participant heard the same
+# voices from one encounter to the next. A run of four encounters now hears
+# nine different gpt voices.
 # ── MEASURED AFTER THIS ROUND ─────────────────────────────────────
 # Both forms driven through the real composed prompt stack with the SAME
 # participant script, on the text model of the configured family, with NO
@@ -123,10 +141,11 @@ agents:
   dan:
     name: Dan
     role: dominates, relabels others' ideas
-    display_role: project teammate
+    display_role: project teammate, drafted the schedule
     realtime_voice:
       gemini-live: Fenrir  # ~116 Hz earlier; 115 Hz re-measured 2026-09-12
       gpt-realtime: verse  # ~120 Hz earlier; 160 Hz re-measured 2026-09-12
+      cascade: joseph  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Fenrir
     # Three separate failures were measured in this brief and all three are
     # repaired here rather than in the cue, because on the configured model the
@@ -421,6 +440,7 @@ agents:
     realtime_voice:
       gemini-live: Aoede   # ~170 Hz earlier; 166 Hz re-measured 2026-09-12
       gpt-realtime: coral  # ~198 Hz earlier; 190 Hz re-measured 2026-09-12
+      cascade: ivanna  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Aoede
     system_prompt: |
       You are Priya. You know why last year's rollout failed: it went out to
@@ -517,7 +537,8 @@ agents:
     display_role: project teammate
     realtime_voice:
       gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
-      gpt-realtime: ash    # ~89 Hz earlier; 130 Hz re-measured 2026-09-12
+      gpt-realtime: echo   # 120 Hz measured 2026-10-01 (ash until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
+      cascade: mark  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Charon
     # "one team first, see what breaks, then the rest" was a three-beat formula
     # and it came back verbatim: "See what breaks, then expand" in 6 of 6 runs,

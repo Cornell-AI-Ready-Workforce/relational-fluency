@@ -174,6 +174,11 @@ class GroupRoom:
         # agent id (or SCRIBE_ID) -> why that channel stopped taking audio.
         # hear() used to swallow this entirely; see hear().
         self.lost: Dict[str, str] = {}
+        # agent id (or SCRIBE_ID) -> the session that went deaf, for an
+        # on_lost caller that rebuilds it (pipeline 2026-10-14a): on_lost is
+        # called with (channel_id, reason) and the room has dropped the
+        # session by then.
+        self.lost_sessions: Dict[str, object] = {}
         # Called with (channel_id, reason) the first time a channel goes deaf,
         # so the runner can put it in the record. Optional, because the room has
         # no store of its own and must not need one in order to be correct.
@@ -193,7 +198,8 @@ class GroupRoom:
         self.grant_fallback_creates = 0
         # How the latest give_floor asked for its reply: {agent_id, via,
         # waited_s?}; `via` is commit, commit+create_fallback, commit+create,
-        # text_prompt, already_answering, commit_cancelled or commit_moved.
+        # text_prompt, already_answering, commit_cancelled, commit_moved or
+        # commit_lost.
         self.last_grant: Optional[dict] = None
         # agent id -> bytes of audio this room has fanned to that member since
         # it last held the floor. The room's own books, kept because nothing on
@@ -259,6 +265,9 @@ class GroupRoom:
         # Only where ROOM_TOLD_TEXT is "heard" and the member tracks items;
         # bounded to the last 32 lines.
         self._told: Dict[tuple, Dict[str, dict]] = {}
+        # agent id -> how many times reopen_member rebuilt that member's
+        # session after the gateway closed it (pipeline 2026-10-14a).
+        self.member_reopens: Dict[str, int] = {}
 
     # ── what the family can do ─────────────────────────────────────────────
     @property
@@ -487,10 +496,23 @@ class GroupRoom:
 
     # ── listening ──────────────────────────────────────────────────────────
     async def _went_deaf(self, channel_id: str, rt, why: str) -> None:
-        """Record that one channel has stopped taking audio, once."""
+        """Record that one channel has stopped taking audio, once.
+
+        A member's report is about the session it names: one that is no longer
+        that member's (rebuilt since, pipeline 2026-10-14a; a send gathered
+        before the rebuild seated can fail after it) is closed and nothing
+        else, so it can never take the rebuilt session out of the room."""
+        if (channel_id != SCRIBE_ID and channel_id in self.sessions
+                and self.sessions.get(channel_id) is not rt):
+            try:
+                await rt.close()
+            except Exception:  # noqa: BLE001 - it is already gone
+                pass
+            return
         if channel_id in self.lost:
             return
         self.lost[channel_id] = why
+        self.lost_sessions[channel_id] = rt
         if channel_id == SCRIBE_ID:
             self.scribe = None
         else:
@@ -558,6 +580,78 @@ class GroupRoom:
         self.lost.pop(SCRIBE_ID, None)
         self.scribe_reopens += 1
         return rt
+
+    async def reopen_member(self, agent_id: str, *, instructions: str,
+                            voice: Optional[str] = None) -> RealtimeVoiceSession:
+        """A fresh, connected session for a member whose session the gateway
+        closed (pipeline 2026-10-14a), NOT yet seated: the runner seeds it
+        with the conversation so far first, and only then seat_member puts it
+        back, so that no grant, told note or fanned audio reaches a member
+        that does not yet know where the meeting is.
+
+        The same kind of session open() builds, for the reason reopen_scribe
+        gives: through _new_session on the room's own model, with the
+        member's tools and memory configuration, so the replacement is the
+        character it replaces. `voice` is the voice the lost session was
+        speaking with, so the character keeps it; without one it is cast
+        again as open() cast it. The old session, if the room still holds it,
+        is closed and dropped first. A refused connect closes what it opened
+        and raises, and the member stays out of the room."""
+        agent = next((a for a in self.agents if a.id == agent_id), None)
+        if agent is None:
+            raise KeyError(agent_id)
+        old = self.sessions.pop(agent_id, None)
+        if old is not None:
+            try:
+                await old.close()
+            except Exception:  # noqa: BLE001 - it is already gone
+                pass
+        rt = self._new_session(
+            instructions=instructions,
+            voice=voice or self._voice_for_agent(agent),
+            tools=self._member_tools(),
+        )
+        self._configure_memory(rt)
+        try:
+            await rt.connect(open_conversation=False)
+        except BaseException:
+            try:
+                await rt.close()
+            except Exception:  # noqa: BLE001 - the refusal is the news
+                pass
+            raise
+        return rt
+
+    def seat_member(self, agent_id: str, rt, *, told_keys=()) -> None:
+        """Put a rebuilt member back in the room (pipeline 2026-10-14a): it
+        is granted, told and fanned to from here on, and it is no longer
+        lost, so a later loss is reported again (as reopen_scribe does for
+        the scribe). Its told notes from the conversation that went away name
+        items nothing holds any more, so every one is forgotten except the
+        lines in `told_keys`, the (speaker id, reply id) of each note the
+        runner seeded into the new conversation (note_told)."""
+        self.sessions[agent_id] = rt
+        self.lost.pop(agent_id, None)
+        self.lost_sessions.pop(agent_id, None)
+        self._fanned_since_grant[agent_id] = 0
+        keep = set(told_keys or ())
+        for key, entries in list(self._told.items()):
+            if agent_id in entries and key not in keep:
+                entries.pop(agent_id, None)
+        self.member_reopens[agent_id] = self.member_reopens.get(agent_id, 0) + 1
+
+    def note_told(self, speaker_id: str, response_id: Optional[str],
+                  member_id: str, item_id: Optional[str], text: str) -> None:
+        """Remember a told note seeded into a rebuilt member's conversation
+        under the bridge's name for it, as tell() remembers a live one, so a
+        line cut off while still playing can still be corrected there
+        (correct_told). Only for a line with a reply id."""
+        if not (response_id and item_id):
+            return
+        self._told.setdefault((speaker_id, response_id), {})[member_id] = {
+            "item_id": item_id, "text": text}
+        while len(self._told) > 32:
+            self._told.pop(next(iter(self._told)))
 
     async def hear(self, pcm: bytes, *, exclude: Optional[str] = None) -> None:
         """Everyone in the room hears this audio.
@@ -698,7 +792,11 @@ class GroupRoom:
                 self._fanned_since_grant[channel_id] = (
                     self._fanned_since_grant.get(channel_id, 0) + len(note)
                 )
-                if ids[channel_id] and result:
+                # Only for the session that was told: a member rebuilt while
+                # the tell was going out (pipeline 2026-10-14a) holds its note
+                # of this line under the name its seed gave it, if it has one.
+                if (ids[channel_id] and result
+                        and self.sessions.get(channel_id) is _rt):
                     self._told.setdefault(key, {})[channel_id] = {
                         "item_id": ids[channel_id], "text": text}
         while len(self._told) > 32:
@@ -822,7 +920,10 @@ class GroupRoom:
         should have started. "started" on any sign of it; "cancelled" if the
         participant cut it off meanwhile (cancel_response sets
         _cancelled_by_us; commit_input cleared it); "moved" if the floor went
-        to somebody else; else "unanswered".
+        to somebody else; "lost" once the member's socket is gone (closed
+        after the gateway closed it: nothing can answer on it, and the
+        runner is rebuilding the member, pipeline 2026-10-14a); else
+        "unanswered".
 
         A reply can be complete before this looks (response.done came 2.3 s
         after response.created in the probes), and its done clears every
@@ -859,6 +960,8 @@ class GroupRoom:
                 return "cancelled"
             if self.speaking != agent_id:
                 return "moved"
+            if getattr(rt, "ws", True) is None:
+                return "lost"
             if time.time() >= deadline:
                 return "unanswered"
             await asyncio.sleep(0.05)

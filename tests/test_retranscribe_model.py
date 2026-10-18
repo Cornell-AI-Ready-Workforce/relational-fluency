@@ -23,9 +23,9 @@ def test_the_default_is_the_2026_09_23_choice():
     # cannot make this pass or fail. server/llm.py's preflight table states the
     # same default (pinned in tests/test_final_preflight.py).
     src = (ROOT / "server" / "retranscribe.py").read_text(encoding="utf-8")
-    assert 'setting("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash")' in src
+    assert 'setting("TRANSCRIBE_MODEL", "nto.gemini-4-argon")' in src
     tool = (ROOT / "tools" / "recover_from_video.py").read_text(encoding="utf-8")
-    assert 'setting("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash")' in tool
+    assert 'setting("TRANSCRIBE_MODEL", "nto.gemini-4-argon")' in tool
 
 
 @pytest.mark.parametrize("body", [

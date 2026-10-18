@@ -208,6 +208,9 @@ COMMIT_AUDIO_TAGS = 4
 GATEWAY_OUTPUT_RATE = int(setting("REALTIME_OUTPUT_RATE", "24000"))
 
 
+from .cascade import VOICE_ROSTER as _CASCADE_VOICES, CascadeSocket
+
+
 class UnknownRealtimeModel(RuntimeError):
     """REALTIME_MODEL names a model no row in the table covers."""
 
@@ -613,6 +616,45 @@ REALTIME_FAMILIES = {
             "orus": "verse", "zephyr": "marin",
         },
     ),
+    "cascade": RealtimeCapabilities(
+        family="cascade",
+        # Argon hears, Argon thinks, ElevenLabs speaks (server/voice/cascade.py).
+        # The roster is ElevenLabs default voice names; a scenario's Gemini
+        # names alias onto it below. ELEVENLABS_VOICE_IDS adds cast voices.
+        voices=_CASCADE_VOICES,
+        # The cascade's own STT step always writes the participant transcript.
+        needs_input_transcription=False,
+        input_transcription_model="",
+        # The runner's VAD is the only end-of-turn; nothing server-side decides.
+        needs_turn_detection_null=True,
+        # A session.update is simply stored and acked, and the next reply is
+        # built from it, so a director's direction lands on the very next turn.
+        honours_session_update=True,
+        end_of_turn=None,
+        end_of_turn_silence_ms=0,
+        # The browser's 16 kHz goes straight to the STT step (WAV header).
+        input_rate=CLIENT_RATE,
+        # Nothing is ever auto-fired: a reply exists only for a response.create.
+        autofire_wait=0.0,
+        accepts_text_items=True,
+        relay_colleagues_as_text=True,
+        grant_via_text_prompt=True,
+        member_tools=True,
+        tool_output="request",
+        autofire_at_created=False,
+        transcription_language_hint=False,
+        # The cascade's STT already is the second hearing a check would make.
+        participant_speech_check=False,
+        voice_aliases={
+            "puck": "will", "charon": "brian", "kore": "sarah",
+            "fenrir": "chris", "aoede": "jessica", "leda": "matilda",
+            "orus": "eric", "zephyr": "bella",
+        },
+        # Its own casting column: every character in scenarios/v3 names a
+        # `cascade:` voice (library clones chosen by ear, 2026-10-15). The
+        # aliases above stay for an unqualified Gemini name (the scribe).
+        casting_family="",
+    ),
 }
 
 
@@ -643,6 +685,10 @@ def family_of(model: str) -> str:
     a study ends up running a model whose behaviour nobody checked.
     """
     name = (model or "").lower()
+    if name.startswith("cascade"):
+        # REALTIME_MODEL=cascade-argon-elevenlabs: not a gateway model at all
+        # but the three-step pipeline in server/voice/cascade.py.
+        return "cascade"
     if "gemini" in name and "live" in name:
         # ORDER MATTERS. The native-audio sibling matches the gemini-live test
         # too, and answering "gemini-live" for it is not a near-miss: it feeds
@@ -1515,6 +1561,52 @@ def new_item_id(kind: str) -> str:
     gateway takes a client item id and echoes it in conversation.item.added."""
     k = "".join(c for c in (kind or "x").lower() if c.isalnum())[:2] or "x"
     return f"rf_{k}_{os.urandom(4).hex()}_{next(_ITEM_SEQ):x}"[:32]
+
+
+# ── room members the gateway closed (pipeline 2026-10-14a) ──────────────────
+#
+# A 1:1 session the gateway closes is rebuilt inside the encounter
+# (RECONNECT_LIMIT; the runner's _reconnect_after_gateway_close). A room
+# member's was not: it left the room for good, and when the gateway restarted
+# (WebSocket 1012, "service restart") it closed every member at once and the
+# room answered nobody for the rest of the encounter (S4A sim on 01f10f0,
+# 2026-10-14: all three members at 154.7 s, then 39 participant turns written
+# as group_turn_no_members). A member is now rebuilt as the same character,
+# with the same voice and brief, and seeded with the room's conversation as
+# that character was left holding it (the runner's _rebuild_member).
+
+def room_reconnect_limit() -> int:
+    """ROOM_RECONNECT_LIMIT, default 2: how many times one encounter may
+    rebuild each room member whose session the gateway closed. Every connect
+    attempt counts, so a member the gateway keeps refusing stops costing a
+    session at the limit. Per member, not per room: one gateway restart
+    closes every member at once. 0 turns it off: a member the gateway
+    closed is handled as on 10-01a (it stays in the room until a send to it
+    fails, then leaves it). A value that is not a whole number reads as the
+    default."""
+    raw = (setting("ROOM_RECONNECT_LIMIT", "2") or "").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 2
+
+
+def reconnect_provenance(model: str) -> dict:
+    """What happens to a session the gateway closes, as this process applies
+    it (pipeline 2026-10-14a). `one_to_one_limit` is REALTIME_RECONNECT_LIMIT
+    (rebuilds per encounter, read at import), `room_member_limit`
+    ROOM_RECONNECT_LIMIT (per member per encounter). `room_seed` is how a
+    rebuilt member on `model` is given the conversation so far: as items in
+    its new conversation on the gpt route ("conversation_items": the
+    participant's lines, its own lines and its colleagues' told notes, as
+    room memory left them), elsewhere as a recap in its brief for one reply
+    ("brief_recap"), the way a rebuilt 1:1 session is."""
+    return {
+        "one_to_one_limit": RECONNECT_LIMIT,
+        "room_member_limit": room_reconnect_limit(),
+        "room_seed": ("conversation_items" if is_openai_realtime(model or "")
+                      else "brief_recap"),
+    }
 
 
 def pacing_provenance() -> dict:
@@ -2541,6 +2633,13 @@ class RealtimeVoiceSession:
         # websockets renamed extra_headers -> additional_headers when the new
         # asyncio client became the top-level default in 14.0; requirements
         # allow >=12, so pick the kwarg the installed version actually accepts.
+        if self.capabilities.family == "cascade":
+            # No socket to dial: the stand-in answers as a realtime server.
+            self.ws = CascadeSocket(voice=self.voice, api_key=self.api_key)
+            await self._send({
+                "type": "session.update", "session": self._session_payload(),
+            })
+            return
         header_kwarg = "additional_headers"
         try:
             if int(websockets.__version__.split(".")[0]) < 14:
@@ -3485,6 +3584,45 @@ class RealtimeVoiceSession:
             self._unplace(iid)
             return None
         return iid
+
+    async def seed_item(self, role: str, text: str) -> Optional[str]:
+        """One message item of a REBUILT room member's conversation (pipeline
+        2026-10-14a): a participant line or a colleague's told note as a user
+        item, one of the character's own lines as an assistant output_text
+        item, at the end of the conversation, asking for nothing. On a session
+        that tracks its items it is insert_item's frame (an id of ours, an
+        event_id, so a refusal is a memory_op_error with the measured
+        fallbacks, and the mirror knows the item); on one that does not (a
+        room at 30a's knobs) it is the same create with neither. Returns the
+        mirror's id, "" for an untracked frame that went out, None when
+        nothing was sent."""
+        if self.track_items:
+            return await self.insert_item(role, text, context={"kind": "seed"})
+        if self.ws is None:
+            return None
+        failures = self.send_failures
+        await self._send(self._create_frame("", role, text,
+                                            previous_item_id=None, named=False))
+        if self.ws is None or self.send_failures > failures:
+            return None
+        return ""
+
+    def adopt_seeded_reply(self, rid: Optional[str], item_id: Optional[str]) -> bool:
+        """Let a seeded item stand for reply `rid` of the conversation this
+        session replaced (pipeline 2026-10-14a): the character's own line, put
+        back as one item when the member was rebuilt. A cut that lands on that
+        line afterwards (it was still playing on the page) then finds it by
+        the reply's name, exactly as on the old session, and forget_reply
+        deletes the item and puts the heard words in its place. The reply is
+        long over, so its done counts as seen. Only on a tracking session."""
+        if not (self.track_items and rid and item_id):
+            return False
+        self._reply_items[rid] = [item_id]
+        self._bound(self._reply_items, 256)
+        self._reply_done_seen[rid] = time.time()
+        self._bound(self._reply_done_seen, 256)
+        self._info(item_id)["rid"] = rid
+        return True
 
     async def _send_memory(self, frame: dict, *, op: str, item_id: Optional[str],
                            key: Optional[str] = None,

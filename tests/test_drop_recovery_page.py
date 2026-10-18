@@ -449,7 +449,7 @@ async function connected(position, total, opts) {
     // 1 in S2/S4 included, with the timer and End's lock; "this part" read as
     // one phase of it. "Press", which is what a phone does.
     assert(/this conversation will start again from the beginning/.test(c.text), c.text);
-    assert(/timer starts again at 00:00/.test(c.text) && /End unlocks again 7 minutes after you start/.test(c.text),
+    assert(/timer starts again at 00:00/.test(c.text) && /End unlocks again 5 minutes after you start/.test(c.text),
       'the card does not say the clock and the lock start again: ' + c.text);
     assert(!/this part|Click/.test(c.text), c.text);
     const line = b.dom.$('transcript').children.filter(x => x.className === 'scene').pop().textContent;

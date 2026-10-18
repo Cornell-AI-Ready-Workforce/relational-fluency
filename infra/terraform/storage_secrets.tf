@@ -286,6 +286,13 @@ resource "aws_secretsmanager_secret" "survey_completion_code" {
   name = "${var.project}/survey-completion-code"
 }
 
+# ElevenLabs, which speaks the cascade's replies (server/voice/cascade.py). Read
+# by the task only while actor_model is a cascade, so it can exist empty before
+# the switch; it must hold a value before the apply that makes the switch.
+resource "aws_secretsmanager_secret" "elevenlabs_key" {
+  name = "${var.project}/elevenlabs-api-key"
+}
+
 # Browser-direct webcam upload (IRB 6a: video goes straight to storage and
 # never transits the model path). Presigned PUTs come from the app origins.
 resource "aws_s3_bucket_cors_configuration" "study_data" {

@@ -250,6 +250,9 @@ def pipeline_health(events: List[dict]) -> dict:
                                    began, and whether it was asked for again
       realtime_session_reconnected the gateway closed a 1:1 socket and the
                                    runner rebuilt it inside the encounter
+      room_member_dropped /        the gateway closed a room member's socket,
+      _reconnected / _lost         and whether the member was rebuilt in the
+                                   room or left it (pipeline 2026-10-14a)
       empty agent turns            assistant_turn rows with no text, or with
                                    text and no audio delivered
       user_turn fragments          participant turns of <= 3 words: the
@@ -282,6 +285,12 @@ def pipeline_health(events: List[dict]) -> dict:
         "reply_reasked": sum(1 for e in retries if e.get("asked")),
         "reconnects": sum(1 for e in events
                           if e.get("type") == "realtime_session_reconnected"),
+        "room_members_dropped": sum(1 for e in events
+                                    if e.get("type") == "room_member_dropped"),
+        "room_members_reconnected": sum(
+            1 for e in events if e.get("type") == "room_member_reconnected"),
+        "room_members_lost": sum(1 for e in events
+                                 if e.get("type") == "room_member_lost"),
     }
 
 
@@ -300,6 +309,11 @@ def pipeline_notes(events: List[dict]) -> List[str]:
     if h["reconnects"]:
         out.append(f"gateway closed the session {h['reconnects']} time(s); "
                    "reconnected inside the encounter")
+    if h["room_members_dropped"]:
+        out.append(f"gateway closed a room member's session "
+                   f"{h['room_members_dropped']} time(s); "
+                   f"{h['room_members_reconnected']} rebuilt in the room, "
+                   f"{h['room_members_lost']} left it")
     if h["empty_agent_turns"] or h["voiceless_agent_turns"]:
         out.append(f"agent turns with nothing in them: {h['empty_agent_turns']} "
                    f"empty, {h['voiceless_agent_turns']} voiceless, "

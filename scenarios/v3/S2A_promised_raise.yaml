@@ -44,7 +44,7 @@ construct: influence
 variant: A
 parallel_form: S2B
 title: "Promised raise and a competing offer"
-duration_minutes: [7, 12]
+duration_minutes: [5, 10]
 
 skill_measured: >-
   Persuading by anticipating objections, using multiple strategies, and
@@ -63,6 +63,12 @@ setup: >-
   workload grew. You now hold a written competing offer at higher pay. A peer
   was kept last quarter with an off-cycle raise. You are meeting your manager,
   Morgan.
+
+# What the participant is told they are there to do. Shown on the situation
+# card and kept on screen under the header for the whole conversation. It is
+# the task, in their terms; never the construct or what the raters look for.
+goal: >-
+  Leave the meeting with a concrete answer on your pay: a raise, a date, or a clear reason, without burning the relationship with Morgan.
 
 # Setup sentences that must NOT reach the actors. `setup` is written to the
 # participant and doubles as the shared scene every actor's system prompt opens
@@ -131,7 +137,8 @@ assets:
 # what makes the two catalogues comparable at all; they agree with the earlier
 # per-family numbers on Gemini and read the gpt voices higher. Every gpt name
 # below was confirmed on the gateway that day: session.updated acked and audio
-# returned.
+# returned. The names cast on 2026-10-14 were confirmed the same way that day,
+# with production's own session payload.
 # ── MEASURED AFTER THIS ROUND ─────────────────────────────────────
 # Both forms driven through the real composed prompt stack with the SAME
 # participant script, on the text model of the configured family, with NO
@@ -162,7 +169,8 @@ agents:
     display_role: your manager
     realtime_voice:
       gemini-live: Kore    # ~222 Hz earlier; 220 Hz re-measured 2026-09-12
-      gpt-realtime: coral  # ~198 Hz earlier; 190 Hz re-measured 2026-09-12
+      gpt-realtime: shimmer  # 148 Hz measured 2026-10-01 (coral until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
+      cascade: zuri  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Kore
     # Morgan and Sasha used to be one manager with two names. Measured on the
     # gateway with matched participant scripts: both opened "I appreciate you
@@ -348,6 +356,21 @@ agents:
         you are refusing in it, so there is something in it for them to
         answer. A different one each time, and no stock word you fall back on
         when you do not know what to say. A noun on its own is not a turn.
+      - You sound like someone who is sorry about the answer, never like
+        someone enforcing it. The warmth is in the shape of the sentence, not
+        in a phrase in front of it: a soft start, a half-beat of hesitation
+        where you lose your nerve for a moment (trail off, then pick it up),
+        an honest hedge where there is one (that you do not think you can,
+        rather than that you cannot), and the refusal lands on the thing,
+        never on them. Short is not clipped, and a no is never a flat one.
+      - You see what this is costing them, and now and then you say so in
+        your own words, before the obstacle and not instead of it: the hours
+        they have been putting in, the waiting, that they had to be the one to
+        book this meeting. Specific to them, one short clause, never a
+        formula, and never the help-desk phrases. Ask about them, not only
+        about the case: how they are holding up, what it has been like. The
+        obstacle still comes, and you still cannot sign anything; you are just
+        a person who likes them while you say it.
       - If they give you nothing to refuse — a hello, a what-about-it, a
         blank, a question about what you mean — you do not wait them out with
         a noun and you do not put an obstacle to them again. Say in plain
@@ -456,7 +479,7 @@ agents:
       - Late on, once something concrete and dated is actually on the table,
         stop adding obstacles. Go quieter, say back what you are taking upward
         and when, and let it settle. Do not announce that the meeting is over.
-      - This runs seven to twelve minutes. If they are racing, slow it down:
+      - This runs five to ten minutes. If they are racing, slow it down:
         make them say the concrete version of a point before you answer it.
 
       If they are lost:

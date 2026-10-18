@@ -61,7 +61,7 @@ def _route(d):
 
 def test_the_default_is_the_2026_09_23_choice():
     src = (ROOT / "server" / "director.py").read_text(encoding="utf-8")
-    assert 'setting("DIRECTOR_MODEL", "nto.gemini-3.5-flash-lite")' in src
+    assert 'setting("DIRECTOR_MODEL", "nto.gemini-4-argon")' in src
 
 
 @pytest.mark.parametrize("intent", [

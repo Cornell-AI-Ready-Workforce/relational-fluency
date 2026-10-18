@@ -23,7 +23,7 @@ python -m tools.sim.check --scenarios S2A     # one, about 13 minutes
 It starts its own server from this checkout (`tools/sim/serve.py`) on a free
 port, configured the way production is: the task definition's environment
 from `infra/terraform/ecs.tf`, with `var.*` resolved from `terraform.tfvars`,
-and only the two credentials taken from `.env`. AWS credentials are stripped
+and only the credentials (the task's `secrets`) taken from `.env`. AWS credentials are stripped
 and archiving is off, so nothing it records reaches the study bucket; sessions
 go to a temporary directory that the command prints, with `server.log` and a
 `<scenario>.timeline.json` per run beside them.
@@ -94,9 +94,18 @@ shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
 check fails for it, saying so, until it is recorded. None is pending as
-committed: all four are recorded on pipeline 2026-10-01a / room pacing 29b,
-build 0c271c7 (2026-10-02, `reports/0c271c7.json`), which is 30a's speech
-check (#67) with 10-01a's room memory hygiene (#72) on top.
+committed: all four are recorded on the cascade (`cascade-argon-elevenlabs`:
+Argon hears and replies, flash-lite transcribes, ElevenLabs eleven_v4 speaks),
+pipeline 2026-10-14a / room pacing 29b, on 2026-10-15: S1A, S2A and S4A from
+build ac5e5c9 (s_1792090452_90b16a, s_1792090674_44dec7, s_1792091509_666571)
+and S3A from 488ad6b (s_1792092205_0207e6), re-run alone because the first S3A
+run's one voice_error was ElevenLabs adding a never-used library voice to the
+account under three concurrent requests (409 already_running, now retried).
+The gateway closed nothing in any of them. The gpt-realtime-2.1 values these
+replace are at `git show 9361af6:tools/sim/baseline.json`; against them the
+cascade answers about two seconds later per turn one-to-one (p50 4.1 / 3.8 s
+against 2.4 / 1.8 s) and about level in rooms, with every line heard, no
+phantom turns and every trigger fired.
 
 A baseline compares one `pipeline_version` with itself, so a merge that brings
 another version's change in under the same label needs a re-record that the
@@ -117,6 +126,16 @@ any `member_memory_late`, `member_memory_error` or `member_memory_skipped`
 not a baseline. 0c271c7's run answered 8 of 9 and 25 of 30, at 3.862 / 5.88
 and 4.027 / 6.379 s, with none of those events (7 lines replaced, 4 told lines
 corrected, no wait).
+
+For 10-14a, read the first run against those 10-01a values (`git show
+01f10f0:tools/sim/baseline.json`). A run in which the gateway closes nothing
+does not reach any of 10-14a's code, so it should match 10-01a within the
+tolerances; if a member's socket was closed, the sessions' events say what
+happened (`room_member_dropped`, then `room_member_reconnected` or
+`room_member_lost`, and `floor_regranted` for a holder that had not been
+heard), and S4A's 01f10f0 run, which lost all three members at 154.7 s and
+answered 5 of 47 lines, is the failure it replaces: a run that answers far
+fewer lines than 10-01a with any of those events in it is not a baseline.
 
 ## The stimulus
 

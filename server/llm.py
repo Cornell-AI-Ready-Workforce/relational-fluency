@@ -627,23 +627,7 @@ def text_client() -> AsyncAnthropic:
 #                ROOM_TOLD_TEXT=generated, ROOM_NUDGE_ROLE=user restore 30a's
 #                frames, behaviour and records (the speech check included);
 #                only provenance `room_memory` (`effective` false) says so.
-#   2026-10-12a  two more participant-transcript gates
-#                (voice/transcript_gates.py), beside the speech check, not
-#                instead of it. The gpt route asks the transcriber for its
-#                per-token logprobs (session `include`, probed live on
-#                gpt-realtime-2.1), and a line whose mean word log-probability
-#                is under PARTICIPANT_MIN_WORD_LOGPROB (-2.0) is
-#                user_turn_suppressed{low_transcriber_confidence}, before the
-#                speech check (whose hearing is then cancelled). On every
-#                route, a line of up to PARTICIPANT_LANGUAGE_GATE_MAX_WORDS (6)
-#                words with no English word in it, after the speech check, is
-#                written as the English the check heard where it heard some,
-#                and is otherwise user_turn_suppressed{not_english}. Both
-#                withdraw the 1:1 reply their commit started, as the other
-#                gates do. user_turn carries transcriber_confidence where the
-#                transcriber gave scores. TRANSCRIPTION_LOGPROBS=0 and
-#                PARTICIPANT_LANGUAGE_GATE=0 restore 10-01a.
-PIPELINE_VERSION = "2026-10-12a"
+PIPELINE_VERSION = "2026-10-01a"
 ROOM_PACING_VERSION = "2026-09-29b"
 
 
@@ -668,13 +652,14 @@ def provenance(model: Optional[str] = None,
     """
     # Imported here, not at the top: server.voice.realtime imports this module.
     from .voice.realtime import (audio_provenance, bridge_provenance,
-                                 pacing_provenance, record_provenance,
-                                 room_memory_provenance, turn_gate_provenance)
+                                 pacing_provenance, reconnect_provenance,
+                                 record_provenance, room_memory_provenance,
+                                 turn_gate_provenance)
 
     realtime = _cfg("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio")
     return {
         "gateway": gateway_base_url(),
-        "text_model": _cfg("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite"),
+        "text_model": _cfg("CLAUDE_MODEL", "nto.gemini-4-argon"),
         "realtime_model": realtime,
         # The two live text models, so a change to either is visible on every
         # encounter it touched. Steering is the manipulated variable; its model
@@ -683,8 +668,8 @@ def provenance(model: Optional[str] = None,
         # controller a given encounter ran under. Defaults duplicated from
         # server/steering.py and server/director.py (pinned by
         # tests/test_final_preflight.py via _MODEL_ROLES).
-        "steering_model": _cfg("STEERING_MODEL", "nto.gemini-3.5-flash-lite"),
-        "director_model": _cfg("DIRECTOR_MODEL", "nto.gemini-3.5-flash-lite"),
+        "steering_model": _cfg("STEERING_MODEL", "nto.gemini-4-argon"),
+        "director_model": _cfg("DIRECTOR_MODEL", "nto.gemini-4-argon"),
         # input_rate, input_transcription_model, max_output_tokens,
         # resampler, input_resampler; see audio_provenance.
         **audio_provenance(model or realtime),
@@ -706,6 +691,11 @@ def provenance(model: Optional[str] = None,
         # see room_memory_provenance. `active` is False off the gpt route;
         # `effective` is False there and on every encounter without a room.
         "room_memory": room_memory_provenance(model or realtime, room=room),
+        # What happens to a session the gateway closes: a 1:1 session's
+        # rebuild budget, a room member's (pipeline 2026-10-14a), and how a
+        # rebuilt member is given the conversation so far; see
+        # reconnect_provenance.
+        "reconnect": reconnect_provenance(model or realtime),
         # Who opens a conversation, and which clock each limit counts on
         # (pipeline 2026-09-28b; see realtime_voice_session's "the
         # participant opens"). Before 28b a room's lead opened the scene and
@@ -766,14 +756,18 @@ def provenance(model: Optional[str] = None,
 # Importing them instead would be better and is not available - server.director
 # and server.steering both import this module.
 _MODEL_ROLES = (
-    ("CLAUDE_MODEL", "nto.gemini-3.1-flash-lite", "the actor's text engine", True),
-    ("DIRECTOR_MODEL", "nto.gemini-3.5-flash-lite", "the director", True),
-    ("STEERING_MODEL", "nto.gemini-3.5-flash-lite", "the steering reviewer", True),
+    ("CLAUDE_MODEL", "nto.gemini-4-argon", "the actor's text engine", True),
+    ("DIRECTOR_MODEL", "nto.gemini-4-argon", "the director", True),
+    ("STEERING_MODEL", "nto.gemini-4-argon", "the steering reviewer", True),
     ("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio", "the voice socket", True),
-    ("TRANSCRIBE_MODEL", "nto.gemini-3.8-flash", "the re-transcriber, offline", False),
+    # Read only when REALTIME_MODEL is the cascade (server/voice/cascade.py):
+    # the model that hears the participant and writes each reply.
+    ("CASCADE_LLM_MODEL", "nto.gemini-4-argon", "the cascade's hearing and reply model", True),
+    ("CASCADE_STT_MODEL", "nto.gemini-3.5-flash-lite", "the cascade's transcriber", True),
+    ("TRANSCRIBE_MODEL", "nto.gemini-4-argon", "the re-transcriber, offline", False),
     # Not blocking: a check the gateway refuses keeps the line as it came,
     # which is the behaviour before 2026-09-30a.
-    ("SPEECH_CHECK_MODEL", "nto.gemini-3.1-flash-lite", "the participant speech check", False),
+    ("SPEECH_CHECK_MODEL", "nto.gemini-4-argon", "the participant speech check", False),
 )
 
 
@@ -842,6 +836,10 @@ def model_check(response: object) -> dict:
         for name, default, role, blocks in _MODEL_ROLES:
             value = _cfg(name, default)
             if not value or value in served:
+                continue
+            if name == "REALTIME_MODEL" and value.lower().startswith("cascade"):
+                # Not a gateway model: the cascade (server/voice/cascade.py).
+                # Its Argon model is checked on the CASCADE_LLM_MODEL row.
                 continue
             # The wave-killer shape is a typo, not an invention -
             # "nto.gemini-3.6-flsah" for "nto.gemini-3.6-flash" - so the nearest

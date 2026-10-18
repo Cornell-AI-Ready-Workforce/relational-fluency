@@ -38,6 +38,7 @@ the runner reads it at call time.
 
 from __future__ import annotations
 
+import itertools
 import sys
 from pathlib import Path
 
@@ -63,18 +64,18 @@ ROSTER_ORDER_ON_GPT = ["alloy", "ash", "ballad"]
 # The casting, as the specs record it. Second column is the Gemini name the
 # bank has used for four rounds; third is the gpt voice measured against it.
 CASTING = {
-    "S1A": [("riley", "Aoede", "coral"), ("sam", "Charon", "ash")],
-    "S1B": [("mel", "Aoede", "coral"), ("drew", "Charon", "ash")],
-    "S2A": [("morgan", "Kore", "coral")],
-    "S2B": [("sasha", "Kore", "coral")],
-    "S3A": [("alex", "Fenrir", "verse"), ("jordan", "Charon", "ash"),
-            ("casey", "Leda", "marin")],
-    "S3B": [("toni", "Fenrir", "verse"), ("lee", "Charon", "ash"),
-            ("ari", "Leda", "marin")],
+    "S1A": [("riley", "Aoede", "marin"), ("sam", "Charon", "ash")],
+    "S1B": [("mel", "Aoede", "marin"), ("drew", "Charon", "ash")],
+    "S2A": [("morgan", "Kore", "shimmer")],
+    "S2B": [("sasha", "Kore", "shimmer")],
+    "S3A": [("alex", "Fenrir", "ballad"), ("jordan", "Charon", "cedar"),
+            ("casey", "Leda", "sage")],
+    "S3B": [("toni", "Fenrir", "ballad"), ("lee", "Charon", "cedar"),
+            ("ari", "Leda", "sage")],
     "S4A": [("dan", "Fenrir", "verse"), ("priya", "Aoede", "coral"),
-            ("chris", "Charon", "ash")],
+            ("chris", "Charon", "echo")],
     "S4B": [("dan", "Fenrir", "verse"), ("priya", "Aoede", "coral"),
-            ("chris", "Charon", "ash")],
+            ("chris", "Charon", "echo")],
 }
 
 
@@ -176,8 +177,29 @@ def test_the_group_room_is_not_cast_by_roster_position(on_model):
     runner, _ = make_runner("S4A")
     got = [runner._voice_for(a) for a in runner.cast]
     assert got != ROSTER_ORDER_ON_GPT
-    assert got == ["verse", "coral", "ash"]
+    assert got == ["verse", "coral", "echo"]
     assert len(set(got)) == 3, f"the room shares voices: {got}"
+
+
+@pytest.mark.parametrize("forms", [
+    "".join(f) for f in itertools.product("AB", repeat=4)])
+def test_a_run_never_hears_the_same_gpt_voice_twice(on_model, forms):
+    """A run is one form of each of S1-S4, nine characters in all, and on gpt
+    they were four voices: participants heard coral as Riley, Morgan and Priya
+    and ash as Sam, Jordan and Chris, and reported the same voice from one
+    encounter to the next (2026-10-14). The roster has ten voices, so every
+    character a run meets is cast in a different one. Held over every mix of
+    forms, not only the ones the run builder allows: the A/B pairs share their
+    casting (above), so it is the same nine voices whichever forms are drawn."""
+    on_model(GPT)
+    heard = []
+    for n, form in zip("1234", forms):
+        runner, _ = make_runner(f"S{n}{form}")
+        heard += [(f"S{n}{form}/{a.id}", runner._voice_for(a)) for a in runner.cast]
+    voices = [v for _, v in heard]
+    shared = {v: [who for who, w in heard if w == v]
+              for v in voices if voices.count(v) > 1}
+    assert not shared, f"a run on forms {forms} hears one voice as several people: {shared}"
 
 
 @pytest.mark.parametrize("scenario_id", sorted(CASTING))
@@ -261,9 +283,16 @@ def test_every_named_voice_is_on_its_family_roster():
 
     The gpt names were re-confirmed on the gateway on 2026-09-12: one short
     socket each for verse, coral, ash and marin, session.updated acked in
-    333-1330 ms and audio returned on every one."""
+    333-1330 ms and audio returned on every one. The 2026-10-14 casting was
+    confirmed the same way that day, with production's own session payload:
+    marin, shimmer, ballad, cedar, sage, echo, verse, coral and ash each came
+    back in session.updated, acked in 0.50-0.87 s, and a whole reply's audio
+    returned on every one."""
+    # The family that OWNS a column: one that casts from another's column (the
+    # cascade, which aliases the Gemini names) does not redefine its roster.
     rosters = {caps.casting_key: set(caps.voices)
-               for caps in rt_mod.REALTIME_FAMILIES.values()}
+               for caps in rt_mod.REALTIME_FAMILIES.values()
+               if not caps.casting_family}
     columns = set(rt_mod.casting_families())
     for sid in v3.available():
         spec = v3.load_spec(sid)
