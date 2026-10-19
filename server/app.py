@@ -442,6 +442,22 @@ async def _run_preflights_on_startup() -> None:
 app.router.on_startup.append(_run_preflights_on_startup)
 
 
+async def _sweep_video_streams_on_startup() -> None:
+    """Startup hook: re-arm the salvage of any streamed webcam copy on disk.
+
+    The salvage timer is armed when a session closes and lives in this process,
+    so a deploy or a crash inside the grace window would otherwise leave the
+    copy of a closed-tab encounter on disk with nothing ever promoting it. See
+    video.salvage; each one runs in its own daemon timer, off the loop.
+    """
+    n = _video.sweep_streams()
+    if n:
+        print(f"  NOTE: re-armed the salvage of {n} streamed webcam recording(s).")
+
+
+app.router.on_startup.append(_sweep_video_streams_on_startup)
+
+
 
 
 # Participant-facing HTML must never be cached. A stale build is invisible to
@@ -1998,6 +2014,22 @@ def _withdrawn(participant_id: str) -> bool:
     return _participant_withdrawal(participant_id) is not None
 
 
+# The streamed webcam copy is promoted in a timer thread, long after any route
+# that could refuse it has answered; it asks the same question they do. A store
+# it cannot read answers "withdrawn" (fail closed), so salvage waits rather than
+# keeping, and it never deletes on that sentinel alone.
+def _may_keep_streamed_video(participant_id: str) -> bool:
+    stamp = _participant_withdrawal(participant_id)
+    if stamp is None:
+        return True
+    if stamp.get("status_unknown"):
+        raise RuntimeError("withdrawal status unknown")
+    return False
+
+
+_video.salvage_guard = _may_keep_streamed_video
+
+
 def _confirmed_withdrawal(participant_id: Optional[str]) -> Optional[dict]:
     """A withdrawal somebody actually recorded, never the fail-closed sentinel.
 
@@ -3008,6 +3040,63 @@ async def api_video_upload(request: Request, session_id: str,
     # The confirm endpoint's body shape, so a client can handle both paths with
     # one branch.
     return {"ok": True, "bytes": written, "key": event["key"], "status": "ok"}
+
+
+@app.post("/api/sessions/{session_id}/video-chunk")
+async def api_video_chunk(request: Request, session_id: str, seq: int,
+                          participant_id: Optional[str] = None,
+                          key: Optional[str] = None):
+    """One MediaRecorder timeslice of the live webcam recording, as it is made.
+
+    The copy that survives a participant leaving without the page running its
+    end-of-encounter upload — a closed tab, a reload, Back. It is never served
+    and never counts as a recording by itself; video.salvage promotes it only
+    when no real upload arrived. See the note above video.VIDEO_STREAM_NAME.
+
+    The upload route's authorisation, exactly: key, session, owner, withdrawal,
+    and the one-shot refusal once a recording is stored (checked locally only —
+    an S3 HEAD every two seconds per encounter is not affordable, and the
+    streamed copy cannot overwrite anything; salvage asks S3 before it writes).
+    """
+    check_participant(key)
+    from . import video
+
+    from starlette.concurrency import run_in_threadpool
+
+    sdir = _session_dir(session_id)
+    _require_session_owner(_load_manifest(sdir), participant_id)
+    _refuse_if_withdrawn(participant_id, key, action="a webcam chunk")
+    if seq < 0:
+        raise HTTPException(400, "bad seq")
+    if video._local_size(session_id) > 0 or video.upload_receipt(session_id) is not None:
+        raise HTTPException(409, "video already uploaded")
+
+    declared = request.headers.get("content-length")
+    if declared and declared.strip().isdigit() and int(declared) > video.MAX_STREAM_CHUNK_BYTES:
+        raise HTTPException(413, "chunk too large")
+    data = b""
+    async for piece in request.stream():
+        data += piece
+        if len(data) > video.MAX_STREAM_CHUNK_BYTES:
+            raise HTTPException(413, "chunk too large")
+    if not data:
+        raise HTTPException(400, "empty chunk")
+
+    mime = (request.headers.get("content-type") or "").split(";")[0].strip() or None
+    try:
+        out = await run_in_threadpool(
+            video.append_chunk, session_id, seq, data,
+            limit=MAX_VIDEO_UPLOAD_BYTES, mime=mime,
+        )
+    except video.StreamTooLarge:
+        raise HTTPException(413, f"recording larger than {MAX_VIDEO_UPLOAD_BYTES} bytes")
+    except OSError as exc:
+        print(f"  WARNING: could not store a webcam chunk for session "
+              f"{session_id}: {type(exc).__name__}: {exc}")
+        raise HTTPException(503, "recording storage unavailable")
+    if out["status"] == "out_of_order":
+        return JSONResponse(out, status_code=409)
+    return out
 
 
 @app.get("/api/run/config")

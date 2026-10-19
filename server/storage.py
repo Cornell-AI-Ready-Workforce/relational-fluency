@@ -577,6 +577,15 @@ class SessionStore:
             archive_session_later(self.dir)
         except Exception:  # noqa: BLE001, never fail a session close on this
             log.exception("could not start the archive for %s", self.id)
+        # The webcam copy the page streamed while recording becomes the
+        # recording only if the page never uploads one: a closed tab, a reload,
+        # a lost machine. See video.salvage; it waits out the page's own upload.
+        try:
+            if (self.dir / "video_stream.part").exists():
+                from .video import salvage_later
+                salvage_later(self.id)
+        except Exception:  # noqa: BLE001, never fail a session close on this
+            log.exception("could not arm the video salvage for %s", self.id)
 
 
 # ---------- The encounter clock ----------

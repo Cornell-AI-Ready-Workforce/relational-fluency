@@ -1315,6 +1315,11 @@
   let playDest = null;       // playback bus, rendered through an <audio> element
   let playEl = null;         // so Chrome's echo canceller can subtract it
   let videoChunks = [];      // recorded video pieces
+  // The same pieces, streamed to the server as they are recorded, so a page
+  // that goes away without running endSession — a closed tab, a reload, Back —
+  // has not taken the only copy with it. { sid, seq, queue, busy, dead };
+  // see streamVideoChunk.
+  let videoStream = null;
   let videoMime = 'video/webm'; // container/codec actually used by MediaRecorder
   let videoUpload = null;    // promise for the upload; resolves {ok, reason}, never rejects
   // The same upload, tracked so it survives the completion overlay clearing
@@ -3463,7 +3468,12 @@
       else tracks.push(...mediaStream.getAudioTracks());
       videoRecorder = new MediaRecorder(new MediaStream(tracks), { mimeType: mime,
         videoBitsPerSecond: 600000 });
-      videoRecorder.ondataavailable = e => { if (e.data.size) videoChunks.push(e.data); };
+      const stream = videoStream = { sid: null, seq: 0, queue: [], busy: false, dead: false };
+      videoRecorder.ondataavailable = e => {
+        if (!e.data.size) return;
+        videoChunks.push(e.data);
+        streamVideoChunk(stream, e.data);
+      };
       // A recorder that dies mid-encounter used to leave every signal on screen
       // green: the encounter ran to a normal ending and a truncated blob was
       // uploaded and confirmed as a successful capture. Say it, and record it.
@@ -3489,6 +3499,84 @@
       noteNoCamera('This browser could not start the camera recording, so this conversation will ' +
                    'not be captured on camera. The conversation itself is unaffected.');
     }
+  }
+
+  // The streamed copy. Each MediaRecorder timeslice (two seconds, ~150 KB) is
+  // POSTed to /api/sessions/{id}/video-chunk in order, one at a time; the
+  // server appends it to a copy that becomes the recording ONLY if the
+  // end-of-encounter upload below never arrives (server/video.py salvage).
+  // That is the whole point: without it, a participant who closes the tab
+  // mid-conversation leaves a full audio record and no video at all.
+  //
+  // Best effort and silent. A chunk that fails stays at the head of the queue
+  // and goes again with the next one; a refusal that cannot change (401, 403,
+  // 404, 409 already stored, 413) stops the stream. Nothing here touches
+  // videoChunks or the upload chain, so the stream failing costs nothing the
+  // page had before.
+  function videoChunkUrl(sid, seq) {
+    const base = `/api/sessions/${encodeURIComponent(sid)}/video-chunk` + keyParamFirst;
+    const pidQ = participantId ? '&participant_id=' + encodeURIComponent(participantId) : '';
+    return base + (base.includes('?') ? '&' : '?') + 'seq=' + seq + pidQ;
+  }
+  function streamVideoChunk(stream, blob) {
+    if (stream.dead || withdrawing) return;
+    stream.queue.push({ seq: stream.seq++, blob });
+    pumpVideoStream(stream);
+  }
+  async function pumpVideoStream(stream) {
+    if (stream.busy || !stream.sid) return;
+    stream.busy = true;
+    try {
+      while (stream.queue.length && !stream.dead && !withdrawing) {
+        const head = stream.queue[0];
+        let r;
+        try {
+          r = await fetchWithDeadline(videoChunkUrl(stream.sid, head.seq), {
+            method: 'POST', body: head.blob,
+            headers: { 'Content-Type': (videoMime || 'video/webm').split(';')[0] },
+          }, PRESIGN_TIMEOUT_MS);
+        } catch (e) { break; }   // network: try again with the next chunk
+        if (r.ok) { stream.queue.shift(); continue; }
+        if (r.status === 409) {
+          const j = await r.json().catch(() => null);
+          // Out of order: the server already holds everything below
+          // next_seq, so drop what it has and carry on from there.
+          if (j && typeof j.next_seq === 'number' && j.status === 'out_of_order' &&
+              j.next_seq > head.seq) {
+            stream.queue = stream.queue.filter(c => c.seq >= j.next_seq);
+            continue;
+          }
+          stream.dead = true; break;
+        }
+        if ([400, 401, 403, 404, 413].includes(r.status)) { stream.dead = true; break; }
+        break;   // 5xx: storage hiccup, try again with the next chunk
+      }
+    } finally {
+      stream.busy = false;
+    }
+  }
+  // The page is going away. Whatever is still queued would be lost with it,
+  // and an ordinary fetch is cancelled on unload, so it goes by beacon — in
+  // order, within the ~64 KB a browser lets beacons carry, which is the last
+  // second or so of a backlog. The type is stripped so the beacon stays a
+  // simple request; the server already knows the container from the stream.
+  function flushVideoStreamOnExit() {
+    const stream = videoStream;
+    if (!stream || stream.dead || !stream.sid || !navigator.sendBeacon) return;
+    let budget = 60000;
+    // The head may already be in flight from the pump; re-sending it is
+    // harmless (the server answers a repeated seq as a duplicate).
+    for (const c of stream.queue) {
+      if (c.blob.size > budget) break;
+      try {
+        if (!navigator.sendBeacon(videoChunkUrl(stream.sid, c.seq), new Blob([c.blob]))) break;
+      } catch (e) { break; }
+      budget -= c.blob.size;
+    }
+    stream.dead = true;
+  }
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('pagehide', () => { flushVideoStreamOnExit(); });
   }
 
   // Every request in the upload chain gets a deadline. Without one a socket
@@ -3987,6 +4075,10 @@
       if (m.type === 'session') {
         $('title').textContent = m.scenario.title;
         sessionId = m.session_id;
+        // The recorder starts before the socket opens, so its stream learns
+        // which session it belongs to here — never from `sessionId` at send
+        // time, which still names the previous encounter until this frame.
+        if (videoStream && !videoStream.sid) { videoStream.sid = m.session_id; pumpVideoStream(videoStream); }
         sessionMode = m.scenario.mode || 'single';
         cast = m.cast || [];
         renderGrid();
