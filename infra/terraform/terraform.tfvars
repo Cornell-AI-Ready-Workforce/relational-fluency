@@ -56,6 +56,10 @@ actor_model = "cascade-argon-elevenlabs"
 # in .env.example); 1:1 steering never waited on it.
 director_route = "0"
 
+# The spoken reply: flash-lite, for first-token latency (0.6-0.9 s against Argon's
+# 2.5-3 s). Argon stays on steering and the director.
+cascade_llm_model = "nto.gemini-3.5-flash-lite"
+
 # Retention: study_data_retention_days defaults to 0 = no expiration rule
 # (PI decision, 2026-09-17: recordings are kept until deleted by hand). To
 # expire recordings instead, set a positive number of days here, in a commit:
