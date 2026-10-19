@@ -5,6 +5,9 @@ Per-session layout under data/sessions/{session_id}/:
   events.jsonl           , turn-level events (replaces logs/{id}.jsonl)
   user_audio.wav         , 16 kHz mono mic stream
   assistant_audio.wav    , 16 kHz mono TTS stream
+  conversation_audio.wav , both sides mixed on the session clock (rendered
+                           after close from audio_timeline.json; see
+                           server/conversation_audio.py)
 
 A SQLite index at data/index.db lets you query across sessions:
   sessions(id, participant_id, scenario, model, started_at, ended_at, duration_s,
@@ -438,6 +441,10 @@ class SessionStore:
         self.events_fh = self.events_path.open("a", buffering=1, encoding="utf-8")
         self.user_audio: Optional[WavAppender] = None
         self.assistant_audio: Dict[str, WavAppender] = {}
+        # Where every appended chunk falls on the session clock, so the gapless
+        # per-speaker WAVs can be mixed into conversation_audio.wav at close.
+        from .conversation_audio import Timeline
+        self.timeline = Timeline(self.started_at)
         if capture_audio:
             self.user_audio = WavAppender(self.dir / "user_audio.wav")
             if not self.agent_ids or len(self.agent_ids) <= 1:
@@ -475,19 +482,42 @@ class SessionStore:
         }
         rec.update(fields)
         self.events_fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        if type_ == "play_end" and fields.get("interrupted"):
+            # The page cut this reply off here; the mix must stop it too.
+            at = fields.get("at")
+            w = self._assistant_writer(fields.get("agent_id"))
+            tl = getattr(self, "timeline", None)
+            if tl is not None and w is not None and isinstance(at, (int, float)) and not isinstance(at, bool):
+                try:
+                    tl.cut(w.path.name, float(at))
+                except Exception:  # noqa: BLE001, never fail an event on the mix
+                    log.exception("could not cut the conversation timeline for %s", self.id)
 
     def append_user_audio(self, pcm: bytes) -> None:
         if self.user_audio:
             self.user_audio.append(pcm)
+            if pcm:
+                tl = getattr(self, "timeline", None)
+                if tl is not None:
+                    tl.mic(self.user_audio.path.name, len(pcm))
+
+    def _assistant_writer(self, agent_id: Optional[str]) -> Optional[WavAppender]:
+        if not self.assistant_audio:
+            return None
+        if agent_id and agent_id in self.assistant_audio:
+            return self.assistant_audio[agent_id]
+        # Single-file fallback for legacy callers that don't pass agent_id.
+        return next(iter(self.assistant_audio.values()))
 
     def append_assistant_audio(self, pcm: bytes, agent_id: Optional[str] = None) -> None:
-        if not self.assistant_audio:
+        w = self._assistant_writer(agent_id)
+        if w is None:
             return
-        if agent_id and agent_id in self.assistant_audio:
-            self.assistant_audio[agent_id].append(pcm)
-        else:
-            # Single-file fallback for legacy callers that don't pass agent_id.
-            next(iter(self.assistant_audio.values())).append(pcm)
+        w.append(pcm)
+        if pcm:
+            tl = getattr(self, "timeline", None)
+            if tl is not None:
+                tl.agent(w.path.name, len(pcm))
 
     def _write_manifest(self, *, status: str, ended_at: Optional[float] = None,
                         n_turns: int = 0) -> None:
@@ -540,6 +570,12 @@ class SessionStore:
             self.user_audio.close()
         for w in self.assistant_audio.values():
             w.close()
+        if getattr(self, "timeline", None) is not None and (self.user_audio or self.assistant_audio):
+            try:
+                from .conversation_audio import write_timeline
+                write_timeline(self.dir, self.timeline)
+            except Exception:  # noqa: BLE001, never fail a session close on this
+                log.exception("could not write the audio timeline for %s", self.id)
         try:
             self.events_fh.close()
         except Exception:
@@ -572,9 +608,13 @@ class SessionStore:
             )
         # The analysis copy (Study 1 plan 5.2): everything above goes to the
         # study bucket beside the webcam video, in a thread, best effort.
+        #
+        # The conversation mix is rendered first, in the same thread, so the
+        # archive carries it and the rebuilt record names it. It runs even when
+        # archiving is off: the mix is the dataset's, not the bucket's.
         try:
-            from .archive import archive_session_later
-            archive_session_later(self.dir)
+            from .conversation_audio import finish_later
+            finish_later(self.dir)
         except Exception:  # noqa: BLE001, never fail a session close on this
             log.exception("could not start the archive for %s", self.id)
         # The webcam copy the page streamed while recording becomes the

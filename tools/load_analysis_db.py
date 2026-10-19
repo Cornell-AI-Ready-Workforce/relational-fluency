@@ -538,6 +538,12 @@ def load_s3_media(cur, s3_prefix: str) -> int:
                 continue
             kind = kinds[ext]
             agent = None
+            if name.startswith("conversation_audio"):
+                # The mixed conversation (server/conversation_audio.py). Not a
+                # participant or agent channel, and media.kind has no value for
+                # it yet: skipped until the schema grows one, rather than filed
+                # as agent audio.
+                continue
             if kind is None:  # .wav: user_audio.wav | assistant_audio[_<agent>].wav
                 if name.startswith("user_audio"):
                     kind = "participant_audio"
