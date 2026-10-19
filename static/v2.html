@@ -2170,13 +2170,19 @@
       'You can stop taking part at any time with “Stop and leave the study”.';
     const pct = Math.min(1, floorElapsedS() / MIN_S);
     $('gateFill').style.strokeDashoffset = String(RING * (1 - pct));
-    if (pct >= 1) {
+    // A direct link (?scenario=..., no run) is a researcher testing one
+    // scenario: End is never held there, from the first second. The study's
+    // 5-minute floor is for run links and /test, where it keeps a recorded
+    // encounter long enough to measure. The hard stop (MAX_S) still applies.
+    const direct = !runId;
+    if (pct >= 1 || direct) {
       g.classList.add('open');
-      $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up' : 'You can move on when you are ready';
+      $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up'
+        : (pct >= 1 ? 'You can move on when you are ready' : 'You can end any time');
       $('stopBtn').classList.remove('locked');
       $('stopBtn').setAttribute('aria-disabled', 'false');
       $('stopBtn').title = '';
-      noteMoveOn();
+      if (pct >= 1) noteMoveOn();
       if (s >= WRAP_S) noteWrap(MAX_S - s);
     } else {
       // On the floor's clock, which the timer does not show (it starts at the
@@ -4792,7 +4798,8 @@
     // The clock is the ring's: from the participant's first accepted line,
     // as the runner's own floor (participant_opened, move_on_open).
     const elapsed = floorElapsedS();
-    if (started && elapsed < MIN_S) {
+    // Never on a direct link (no run): see renderGate.
+    if (started && runId && elapsed < MIN_S) {
       const left = Math.max(1, Math.ceil((MIN_S - elapsed) / 60));
       const when = canMoveOnIn(left);
       // When the stop comes first End never unlocks, so the note says the

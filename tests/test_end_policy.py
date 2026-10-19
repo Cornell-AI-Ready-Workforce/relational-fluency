@@ -369,6 +369,19 @@ function page(search, runObj) {
     p.set('endSession = () => { __ended = (typeof __ended === "number" ? __ended : 0) + 1; };');
     p.set('__ended = 0;');
 
+    // A direct link is a researcher testing one scenario: End is never held,
+    // before the floor or at any other time, and says so. Run links and /test
+    // keep the floor (the rest of this loop).
+    if (!runObj) {
+      p.at(100);
+      assert(!$('stopBtn').classList.contains('locked'), label + ': End held on a direct link');
+      assert(/end any time/.test($('gateLabel').textContent), $('gateLabel').textContent);
+      assert.strictEqual(p.moveOns().length, 0, label + ': a move-on notice before the floor');
+      $('stopBtn').click();
+      assert.strictEqual(p.get('__ended'), 1, label + ': End did nothing on a direct link at 100 s');
+      continue;
+    }
+
     // Before the floor: the ring is up and End is held, with a reason.
     p.at(100);
     assert($('gate').classList.contains('show'), label + ': no ring');

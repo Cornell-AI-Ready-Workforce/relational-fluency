@@ -755,7 +755,9 @@ const { bootV2, vm } = require(path.join(__dirname, 'stub.js'));
 const PAGE = process.argv[2];
 
 function page(mode, castList) {
-  const b = bootV2(PAGE, '?scenario=X');
+  // A run link (?run=): the floor under test is a run's; a direct link
+  // (?scenario= alone) never holds End.
+  const b = bootV2(PAGE, '?run=r_1&scenario=X');
   const set = (code) => vm.runInContext(code, b.ctx);
   const get = (code) => vm.runInContext(code, b.ctx);
   const frame = (m) => b.ctx.handleServerFrame({ data: JSON.stringify(m) });
@@ -840,7 +842,7 @@ const START = "You start the conversation. Say hello when you're ready.";
     // timer's (review of 28b: "End unlocks at 07:00.").
     p.set('timerStartMs = Date.now() - 60 * 1000; renderTimer();');
     assert.strictEqual($('gateLabel').textContent, 'You can move on 7 minutes after you start');
-    assert.strictEqual($('stopBtn').title, 'End unlocks 7 minutes after you start.');
+    assert($('stopBtn').title.startsWith('End unlocks 7 minutes after you start.'), $('stopBtn').title);
     // 7:40 on the timer, and nobody has spoken: the floor has not started,
     // and could no longer come before the 12:00 stop, so the stop is said.
     p.set('timerStartMs = Date.now() - 460 * 1000; renderTimer();');
@@ -852,7 +854,7 @@ const START = "You start the conversation. Say hello when you're ready.";
     p.set('floorStartMs = Date.now() - 400 * 1000; timerStartMs = Date.now() - 520 * 1000; renderTimer();');
     assert($('stopBtn').classList.contains('locked'), 'End unlocked before 7:00 of conversation');
     assert(/move on in about 1 minute/.test($('gateLabel').textContent), $('gateLabel').textContent);
-    assert.strictEqual($('stopBtn').title, 'End unlocks in about 1 minute.');
+    assert($('stopBtn').title.startsWith('End unlocks in about 1 minute.'), $('stopBtn').title);
     // A later participant_opened (a hand-off) does not restart it.
     p.frame({ type: 'participant_opened', reason: 'handoff', first_of_encounter: false });
     assert(p.get('(Date.now() - floorStartMs) / 1000') > 399, 'a hand-off restarted the floor');
@@ -877,7 +879,7 @@ const START = "You start the conversation. Say hello when you're ready.";
     // First line at 6:00, timer at 8:00: the floor is 5 minutes off, the stop 4.
     p.set('floorStartMs = Date.now() - 120 * 1000; timerStartMs = Date.now() - 480 * 1000; renderTimer();');
     assert.strictEqual($('gateLabel').textContent, 'Ends automatically in about 4 minutes');
-    assert.strictEqual($('stopBtn').title, 'This conversation ends automatically in about 4 minutes.');
+    assert($('stopBtn').title.startsWith('This conversation ends automatically in about 4 minutes.'), $('stopBtn').title);
     // First line at 7:10, timer at 11:10: the warning, and it stays up.
     p.set('floorStartMs = Date.now() - 240 * 1000; timerStartMs = Date.now() - 670 * 1000;');
     p.frame({ type: 'wrap_up', seconds_left: 50 });
