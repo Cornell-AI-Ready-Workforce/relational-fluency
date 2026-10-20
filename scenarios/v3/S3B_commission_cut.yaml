@@ -32,7 +32,33 @@ setup: >-
 # card and kept on screen under the header for the whole conversation. It is
 # the task, in their terms; never the construct or what the raters look for.
 goal: >-
-  Help the team absorb the cut: be straight about what has changed, and leave with commitments you can actually keep.
+  You want to help the team cope with the cut: be honest about what has changed, and leave with commitments you can actually keep.
+
+# The intro card shown before the session starts; S1A_taken_credit.yaml
+# documents the fields.
+intro_card:
+  situation: >-
+    You are the interim lead of a sales team of three: Toni, Lee, and Ari. A
+    restructuring decided two levels above you has cut the team's commission, so
+    their take-home pay is lower. The decision is final, and leadership will not
+    revisit it. You are meeting with the team, and everyone already knows about
+    the cut.
+  parts:
+    - "They are your team, and you are leading the meeting."
+  howto:
+    - lead: "You start the conversation."
+      text: "Speak first when you are ready."
+      icon: mic
+    - text: "Speak out loud, as you would at work. The other people hear you and reply."
+      icon: message
+    - text: "There are no right or wrong answers. Say what you would actually say."
+      icon: bulb
+    - text: "The conversation ends on its own. You don't need to end it."
+      icon: skip
+  note: >-
+    This scenario is fictional. Please use the names given here and don't share
+    real personal details.
+  start: "I am ready, let's start"
 
 pre_reading:
   - "Lee, carried last year's enterprise deals; quietest since the plan changed."

@@ -38,7 +38,36 @@ setup: >-
 # card and kept on screen under the header for the whole conversation. It is
 # the task, in their terms; never the construct or what the raters look for.
 goal: >-
-  Leave the session with a rollout plan and a go-live date that all four of you genuinely agree to.
+  You want all four of you to leave the session with a rollout plan and a go-live date that everyone genuinely agrees to.
+
+# The intro card shown before the session starts; S1A_taken_credit.yaml
+# documents the fields.
+intro_card:
+  situation: >-
+    You are one of four people on a project team rolling out a new internal
+    process to every team in the company. The other three are Dan, Priya, and
+    Chris. Nobody outranks anyone, and there is no manager in the room. Dan has
+    drafted the rollout schedule, and his draft has every team go live on the
+    same day. Nothing has gone live yet. You are in a working session that is
+    already underway.
+  assets:
+    - "Dan's draft schedule, shared before the session, which has every team going live on the same day."
+  parts:
+    - "They are your project teammates. Together you need to agree on the plan."
+  howto:
+    - lead: "You start the conversation."
+      text: "Speak first when you are ready."
+      icon: mic
+    - text: "Speak out loud, as you would at work. The other people hear you and reply."
+      icon: message
+    - text: "There are no right or wrong answers. Say what you would actually say."
+      icon: bulb
+    - text: "The conversation ends on its own. You don't need to end it."
+      icon: skip
+  note: >-
+    This scenario is fictional. Please use the names given here and don't share
+    real personal details.
+  start: "I am ready, let's start"
 
 # Participant-only (the "What you have" card; actors never see this list).
 # Kept to what the setup already says, so the instrument is unchanged: nothing

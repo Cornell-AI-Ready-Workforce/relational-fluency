@@ -61,7 +61,36 @@ setup: >-
 # card and kept on screen under the header for the whole conversation. It is
 # the task, in their terms; never the construct or what the raters look for.
 goal: >-
-  Keep your two remote days, or leave with a clear path to keeping them, while staying on good terms with Sasha.
+  You want to keep your two remote days a week, or leave with a clear path to keeping them, and you want to stay on good terms with Sasha.
+
+# The intro card shown before the session starts; S1A_taken_credit.yaml
+# documents the fields.
+intro_card:
+  situation: >-
+    You are a {role} at {org}. The company has just announced that everyone must
+    return to the office. You want to keep your two remote days a week: your
+    output on those days is the strongest on the team. Another team, led by
+    Rivera, kept its hybrid schedule by showing it was more productive that way.
+    You are meeting your manager, Sasha, to talk about it.
+  assets:
+    - "Your performance record, which is strongest on your remote days."
+    - "Rivera's team, who kept hybrid work by showing they were more productive that way."
+  parts:
+    - "Sasha is your manager. The two of you meet one-on-one."
+  howto:
+    - lead: "You start the conversation."
+      text: "Speak first when you are ready."
+      icon: mic
+    - text: "Speak out loud, as you would at work. The other person hears you and replies."
+      icon: message
+    - text: "There are no right or wrong answers. Say what you would actually say."
+      icon: bulb
+    - text: "The conversation ends on its own. You don't need to end it."
+      icon: skip
+  note: >-
+    This scenario is fictional. Please use the names given here and don't share
+    real personal details.
+  start: "I am ready, let's start"
 
 # Same declaration as S2A, and the parallel form needs it in the same place or
 # the two variants stop being interchangeable: the participant's leverage is

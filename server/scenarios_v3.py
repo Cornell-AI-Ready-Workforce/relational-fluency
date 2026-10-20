@@ -849,6 +849,9 @@ def _briefing(spec: dict) -> dict:
         # The task in the participant's own terms (the spec's `goal`): on the
         # situation card, and kept under the header while they talk.
         "goal": spec.get("goal", "").strip(),
+        # A scenario's own intro card (the spec's `intro_card`), which the page
+        # draws in place of the generic situation card. None when it has none.
+        "card": spec.get("intro_card"),
         # Facts the participant holds. S2's ladder is only winnable if they know
         # they have the precedent, so withholding these does not test skill,
         # it tests whether they guessed.
