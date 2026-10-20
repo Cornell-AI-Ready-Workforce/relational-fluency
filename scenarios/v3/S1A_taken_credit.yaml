@@ -41,11 +41,13 @@ goal: >-
 
 # The intro card shown before the session starts (static/v2.html,
 # introCardHtml), in place of the generic situation card. Participant-facing
-# only: the characters are briefed from `setup`, not from this. Each entry in
-# `parts` follows one interaction, in order; the page writes "You speak with
-# <name> for up to N minutes." in front of it from the interaction's timebox
-# (or, for the last one, the encounter's stop), so the lengths stay true when
-# the timing changes.
+# only: the characters are briefed from `setup` and `assets`, not from this.
+# Every scenario has one, so the cards read alike. `assets` (optional) is the
+# "What you have" list. Each entry in `parts` is one conversation, in order:
+# consecutive interactions with the same people are one conversation to the
+# participant. The page writes "You speak with <names> for up to N minutes."
+# in front of it from the interactions' timeboxes (or, for the last one, the
+# encounter's stop), so the lengths stay true when the timing changes.
 intro_card:
   situation: >-
     You are a {role} at {org}. Over the past few months, your colleague Sam has

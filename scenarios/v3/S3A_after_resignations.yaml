@@ -34,7 +34,33 @@ setup: >-
 # card and kept on screen under the header for the whole conversation. It is
 # the task, in their terms; never the construct or what the raters look for.
 goal: >-
-  Leave the meeting with a team that knows where it stands and a plan for the quarter they can live with, having promised nothing you cannot deliver.
+  You want the team to know where things stand and to agree on a plan for the quarter that they can live with, without promising anything you cannot deliver.
+
+# The intro card shown before the session starts; S1A_taken_credit.yaml
+# documents the fields.
+intro_card:
+  situation: >-
+    You have just become the interim lead of a team of three: Alex, Jordan, and
+    Casey. Two of your colleagues recently resigned over pay, and their work now
+    falls on the people who stayed. You have to get the team through the next
+    quarter with no extra people or budget, and leadership will not discuss pay.
+    You are meeting with the team, and everyone already knows the news.
+  parts:
+    - "They are your team, and you are leading the meeting."
+  howto:
+    - lead: "You start the conversation."
+      text: "Speak first when you are ready."
+      icon: mic
+    - text: "Speak out loud, as you would at work. The other people hear you and reply."
+      icon: message
+    - text: "There are no right or wrong answers. Say what you would actually say."
+      icon: bulb
+    - text: "The conversation ends on its own. You don't need to end it."
+      icon: skip
+  note: >-
+    This scenario is fictional. Please use the names given here and don't share
+    real personal details.
+  start: "I am ready, let's start"
 
 # Two short notes stand in for the briefing, context lands in-scene.
 pre_reading:

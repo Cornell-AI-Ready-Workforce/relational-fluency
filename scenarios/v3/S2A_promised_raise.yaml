@@ -67,7 +67,36 @@ setup: >-
 # card and kept on screen under the header for the whole conversation. It is
 # the task, in their terms; never the construct or what the raters look for.
 goal: >-
-  Leave the meeting with a concrete answer on your pay: a raise, a date, or a clear reason, without burning the relationship with Morgan.
+  You want a clear answer about your pay (a raise, a date for one, or a clear reason why not), and you want to keep a good working relationship with Morgan.
+
+# The intro card shown before the session starts; S1A_taken_credit.yaml
+# documents the fields.
+intro_card:
+  situation: >-
+    You are a {role} at {org}. You were promised a raise that never came, and
+    your workload has grown since. You now have a written job offer from another
+    company at higher pay. Last quarter, your peer Alex was given an off-cycle
+    raise to keep Alex from leaving. You are meeting your manager, Morgan, to
+    talk about your pay.
+  assets:
+    - "A written job offer from another company, at noticeably higher pay."
+    - "Alex's off-cycle raise last quarter, which you can point to as a precedent."
+  parts:
+    - "Morgan is your manager. The two of you meet one-on-one."
+  howto:
+    - lead: "You start the conversation."
+      text: "Speak first when you are ready."
+      icon: mic
+    - text: "Speak out loud, as you would at work. The other person hears you and replies."
+      icon: message
+    - text: "There are no right or wrong answers. Say what you would actually say."
+      icon: bulb
+    - text: "The conversation ends on its own. You don't need to end it."
+      icon: skip
+  note: >-
+    This scenario is fictional. Please use the names given here and don't share
+    real personal details.
+  start: "I am ready, let's start"
 
 # Setup sentences that must NOT reach the actors. `setup` is written to the
 # participant and doubles as the shared scene every actor's system prompt opens

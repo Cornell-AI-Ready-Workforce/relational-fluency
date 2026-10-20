@@ -31,7 +31,33 @@ setup: >-
 # card and kept on screen under the header for the whole conversation. It is
 # the task, in their terms; never the construct or what the raters look for.
 goal: >-
-  Settle the handoff point with Drew, and how things like this get raised in future, without it turning into a fight.
+  You want to settle the handoff issue with Drew and agree on how problems like this are raised in the future, and you want to keep working well together.
+
+# The intro card shown before the session starts; S1A_taken_credit.yaml
+# documents the fields.
+intro_card:
+  situation: >-
+    You are a {role} at {org}. Late last night, your colleague Drew sent you a
+    blunt message criticizing how you handed off your work, and copied two
+    teammates, Priya and Tom. Drew may have a point about the handoff, but
+    the way it was raised was not fair.
+  parts:
+    - "Mel is on your team and saw Drew's message."
+    - "Drew sent the message. You run into Drew at the coffee machine."
+  howto:
+    - lead: "You start each conversation."
+      text: "The conversation transitions automatically."
+      icon: mic
+    - text: "Speak out loud, as you would at work. The other person hears you and replies."
+      icon: message
+    - text: "There are no right or wrong answers. Say what you would actually say."
+      icon: bulb
+    - text: "Each conversation ends on its own. You don't need to end it."
+      icon: skip
+  note: >-
+    This scenario is fictional. Please use the names given here and don't share
+    real personal details.
+  start: "I am ready, let's start"
 
 # Casting, per model family. `realtime_voice` is a MAP from model family to the
 # voice that family speaks this character with, and server/scenarios_v3.py

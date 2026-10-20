@@ -38,7 +38,35 @@ setup: >-
 # card and kept on screen under the header for the whole conversation. It is
 # the task, in their terms; never the construct or what the raters look for.
 goal: >-
-  Leave the session with a running order for tomorrow, and who presents what, that all four of you genuinely agree to.
+  You want all four of you to leave the session with a running order for tomorrow's presentation, and who presents what, that everyone genuinely agrees to.
+
+# The intro card shown before the session starts; S1A_taken_credit.yaml
+# documents the fields.
+intro_card:
+  situation: >-
+    You are one of four people on a project team preparing a presentation to a
+    client tomorrow. The other three are Dan, Priya, and Chris. Nobody outranks
+    anyone, and there is no manager in the room. Dan has built the slide deck,
+    and his draft has him presenting all of it on his own. You are in a working
+    session that is already underway.
+  assets:
+    - "Dan's slide deck, shared before the session, with Dan presenting all of it."
+  parts:
+    - "They are your project teammates. Together you need to agree on the presentation."
+  howto:
+    - lead: "You start the conversation."
+      text: "Speak first when you are ready."
+      icon: mic
+    - text: "Speak out loud, as you would at work. The other people hear you and reply."
+      icon: message
+    - text: "There are no right or wrong answers. Say what you would actually say."
+      icon: bulb
+    - text: "The conversation ends on its own. You don't need to end it."
+      icon: skip
+  note: >-
+    This scenario is fictional. Please use the names given here and don't share
+    real personal details.
+  start: "I am ready, let's start"
 
 # Participant-only (the "What you have" card; actors never see this list).
 # The parallel of S4A's, so the two forms give the participant the same

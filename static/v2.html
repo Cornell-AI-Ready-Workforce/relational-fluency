@@ -427,6 +427,8 @@
   .ic-icon { flex: 0 0 20px; width: 20px; height: 20px; margin-top: 2px; color: var(--muted);
     fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .ic-icon.mic { color: var(--accent); }
+  .situation-card .body.rich ul.ic-assets { margin: 0 0 26px; padding-left: 20px;
+    font-size: 15px; line-height: 1.6; }
   .situation-main { display: flex; gap: 24px; align-items: flex-start; }
   .situation-card .situation-img { width: 300px; flex-shrink: 0; border-radius: 12px; margin: 4px 0 0; display: block;
                  box-shadow: 0 6px 20px rgba(47,47,47,0.18); }
@@ -1778,7 +1780,7 @@
           <div><h4>How it runs</h4><ul>${parts}</ul>
                ${dur ? `<p class="sit-note">About ${esc(dur)} in total.</p>` : ''}</div>
         </div>
-        <h4>What to do</h4><ul class="sit-how">${how}</ul>`}`;
+        <h4>How to take part</h4><ul class="sit-how">${how}</ul>`}`;
   }
 
   // A scenario's own intro card (the spec's `intro_card`), drawn in place of
@@ -1791,26 +1793,42 @@
     bulb: '<path d="M9 16a5 5 0 1 1 6 0a3.5 3.5 0 0 0-1 3a2 2 0 0 1-4 0a3.5 3.5 0 0 0-1-3M9.7 17h4.6"/>',
     skip: '<path d="M4 5v14l12-7zM20 5v14"/>',
   };
+  // Consecutive parts with the same people are one conversation to the
+  // participant (S2's case and close with Morgan, S4's session and close).
+  function conversationsOf(plan) {
+    const out = [];
+    for (const p of plan) {
+      const last = out[out.length - 1];
+      const key = (p.with || []).join('|');
+      if (last && last.key === key) last.parts.push(p);
+      else out.push({ key, with: p.with || [], group: p.mode === 'group', parts: [p] });
+    }
+    return out;
+  }
   function introCardHtml(d) {
     const b = d.briefing, c = b.card;
-    const plan = b.parts || [];
+    const convs = conversationsOf(b.parts || []);
     const upTo = s => { const m = Math.max(1, Math.round(s / 60)); return ` for up to ${m} minute${m === 1 ? '' : 's'}`; };
     let used = 0;
-    const parts = (c.parts || []).map((text, i) => {
-      const p = plan[i] || {};
-      const fixed = p.timebox_seconds || 0;
-      const len = fixed ? upTo(fixed) : (i === plan.length - 1 ? upTo(MAX_S - used) : '');
-      used += fixed;
-      const who = (p.with || []).map(n => `<b>${esc(n)}</b>`);
+    const parts = convs.map((v, i) => {
+      const fixed = v.parts.every(p => p.timebox_seconds > 0);
+      const secs = v.parts.reduce((t, p) => t + (p.timebox_seconds || 0), 0);
+      const len = fixed ? upTo(secs) : (i === convs.length - 1 ? upTo(MAX_S - used) : '');
+      used += secs;
+      const who = v.with.map(n => `<b>${esc(n)}</b>`);
+      const together = v.group && who.length > 1 ? ' together' : '';
       return `<li><span class="ic-num" aria-hidden="true">${i + 1}</span><div>` +
-        (who.length ? `You speak with ${listPhrase(who)}${len}. ` : '') + `${esc(text)}</div></li>`;
+        (who.length ? `You speak with ${listPhrase(who)}${together}${len}. ` : '') +
+        `${esc((c.parts || [])[i] || '')}</div></li>`;
     }).join('');
+    const assets = (c.assets || b.assets || []).map(a => `<li>${esc(a)}</li>`).join('');
     const how = (c.howto || []).map(h =>
       `<li><svg class="ic-icon ${esc(h.icon || '')}" viewBox="0 0 24 24" aria-hidden="true">${IC_ICONS[h.icon] || ''}</svg>` +
       `<div>${h.lead ? `<b>${esc(h.lead)}</b> ` : ''}${esc(h.text || '')}</div></li>`).join('');
     return `
       <p class="ic-lead">${esc(c.situation || b.situation || '')}</p>
       ${b.goal ? `<p class="ic-goal"><b>Your goal</b>${esc(b.goal)}</p>` : ''}
+      ${assets ? `<h4 class="ic-label">What you have</h4><ul class="ic-assets">${assets}</ul>` : ''}
       ${parts ? `<h4 class="ic-label">What happens in the scenario</h4><ol class="ic-rows">${parts}</ol>` : ''}
       ${how ? `<h4 class="ic-label">How to take part</h4><ul class="ic-rows">${how}</ul>` : ''}`;
   }
