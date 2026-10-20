@@ -111,6 +111,11 @@ _SENTENCE_END = re.compile(r"(?<=[.!?…])[\"')\]]*\s+")
 _FIRST_MIN_CHARS = 8
 _LATER_MIN_CHARS = 24
 
+# Participants heard eleven_v4's pitch jump at ", and" inside a reply: the
+# comma seems to be where ElevenLabs cuts a long sentence and starts its
+# delivery afresh. What it is sent drops that comma; the transcript keeps it.
+_COMMA_AND = re.compile(r",\s+(and)\b", re.IGNORECASE)
+
 
 def llm_model() -> str:
     return setting("CASCADE_LLM_MODEL", "nto.gemini-4-argon")
@@ -201,6 +206,12 @@ def wav_bytes(pcm16: bytes, rate: int) -> bytes:
         w.setframerate(rate)
         w.writeframes(pcm16)
     return buf.getvalue()
+
+
+def tts_text(sentence: str) -> str:
+    """The words as ElevenLabs is sent them: `sentence` minus the comma
+    before "and" (see _COMMA_AND). Nothing else changes."""
+    return _COMMA_AND.sub(r" \1", sentence)
 
 
 def split_sentences(buffer: str, *, first: bool, final: bool = False):
@@ -577,7 +588,7 @@ class CascadeSocket:
             spoken.append(sentence)
             self._emit({"type": "response.output_audio_transcript.delta",
                         "response_id": rid, "item_id": iid, "delta": sentence + " "})
-            await ws.send(json.dumps({"inputs": [{"text": sentence + " ", "voice_id": voice_id}],
+            await ws.send(json.dumps({"inputs": [{"text": tts_text(sentence) + " ", "voice_id": voice_id}],
                                       "flush": True}))
 
         # The stream closes itself after 20 s without a message; Argon can
