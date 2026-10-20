@@ -1592,6 +1592,15 @@
     return `${xs.slice(0, -1).join(', ')}, and ${xs[xs.length - 1]}`;
   }
 
+  // A step's label often names who it is with already ('Hallway run-in with
+  // Sam'), and adding ', with Sam' after it printed the name twice. True when
+  // the label already contains every name in the list.
+  function labelNamesAll(label, names) {
+    const l = String(label || '').toLowerCase();
+    const xs = (names || []).map(n => String(n || '').toLowerCase()).filter(Boolean);
+    return xs.length > 0 && xs.every(n => l.includes(n));
+  }
+
   // ---------- the page's cards (issue #43) ----------
   // Every card opens and closes through these two. They used to set `display`
   // and nothing else, so a screen reader stayed on the page behind with
@@ -1690,7 +1699,7 @@
     const people = (b.people || []).map(p =>
       `<li><b>${esc(p.name)}</b>${p.role ? `, ${esc(p.role)}` : ''}</li>`).join('');
     const parts = (b.parts || []).map((p, i) =>
-      `<li>${esc(p.label)}${p.with?.length ? `, with ${listPhrase(p.with.map(esc))}` : ''}</li>`).join('');
+      `<li>${esc(p.label)}${p.with?.length && !labelNamesAll(p.label, p.with) ? `, with ${listPhrase(p.with.map(esc))}` : ''}</li>`).join('');
     const how = (b.howto || []).map(h => `<li>${esc(h)}</li>`).join('');
     const dur = b.duration ? `${b.duration[0]}–${b.duration[1]} minutes` : '';
     return `
@@ -4178,7 +4187,10 @@
           const label = esc(m.label || `Part ${m.index + 1}`);
           const el = document.createElement('div');
           el.className = 'scene';
-          el.innerHTML = `${label}<span class="with">, you are now with ${names}</span>`;
+          // 'Hallway run-in with Sam, you are now with Sam' said it twice.
+          el.innerHTML = labelNamesAll(m.label, (m.present || []).map(p => p.name))
+            ? label
+            : `${label}<span class="with">, you are now with ${names}</span>`;
           $('transcript').appendChild(el);
           $('transcript').scrollTop = $('transcript').scrollHeight;
           announce(el.textContent);
