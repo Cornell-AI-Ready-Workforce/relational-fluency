@@ -757,3 +757,298 @@ def store_local(session_id: str, source) -> int:
         raise
     return written
 
+
+
+# --- the streamed copy, and salvaging it --------------------------------------
+#
+# Everything above receives a recording ONCE, at the end of the encounter: the
+# page stops its MediaRecorder, builds one Blob and uploads it. That only
+# happens when the page itself runs endSession. A participant who closes the
+# tab, reloads, presses Back or loses the machine mid-conversation never gets
+# there, and the recording — held in the page's memory and nowhere else — dies
+# with it. The audio and the record survive that same exit because the server
+# writes them from the stream it is already receiving; the video had no such
+# copy.
+#
+# So the page also streams each MediaRecorder timeslice here as it is produced
+# (POST /api/sessions/{id}/video-chunk), and this module appends them, in
+# order, to VIDEO_STREAM_NAME in the session directory. The chunks are the same
+# bytes the end-of-encounter Blob is built from, so their concatenation is the
+# same container, missing only whatever the page had not sent when it went.
+#
+# The streamed copy is a FALLBACK and never competes with the real upload. When
+# the session store closes, salvage_later() waits SALVAGE_GRACE_SECONDS — longer
+# than the page's whole upload chain can take — and then asks the same question
+# the one-shot guard asks: is there a recording already? If there is, the
+# streamed copy is deleted. Only when there is none does it become the
+# recording: uploaded to the canonical key in the bucket, or kept on local disk
+# as webcam.webm where the bucket cannot be reached, with a `video_uploaded`
+# event that says `via: "stream"` and `partial: true` so a rater knows the end
+# may be missing.
+#
+# The name deliberately does NOT start with "webcam": encounter_record.build and
+# app._video_state glob "webcam*" for a stored recording, and an in-progress
+# stream is not one.
+VIDEO_STREAM_NAME = "video_stream.part"
+VIDEO_STREAM_STATE = "video_stream.json"
+
+
+def _float_setting(name: str, default: float) -> float:
+    try:
+        value = float(setting(name, str(default)) or default)
+        return value if value >= 0 else default
+    except ValueError:
+        return default
+
+
+# How long after the session closes before the streamed copy may be promoted.
+# The page's own upload chain is two presign+PUT attempts at up to three
+# minutes each, then two fallback PUTs to this server at the same, then the
+# confirms — about thirteen minutes at its very worst. Promoting before that
+# could put a truncated copy in the bucket underneath a whole recording that
+# was still on its way.
+SALVAGE_GRACE_SECONDS = _float_setting("VIDEO_SALVAGE_GRACE_SECONDS", 20 * 60)
+
+# A stream that has not grown for this long belongs to an encounter that is
+# over whatever its manifest says: a task that died mid-encounter never wrote
+# "closed". Well past the 12-minute encounter ceiling plus the grace above.
+SALVAGE_STALE_SECONDS = _float_setting("VIDEO_SALVAGE_STALE_SECONDS", 60 * 60)
+
+# One chunk is a two-second timeslice at 600 kbit/s, about 150 KB. The cap is
+# generous for an engine that ignores the requested bitrate, and small enough
+# that the route can hold one in memory.
+MAX_STREAM_CHUNK_BYTES = 8 * 1024 * 1024
+
+# Set by server.app: given a participant id, may this person's recording still
+# be kept? A withdrawal refuses every video write the page can make, so the
+# streamed copy of a withdrawn participant's encounter must not be promoted by
+# the back door either. None (a tool importing this module alone) keeps.
+salvage_guard = None
+
+import threading as _threading  # noqa: E402
+
+_stream_locks: dict = {}
+_stream_locks_guard = _threading.Lock()
+
+
+def _stream_lock(session_id: str):
+    with _stream_locks_guard:
+        lock = _stream_locks.get(session_id)
+        if lock is None:
+            lock = _stream_locks[session_id] = _threading.Lock()
+        return lock
+
+
+class StreamTooLarge(Exception):
+    """The streamed copy would pass the caller's byte ceiling."""
+
+
+def _stream_paths(session_id: str) -> tuple[Path, Path]:
+    if not _SESSION_ID_RE.fullmatch(session_id or ""):
+        raise ValueError("bad session_id")
+    sdir = SESSIONS_DIR / session_id
+    return sdir / VIDEO_STREAM_NAME, sdir / VIDEO_STREAM_STATE
+
+
+def _read_stream_state(state_path: Path) -> dict:
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if isinstance(state, dict):
+            return state
+    except (OSError, ValueError):
+        pass
+    return {"next_seq": 0, "bytes": 0}
+
+
+def append_chunk(session_id: str, seq: int, data: bytes, *,
+                 limit: int, mime: Optional[str] = None) -> dict:
+    """Append one MediaRecorder timeslice to the streamed copy.
+
+    Strictly in order, and idempotent, because the page retries a chunk whose
+    answer it lost: seq == next is appended; seq < next was already stored and
+    answers "duplicate"; seq > next would leave a hole in the container and is
+    refused as "out_of_order" with the seq this side expects.
+
+    The state file records the byte length that belongs to the acknowledged
+    chunks, and the file is cut back to it before every append, so a crash
+    between the write and the state update cannot store a chunk twice when the
+    page re-sends it.
+    """
+    part, state_path = _stream_paths(session_id)
+    with _stream_lock(session_id):
+        state = _read_stream_state(state_path)
+        expected = int(state.get("next_seq") or 0)
+        have = int(state.get("bytes") or 0)
+        if seq < expected:
+            return {"status": "duplicate", "next_seq": expected, "bytes": have}
+        if seq > expected:
+            return {"status": "out_of_order", "next_seq": expected, "bytes": have}
+        if have + len(data) > limit:
+            raise StreamTooLarge(have + len(data))
+        part.parent.mkdir(parents=True, exist_ok=True)
+        with open(part, "ab") as fh:
+            fh.truncate(have)
+            fh.seek(have)
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        state = {"next_seq": expected + 1, "bytes": have + len(data),
+                 "mime": mime or state.get("mime"), "updated": time.time()}
+        tmp = state_path.with_name(f"{state_path.name}.{secrets.token_hex(4)}.tmp")
+        tmp.write_text(json.dumps(state), encoding="utf-8")
+        replace_with_retry(tmp, state_path)
+        return {"status": "stored", "next_seq": state["next_seq"], "bytes": state["bytes"]}
+
+
+def _discard_stream(session_id: str) -> None:
+    for p in _stream_paths(session_id):
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+
+def _append_event(sdir: Path, event: dict) -> None:
+    with open(sdir / "events.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event) + "\n")
+
+
+def salvage(session_id: str, *, now: Optional[float] = None) -> str:
+    """Promote the streamed copy to the recording if nothing else became one.
+
+    Returns what happened, as one word for the log and the tests: "none" (no
+    stream), "waiting" (too soon, or S3 could not say whether a recording is
+    there — try again later), "superseded" (a real recording exists; the stream
+    was deleted), "withdrawn" (deleted unpromoted), "s3" or "local" (promoted).
+    Never raises: it runs in a timer thread nobody is watching.
+    """
+    try:
+        part, state_path = _stream_paths(session_id)
+    except ValueError:
+        return "none"
+    sdir = part.parent
+    now = time.time() if now is None else now
+    with _stream_lock(session_id):
+        try:
+            size = part.stat().st_size if part.is_file() else 0
+        except OSError:
+            size = 0
+        if size <= 0:
+            _discard_stream(session_id)
+            return "none"
+        state = _read_stream_state(state_path)
+        idle = now - float(state.get("updated") or part.stat().st_mtime)
+        try:
+            manifest = json.loads((sdir / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            manifest = {}
+        closed = manifest.get("status") == "closed"
+        if idle < (SALVAGE_GRACE_SECONDS if closed else SALVAGE_STALE_SECONDS):
+            return "waiting"
+
+        pid = manifest.get("participant_id")
+        guard = salvage_guard
+        if pid and guard is not None:
+            try:
+                keep = bool(guard(pid))
+            except Exception:  # noqa: BLE001, cannot tell: neither keep nor delete
+                return "waiting"
+            if not keep:
+                _discard_stream(session_id)
+                print(f"  NOTE: discarded the streamed webcam copy for session "
+                      f"{session_id}: the participant withdrew from the study.")
+                return "withdrawn"
+
+        # The one-shot guard's two questions, in the same order as the upload
+        # route asks them. A HEAD that cannot be answered is not "absent": the
+        # page's own upload may be sitting in the bucket unconfirmed, and
+        # writing a truncated copy over it is the outcome to avoid. Wait.
+        if _local_size(session_id) > 0 or upload_receipt(session_id) is not None:
+            _discard_stream(session_id)
+            return "superseded"
+        probe = head_video(session_id)
+        if (probe["bytes"] or 0) > 0:
+            _discard_stream(session_id)
+            return "superseded"
+        if probe["bytes"] is None and probe["error"] != "NoCredentialsError":
+            return "waiting"
+
+        key = video_key(session_id)
+        event = {"t": None, "wall": time.time(), "type": "video_uploaded",
+                 "key": key, "status": "ok", "via": "stream", "partial": True}
+        landed = None
+        if probe["bytes"] == 0:
+            try:
+                _client().upload_file(str(part), BUCKET, key)
+                landed = head_video(session_id)["bytes"]
+            except Exception as exc:  # noqa: BLE001, fall back to local disk
+                print(f"  WARNING: could not upload the streamed webcam copy for "
+                      f"session {session_id} (bucket {BUCKET}, region {REGION}): "
+                      f"{_aws_code(exc)}; keeping it on local disk")
+        if landed and landed > 0:
+            event["bytes"] = landed
+            outcome = "s3"
+            _discard_stream(session_id)
+        else:
+            try:
+                replace_with_retry(part, local_path(session_id))
+            except OSError as exc:
+                print(f"  WARNING: could not keep the streamed webcam copy for "
+                      f"session {session_id}: {type(exc).__name__}: {exc}")
+                return "waiting"
+            event["bytes"] = size
+            event["via"] = "stream_local"
+            outcome = "local"
+            _discard_stream(session_id)
+        _append_event(sdir, event)
+
+    print(f"  NOTE: session {session_id} ended without the page uploading its "
+          f"recording; kept the streamed copy ({event['bytes']} bytes, {outcome}).")
+    # Same rebuild as the confirm route, and then the archive again, because
+    # both copies of record.json were written at close and say "no video".
+    try:
+        from .encounter_record import write as _write_record
+        _write_record(sdir)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from . import archive
+        if archive.enabled():
+            archive.archive_session(sdir)
+    except Exception:  # noqa: BLE001
+        pass
+    return outcome
+
+
+def salvage_later(session_id: str, delay: Optional[float] = None):
+    """Run salvage() after `delay` (default: the grace), re-arming while it waits.
+
+    A daemon timer, so a session close returns at once and process exit is not
+    held up. A restart loses the timer; sweep_streams() at startup re-arms it.
+    Returns the timer (tests cancel or join it), or None for a bad id.
+    """
+    if not _SESSION_ID_RE.fullmatch(session_id or ""):
+        return None
+
+    def fire():
+        outcome = salvage(session_id)
+        if outcome == "waiting":
+            salvage_later(session_id, max(60.0, SALVAGE_GRACE_SECONDS / 4))
+
+    t = _threading.Timer(SALVAGE_GRACE_SECONDS if delay is None else delay, fire)
+    t.daemon = True
+    t.name = f"video-salvage-{session_id}"
+    t.start()
+    return t
+
+
+def sweep_streams() -> int:
+    """Arm salvage for every streamed copy on disk; return how many. Never raises."""
+    n = 0
+    try:
+        for part in SESSIONS_DIR.glob(f"*/{VIDEO_STREAM_NAME}"):
+            if salvage_later(part.parent.name, delay=0) is not None:
+                n += 1
+    except OSError:
+        pass
+    return n

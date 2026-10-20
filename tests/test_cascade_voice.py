@@ -7,6 +7,7 @@ frame the bridge reads is one the cascade socket really produced.
 import asyncio
 import base64
 import json
+import sys
 
 import httpx
 
@@ -111,6 +112,29 @@ def test_sentence_splitting_keeps_short_first_and_merges_stragglers():
     assert got == ["Hi there.", "How are you doing today?"] and rest == "Fine"
     got, rest = cascade.split_sentences("Fine", first=False, final=True)
     assert got == ["Fine"] and rest == ""
+
+
+def test_tts_text_drops_only_the_comma_before_and():
+    assert cascade.tts_text("I hear you, and I get it.") == "I hear you and I get it."
+    assert cascade.tts_text("Fine,  And then?") == "Fine And then?"
+    # Other commas, and "and" words that merely start with it, are left alone.
+    assert cascade.tts_text("Well, Andrea said so, android or not.") == \
+        "Well, Andrea said so, android or not."
+    assert cascade.tts_text("Bread and butter, eggs, milk.") == "Bread and butter, eggs, milk."
+
+
+def test_the_transcript_keeps_the_comma_elevenlabs_does_not_get(monkeypatch):
+    def handle(req: httpx.Request) -> httpx.Response:
+        body = json.loads(req.content)
+        if body.get("stream"):
+            return _sse("I hear you, and ", "I want to fix it.")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Hi."}}]})
+    monkeypatch.setattr(sys.modules[__name__], "_handler", lambda seen: handle)
+    seen, events = asyncio.run(_drive(monkeypatch))
+    said = [e for e in events if e["type"] == "agent_transcript"][-1]["text"]
+    assert said == "I hear you, and I want to fix it."
+    inputs = [m["inputs"][0]["text"].strip() for m in seen["tts"] if m.get("inputs")]
+    assert inputs == ["I hear you and I want to fix it."]
 
 
 def test_a_turn_is_heard_answered_and_spoken(monkeypatch):

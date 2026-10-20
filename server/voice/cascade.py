@@ -163,6 +163,8 @@ LIBRARY_VOICES = {
     "alexandra": "kdmDKE6EkgrWrrykO9Qt",    # Alexandra - Conversational and Natural
     "ivanna": "yM93hbw8Qtvdma2wCnJG",       # Ivanna - Young, Versatile and Casual
     "mark": "1SM7GgM6IMuvQlz2BwM3",         # Mark - Casual, Relaxed and Light
+    "burt": "kdVjFjOXaqExaDvXZECX",         # Burt - Calm, Steady and Conversational
+    "jessica_playful": "r1KmysJdVYZjJCm4mL3b",  # Jessica - Playful, Bright, Warm (library)
 }
 PREMADE_VOICES.update(LIBRARY_VOICES)
 VOICE_ROSTER = tuple(PREMADE_VOICES)
@@ -173,6 +175,11 @@ VOICE_ROSTER = tuple(PREMADE_VOICES)
 _SENTENCE_END = re.compile(r"(?<=[.!?…])[\"')\]]*\s+")
 _FIRST_MIN_CHARS = 8
 _LATER_MIN_CHARS = 24
+
+# Participants heard eleven_v4's pitch jump at ", and" inside a reply: the
+# comma seems to be where ElevenLabs cuts a long sentence and starts its
+# delivery afresh. What it is sent drops that comma; the transcript keeps it.
+_COMMA_AND = re.compile(r",\s+(and)\b", re.IGNORECASE)
 
 
 def llm_model() -> str:
@@ -266,6 +273,12 @@ def wav_bytes(pcm16: bytes, rate: int) -> bytes:
         w.setframerate(rate)
         w.writeframes(pcm16)
     return buf.getvalue()
+
+
+def tts_text(sentence: str) -> str:
+    """The words as ElevenLabs is sent them: `sentence` minus the comma
+    before "and" (see _COMMA_AND). Nothing else changes."""
+    return _COMMA_AND.sub(r" \1", sentence)
 
 
 def split_sentences(buffer: str, *, first: bool, final: bool = False):
@@ -544,8 +557,10 @@ class ElevenLabsDialogueTTSService(TTSService):
     async def run_tts(self, text: str, context_id: str):
         if self._stream is None and not await self._open(context_id):
             return
+        # tts_text: the words ElevenLabs is sent (the transcript the bridge
+        # reads keeps the sentence as the model wrote it).
         await self._stream.ws.send(json.dumps({
-            "inputs": [{"text": text + " ", "voice_id": self._settings.voice}],
+            "inputs": [{"text": tts_text(text) + " ", "voice_id": self._settings.voice}],
             "flush": True}))
         yield None
 

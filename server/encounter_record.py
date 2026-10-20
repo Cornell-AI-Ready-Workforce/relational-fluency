@@ -337,6 +337,11 @@ def build(session_dir: Path) -> Dict[str, Any]:
     audio = {
         "participant": "user_audio.wav" if (session_dir / "user_audio.wav").exists() else None,
         "agents": sorted(p.name for p in session_dir.glob("assistant_audio*.wav")),
+        # Both sides on the conversation's clock, as heard (the per-speaker
+        # files above are gapless). Rendered after close; see
+        # server/conversation_audio.py.
+        "conversation": ("conversation_audio.wav"
+                         if (session_dir / "conversation_audio.wav").exists() else None),
         "sample_rate": 16000,
         "channels": 1,
         "format": "pcm_s16le",

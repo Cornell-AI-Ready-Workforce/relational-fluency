@@ -26,11 +26,11 @@
 #      up-to-date main; it refuses to plan from anywhere else
 #   4. tofu -chdir=infra/terraform apply tfplan.bin, then check /health "build"
 #
-# deployed: relational-fluency-agent:58 carries a58dc4f, verified 2026-10-15
-#   (describe-services, rollout COMPLETED; /health build a58dc4f); this tag
-#   (80041df, main with #95, #92, #93, #96) is built with BUILD_SHA and
-#   pushed, awaiting the apply that registers 59.
-container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:80041df"
+# deployed: relational-fluency-agent:66 carries cd8b28f, verified 2026-10-20
+#   (describe-services, rollout COMPLETED; /health build cd8b28f); this tag
+#   (633e209, main with #105 and #120) is built with BUILD_SHA and pushed,
+#   awaiting the apply that registers 67.
+container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:633e209"
 
 # Live voice model. gpt-realtime-2.1 since 2026-09-18: the Gemini live routes
 # are being deprecated and the native-audio one is losing sessions to a gateway-side Vertex credentials error.
@@ -55,6 +55,10 @@ actor_model = "cascade-argon-elevenlabs"
 # The director's routing call is off the room's critical path (DIRECTOR_ROUTE
 # in .env.example); 1:1 steering never waited on it.
 director_route = "0"
+
+# The spoken reply: flash-lite, for first-token latency (0.6-0.9 s against Argon's
+# 2.5-3 s). Argon stays on steering and the director.
+cascade_llm_model = "nto.gemini-3.5-flash-lite"
 
 # Retention: study_data_retention_days defaults to 0 = no expiration rule
 # (PI decision, 2026-09-17: recordings are kept until deleted by hand). To

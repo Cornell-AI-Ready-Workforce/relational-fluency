@@ -380,6 +380,27 @@
     border-left: 3px solid var(--accent, #b3181b); background: var(--surface, #f6f6f4);
     color: var(--fg); border-radius: 0 6px 6px 0; }
   @media (max-width: 640px) { .goal-strip { margin: 8px 14px 0; font-size: 13.5px; } }
+  /* The conversation's timeline (renderTimeline): where the participant is on
+     the clock, who they are with and when End unlocks. Only for scenarios whose
+     first part has a fixed length (S1: a minute with the colleague, then the
+     counterpart for the rest). Decorative, aria-hidden: the same facts are in
+     the timer and the gate label. */
+  .timeline { margin: 10px 20px 0; }
+  .tl-track { position: relative; height: 26px; display: flex; border-radius: 6px;
+    overflow: hidden; background: var(--surface-2); border: 1px solid var(--line-strong); }
+  .tl-seg { position: relative; height: 100%; min-width: 0; }
+  .tl-labels { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+  .tl-labels span { position: absolute; top: 0; bottom: 0; display: flex; align-items: center;
+    font-size: 13px; font-weight: 600; white-space: nowrap; color: var(--fg); }
+  .tl-seg-1 { background: var(--accent-soft); }
+  .tl-seg-2 { background: var(--line-soft); flex: 1; }
+  .tl-tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg); z-index: 1; }
+  .tl-now { position: absolute; top: -2px; bottom: -2px; width: 3px; border-radius: 2px;
+    background: var(--accent); transition: left 1s linear; z-index: 1; }
+  @media (prefers-reduced-motion: reduce) { .tl-now { transition: none; } }
+  .tl-axis { position: relative; height: 20px; font-size: 13px; color: var(--muted); }
+  .tl-axis span { position: absolute; top: 3px; white-space: nowrap; }
+  @media (max-width: 640px) { .timeline { margin: 8px 14px 0; } }
   .sit-assets { background: #f6f6f4; border-left: 3px solid var(--accent, #b3181b);
     padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 14px; }
   .sit-assets h4 { margin-top: 0; }
@@ -778,6 +799,18 @@
 <div class="capture-slot" id="captureSlot" aria-live="polite"></div>
 <!-- The participant's goal, in view for the whole conversation (showGoalStrip). -->
 <div class="goal-strip" id="goalStrip" role="note" style="display:none"></div>
+<!-- Who the participant is with, and when End unlocks (renderTimeline). -->
+<div class="timeline" id="timeline" aria-hidden="true" style="display:none">
+  <div class="tl-track">
+    <div class="tl-seg tl-seg-1" id="tlSeg1"></div>
+    <div class="tl-seg tl-seg-2" id="tlSeg2"></div>
+    <div class="tl-tick" id="tlUnlock"></div>
+    <div class="tl-now" id="tlNow"></div>
+    <!-- The names sit above the needle so it never hides a letter. -->
+    <div class="tl-labels"><span id="tlName1" style="left:10px"></span><span id="tlName2"></span></div>
+  </div>
+  <div class="tl-axis" id="tlAxis"></div>
+</div>
 
 <main>
   <div class="grid" id="grid"></div>
@@ -1315,6 +1348,11 @@
   let playDest = null;       // playback bus, rendered through an <audio> element
   let playEl = null;         // so Chrome's echo canceller can subtract it
   let videoChunks = [];      // recorded video pieces
+  // The same pieces, streamed to the server as they are recorded, so a page
+  // that goes away without running endSession — a closed tab, a reload, Back —
+  // has not taken the only copy with it. { sid, seq, queue, busy, dead };
+  // see streamVideoChunk.
+  let videoStream = null;
   let videoMime = 'video/webm'; // container/codec actually used by MediaRecorder
   let videoUpload = null;    // promise for the upload; resolves {ok, reason}, never rejects
   // The same upload, tracked so it survives the completion overlay clearing
@@ -1592,6 +1630,15 @@
     return `${xs.slice(0, -1).join(', ')}, and ${xs[xs.length - 1]}`;
   }
 
+  // A step's label often names who it is with already ('Hallway run-in with
+  // Sam'), and adding ', with Sam' after it printed the name twice. True when
+  // the label already contains every name in the list.
+  function labelNamesAll(label, names) {
+    const l = String(label || '').toLowerCase();
+    const xs = (names || []).map(n => String(n || '').toLowerCase()).filter(Boolean);
+    return xs.length > 0 && xs.every(n => l.includes(n));
+  }
+
   // ---------- the page's cards (issue #43) ----------
   // Every card opens and closes through these two. They used to set `display`
   // and nothing else, so a screen reader stayed on the page behind with
@@ -1690,7 +1737,7 @@
     const people = (b.people || []).map(p =>
       `<li><b>${esc(p.name)}</b>${p.role ? `, ${esc(p.role)}` : ''}</li>`).join('');
     const parts = (b.parts || []).map((p, i) =>
-      `<li>${esc(p.label)}${p.with?.length ? `, with ${listPhrase(p.with.map(esc))}` : ''}</li>`).join('');
+      `<li>${esc(p.label)}${p.with?.length && !labelNamesAll(p.label, p.with) ? `, with ${listPhrase(p.with.map(esc))}` : ''}</li>`).join('');
     const how = (b.howto || []).map(h => `<li>${esc(h)}</li>`).join('');
     const dur = b.duration ? `${b.duration[0]}–${b.duration[1]} minutes` : '';
     return `
@@ -1760,6 +1807,11 @@
   // Characters in the current interaction. Empty means "everyone" (legacy
   // scenarios that have no interaction structure).
   let presentIds = [];
+  // The conversation's plan (the briefing's parts), and the second on the
+  // timer when each part actually began, for the timeline.
+  let timelineParts = [];
+  const partStartsS = [];
+  let lastScenePeople = null;   // who was present at the previous segment_start (null before the first)
 
   let upNext = null;   // {agent_id, agent_name, label} for the following beat
   let interactionStartedAt = 0;  // wall clock of the current interaction's banner
@@ -2045,10 +2097,48 @@
 
   // ---------- conversation timer ----------
   const pad2 = (n) => (n < 10 ? '0' : '') + n;
+  // The timeline: the first part's fixed length with the colleague, then the
+  // counterpart for the rest, with the second End unlocks.
+  // Drawn on the timer's clock (what the participant reads); the first part's
+  // end is the real hand-off once it has happened, the planned one before it.
+  // Only for a scenario whose first part has a fixed length (S1A and S1B).
+  const HANDOFF_PAD_S = 20;   // the colleague's closing line, after the timebox
+  function timelineModel(s) {
+    const first = timelineParts[0];
+    if (timelineParts.length < 2 || !first || !(first.timebox_seconds > 0)) return null;
+    const offset = floorStartMs && timerStartMs ? Math.max(0, (floorStartMs - timerStartMs) / 1000) : 0;
+    const planned = offset + first.timebox_seconds + HANDOFF_PAD_S;
+    const firstEnd = partStartsS[1] != null ? partStartsS[1] : planned;
+    const names = (p) => (p.with || []).join(' & ');
+    return { total: MAX_S, firstEnd: Math.min(firstEnd, MAX_S),
+             unlock: Math.min(offset + MIN_S, MAX_S),
+             n1: names(first), n2: names(timelineParts[1]), now: Math.min(s, MAX_S) };
+  }
+  function renderTimeline(s) {
+    const el = $('timeline');
+    if (!el) return;
+    const m = started ? timelineModel(s) : null;
+    if (!m) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    const pct = (x) => (Math.max(0, Math.min(1, x / m.total)) * 100).toFixed(2) + '%';
+    $('tlSeg1').style.flex = '0 0 ' + pct(m.firstEnd);
+    $('tlName1').textContent = m.n1;
+    $('tlName2').textContent = m.n2;
+    $('tlName2').style.left = `calc(${pct(m.firstEnd)} + 10px)`;
+    $('tlUnlock').style.left = pct(m.unlock);
+    $('tlNow').style.left = `calc(${pct(m.now)} - 1px)`;
+    const clock = (x) => pad2(Math.floor(x / 60)) + ':' + pad2(Math.round(x) % 60);
+    $('tlAxis').innerHTML =
+      `<span style="left:0">00:00</span>` +
+      `<span style="left:clamp(64px, ${pct(m.unlock)}, calc(100% - 64px));transform:translateX(-50%)">End unlocks ${clock(m.unlock)}</span>` +
+      `<span style="right:0">${clock(m.total)}</span>`;
+  }
+
   function renderTimer() {
     const s = Math.max(0, Math.floor((Date.now() - timerStartMs) / 1000));
     $('timer').textContent = pad2(Math.floor(s / 60)) + ':' + pad2(s % 60);
     renderGate(s);
+    renderTimeline(s);
     // The advance floor passes on the clock, not on any incoming message, so it
     // needs the same one-second tick to draw the control the moment it opens.
     // applyPresence covers both the tile button and the header one.
@@ -2170,13 +2260,19 @@
       'You can stop taking part at any time with “Stop and leave the study”.';
     const pct = Math.min(1, floorElapsedS() / MIN_S);
     $('gateFill').style.strokeDashoffset = String(RING * (1 - pct));
-    if (pct >= 1) {
+    // A direct link (?scenario=..., no run) is a researcher testing one
+    // scenario: End is never held there, from the first second. The study's
+    // 5-minute floor is for run links and /test, where it keeps a recorded
+    // encounter long enough to measure. The hard stop (MAX_S) still applies.
+    const direct = !runId;
+    if (pct >= 1 || direct) {
       g.classList.add('open');
-      $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up' : 'You can move on when you are ready';
+      $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up'
+        : (pct >= 1 ? 'You can move on when you are ready' : 'You can end any time');
       $('stopBtn').classList.remove('locked');
       $('stopBtn').setAttribute('aria-disabled', 'false');
       $('stopBtn').title = '';
-      noteMoveOn();
+      if (pct >= 1) noteMoveOn();
       if (s >= WRAP_S) noteWrap(MAX_S - s);
     } else {
       // On the floor's clock, which the timer does not show (it starts at the
@@ -3463,7 +3559,12 @@
       else tracks.push(...mediaStream.getAudioTracks());
       videoRecorder = new MediaRecorder(new MediaStream(tracks), { mimeType: mime,
         videoBitsPerSecond: 600000 });
-      videoRecorder.ondataavailable = e => { if (e.data.size) videoChunks.push(e.data); };
+      const stream = videoStream = { sid: null, seq: 0, queue: [], busy: false, dead: false };
+      videoRecorder.ondataavailable = e => {
+        if (!e.data.size) return;
+        videoChunks.push(e.data);
+        streamVideoChunk(stream, e.data);
+      };
       // A recorder that dies mid-encounter used to leave every signal on screen
       // green: the encounter ran to a normal ending and a truncated blob was
       // uploaded and confirmed as a successful capture. Say it, and record it.
@@ -3489,6 +3590,84 @@
       noteNoCamera('This browser could not start the camera recording, so this conversation will ' +
                    'not be captured on camera. The conversation itself is unaffected.');
     }
+  }
+
+  // The streamed copy. Each MediaRecorder timeslice (two seconds, ~150 KB) is
+  // POSTed to /api/sessions/{id}/video-chunk in order, one at a time; the
+  // server appends it to a copy that becomes the recording ONLY if the
+  // end-of-encounter upload below never arrives (server/video.py salvage).
+  // That is the whole point: without it, a participant who closes the tab
+  // mid-conversation leaves a full audio record and no video at all.
+  //
+  // Best effort and silent. A chunk that fails stays at the head of the queue
+  // and goes again with the next one; a refusal that cannot change (401, 403,
+  // 404, 409 already stored, 413) stops the stream. Nothing here touches
+  // videoChunks or the upload chain, so the stream failing costs nothing the
+  // page had before.
+  function videoChunkUrl(sid, seq) {
+    const base = `/api/sessions/${encodeURIComponent(sid)}/video-chunk` + keyParamFirst;
+    const pidQ = participantId ? '&participant_id=' + encodeURIComponent(participantId) : '';
+    return base + (base.includes('?') ? '&' : '?') + 'seq=' + seq + pidQ;
+  }
+  function streamVideoChunk(stream, blob) {
+    if (stream.dead || withdrawing) return;
+    stream.queue.push({ seq: stream.seq++, blob });
+    pumpVideoStream(stream);
+  }
+  async function pumpVideoStream(stream) {
+    if (stream.busy || !stream.sid) return;
+    stream.busy = true;
+    try {
+      while (stream.queue.length && !stream.dead && !withdrawing) {
+        const head = stream.queue[0];
+        let r;
+        try {
+          r = await fetchWithDeadline(videoChunkUrl(stream.sid, head.seq), {
+            method: 'POST', body: head.blob,
+            headers: { 'Content-Type': (videoMime || 'video/webm').split(';')[0] },
+          }, PRESIGN_TIMEOUT_MS);
+        } catch (e) { break; }   // network: try again with the next chunk
+        if (r.ok) { stream.queue.shift(); continue; }
+        if (r.status === 409) {
+          const j = await r.json().catch(() => null);
+          // Out of order: the server already holds everything below
+          // next_seq, so drop what it has and carry on from there.
+          if (j && typeof j.next_seq === 'number' && j.status === 'out_of_order' &&
+              j.next_seq > head.seq) {
+            stream.queue = stream.queue.filter(c => c.seq >= j.next_seq);
+            continue;
+          }
+          stream.dead = true; break;
+        }
+        if ([400, 401, 403, 404, 413].includes(r.status)) { stream.dead = true; break; }
+        break;   // 5xx: storage hiccup, try again with the next chunk
+      }
+    } finally {
+      stream.busy = false;
+    }
+  }
+  // The page is going away. Whatever is still queued would be lost with it,
+  // and an ordinary fetch is cancelled on unload, so it goes by beacon — in
+  // order, within the ~64 KB a browser lets beacons carry, which is the last
+  // second or so of a backlog. The type is stripped so the beacon stays a
+  // simple request; the server already knows the container from the stream.
+  function flushVideoStreamOnExit() {
+    const stream = videoStream;
+    if (!stream || stream.dead || !stream.sid || !navigator.sendBeacon) return;
+    let budget = 60000;
+    // The head may already be in flight from the pump; re-sending it is
+    // harmless (the server answers a repeated seq as a duplicate).
+    for (const c of stream.queue) {
+      if (c.blob.size > budget) break;
+      try {
+        if (!navigator.sendBeacon(videoChunkUrl(stream.sid, c.seq), new Blob([c.blob]))) break;
+      } catch (e) { break; }
+      budget -= c.blob.size;
+    }
+    stream.dead = true;
+  }
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('pagehide', () => { flushVideoStreamOnExit(); });
   }
 
   // Every request in the upload chain gets a deadline. Without one a socket
@@ -3987,6 +4166,10 @@
       if (m.type === 'session') {
         $('title').textContent = m.scenario.title;
         sessionId = m.session_id;
+        // The recorder starts before the socket opens, so its stream learns
+        // which session it belongs to here — never from `sessionId` at send
+        // time, which still names the previous encounter until this frame.
+        if (videoStream && !videoStream.sid) { videoStream.sid = m.session_id; pumpVideoStream(videoStream); }
         sessionMode = m.scenario.mode || 'single';
         cast = m.cast || [];
         renderGrid();
@@ -4157,14 +4340,29 @@
         // The advance we were waiting on landed: release the header control so
         // it re-labels itself for the beat after this one.
         { const ab = $('advanceBtn'); if (ab) delete ab.dataset.moving; }
-        const names = (m.present || []).map(p => esc(p.name)).join(' · ');
-        const label = esc(m.label || `Part ${m.index + 1}`);
-        const el = document.createElement('div');
-        el.className = 'scene';
-        el.innerHTML = `${label}<span class="with">, you are now with ${names}</span>`;
-        $('transcript').appendChild(el);
-        $('transcript').scrollTop = $('transcript').scrollHeight;
-        announce(el.textContent);
+        // The divider says who the participant is now with. It says nothing
+        // new when the same single person carries on (S2A's second beat is
+        // still Morgan) or when a one-to-one opens (the situation card has
+        // said who it is), and its label is the spec's own name for the beat,
+        // not something to read out to a participant, so it is left out then.
+        partStartsS[m.index] = encounterElapsedS();
+        const peopleKey = presentIds.slice().sort().join(',');
+        const single = presentIds.length <= 1;
+        const showScene = !(single && (lastScenePeople === null || lastScenePeople === peopleKey));
+        lastScenePeople = peopleKey;
+        if (showScene) {
+          const names = (m.present || []).map(p => esc(p.name)).join(' · ');
+          const label = esc(m.label || `Part ${m.index + 1}`);
+          const el = document.createElement('div');
+          el.className = 'scene';
+          // 'Hallway run-in with Sam, you are now with Sam' said it twice.
+          el.innerHTML = labelNamesAll(m.label, (m.present || []).map(p => p.name))
+            ? label
+            : `${label}<span class="with">, you are now with ${names}</span>`;
+          $('transcript').appendChild(el);
+          $('transcript').scrollTop = $('transcript').scrollHeight;
+          announce(el.textContent);
+        }
         applyPresence();
       } else if (m.type === 'floor_held') {
         // The server declined to finish the encounter before the floor (the
@@ -4300,6 +4498,8 @@
 
   async function startSession() {
     $('startBtn').disabled = true;
+    partStartsS.length = 0;
+    lastScenePeople = null;   // a fresh conversation: the first one-to-one opens without a divider
     // A participant_id is NOT evidence of consent. /start mints the record
     // before anyone has agreed to anything and puts it in the redirect with
     // consent=1 to say exactly that, so on a real study arrival this gate saw a
@@ -4792,7 +4992,8 @@
     // The clock is the ring's: from the participant's first accepted line,
     // as the runner's own floor (participant_opened, move_on_open).
     const elapsed = floorElapsedS();
-    if (started && elapsed < MIN_S) {
+    // Never on a direct link (no run): see renderGate.
+    if (started && runId && elapsed < MIN_S) {
       const left = Math.max(1, Math.ceil((MIN_S - elapsed) / 60));
       const when = canMoveOnIn(left);
       // When the stop comes first End never unlocks, so the note says the
@@ -4903,6 +5104,7 @@
       const d = await fetchBrief();
       showTitle(d);
       goalText = (d.briefing && d.briefing.goal) || '';
+      timelineParts = (d.briefing && d.briefing.parts) || [];
       const refHtml = briefingHtml(d, true);
       if (refHtml) {
         $('briefBody').classList.add('rich');

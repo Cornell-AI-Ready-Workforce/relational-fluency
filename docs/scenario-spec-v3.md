@@ -120,13 +120,19 @@ simultaneity is the instrument.
 
 Triggers fire in a fixed order and each maps to specific ESCI items. Examples:
 
-- **S1-A, interaction 1** — Riley, gossiping rather than upset: *"Did you see
-  Sam this morning? Your analysis again, third time. You could just reply-all
-  with the original file."* On hesitation: *"Or just let it go.
-  Not worth the drama."* Observe: retaliate, avoid, or commit to raising it.
-- **S1-A, interaction 2** — if the participant stays quiet, Sam probes; when
-  raised, Sam turns defensive (*"I did most of the legwork anyway"*), then
-  offers a face-saving half-concession.
+- **S1-A, interaction 1** — Riley, plain and friendly rather than dramatic. First
+  a heads-up and then a pause for the participant: *"Hey, there's something I
+  need to talk to you about. This morning I saw Sam presenting your latest
+  analysis to leadership, and he didn't mention at all that you ran those
+  numbers. We can't let this happen again."* Next turn, the retaliation fork:
+  emailing leadership with the original analysis files attached, with an offer
+  to help draft it. On hesitation: *"Or just let it go. Not worth the drama."*
+  Observe: retaliate, avoid, or commit to raising it.
+- **S1-A, interaction 2** — Sam opens with small talk and the new-results
+  question, and does not raise the credit himself. If the participant says they
+  want to talk about something else, Sam invites them to go on and lets them
+  speak; only once they raise the credit does he turn defensive (*"I did most
+  of the legwork anyway"*), then offer a face-saving half-concession.
 - **S2, interaction 2** — a fixed deflection ladder: no budget → everyone's
   stretched → can't set a precedent. The last rung is contradicted by the
   precedent the participant holds. The manager moves only when handed something
