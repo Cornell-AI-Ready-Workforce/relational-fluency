@@ -31,14 +31,20 @@ participant who never opens produces an empty encounter until the 12:00 stop
 
 | Scenario | Interaction | Trigger | ESCI items | |
 |---|---|---|---|---|
-| `S1A` | `i1` | `t1_retaliation_fork` | resolve_not_fester, bring_into_open, fester_r | probe scored |
-| `S1A` | `i2` | `t2_the_opening` | talk_openly, bring_into_open, fester_r | probe scored |
+| `S1A` | `i1` | `t1_retaliation_fork` | resolve_not_fester, bring_into_open, fester_r | probe |
+| `S1A` | `i2` | `t2_the_opening` | talk_openly, bring_into_open, fester_r | probe |
 | `S1A` | `i2` | `t3_defensiveness` | de_escalate, talk_openly | probe |
+| `S1A` | `i2` | `t5_brush_it_off` | fester_r, resolve_not_fester, talk_openly | probe |
+| `S1A` | `i2` | `t6_how_it_works` | bring_into_open, de_escalate, talk_openly | probe |
 | `S1A` | `i2` | `t4_half_concession` | de_escalate, resolve_not_fester | probe |
-| `S1B` | `i1` | `t1_retaliation_fork` | resolve_not_fester, bring_into_open, fester_r | probe scored |
-| `S1B` | `i2` | `t2_the_opening` | talk_openly, bring_into_open, fester_r | probe scored |
+| `S1A` | `i2` | `t7_time_runs_out` | resolve_not_fester, fester_r, bring_into_open | probe |
+| `S1B` | `i1` | `t1_retaliation_fork` | resolve_not_fester, bring_into_open, fester_r | probe |
+| `S1B` | `i2` | `t2_the_opening` | talk_openly, bring_into_open, fester_r | probe |
 | `S1B` | `i2` | `t3_defensiveness` | de_escalate, talk_openly | probe |
+| `S1B` | `i2` | `t5_brush_it_off` | fester_r, resolve_not_fester, talk_openly | probe |
+| `S1B` | `i2` | `t6_how_it_works` | bring_into_open, de_escalate, talk_openly | probe |
 | `S1B` | `i2` | `t4_half_concession` | de_escalate, resolve_not_fester | probe |
+| `S1B` | `i2` | `t7_time_runs_out` | resolve_not_fester, fester_r, bring_into_open | probe |
 | `S2A` | `i1` | `t1_the_opening` | through_discussion, anticipates, self_interest | probe |
 | `S2A` | `i2` | `t2_the_money_is_not_there` | anticipates, multiple_approaches, self_interest | probe |
 | `S2A` | `i2` | `t3_the_argument_lands_flat` | multiple_approaches, anticipates | probe |

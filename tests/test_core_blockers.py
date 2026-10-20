@@ -597,20 +597,19 @@ def test_a_probed_beat_is_not_counted_as_a_volunteered_one(tmp_path):
     report a researcher runs over a whole wave. Both routes still count as
     delivered stimulus — the beat did happen — but the line has to say which."""
     ids = verify_record._expected_triggers("S1A")
-    assert len(ids) == 4, "S1A's beat plan changed; this test needs rewriting"
+    n = len(ids)
+    assert n >= 4, "S1A's beat plan shrank; this test needs rewriting"
     sdir = _encounter(
         tmp_path,
         _fired(ids[0], 0, probing=False),
-        _fired(ids[1], 1, probing=True),
-        _fired(ids[2], 2, probing=True),
-        _fired(ids[3], 3, probing=True),
+        *(_fired(t, i, probing=True) for i, t in enumerate(ids) if i),
     )
 
     passed, _, detail = _check(sdir, "planted triggers fired")
 
-    assert passed is True, "all four beats were delivered; coverage is complete"
-    assert "1 volunteered" in detail and "3 probed" in detail
-    assert detail.startswith("4/4")
+    assert passed is True, "every planted beat was delivered; coverage is complete"
+    assert "1 volunteered" in detail and f"{n - 1} probed" in detail
+    assert detail.startswith(f"{n}/{n}")
     assert ", all" not in detail, (
         "the old wording claimed full participation, not full coverage"
     )
@@ -626,7 +625,8 @@ def test_a_fully_volunteered_encounter_says_so(tmp_path):
     passed, _, detail = _check(sdir, "planted triggers fired")
 
     assert passed is True
-    assert detail == "4/4 (4 volunteered, 0 probed)"
+    n = len(ids)
+    assert detail == f"{n}/{n} ({n} volunteered, 0 probed)"
 
 
 def test_a_retracted_probe_is_not_counted_on_either_side(tmp_path):
@@ -647,7 +647,7 @@ def test_a_retracted_probe_is_not_counted_on_either_side(tmp_path):
     passed, _, detail = _check(sdir, "planted triggers fired")
 
     assert passed is False
-    assert detail.startswith("1/4 (1 volunteered, 0 probed)")
+    assert detail.startswith(f"1/{len(ids)} (1 volunteered, 0 probed)")
     assert ids[1] in detail and ids[2] in detail and ids[3] in detail
 
 
