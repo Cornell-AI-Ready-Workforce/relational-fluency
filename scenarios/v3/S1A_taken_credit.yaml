@@ -37,7 +37,38 @@ setup: >-
 # card and kept on screen under the header for the whole conversation. It is
 # the task, in their terms; never the construct or what the raters look for.
 goal: >-
-  Decide how to handle it, then raise it with Sam so that your work is credited from now on and the two of you can still work together.
+  You want your work to be credited from now on, and you want to keep working well together with Sam.
+
+# The intro card shown before the session starts (static/v2.html,
+# introCardHtml), in place of the generic situation card. Participant-facing
+# only: the characters are briefed from `setup`, not from this. Each entry in
+# `parts` follows one interaction, in order; the page writes "You speak with
+# <name> for up to N minutes." in front of it from the interaction's timebox
+# (or, for the last one, the encounter's stop), so the lengths stay true when
+# the timing changes.
+intro_card:
+  situation: >-
+    You are a {role} at {org}. Over the past few months, your colleague Sam has
+    twice presented your analysis in leadership meetings as his own work. You
+    asked him privately to credit you, but yesterday he once again failed to
+    give you credit.
+  parts:
+    - "She is on your team and saw what happened."
+    - "He took credit for your work. You meet him in the hallway."
+  howto:
+    - lead: "You start each conversation."
+      text: "The conversation transitions automatically."
+      icon: mic
+    - text: "Speak out loud, as you would at work. The other person hears you and replies."
+      icon: message
+    - text: "There are no right or wrong answers. Say what you would actually say."
+      icon: bulb
+    - text: "Each conversation ends on its own. You don't need to end it."
+      icon: skip
+  note: >-
+    This scenario is fictional. Please use the names given here and don't share
+    real personal details.
+  start: "I am ready, let's start"
 
 # Casting per model family: `realtime_voice` maps family -> voice name; the
 # families keep disjoint rosters, so a character is the same person on either

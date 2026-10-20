@@ -406,6 +406,27 @@
   .sit-assets h4 { margin-top: 0; }
   .fiction-reminder { font-size: 13px; color: var(--muted, #6b6b68);
     border-top: 1px solid #eee; padding-top: 10px; margin: 14px 0 0; }
+  /* A scenario's own intro card (introCardHtml; S1A's `intro_card`): the
+     situation, the goal, the conversations in order with how long each runs,
+     and how to take part. */
+  .ic-eyebrow { font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 500; margin: 0 0 4px; }
+  .situation-card.has-card h2 { font-size: 22px; font-weight: 500; margin: 0 0 14px; }
+  .situation-card .body.rich .ic-lead { font-size: 15px; line-height: 1.7; margin: 0 0 18px; }
+  .situation-card .body.rich .ic-goal { border-left: 3px solid var(--accent); background: #f6f6f4;
+    padding: 12px 16px; margin: 0 0 26px; font-size: 15px; line-height: 1.6; }
+  .ic-goal b { display: block; font-weight: 600; }
+  .situation-card .body.rich h4.ic-label { font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 500; margin: 0 0 10px; }
+  .ic-rows { list-style: none; margin: 0 0 26px !important; padding: 0 !important; }
+  .ic-rows li { display: flex; gap: 12px; align-items: flex-start; margin: 0 0 10px;
+    font-size: 15px; line-height: 1.6; }
+  .ic-num { flex: 0 0 26px; height: 26px; border-radius: 50%; background: var(--accent-soft);
+    color: var(--accent-deep); font-size: 13px; font-weight: 600; display: flex;
+    align-items: center; justify-content: center; margin-top: 1px; }
+  .ic-icon { flex: 0 0 20px; width: 20px; height: 20px; margin-top: 2px; color: var(--muted);
+    fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .ic-icon.mic { color: var(--accent); }
   .situation-main { display: flex; gap: 24px; align-items: flex-start; }
   .situation-card .situation-img { width: 300px; flex-shrink: 0; border-radius: 12px; margin: 4px 0 0; display: block;
                  box-shadow: 0 6px 20px rgba(47,47,47,0.18); }
@@ -583,11 +604,12 @@
     <div class="situation-main">
       <img id="situationImg" class="situation-img" alt="" />
       <div class="situation-text">
+        <p class="ic-eyebrow" id="situationEyebrow" hidden>Before you begin</p>
         <h2 id="situationTitle">The situation</h2>
         <div class="body" id="situationBody"></div>
       </div>
     </div>
-    <p class="fiction-reminder">Reminder: this is a fictional scenario. Please use
+    <p class="fiction-reminder" id="situationReminder">Reminder: this is a fictional scenario. Please use
     the names provided and avoid real personal details.</p>
     </div>
     <div class="actions"><button id="situationStart">I'm ready, let me in</button></div>
@@ -1759,7 +1781,54 @@
         <h4>What to do</h4><ul class="sit-how">${how}</ul>`}`;
   }
 
+  // A scenario's own intro card (the spec's `intro_card`), drawn in place of
+  // the generic one. Each conversation's length is written from the plan, not
+  // the card's text: a fixed part says its timebox, and the last part runs to
+  // the encounter's stop, so a timing change cannot leave the card wrong.
+  const IC_ICONS = {
+    mic: '<rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/>',
+    message: '<path d="M3 20l1.3-3.9A9 8 0 1 1 7.7 19L3 20"/>',
+    bulb: '<path d="M9 16a5 5 0 1 1 6 0a3.5 3.5 0 0 0-1 3a2 2 0 0 1-4 0a3.5 3.5 0 0 0-1-3M9.7 17h4.6"/>',
+    skip: '<path d="M4 5v14l12-7zM20 5v14"/>',
+  };
+  function introCardHtml(d) {
+    const b = d.briefing, c = b.card;
+    const plan = b.parts || [];
+    const upTo = s => { const m = Math.max(1, Math.round(s / 60)); return ` for up to ${m} minute${m === 1 ? '' : 's'}`; };
+    let used = 0;
+    const parts = (c.parts || []).map((text, i) => {
+      const p = plan[i] || {};
+      const fixed = p.timebox_seconds || 0;
+      const len = fixed ? upTo(fixed) : (i === plan.length - 1 ? upTo(MAX_S - used) : '');
+      used += fixed;
+      const who = (p.with || []).map(n => `<b>${esc(n)}</b>`);
+      return `<li><span class="ic-num" aria-hidden="true">${i + 1}</span><div>` +
+        (who.length ? `You speak with ${listPhrase(who)}${len}. ` : '') + `${esc(text)}</div></li>`;
+    }).join('');
+    const how = (c.howto || []).map(h =>
+      `<li><svg class="ic-icon ${esc(h.icon || '')}" viewBox="0 0 24 24" aria-hidden="true">${IC_ICONS[h.icon] || ''}</svg>` +
+      `<div>${h.lead ? `<b>${esc(h.lead)}</b> ` : ''}${esc(h.text || '')}</div></li>`).join('');
+    return `
+      <p class="ic-lead">${esc(c.situation || b.situation || '')}</p>
+      ${b.goal ? `<p class="ic-goal"><b>Your goal</b>${esc(b.goal)}</p>` : ''}
+      ${parts ? `<h4 class="ic-label">What happens in the scenario</h4><ol class="ic-rows">${parts}</ol>` : ''}
+      ${how ? `<h4 class="ic-label">How to take part</h4><ul class="ic-rows">${how}</ul>` : ''}`;
+  }
+
   function showSituation(d) {
+    const card = d.briefing && d.briefing.card;
+    $('situationOverlay').querySelector('.situation-card').classList.toggle('has-card', !!card);
+    $('situationEyebrow').hidden = !card;
+    $('situationStart').textContent = (card && card.start) || "I'm ready, let me in";
+    $('situationReminder').textContent = (card && card.note) ||
+      'Reminder: this is a fictional scenario. Please use the names provided and avoid real personal details.';
+    if (card) {
+      $('situationTitle').textContent = 'About the scenario';
+      $('situationBody').classList.add('rich');
+      $('situationBody').innerHTML = introCardHtml(d);
+      $('situationImg').style.display = 'none';
+      return armSituationStart();
+    }
     $('situationTitle').textContent = d.title || 'The situation';
     const html = briefingHtml(d, false);
     if (html) {
@@ -1778,6 +1847,10 @@
     } else {
       img.style.display = 'none';
     }
+    armSituationStart();
+  }
+
+  function armSituationStart() {
     showOverlay($('situationOverlay'));
     $('situationStart').addEventListener('click', async () => {
       $('situationStart').disabled = true;
