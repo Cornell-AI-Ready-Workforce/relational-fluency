@@ -821,6 +821,7 @@ const START = "You start the conversation. Say hello when you're ready.";
   // ---- S1's hand-off: the new person, by name, and the same rule
   {
     const p = page('single', [{ id: 'riley', name: 'Riley' }, { id: 'sam', name: 'Sam' }]);
+    p.frame({ type: 'segment_start', index: 0, label: 'Part 1', present: [{ id: 'riley', name: 'Riley' }] });
     p.frame({ type: 'awaiting_participant', reason: 'start', names: ['Riley'] });
     p.frame({ type: 'participant_opened', reason: 'start', first_of_encounter: true });
     p.frame({ type: 'segment_start', index: 1, label: 'Part 2', present: [{ id: 'sam', name: 'Sam' }] });
