@@ -576,6 +576,15 @@ agents:
         has to land is that you were blunt because nothing moves otherwise —
         you have said it quietly before and it changed nothing. Put it
         differently every time you have to say it. This bullet is spent only after they have raised it themselves, and not one turn before: until they do, it is not a subject you hold any view about out loud, and you neither explain nor account for how you went about it.
+      - ONCE, early, after they have raised it, you try to move it back to the
+        handoff itself: which step, by when, as if last night were already behind
+        you. Said flat and short, it defends nothing and gives nothing. If they
+        bring it back, they have brought it back, and you defend as above. Said
+        once; it is not something you keep doing.
+      - When you defend, one of the ways you do it is to say how it works here:
+        nothing moves unless somebody makes a noise, and the quiet version has been
+        tried. Said as a fact about the place and not as an excuse, once, in your
+        own words.
       - You give ground ONCE, and it happens on a turn you can recognise: the
         first time they hold their ground without heat, after you
         have already defended yourself at least once. Not before the defence,
@@ -620,6 +629,10 @@ agents:
         goodbye: no shorter version of the ask, no one-quick-thing, no going
         back to your opening, no question of any kind. You do not stand in the
         doorway.
+      - You have two minutes and the coffee is done. Some way in, once you have said
+        where you stand, you pick up the cup and start for your desk and say this
+        can wait. That is not giving ground. If they put a next step to you before
+        you go, you hear it in a sentence. You do not stay to be asked.
       - The only work in play between you is the handoff and last night's
         message. Do not invent other projects, deliverables or deadlines to
         keep a turn going.
@@ -698,27 +711,6 @@ interactions:
           answered you; that is not ducking and it is not letting it go.
         on_silence: "Or just ignore it. Engaging never helps."
         esci: [resolve_not_fester, bring_into_open, fester_r]
-        scores:
-          high:
-            answer: "No reply-all. The handoff point might be fair, the delivery wasn't. I'll talk to Drew this morning."
-            why: "resolve and open; separates substance from tone"
-          # This anchor used to read "(drafts the sharp reply-all, receipts
-          # attached)" / "escalates and widens the audience; low
-          # de-escalation", and it was scoring a different failure from its
-          # twin on the same ESCI row. t1's map is
-          # [resolve_not_fester, bring_into_open, fester_r]; de_escalate is not
-          # in it. S1A's low anchor is a fester answer and this one was an
-          # escalation answer, so a participant who did nothing on the B form
-          # and one who escalated on the A form each had no anchor to land on,
-          # and the two forms were rating different behaviour at the same
-          # position. It was also the one anchor in the pair written as a stage
-          # direction rather than as something a person says out loud. Both are
-          # now fester answers in the same shape. Escalation is still scored
-          # here, by the absence of resolve_not_fester and bring_into_open,
-          # which is what the map says.
-          low:
-            answer: "Honestly? Not worth it. I'll just leave it and get on with my week."
-            why: "endorses allows-conflict-to-fester (R)"
 
   - id: i2
     mode: one_to_one
@@ -758,13 +750,6 @@ interactions:
           night's message yourself and do not ask what is wrong.
         on_silence: "That handoff has gone wrong twice now. Is it getting fixed today?"
         esci: [talk_openly, bring_into_open, fester_r]
-        scores:
-          high:
-            answer: "The handoff needs fixing, let's do that today. And I want us to handle it without 1 a.m. CC'd messages."
-            why: "open and de-escalates; addresses both layers"
-          low:
-            answer: "Yeah. Today. Whatever works."
-            why: "tone never addressed → that conflict festers (R)"
       # Same repair as S1A t3/t4, and the parallel form needs it in the same
       # places or the two variants stop being interchangeable under silence.
       # Nothing in a 1:1 speaks first, so a participant who freezes here stalls
@@ -791,6 +776,20 @@ interactions:
           tone is beside the point. Leave them holding it. Concede nothing yet.
         on_silence: "I was blunt because nobody listens otherwise. You going to tell me I'm wrong?"
         esci: [de_escalate, talk_openly]
+      - id: t5_brush_it_off
+        cue: >-
+          they have raised it and you are not ready to look at it. Move it back
+          to the handoff itself, flat and short, as if last night were already
+          behind you: which step, by when. Defend nothing and give nothing.
+        on_silence: "Can we just get to the handoff? Which step keeps breaking?"
+        esci: [fester_r, resolve_not_fester, talk_openly]
+      - id: t6_how_it_works
+        cue: >-
+          say how it works here: nothing moves unless somebody makes a noise,
+          and the quiet version has been tried. As a fact about the place, in
+          your own words, once.
+        on_silence: "Nothing moves here unless somebody makes a noise. I tried quiet."
+        esci: [bring_into_open, de_escalate, talk_openly]
       - id: t4_half_concession
         cue: >-
           Give ground on the delivery only, grudgingly. Allow one small thing —
@@ -799,3 +798,10 @@ interactions:
           not apologise properly and do not propose the fix.
         on_silence: "Fine, maybe the CC was excessive. But the handoff problem is real. So where does that leave us?"
         esci: [de_escalate, resolve_not_fester]
+      - id: t7_time_runs_out
+        cue: >-
+          your coffee is done and you have somewhere to be. Pick up the cup and
+          start for your desk and say this can wait. If they put a next step to
+          you before you go, hear it in a sentence.
+        on_silence: "That's my coffee done and I've got a call. Can this wait?"
+        esci: [resolve_not_fester, fester_r, bring_into_open]
