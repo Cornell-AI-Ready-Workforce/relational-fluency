@@ -77,14 +77,22 @@ participant who never opens produces an empty encounter until the 12:00 stop
 | `S3B` | `i1` | `t5_a_fact_left_on_the_table` | brings_out_best, inspires, builds_pride | probe |
 | `S3B` | `i1` | `t6_one_clarifying_question` | brings_out_best, builds_pride | probe |
 | `S3B` | `i1` | `t7_why_would_anyone_stay` | compelling_vision, not_inspire_r, inspires | probe |
-| `S4A` | `i1` | `t1_priya_interrupted` | solicits_input, encourages_participation, not_cooperate_r | probe scored |
+| `S4A` | `i1` | `t1_priya_interrupted` | solicits_input, encourages_participation, not_cooperate_r | probe |
 | `S4A` | `i1` | `t2_idea_relabelled` | respectful, encourages_cooperation | probe |
+| `S4A` | `i1` | `t5_a_smaller_second_try` | solicits_input, encourages_participation, supportive | probe |
+| `S4A` | `i1` | `t8_splitting_it_up_is_slower` | not_cooperate_r, encourages_cooperation, respectful | probe |
+| `S4A` | `i1` | `t6_chris_backs_the_room` | solicits_input, encourages_participation, encourages_cooperation | probe |
 | `S4A` | `i1` | `t3_decisions_close_with_priya_silent` | encourages_participation, solicits_input | probe |
-| `S4A` | `i2` | `t4_dan_claims_the_writeup` | supportive, respectful, encourages_cooperation | probe scored |
-| `S4B` | `i1` | `t1_priya_interrupted` | solicits_input, encourages_participation, not_cooperate_r | probe scored |
+| `S4A` | `i2` | `t4_dan_claims_the_writeup` | supportive, respectful, encourages_cooperation, not_cooperate_r | probe |
+| `S4A` | `i2` | `t7_priya_waits_to_be_handed_work` | supportive, respectful, encourages_cooperation | probe |
+| `S4B` | `i1` | `t1_priya_interrupted` | solicits_input, encourages_participation, not_cooperate_r | probe |
 | `S4B` | `i1` | `t2_idea_relabelled` | respectful, encourages_cooperation | probe |
+| `S4B` | `i1` | `t5_a_smaller_second_try` | solicits_input, encourages_participation, supportive | probe |
+| `S4B` | `i1` | `t8_splitting_it_up_is_slower` | not_cooperate_r, encourages_cooperation, respectful | probe |
+| `S4B` | `i1` | `t6_chris_backs_the_room` | solicits_input, encourages_participation, encourages_cooperation | probe |
 | `S4B` | `i1` | `t3_runthrough_without_priya` | encourages_participation, solicits_input | probe |
-| `S4B` | `i2` | `t4_dan_claims_the_walkthrough` | supportive, respectful, encourages_cooperation | probe scored |
+| `S4B` | `i2` | `t4_dan_claims_the_walkthrough` | supportive, respectful, encourages_cooperation, not_cooperate_r | probe |
+| `S4B` | `i2` | `t7_priya_waits_to_be_handed_work` | supportive, respectful, encourages_cooperation | probe |
 
 ## ESCI item keys
 
