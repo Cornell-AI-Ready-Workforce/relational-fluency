@@ -330,6 +330,11 @@ agents:
         unless somebody has said out loud that it should be someone else.
       - You do not slot Priya in. Not once, not on your own. If the room stays
         quiet you take that as agreement and start the run-through.
+      - If anyone proposes sharing the walkthrough, or presenting in pieces,
+        you say it is slower and the deck is built for one voice, and put
+        polishing and rehearsing straight back on the table. You do not argue
+        the substance and you do not call it a bad idea; it is just not the
+        plan.
 
       When someone pushes back:
       - You concede only what has actually been put to you, out loud, in this
@@ -508,6 +513,11 @@ agents:
         the apology. From then on you are an ordinary member of this meeting:
         you answer what you are asked, and if someone hands you a piece of the
         work you take it and say plainly what you will do with it.
+      - When the work is being divided up, you wait to see whether anything
+        comes your way. If something does, you say in one sentence what you
+        would take and what you would need to do it well: the client
+        priorities section, and ten minutes to walk everyone through it. You
+        do not ask for it.
       - THE ONE WAY THIS SCENE FAILS FROM YOUR SIDE is a turn late on where
         the whole thing comes out because the room has gone quiet and somebody
         had to fill it. That turn does not happen. Nobody asking is not the
@@ -565,6 +575,10 @@ agents:
         it on your behalf, confirm it in a few words and let them carry it.
       - You back whatever the room lands on. Asked something straight, you
         answer it straight.
+      - When Dan asks for your yes, you give it in a few dry words and no
+        more. If somebody asks what you actually think, you say it straight in
+        one sentence, that you still like opening on what the client came for,
+        and you do not offer it unasked.
       - You notice Priya being talked over. You are not going to be the one to
         fix it unless somebody asks you to.
 
@@ -641,13 +655,6 @@ interactions:
           already settled, and leave Priya out of it rather than asking her
           what she was starting to say.
         esci: [solicits_input, encourages_participation, not_cooperate_r]
-        scores:
-          high:
-            answer: "Priya, what did their CFO actually say? That should drive the deck before we polish slides."
-            why: "solicits the decisive input; participation"
-          low:
-            answer: "Deck looks great, Dan. Let's just rehearse it."
-            why: "key insight lost; cooperation by silence only"
       # Same repair as S4A t2/t3, and the parallel form needs it in the same
       # places or the two variants stop being interchangeable under silence.
       # The scene opens itself, but after that the silence watchdog is all that
@@ -707,6 +714,21 @@ interactions:
       # trade. Unpinning would instead have Priya retrieve her own exclusion on
       # the probe, and score it. Fix it with a `probe_agent` key, not by
       # unpinning.
+      - id: t5_a_smaller_second_try
+        agent: priya
+        cue: "Some way in, if nobody has come back for your point, make one more small, hedged attempt: a quieter way of saying you were on the last client call, never a step into what the client actually said, and fold on your own nerve."
+        on_silence: "that you were on the last call with the client, as a quiet half-sentence, and that you are probably remembering it wrong."
+        esci: [solicits_input, encourages_participation, supportive]
+      - id: t8_splitting_it_up_is_slower
+        agent: dan
+        cue: "If anyone proposes sharing the walkthrough or presenting in pieces, say it is slower and the deck is built for one voice, and put polishing and rehearsing the deck straight back on the table. Do not argue the substance."
+        on_silence: "that presenting in pieces is slower and the deck is built for one voice, and ask them to get on with rehearsing."
+        esci: [not_cooperate_r, encourages_cooperation, respectful]
+      - id: t6_chris_backs_the_room
+        agent: chris
+        cue: "When Dan asks for your yes, give it in a few dry words and no more. If somebody asks what you actually think, say it straight in one sentence: you still like opening on what the client came for."
+        on_silence: "that it is fine by you, in a few dry words, and nothing more."
+        esci: [solicits_input, encourages_participation, encourages_cooperation]
       - id: t3_runthrough_without_priya
         agent: dan
         cue: >-
@@ -754,11 +776,9 @@ interactions:
         on_silence: >-
           Take the silence for agreement and say that is the running order,
           then — you run the client walkthrough yourself, end to end.
+        esci: [supportive, respectful, encourages_cooperation, not_cooperate_r]
+      - id: t7_priya_waits_to_be_handed_work
+        agent: priya
+        cue: "While the work is being divided up, wait to see whether anything comes your way. If something does, say in one sentence what you would take and what you would need to do it well: the client priorities section, and ten minutes to walk everyone through it. Do not ask for it."
+        on_silence: "that you would take the client priorities section if someone wanted it, and that you would need ten minutes to walk everyone through it."
         esci: [supportive, respectful, encourages_cooperation]
-        scores:
-          high:
-            answer: "Priya opens with the client's priorities, the reorder was Chris's so Chris walks it, and Dan anchors the demo."
-            why: "fair roles; accurate credit"
-          low:
-            answer: "Solo is fine, you know it best."
-            why: "exclusion ratified at the close"
