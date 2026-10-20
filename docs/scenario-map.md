@@ -51,12 +51,20 @@ participant who never opens produces an empty encounter until the 12:00 stop
 | `S2B` | `i2` | `t4_rung3_director_wont_sign` | behind_scenes, key_people, multiple_approaches | probe scored |
 | `S2B` | `i2` | `t5_rung4_the_package` | anticipates, multiple_approaches, through_discussion | probe scored |
 | `S2B` | `i2` | `t6_rung4_fairness` | self_interest, anticipates, key_people | probe scored |
-| `S3A` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe scored |
-| `S3A` | `i1` | `t2_jordans_flat_fine` | brings_out_best, inspires | probe scored |
+| `S3A` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe |
+| `S3A` | `i1` | `t2_jordans_flat_fine` | brings_out_best, inspires | probe |
 | `S3A` | `i1` | `t3_caseys_overload` | brings_out_best, builds_pride | probe |
-| `S3B` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe scored |
-| `S3B` | `i1` | `t2_resignation_in_place` | brings_out_best, inspires | probe scored |
+| `S3A` | `i1` | `t4_what_the_team_is_for` | compelling_vision, inspires, not_inspire_r | probe |
+| `S3A` | `i1` | `t5_a_fact_left_on_the_table` | brings_out_best, inspires, builds_pride | probe |
+| `S3A` | `i1` | `t6_one_clarifying_question` | brings_out_best, builds_pride | probe |
+| `S3A` | `i1` | `t7_why_would_anyone_stay` | compelling_vision, not_inspire_r, inspires | probe |
+| `S3B` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe |
+| `S3B` | `i1` | `t2_resignation_in_place` | brings_out_best, inspires | probe |
 | `S3B` | `i1` | `t3_anxious_junior` | brings_out_best, builds_pride | probe |
+| `S3B` | `i1` | `t4_what_the_team_is_for` | compelling_vision, inspires, not_inspire_r | probe |
+| `S3B` | `i1` | `t5_a_fact_left_on_the_table` | brings_out_best, inspires, builds_pride | probe |
+| `S3B` | `i1` | `t6_one_clarifying_question` | brings_out_best, builds_pride | probe |
+| `S3B` | `i1` | `t7_why_would_anyone_stay` | compelling_vision, not_inspire_r, inspires | probe |
 | `S4A` | `i1` | `t1_priya_interrupted` | solicits_input, encourages_participation, not_cooperate_r | probe scored |
 | `S4A` | `i1` | `t2_idea_relabelled` | respectful, encourages_cooperation | probe |
 | `S4A` | `i1` | `t3_decisions_close_with_priya_silent` | encourages_participation, solicits_input | probe |
