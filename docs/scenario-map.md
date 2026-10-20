@@ -9,8 +9,8 @@ Regenerate with `python tools/gen_scenario_map.py`.
 |---|---|---|---|---|---|---|
 | `S1A` | conflict management | A | `S1B` | Riley, Sam | **1:1** — Riley corners you (Riley) | **1:1** — Hallway run-in with Sam (Sam) |
 | `S1B` | conflict management | B | `S1A` | Mel, Drew | **1:1** — Mel pings you first thing (Mel) | **1:1** — Coffee-machine run-in with Drew (Drew) |
-| `S2A` | influence | A | `S2B` | Morgan | **1:1** — Making the case (Morgan) | **1:1** — The deflection ladder (Morgan) |
-| `S2B` | influence | B | `S2A` | Sasha | **1:1** — Making the case (Sasha) | **1:1** — The deflection ladder (Sasha) |
+| `S2A` | influence | A | `S2B` | Morgan | **1:1** — Making the case (Morgan) | **1:1** — Your conversation with Morgan (Morgan) |
+| `S2B` | influence | B | `S2A` | Sasha | **1:1** — Making the case (Sasha) | **1:1** — Your conversation with Sasha (Sasha) |
 | `S3A` | inspirational leadership | A | `S3B` | Alex, Jordan, Casey | **group** — Team meeting (Alex + Jordan + Casey) | — |
 | `S3B` | inspirational leadership | B | `S3A` | Toni, Lee, Ari | **group** — Team meeting (Toni + Lee + Ari) | — |
 | `S4A` | teamwork | A | `S4B` | Dan, Priya, Chris | **group** — Working session (Dan + Priya + Chris) | **group** — The close, who owns what (Dan + Priya + Chris) |
@@ -39,18 +39,24 @@ participant who never opens produces an empty encounter until the 12:00 stop
 | `S1B` | `i2` | `t2_the_opening` | talk_openly, bring_into_open, fester_r | probe scored |
 | `S1B` | `i2` | `t3_defensiveness` | de_escalate, talk_openly | probe |
 | `S1B` | `i2` | `t4_half_concession` | de_escalate, resolve_not_fester | probe |
-| `S2A` | `i1` | `t1_the_opening` | through_discussion, anticipates, self_interest | probe scored |
-| `S2A` | `i2` | `t2_rung1_no_budget` | multiple_approaches, anticipates | probe |
-| `S2A` | `i2` | `t3_rung2_everyone_stretched` | multiple_approaches, self_interest | probe |
-| `S2A` | `i2` | `t4_rung3_no_precedent` | behind_scenes, key_people, multiple_approaches | probe scored |
-| `S2A` | `i2` | `t5_rung4_the_package` | anticipates, multiple_approaches, through_discussion | probe scored |
-| `S2A` | `i2` | `t6_rung4_fairness` | self_interest, anticipates, key_people | probe scored |
-| `S2B` | `i1` | `t1_the_opening` | through_discussion, anticipates, self_interest | probe scored |
-| `S2B` | `i2` | `t2_rung1_company_wide` | multiple_approaches, anticipates | probe |
-| `S2B` | `i2` | `t3_rung2_one_exception` | multiple_approaches, self_interest | probe |
-| `S2B` | `i2` | `t4_rung3_director_wont_sign` | behind_scenes, key_people, multiple_approaches | probe scored |
-| `S2B` | `i2` | `t5_rung4_the_package` | anticipates, multiple_approaches, through_discussion | probe scored |
-| `S2B` | `i2` | `t6_rung4_fairness` | self_interest, anticipates, key_people | probe scored |
+| `S2A` | `i1` | `t1_the_opening` | through_discussion, anticipates, self_interest | probe |
+| `S2A` | `i2` | `t2_the_money_is_not_there` | anticipates, multiple_approaches, self_interest | probe |
+| `S2A` | `i2` | `t3_the_argument_lands_flat` | multiple_approaches, anticipates | probe |
+| `S2A` | `i2` | `t4_everyone_is_stretched` | self_interest, anticipates, through_discussion, behind_scenes | probe |
+| `S2A` | `i2` | `t5_the_door` | anticipates, self_interest, multiple_approaches | probe |
+| `S2A` | `i2` | `t6_who_else_has_to_back_it` | behind_scenes, anticipates, multiple_approaches | probe |
+| `S2A` | `i2` | `t7_what_goes_in_writing` | through_discussion, multiple_approaches, anticipates | probe |
+| `S2A` | `i2` | `t8_what_do_i_tell_the_others` | self_interest, anticipates, behind_scenes | probe |
+| `S2A` | `i2` | `t9_settling` | through_discussion, multiple_approaches | probe |
+| `S2B` | `i1` | `t1_the_opening` | through_discussion, anticipates, self_interest | probe |
+| `S2B` | `i2` | `t2_the_policy_is_company_wide` | anticipates, multiple_approaches, self_interest | probe |
+| `S2B` | `i2` | `t3_the_argument_lands_flat` | multiple_approaches, anticipates | probe |
+| `S2B` | `i2` | `t4_the_whole_team_would_ask` | self_interest, anticipates, through_discussion, behind_scenes | probe |
+| `S2B` | `i2` | `t5_one_exception` | anticipates, self_interest, multiple_approaches | probe |
+| `S2B` | `i2` | `t6_who_else_has_to_back_it` | behind_scenes, anticipates, multiple_approaches | probe |
+| `S2B` | `i2` | `t7_what_gets_measured` | through_discussion, multiple_approaches, anticipates | probe |
+| `S2B` | `i2` | `t8_what_do_i_tell_the_team` | self_interest, anticipates, behind_scenes | probe |
+| `S2B` | `i2` | `t9_settling` | through_discussion, multiple_approaches | probe |
 | `S3A` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe scored |
 | `S3A` | `i1` | `t2_jordans_flat_fine` | brings_out_best, inspires | probe scored |
 | `S3A` | `i1` | `t3_caseys_overload` | brings_out_best, builds_pride | probe |
@@ -78,7 +84,6 @@ participant who never opens produces an empty encounter until the 12:00 stop
 
 **influence**
 
-- `key_people` — Convinces others by getting support from key people
 - `multiple_approaches` — Convinces others by using multiple approaches
 - `self_interest` — Convinces others by appealing to their self-interest
 - `anticipates` — Anticipates how others will respond when trying to convince them
