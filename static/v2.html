@@ -380,6 +380,27 @@
     border-left: 3px solid var(--accent, #b3181b); background: var(--surface, #f6f6f4);
     color: var(--fg); border-radius: 0 6px 6px 0; }
   @media (max-width: 640px) { .goal-strip { margin: 8px 14px 0; font-size: 13.5px; } }
+  /* The conversation's timeline (renderTimeline): where the participant is on
+     the clock, who they are with and when End unlocks. Only for scenarios whose
+     first part has a fixed length (S1: a minute with the colleague, then the
+     counterpart for the rest). Decorative, aria-hidden: the same facts are in
+     the timer and the gate label. */
+  .timeline { margin: 10px 20px 0; }
+  .tl-track { position: relative; height: 26px; display: flex; border-radius: 6px;
+    overflow: hidden; background: var(--surface-2); border: 1px solid var(--line-strong); }
+  .tl-seg { position: relative; height: 100%; min-width: 0; }
+  .tl-labels { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+  .tl-labels span { position: absolute; top: 0; bottom: 0; display: flex; align-items: center;
+    font-size: 13px; font-weight: 600; white-space: nowrap; color: var(--fg); }
+  .tl-seg-1 { background: var(--accent-soft); }
+  .tl-seg-2 { background: var(--line-soft); flex: 1; }
+  .tl-tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg); z-index: 1; }
+  .tl-now { position: absolute; top: -2px; bottom: -2px; width: 3px; border-radius: 2px;
+    background: var(--accent); transition: left 1s linear; z-index: 1; }
+  @media (prefers-reduced-motion: reduce) { .tl-now { transition: none; } }
+  .tl-axis { position: relative; height: 20px; font-size: 13px; color: var(--muted); }
+  .tl-axis span { position: absolute; top: 3px; white-space: nowrap; }
+  @media (max-width: 640px) { .timeline { margin: 8px 14px 0; } }
   .sit-assets { background: #f6f6f4; border-left: 3px solid var(--accent, #b3181b);
     padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 14px; }
   .sit-assets h4 { margin-top: 0; }
@@ -778,6 +799,18 @@
 <div class="capture-slot" id="captureSlot" aria-live="polite"></div>
 <!-- The participant's goal, in view for the whole conversation (showGoalStrip). -->
 <div class="goal-strip" id="goalStrip" role="note" style="display:none"></div>
+<!-- Who the participant is with, and when End unlocks (renderTimeline). -->
+<div class="timeline" id="timeline" aria-hidden="true" style="display:none">
+  <div class="tl-track">
+    <div class="tl-seg tl-seg-1" id="tlSeg1"></div>
+    <div class="tl-seg tl-seg-2" id="tlSeg2"></div>
+    <div class="tl-tick" id="tlUnlock"></div>
+    <div class="tl-now" id="tlNow"></div>
+    <!-- The names sit above the needle so it never hides a letter. -->
+    <div class="tl-labels"><span id="tlName1" style="left:10px"></span><span id="tlName2"></span></div>
+  </div>
+  <div class="tl-axis" id="tlAxis"></div>
+</div>
 
 <main>
   <div class="grid" id="grid"></div>
@@ -1769,6 +1802,10 @@
   // Characters in the current interaction. Empty means "everyone" (legacy
   // scenarios that have no interaction structure).
   let presentIds = [];
+  // The conversation's plan (the briefing's parts), and the second on the
+  // timer when each part actually began, for the timeline.
+  let timelineParts = [];
+  const partStartsS = [];
   let lastScenePeople = null;   // who was present at the previous segment_start (null before the first)
 
   let upNext = null;   // {agent_id, agent_name, label} for the following beat
@@ -2055,10 +2092,48 @@
 
   // ---------- conversation timer ----------
   const pad2 = (n) => (n < 10 ? '0' : '') + n;
+  // The timeline: the first part's fixed length with the colleague, then the
+  // counterpart for the rest, with the second End unlocks.
+  // Drawn on the timer's clock (what the participant reads); the first part's
+  // end is the real hand-off once it has happened, the planned one before it.
+  // Only for a scenario whose first part has a fixed length (S1A and S1B).
+  const HANDOFF_PAD_S = 20;   // the colleague's closing line, after the timebox
+  function timelineModel(s) {
+    const first = timelineParts[0];
+    if (timelineParts.length < 2 || !first || !(first.timebox_seconds > 0)) return null;
+    const offset = floorStartMs && timerStartMs ? Math.max(0, (floorStartMs - timerStartMs) / 1000) : 0;
+    const planned = offset + first.timebox_seconds + HANDOFF_PAD_S;
+    const firstEnd = partStartsS[1] != null ? partStartsS[1] : planned;
+    const names = (p) => (p.with || []).join(' & ');
+    return { total: MAX_S, firstEnd: Math.min(firstEnd, MAX_S),
+             unlock: Math.min(offset + MIN_S, MAX_S),
+             n1: names(first), n2: names(timelineParts[1]), now: Math.min(s, MAX_S) };
+  }
+  function renderTimeline(s) {
+    const el = $('timeline');
+    if (!el) return;
+    const m = started ? timelineModel(s) : null;
+    if (!m) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    const pct = (x) => (Math.max(0, Math.min(1, x / m.total)) * 100).toFixed(2) + '%';
+    $('tlSeg1').style.flex = '0 0 ' + pct(m.firstEnd);
+    $('tlName1').textContent = m.n1;
+    $('tlName2').textContent = m.n2;
+    $('tlName2').style.left = `calc(${pct(m.firstEnd)} + 10px)`;
+    $('tlUnlock').style.left = pct(m.unlock);
+    $('tlNow').style.left = `calc(${pct(m.now)} - 1px)`;
+    const clock = (x) => pad2(Math.floor(x / 60)) + ':' + pad2(Math.round(x) % 60);
+    $('tlAxis').innerHTML =
+      `<span style="left:0">00:00</span>` +
+      `<span style="left:clamp(64px, ${pct(m.unlock)}, calc(100% - 64px));transform:translateX(-50%)">End unlocks ${clock(m.unlock)}</span>` +
+      `<span style="right:0">${clock(m.total)}</span>`;
+  }
+
   function renderTimer() {
     const s = Math.max(0, Math.floor((Date.now() - timerStartMs) / 1000));
     $('timer').textContent = pad2(Math.floor(s / 60)) + ':' + pad2(s % 60);
     renderGate(s);
+    renderTimeline(s);
     // The advance floor passes on the clock, not on any incoming message, so it
     // needs the same one-second tick to draw the control the moment it opens.
     // applyPresence covers both the tile button and the header one.
@@ -4178,6 +4253,7 @@
         // still Morgan) or when a one-to-one opens (the situation card has
         // said who it is), and its label is the spec's own name for the beat,
         // not something to read out to a participant, so it is left out then.
+        partStartsS[m.index] = encounterElapsedS();
         const peopleKey = presentIds.slice().sort().join(',');
         const single = presentIds.length <= 1;
         const showScene = !(single && (lastScenePeople === null || lastScenePeople === peopleKey));
@@ -4330,6 +4406,7 @@
 
   async function startSession() {
     $('startBtn').disabled = true;
+    partStartsS.length = 0;
     lastScenePeople = null;   // a fresh conversation: the first one-to-one opens without a divider
     // A participant_id is NOT evidence of consent. /start mints the record
     // before anyone has agreed to anything and puts it in the redirect with
@@ -4935,6 +5012,7 @@
       const d = await fetchBrief();
       showTitle(d);
       goalText = (d.briefing && d.briefing.goal) || '';
+      timelineParts = (d.briefing && d.briefing.parts) || [];
       const refHtml = briefingHtml(d, true);
       if (refHtml) {
         $('briefBody').classList.add('rich');

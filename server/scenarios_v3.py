@@ -857,7 +857,10 @@ def _briefing(spec: dict) -> dict:
         "parts": [
             {"label": i.get("label", ""), "mode": i["mode"],
              "with": [spec["agents"][w]["name"] for w in
-                      ([i["agent"]] if isinstance(i.get("agent"), str) else i.get("agents", []))]}
+                      ([i["agent"]] if isinstance(i.get("agent"), str) else i.get("agents", []))],
+             # What the page's timeline draws: this part's fixed length (S1's
+             # opening with the instigating colleague), 0 for no fixed length.
+             "timebox_seconds": i.get("timebox_seconds") or 0}
             for i in interactions
         ],
         "duration": spec.get("duration_minutes", [5, 10]),

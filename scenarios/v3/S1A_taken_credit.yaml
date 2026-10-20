@@ -255,12 +255,13 @@ interactions:
     agent: riley
     label: "Riley corners you"
     kind: context_and_push
-    # Fixed at two minutes (2026-09-23): everyone meets Sam, with most of the
+    # Fixed at one minute (two minutes from 2026-09-23 to 2026-10-20; the rest of the
+    # encounter is now the counterpart's): everyone meets Sam, with most of the
     # encounter still to run, and nobody is offered a choice about it. At the
     # mark the runner briefs Riley that her next line is her last, with the
     # hand-off below, and moves on once she has said it
     # (realtime_voice_session._brief_handoff). The move-on control is hidden.
-    timebox_seconds: 120
+    timebox_seconds: 60
     handoff: >-
       You have to get back to your desk. Close this in your own way, and let
       them know Sam is out by the elevators right now.
