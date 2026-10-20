@@ -1,0 +1,531 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "488ad6b",
+   "date": "2026-10-15",
+   "pipeline_version": "2026-10-14a",
+   "room_pacing_version": "2026-09-29b"
+  }
+ },
+ "build": "0ce66cc",
+ "build_from": "HEAD's image contents are identical to the pinned tag 0ce66cc",
+ "failures": [],
+ "generated_at": "2026-10-20T01:35:31Z",
+ "health": {
+  "build": "0ce66cc",
+  "pipeline_version": "2026-10-14a",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-09-29b"
+ },
+ "passed": true,
+ "scenarios": {
+  "S1A": {
+   "checks": [
+    {
+     "baseline": 0.875,
+     "limit": 0.725,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 1.0,
+     "limit": 0.8,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 4,
+     "limit": 3,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 5
+    },
+    {
+     "baseline": 4.092,
+     "limit": 6.638,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 2.258
+    },
+    {
+     "baseline": 4.522,
+     "limit": 7.783,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 4.054
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 12,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 9,
+    "lines_heard": 9,
+    "lines_said": 9,
+    "participant_turns": 11,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "0ce66cc",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-10-14a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1792458478_7f4ebd",
+    "speech_end_to_first_played_s": {
+     "n": 10,
+     "p50": 2.258,
+     "p90": 4.054
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_retaliation_fork",
+     "t2_the_opening",
+     "t3_defensiveness",
+     "t5_brush_it_off",
+     "t6_how_it_works"
+    ],
+    "triggers_fired": 5,
+    "turns_suppressed": {
+     "probe_pad": 1
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": true,
+   "session_id": "s_1792458478_7f4ebd"
+  },
+  "S2A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 1.0,
+     "limit": 0.8,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 0.885
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 6,
+     "limit": 5,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 9
+    },
+    {
+     "baseline": 3.776,
+     "limit": 6.164,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 2.022
+    },
+    {
+     "baseline": 6.963,
+     "limit": 11.444,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 3.457
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 25,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 23,
+    "lines_heard": 26,
+    "lines_said": 26,
+    "participant_turns": 25,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "0ce66cc",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-10-14a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1792458720_a3fb7f",
+    "speech_end_to_first_played_s": {
+     "n": 24,
+     "p50": 2.022,
+     "p90": 3.457
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_the_opening",
+     "t2_the_money_is_not_there",
+     "t3_the_argument_lands_flat",
+     "t4_everyone_is_stretched",
+     "t5_the_door",
+     "t6_who_else_has_to_back_it",
+     "t7_what_goes_in_writing",
+     "t8_what_do_i_tell_the_others",
+     "t9_settling"
+    ],
+    "triggers_fired": 9,
+    "turns_suppressed": {
+     "probe_pad": 1
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": true,
+   "session_id": "s_1792458720_a3fb7f"
+  },
+  "S3A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0.889,
+     "limit": 0.689,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 0.889
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 3,
+     "limit": 2,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 6
+    },
+    {
+     "baseline": 4.742,
+     "limit": 7.613,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 2.733
+    },
+    {
+     "baseline": 8.432,
+     "limit": 13.648,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.839
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 10,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 9,
+    "lines_said": 9,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "0ce66cc",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-10-14a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1792459322_88682e",
+    "speech_end_to_first_played_s": {
+     "n": 9,
+     "p50": 2.733,
+     "p90": 2.839
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_public_challenge",
+     "t2_jordans_flat_fine",
+     "t3_caseys_overload",
+     "t4_what_the_team_is_for",
+     "t5_a_fact_left_on_the_table",
+     "t6_one_clarifying_question"
+    ],
+    "triggers_fired": 6,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": true,
+   "session_id": "s_1792459322_88682e"
+  },
+  "S4A": {
+   "checks": [
+    {
+     "baseline": 0.967,
+     "limit": 0.817,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 0.973
+    },
+    {
+     "baseline": 0.759,
+     "limit": 0.559,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 0.778
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 4,
+     "limit": 3,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 8
+    },
+    {
+     "baseline": 4.566,
+     "limit": 7.349,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 2.587
+    },
+    {
+     "baseline": 6.266,
+     "limit": 10.399,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 4.761
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 33,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 28,
+    "lines_heard": 36,
+    "lines_said": 37,
+    "participant_turns": 36,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "0ce66cc",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-10-14a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-09-29b"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1792459530_81bb5f",
+    "speech_end_to_first_played_s": {
+     "n": 31,
+     "p50": 2.587,
+     "p90": 4.761
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_priya_interrupted",
+     "t2_idea_relabelled",
+     "t5_a_smaller_second_try",
+     "t8_splitting_it_up_is_slower",
+     "t6_chris_backs_the_room",
+     "t3_decisions_close_with_priya_silent",
+     "t4_dan_claims_the_writeup",
+     "t7_priya_waits_to_be_handed_work"
+    ],
+    "triggers_fired": 8,
+    "turns_suppressed": {},
+    "unheard_lines": [
+     "b10"
+    ],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 3,
+    "voice_error_messages": []
+   },
+   "passed": true,
+   "session_id": "s_1792459530_81bb5f"
+  }
+ },
+ "server": "http://127.0.0.1:49557"
+}
