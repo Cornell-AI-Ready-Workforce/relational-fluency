@@ -1760,6 +1760,7 @@
   // Characters in the current interaction. Empty means "everyone" (legacy
   // scenarios that have no interaction structure).
   let presentIds = [];
+  let lastScenePeople = null;   // who was present at the previous segment_start (null before the first)
 
   let upNext = null;   // {agent_id, agent_name, label} for the following beat
   let interactionStartedAt = 0;  // wall clock of the current interaction's banner
@@ -4157,14 +4158,25 @@
         // The advance we were waiting on landed: release the header control so
         // it re-labels itself for the beat after this one.
         { const ab = $('advanceBtn'); if (ab) delete ab.dataset.moving; }
-        const names = (m.present || []).map(p => esc(p.name)).join(' · ');
-        const label = esc(m.label || `Part ${m.index + 1}`);
-        const el = document.createElement('div');
-        el.className = 'scene';
-        el.innerHTML = `${label}<span class="with">, you are now with ${names}</span>`;
-        $('transcript').appendChild(el);
-        $('transcript').scrollTop = $('transcript').scrollHeight;
-        announce(el.textContent);
+        // The divider says who the participant is now with. It says nothing
+        // new when the same single person carries on (S2A's second beat is
+        // still Morgan) or when a one-to-one opens (the situation card has
+        // said who it is), and its label is the spec's own name for the beat,
+        // not something to read out to a participant, so it is left out then.
+        const peopleKey = presentIds.slice().sort().join(',');
+        const single = presentIds.length <= 1;
+        const showScene = !(single && (lastScenePeople === null || lastScenePeople === peopleKey));
+        lastScenePeople = peopleKey;
+        if (showScene) {
+          const names = (m.present || []).map(p => esc(p.name)).join(' · ');
+          const label = esc(m.label || `Part ${m.index + 1}`);
+          const el = document.createElement('div');
+          el.className = 'scene';
+          el.innerHTML = `${label}<span class="with">, you are now with ${names}</span>`;
+          $('transcript').appendChild(el);
+          $('transcript').scrollTop = $('transcript').scrollHeight;
+          announce(el.textContent);
+        }
         applyPresence();
       } else if (m.type === 'floor_held') {
         // The server declined to finish the encounter before the floor (the
@@ -4300,6 +4312,7 @@
 
   async function startSession() {
     $('startBtn').disabled = true;
+    lastScenePeople = null;   // a fresh conversation: the first one-to-one opens without a divider
     // A participant_id is NOT evidence of consent. /start mints the record
     // before anyone has agreed to anything and puts it in the redirect with
     // consent=1 to say exactly that, so on a real study arrival this gate saw a

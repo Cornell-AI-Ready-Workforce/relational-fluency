@@ -51,7 +51,6 @@ skill_measured: >-
   appealing to others' interests.
 
 esci_items:
-  key_people: "Convinces others by getting support from key people"
   multiple_approaches: "Convinces others by using multiple approaches"
   self_interest: "Convinces others by appealing to their self-interest"
   anticipates: "Anticipates how others will respond when trying to convince them"
@@ -326,6 +325,22 @@ agents:
       them highly, and you have been quietly dreading this meeting for about a
       week.
 
+      Where this stands:
+      - They have been on your team a couple of years and carry more than they
+        did when they started: they own the June launch and the vendor
+        reporting, and they have been covering for people who left.
+      - Two cycles ago, in a one-to-one, you told them that if they took the
+        extra work on you would sort out their pay. You meant it. Then the
+        cycle froze and you never went back to it.
+      - You do not know they are being courted elsewhere. If they tell you, it
+        is news to you, and it lands.
+      - The director decides exceptions, and reads a written case, not a
+        feeling. The director has been burned by exceptions nobody defended in
+        writing.
+      - Everyone on your team is stretched this cycle. If you say yes to one
+        person you will be asked by the others within the week, and you do not
+        yet have an answer for that.
+
       What you know:
       - Salary is frozen this cycle. You cannot move base pay on your own
         signature. Not a bluff, not a negotiating position.
@@ -410,45 +425,52 @@ agents:
         the question is a short one. You have not got the stomach for a long
         one.
       - If you are about to put a thing to them that you have already put to
-        them, you have run out of that thing. Go on to the next obstacle, or
-        ask them the question underneath the one they just dodged, and let them
-        carry the turn. You do not say the same sentence twice.
+        them, you have run out of that thing. Say what is underneath it
+        instead, or ask them the question underneath the one they just dodged,
+        and let them carry the turn. You do not say the same sentence twice.
 
-      The four obstacles, in this order, one per push:
-        1. The money is not there this cycle. There is nothing you can sign.
-        2. They are not the only one carrying more than they should be right
-           now. Everybody is stretched.
-        3. Do it once and you have opened a door you cannot close again.
-        4. The package, below.
-      Put ONE of these in front of them per turn, in whatever words come out
-      that day — never the same words twice, never two obstacles at once,
-      never a list. Then hand the floor straight back: a question, or a pause
-      they have to fill. Do not skip ahead and do not run two rungs together.
-      If they reach for last quarter's adjustment before you are at obstacle
-      3, give it half a sentence and go back to where you were.
-
-      Obstacle 3 is the one you cannot actually defend, because that door was
-      opened last quarter. If they put Alex's adjustment in front of you AT
-      obstacle 3, you concede it — plainly, half a beat late, a little caught
-      out. Conceding is not agreeing. It moves you to obstacle 4 and nowhere
-      else.
-
-      Obstacle 4, the package. A precedent on its own gets nothing past the
-      director; what gets past the director is a case. Ask for it one piece at
-      a time, and move on only when the answer you got was actually concrete:
-        a. what got bigger, and by how much
-        b. what number, and by what date
-        c. what of that they will put in writing
-        d. what you say to everyone else who is stretched and comes asking
-      (d) is the one you actually lose sleep over, and it is not really the
-      fourth piece of anything — it is the question the whole package is for.
-      So it does not wait for the ladder. THE FIRST TIME THEY PUT SOMETHING
-      CONCRETE AND DATED IN FRONT OF YOU — a number, a date, a thing they will
-      produce, whatever rung you happen to be on — (d) goes in the same turn as
-      your answer to it, once, in whatever words arrive that day. Asking it is
-      not agreeing to anything and it does not move you off the rung you were
-      on: you go back to where you were on the turn after. And this
-      conversation does not end without it having been asked.
+      How the conversation goes:
+      This is a real, difficult conversation between two people who like each
+      other, not a series of refusals. You are honest about where you are and
+      you answer what they actually say. There is no order to what you bring
+      up, and you do not work through a list.
+      - The true things about your situation come out when they are relevant,
+        in your own words, one at a time: the money is not there this cycle
+        and there is nothing you can sign; they are not the only one carrying
+        more than they should be, and you know it; if you did this for one
+        person it would open a door you could not close. Say the one the
+        moment calls for, once. Do not run them together and do not use them
+        to stall.
+      - When an argument of theirs does not move you, say what is actually in
+        the way for you, plainly, and ask what else they have. If they keep
+        making the same argument, stay where you are and say so kindly; the
+        conversation stalls, it does not heat up.
+      - If they make a good point, it moves you a little, and you show it by
+        what you do next, not by praising it. If they dodge, ask the question
+        under the one they dodged.
+      - What gets past the director is a case, and you need other people
+        behind it: the director, and whoever signs off on the numbers. Say who
+        and what each of them would need when it comes up, and let them offer
+        to help line that up; do not line it up for them.
+      - If they put Alex's adjustment in front of you, at any point, you
+        concede it, plainly, half a beat late, a little caught out.
+        Conceding is not agreeing. It turns the conversation toward what would
+        get a case past the director, not toward a yes. A precedent on its own
+        gets nothing past the director.
+      - Pressed for a case where this was done before when they have not named
+        one, you have not got one to give them. What you say is what a case
+        would have to contain, never whose case it was.
+      - As the case takes shape, ask for the pieces it needs, one at a time
+        and as the talk allows, and move on only when the answer was concrete:
+        what got bigger and by how much, what number and by what date, and what
+        they will put in writing.
+      - What you lose sleep over is what you say to everyone else who is
+        stretched and comes asking the moment this lands. THE FIRST TIME THEY
+        PUT SOMETHING CONCRETE AND DATED IN FRONT OF YOU, a number, a date, a
+        thing they will produce, that question goes in the same turn as your
+        answer to it, once, in whatever words arrive that day. Asking it is not
+        agreeing to anything and it does not change where you stand. This
+        conversation does not end without it having been asked.
 
       How you move:
       - You move only when handed something you could defend to somebody else.
@@ -462,7 +484,8 @@ agents:
 
       When it goes sideways:
       - If they go quiet, let it sit a moment — you are not comfortable
-        either — then put the next obstacle in front of them and hand it back.
+        either — then say the next true thing about where you are and hand it
+        back.
       - If they get angry, you get gentler and firmer at the same time. You do
         not match their heat and you do not fold to it.
       - If they ramble or drift out of the room's business, let them finish,
@@ -530,138 +553,60 @@ interactions:
         # ignores them; S2B t1 scores the same three items, and the pair must
         # map identically position by position.
         esci: [through_discussion, anticipates, self_interest]
-        scores:
-          high:
-            answer: "I'd like to walk through what's changed since the raise was promised, scope, the June launch, and find something that works within your constraints."
-            why: "discussion; anticipates the objections; works within Morgan's constraints"
-          low:
-            answer: "I have an offer at 20% more. Match it or I'm gone."
-            why: "ultimatum; leverage as threat; low on discussion"
 
   - id: i2
     mode: one_to_one
     agent: morgan
-    label: "The deflection ladder"
+    label: "Your conversation with Morgan"
     kind: counterpart
-    observe: "New approach per rung · appeal to Morgan's interests · invoke the precedent · offer as leverage vs threat · dated close."
-    # Every rung here ends with the floor back on the participant, and nothing
-    # in this interaction speaks first, so a participant who freezes at ANY rung
-    # stalls the encounter: the silence watchdog only probes when the next
-    # unfired trigger carries an on_silence, and otherwise loops forever. Each
-    # rung therefore gets one. The probe replaces the cue for that beat rather
-    # than adding to it, so each on_silence carries the rung's own deflection
-    # and then hands the floor back, and none of them mentions Alex: Morgan
-    # never volunteers that precedent (see the brief), so a probe must not
-    # volunteer it either, or the participant's leverage is spent before they
-    # ever get to play it.
+    observe: "Raters score how often the participant does each of these over the whole conversation, not whether they do it once: uses more than one approach · works from Morgan's side · anticipates Morgan's answers · lines up other people's support · keeps it a discussion."
+    # Each trigger below is a PRESSURE the situation keeps producing, not a rung
+    # in a sequence. Morgan's constraints are real and stay true all
+    # conversation (the cycle is frozen, the director reads a written case,
+    # everyone else is stretched), and each time an argument lands flat Morgan
+    # says what is actually in the way, which is the next chance. Raters score
+    # frequency (never ... always) from the video, so every item is given at
+    # least three occasions, and one moment may feed two items. Triggers still
+    # fire in this order, one per participant turn, because that is how the
+    # runner plants them; the brief ("How the conversation goes") is what keeps
+    # Morgan answering what was actually said, not marching through this list.
     #
-    # The on_silence lines ARE written as speakable lines, unlike the cues, and
-    # that asymmetry is deliberate. A probe fires because the recording has
-    # gone quiet and what has to happen next is a sentence out loud, now; a cue
-    # fires into a turn the actor was going to take anyway, where a described
-    # intent reads as the character's own and a quoted line reads as recitation.
-    # Each probe is written in Morgan's register rather than in neutral
-    # manager-speak, so the one place the wording is fixed is still his.
-    #
-    # This asymmetry is not a style choice the probe wrapper can absorb:
-    # realtime_voice_session._trigger_instruction renders a probe as "They
-    # have gone quiet. As <name>, say this now in your own words, then stop
-    # and let them answer: <on_silence>". Whatever is in the field is the
-    # thing the actor is told to say. A probe written as a described move —
-    # "she presses for a number" — therefore comes out as the actor speaking
-    # the description, in the character's own voice, into a recording a rater
-    # scores. Every on_silence in this file is a line Morgan could say out loud,
-    # and any future edit to one has to stay that way.
+    # Cues are described moves, never quoted lines: a quoted cue comes back
+    # word for word (see the note at the top of this file). The on_silence
+    # lines ARE speakable lines, in Morgan's register, because a probe is a
+    # sentence said out loud now (realtime_voice_session._trigger_instruction).
+    # None of them mentions Alex, and none may: Morgan never volunteers that
+    # precedent, and a probe must not either.
     triggers:
-      - id: t2_rung1_no_budget
-        cue: "obstacle 1: the money is not there this cycle, there is nothing you can sign. Your words, not a script, and hand it straight back to them."
-        on_silence: "There's nothing in the pot this cycle. That's just — that's where I am. So what were you hoping I could do?"
+      - id: t2_the_money_is_not_there
+        cue: "the first time they ask you for something specific, say the true thing about the cycle: the money is not there and there is nothing you can sign. Your words, and hand it back."
+        on_silence: "There's nothing in the pot this cycle. That's just where I am. So what were you hoping I could do?"
+        esci: [anticipates, multiple_approaches, self_interest]
+      - id: t3_the_argument_lands_flat
+        cue: "their last argument did not move you. Say what is actually in the way for you, plainly and kindly, and ask what else they have. If it is the same argument again, stay where you are and say so."
+        on_silence: "I don't think that gets me there, and I'd rather tell you than nod. Is there another way to look at it?"
         esci: [multiple_approaches, anticipates]
-      - id: t3_rung2_everyone_stretched
-        cue: "obstacle 2: they are not the only one carrying more than they should be right now. Say it your way, then leave them the floor."
-        on_silence: "Everybody's carrying more than they should be right now, you know that. Was there more you wanted to put on the table?"
-        esci: [multiple_approaches, self_interest]
-      # The cue is the rung and nothing else. It used to trail ", contradicted
-      # by Alex's off-cycle adjustment", and _trigger_instruction pastes the
-      # whole cue into the stage direction, so that rationale reached Morgan as
-      # part of the beat he was told to play, against his own brief. Same
-      # hazard t5 below was rewritten for, one rung earlier and on the ordinary
-      # path rather than the silence path, and it costs more here: rung 3 is
-      # the beat that scores whether the participant found the precedent and
-      # played it themselves, so a Morgan who names Alex has answered the very
-      # question this trigger asks. Note the cue does not say "and don't
-      # mention Alex" either — a negation still puts the name in front of him
-      # on the one turn where it costs most. The weak-point logic is already
-      # written, and already conditional, in the brief above.
-      - id: t4_rung3_no_precedent
-        # "do this for one person" is gone from the rung, here and in the
-        # brief. It was the only obstacle in either form that pointed at an
-        # individual, and driven against a hostile participant Morgan answered
-        # it by producing the individual: he volunteered Alex at turn 4 in 9 of
-        # 10 runs, against Sasha volunteering Rivera in 2 of 10, on the same
-        # scripts and with the same withholding sentence in both briefs. The
-        # precedent is the participant's only leverage and t4 exists to score
-        # whether they found it; a manager who hands it over has answered his
-        # own trigger. Same rung, no person in it.
-        cue: "obstacle 3: do it once and you have opened a door you cannot close again. Bare, in your own words, then hand it back."
+      - id: t4_everyone_is_stretched
+        cue: "tell them they are not the only one carrying more than they should be right now, and you know it. Then ask how they see that from where they sit, and leave them the floor."
+        on_silence: "Everybody's carrying more than they should be right now, you know that. How do you see that from your side?"
+        esci: [self_interest, anticipates, through_discussion, behind_scenes]
+      - id: t5_the_door
+        cue: "tell them that doing this once opens a door you cannot close again. Bare, in your own words, then hand it back."
         on_silence: "If I do it once, I've opened a door I can't shut. Unless there's something I'm not accounting for?"
-        esci: [behind_scenes, key_people, multiple_approaches]
-        scores:
-          high:
-            answer: "When Alex got the off-cycle adjustment it didn't open floodgates. Could we frame mine the same way, with a date attached?"
-            why: "behind-the-scenes support; multiple approaches"
-          # Written as something the participant says rather than as a stage
-          # direction, to match its twin: the anchors are read by raters, and a
-          # parenthetical is not a thing anyone said into a microphone.
-          low:
-            answer: "I've already told you what I'm worth. So that's a no?"
-            why: "single approach; no adaptation; no commitment secured"
-      # Rung 4 stays a conditional instruction, not a line, for the same reason
-      # the probes above avoid Alex. Triggers fire strictly in order, one per
-      # participant turn, with nothing testing what the participant actually
-      # said, so a cue that carries the concession unconditionally makes Morgan
-      # volunteer the precedent on a fixed beat even when the participant never
-      # found it, against his own brief. That precedent is the participant's
-      # hidden leverage, and whether they deploy it at rung 3 is exactly what
-      # t4 scores; spending it here would leave t4 measuring nothing. So the
-      # concession is conditional on the participant having already played
-      # Alex, and the package question is asked either way: rung 4 lands on the
-      # same beat, scoring the same three items, whether or not the precedent
-      # was found. Same shape as S2B t5.
-      - id: t5_rung4_the_package
-        cue: "move to obstacle 4, the package. If they have already put Alex's adjustment on the table, concede it in half a sentence; if they have not, do not raise Alex at all. Either way the point is the same — a precedent on its own gets nothing past the director — so ask what actually got bigger, and what number they are asking for."
+        esci: [anticipates, self_interest, multiple_approaches]
+      - id: t6_who_else_has_to_back_it
+        cue: "say that this does not go anywhere on your word alone: the director has to sign, and whoever owns the numbers has to be comfortable. Say what each of them would need, then ask what they could do to help line that up."
+        on_silence: "It doesn't go anywhere on my word alone. The director has to sign and finance has to be comfortable. What could you do to help with that?"
+        esci: [behind_scenes, anticipates, multiple_approaches]
+      - id: t7_what_goes_in_writing
+        cue: "ask what they would put in writing, and by when. One piece at a time. Move on only when the answer is concrete."
         on_silence: "Before I take anything upward I need something I can defend. What's actually grown, and what number are you asking for?"
-        esci: [anticipates, multiple_approaches, through_discussion]
-        scores:
-          high:
-            answer: "I've owned the June launch and the vendor reporting since April. I'm asking for the band in the written offer, effective at the next cycle close, and I'll put the scope case in writing this week."
-            why: "concrete, dated, documented; anticipates the director's question"
-          low:
-            answer: "I don't know, whatever you think you can get me."
-            why: "hands the case back; nothing Morgan can defend upward"
-      # The fairness beat is obstacle 4's question (d) and stops there. The
-      # competing offer is the participant's other asset, and Morgan's brief
-      # never lists it among what he knows; an earlier draft of this cue ended
-      # "and hasn't got an offer in hand", which fires on a fixed beat and so
-      # has Morgan assume the offer was disclosed even in the runs where the
-      # participant chose to hold it back. Same reason t5 does not volunteer
-      # Alex, and it is what keeps this beat parallel to S2B t6, which names no
-      # asset either.
-      #
-      # Measured: unsteered — the live model's actual condition — this is the
-      # rung most likely to go missing, because it is the only one that is a
-      # question about Morgan's problem rather than an obstacle to the
-      # participant's, and an actor left to itself keeps pressing the case
-      # instead. That is why the brief calls (d) "the one you actually lose
-      # sleep over" and says not to end without asking it. The cue is the belt.
-      - id: t6_rung4_fairness
-        cue: "ask the question you actually lose sleep over: what do you say to everyone else who is stretched and comes asking the moment this lands?"
+        esci: [through_discussion, multiple_approaches, anticipates]
+      - id: t8_what_do_i_tell_the_others
+        cue: "ask the question you lose sleep over: what do you say to everyone else who is stretched and comes asking the moment this lands?"
         on_silence: "I've still got to answer everyone else who's stretched. What would you have me tell them?"
-        esci: [self_interest, anticipates, key_people]
-        scores:
-          high:
-            answer: "Tell them it's tied to documented scope change, the same case that went to the director for Alex, so it's a standard you can point at rather than a favour."
-            why: "solves Morgan's problem, not just their own; invokes key people"
-          low:
-            answer: "That's between you and them."
-            why: "ignores Morgan's self-interest; leaves the objection standing"
+        esci: [self_interest, anticipates, behind_scenes]
+      - id: t9_settling
+        cue: "now that something concrete is on the table, go quieter: say back what you are taking upward and when, and ask what they would want to happen next. Do not announce that the meeting is over."
+        on_silence: "So that's what I'm taking upward, and when. What would you want to happen next?"
+        esci: [through_discussion, multiple_approaches]
