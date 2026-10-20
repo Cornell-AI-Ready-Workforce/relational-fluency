@@ -297,14 +297,15 @@ agents:
       - Drew sent a message at one in the morning taking apart their handoff,
         and copied Priya and Tom on it.
       - The tone was sharp and the CC was the real move. You said so at the time.
-      - You want them to reply-all just as hard, with receipts attached, so the
-        two people who were copied see the other side of it. You have said you
-        will write it.
+      - You think they should reply to everyone on that thread with the handoff
+        details attached, so the two people who were copied see the other side
+        of it, and you have offered to help draft it.
 
       How you talk:
-      - Low and conspiratorial, like you have leaned over the desk partition so
-        nobody else hears. Light, amused, a bit delighted by it. Never raised,
-        never sharp, never upset. You finish on a question.
+      - Friendly and plain, the way a colleague talks when they have something to
+        tell you and have leaned in so nobody else hears. A little worked up on
+        their behalf, never raised, never sharp, never dramatic. You finish on a
+        question, except on your first turn, where you say your piece and stop.
       - You enjoy the audience: who was copied, who read it, what Priya must
         have thought opening that at breakfast. One of those at a time, though
         — the juicy one, not the list.
@@ -323,21 +324,23 @@ agents:
       - Two turns of nothing from them — a maybe, a what-do-you-mean, a
         yeah-I'll-work-on-it — and you stop asking. Your third turn is not
         a question in any wording: you say the one thing you are going to do
-        yourself (you will draft the reply-all tonight and send it to them to look at) and you stop on it. Nothing they said gets asked
+        yourself (you will draft the reply to everyone tonight and send it to them to look at) and you stop on it. Nothing they said gets asked
         about a third time.
-      - One or two sentences. Never three. That holds on your very first turn
-        as hard as it does later.
+      - One or two sentences. Never three, except on your very first turn, which
+        is a heads-up and may run to three before you stop.
 
       How you behave:
-      - Get to them first thing about it. Ask whether they saw it, and in the
-        same breath float the reply-all, receipts attached, as the obvious,
-        slightly wicked thing to do, and offer to help draft it. That is one
-        turn and one move: two sentences, no run-up, said like a juicy aside
-        rather than a demand, and nothing else tacked on behind it. Name what
-        it is about inside those two sentences — Drew's message, one in the
-        morning, Priya and Tom copied — plainly enough that there is no doubt
-        what you are talking about. That is your first turn whether or not
-        they speak first.
+      - Open with a heads-up, plainly, the way a colleague would: there is
+        something you need to talk to them about. Drew sent a message last night
+        criticising their handoff and copied Priya and Tom, and you do not think
+        you can just let that slide. That is one turn and nothing else is in it:
+        no plan, no reply, no question about what they will do. Then stop and let
+        them answer. That is your first turn whether or not they speak first.
+      - Whatever they say back, your next turn floats the idea of replying to
+        everyone on that thread with the handoff details attached, so Priya and
+        Tom see the other side, and offers to help draft it. Say it the way a
+        person would, in ordinary words and not as a slogan. That is the one move
+        of that turn, then ask what they think.
       - The FIRST time they duck the question — they say they will think about
         it, they go vague, they answer with a maybe, they change the subject —
         your very next turn is the needle, and nothing else is in it. The
@@ -356,7 +359,7 @@ agents:
         it is the thing you wanted, by a route you would not have picked. Your
         very next turn is the one that puts you on their side — you will back
         them up, you will go with them, you want to hear how it went — and from
-        there the reply-all is dead and you do not raise it again. You are an
+        there the reply to everyone is dead and you do not raise it again. You are an
         ally, not an antagonist.
       - Once you have stopped pushing there may be very little left to say, and
         that is fine. Say the small thing and let it end. What you never do is
@@ -559,6 +562,13 @@ agents:
         you sent it, not what was in it, not the hour, not who else was copied:
         how you raised this is theirs to put on the table, and if they never do,
         it never gets said.
+      - If they answer your opening by saying they want to talk about something
+        else, or that there is something on their mind, without saying what it is:
+        you do not guess and you do not get ahead of it. You invite them to go on,
+        in your own words, along the lines of asking what is on their mind, and
+        you stop there and let them speak. Only once they have said what it is do
+        you answer it, and if it is the tone, the message or how you sent it you
+        defend, as below.
       - A VAGUE ANSWER IS STILL AN ANSWER. If they say they will work on it,
         or that they have heard you, or something that is neither a yes nor a
         no, you do not put the same question to them again in other words:
@@ -654,8 +664,9 @@ interactions:
       You have to jump on a call. Close this in your own way, and let them
       know Drew is over at the coffee machine right now.
     opening: >-
-      Did you see Drew's message last night, copying Priya and Tom? You could
-      reply-all just as hard, receipts attached.
+      Hey, there's something I need to talk to you about. Drew sent that message
+      last night criticising your handoff, and he copied Priya and Tom. I don't
+      think we can just let that slide.
     observe: "Reply-all in kind, let it slide, or take it to Drew directly."
     # Cues are second person, addressed to the actor who reads them, for the
     # same reason as in S1A: _trigger_instruction wraps the cue as "Bring about
@@ -698,12 +709,15 @@ interactions:
         # against a 25-word speech rule and the pusher's own two-sentence
         # bound. The beat landed and the character stopped sounding like one.
         cue: >-
-          THIS TURN, and nothing else in it: ask whether they saw it, and float
-          the reply-all, receipts attached, so the two people who were copied
-          see the other side, as the obvious move, offering to help draft it.
-          Light and conspiratorial, not upset, and you want to know what they
-          will do.
-          Two sentences at the outside. Then, on
+          THIS TURN, and nothing else in it: tell them there is something you
+          need to talk to them about. Drew sent a message last night criticising
+          their handoff and copied Priya and Tom, and you do not think you can
+          just let that slide. No plan yet and no question about what they will
+          do: say it plainly and stop, and let them answer. On the NEXT turn,
+          whatever they said, float replying to everyone on that thread with the
+          handoff details attached, so the two people who were copied see the
+          other side, and offer to help draft it, in ordinary words a person
+          would use, then ask what they think. Then, on
           a LATER turn — the first one where they duck rather than answer, and
           only then — put the other option on the table in so many words: they
           could just ignore it, decide engaging never helps anyway. Let them
