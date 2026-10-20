@@ -648,7 +648,7 @@ interactions:
     kind: context_and_push
     # Same two-minute timebox and hand-off as S1A's interaction 1, so the
     # parallel form paces identically.
-    timebox_seconds: 120
+    timebox_seconds: 60
     handoff: >-
       You have to jump on a call. Close this in your own way, and let them
       know Drew is over at the coffee machine right now.

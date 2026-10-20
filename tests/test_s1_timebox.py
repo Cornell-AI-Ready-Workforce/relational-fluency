@@ -51,16 +51,16 @@ async def _s1(monkeypatch):
     runner._turns_this_interaction = 3
 
     # The move-on control is not offered for a timeboxed interaction.
-    assert runner._timebox_seconds() == 120
+    assert runner._timebox_seconds() == 60
     assert runner._next_beat_hint() is None
 
-    # Under two minutes: nothing happens (the 180 s / 8-turn gate would also hold).
-    runner._interaction_started_at = time.time() - 60
+    # Under a minute: nothing happens (the 180 s / 8-turn gate would also hold).
+    runner._interaction_started_at = time.time() - 30
     await runner._maybe_advance()
     assert not advanced and not runner._handoff_briefed
 
     # Past two minutes: the closing line is briefed, recorded, and not yet advanced.
-    runner._interaction_started_at = time.time() - 121
+    runner._interaction_started_at = time.time() - 61
     await runner._maybe_advance()
     assert runner._handoff_briefed and not advanced
     note = runner.rt.updates[-1]
@@ -130,7 +130,7 @@ def _timeboxed(monkeypatch, *, rt=None):
     runner._at_ceiling = _no
     runner._trigger_idx = len(runner._triggers())
     now = time.time()
-    runner._interaction_started_at = now - 121
+    runner._interaction_started_at = now - 61
     runner._last_activity = now - 4          # 4 s since the last reply played
     runner._play_cursor = now - 4
     return runner, advanced
@@ -145,7 +145,7 @@ def test_a_silent_participant_is_handed_off_once_the_timebox_is_up(on_model, mon
         assert runner._handoff_briefed and runner._handoff_probed
         assert runner.rt.committed == 1, "the character is made to say it"
         (hb,) = _events(runner, "handoff_briefed")
-        assert hb["next"] == "Sam" and hb["seconds"] >= 120
+        assert hb["next"] == "Sam" and hb["seconds"] >= 60
         (hp,) = _events(runner, "handoff_probed")
         assert hp["interaction"] == "i1"
         assert _events(runner, "stage_direction")[-1]["source"] == "handoff"
@@ -198,7 +198,7 @@ def test_before_the_timebox_nothing_changes(on_model, monkeypatch):
 
     async def go():
         runner, _ = _timeboxed(monkeypatch)
-        runner._interaction_started_at = time.time() - 60
+        runner._interaction_started_at = time.time() - 30
         assert await runner._proactive_handoff() is False
         assert not runner._handoff_briefed and runner.rt.committed == 0
     asyncio.run(go())
@@ -264,7 +264,7 @@ def test_the_hand_off_clock_is_a_knob(monkeypatch):
 # --------------------------------------------------------------------------
 
 def test_a_finalize_still_steering_is_not_overtaken_by_the_hand_off(on_model, monkeypatch):
-    """S1, timebox 120 s: reply R1 ends past the mark and its finalize
+    """S1, timebox 60 s: reply R1 ends past the mark and its finalize
     spends a long time in _steer. The watchdog must not brief and probe the
     closing line meanwhile; R1's own _maybe_advance briefs it, the watchdog
     then probes, and only the closing line's finalize advances."""
@@ -361,3 +361,51 @@ def test_a_refused_advance_keeps_the_hand_off_spent(on_model, monkeypatch):
         assert runner.segment == 1 or runner._series_idx == 1
         assert not runner._handoff_briefed and not runner._handoff_probed
     asyncio.run(go())
+
+
+def test_the_opening_is_one_minute_and_the_page_is_told_so():
+    """S1A and S1B: a minute with the colleague, then the counterpart for the
+    rest (2026-10-20; it was two minutes). The briefing's parts carry the
+    length so the page's timeline can draw it."""
+    from server import scenarios_v3 as v3
+    for sid, first, second in (("S1A", "Riley", "Sam"), ("S1B", "Mel", "Drew")):
+        parts = v3.compile_scenario(sid).briefing["parts"]
+        assert [p["with"] for p in parts] == [[first], [second]], sid
+        assert [p["timebox_seconds"] for p in parts] == [60, 0], sid
+
+
+def test_the_timeline_puts_the_hand_off_where_it_happened_and_unlock_at_the_floor():
+    import json, re, shutil, subprocess
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "static" / "v2.html").read_text(encoding="utf-8")
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    a = src.index("const HANDOFF_PAD_S")
+    b = src.index("  function renderTimeline(s)")
+    body = src[a:b]
+    script = """
+    let timelineParts = [{ with: ['Riley'], timebox_seconds: 60 }, { with: ['Sam'], timebox_seconds: 0 }];
+    let floorStartMs = 0, timerStartMs = 0, MAX_S = 600, MIN_S = 300;
+    const partStartsS = [];
+    let started = true;
+    """ + body + """
+    const out = {};
+    // Before the hand-off: planned from the first line (here at 7 s).
+    timerStartMs = Date.now() - 30000; floorStartMs = timerStartMs + 7000;
+    out.planned = timelineModel(30);
+    // After it: where it really happened.
+    partStartsS[1] = 83;
+    out.actual = timelineModel(95);
+    // A scenario with no fixed first part draws no timeline.
+    timelineParts = [{ with: ['Dan'], timebox_seconds: 0 }, { with: ['Dan'], timebox_seconds: 0 }];
+    out.none = timelineModel(10);
+    console.log(JSON.stringify(out));
+    """
+    res = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout)
+    assert out["planned"]["firstEnd"] == 7 + 60 + 20 and out["planned"]["unlock"] == 7 + 300
+    assert out["planned"]["n1"] == "Riley" and out["planned"]["n2"] == "Sam"
+    assert out["actual"]["firstEnd"] == 83 and out["actual"]["unlock"] == 307
+    assert out["none"] is None
