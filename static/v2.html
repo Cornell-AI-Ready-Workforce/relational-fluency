@@ -2189,7 +2189,7 @@
   // ---------- conversation timer ----------
   const pad2 = (n) => (n < 10 ? '0' : '') + n;
   // The timeline: the first part's fixed length with the colleague, then the
-  // counterpart for the rest, with the second End unlocks.
+  // counterpart for the rest, with the second the participant can end it.
   // Drawn on the timer's clock (what the participant reads); the first part's
   // end is the real hand-off once it has happened, the planned one before it.
   // Only for a scenario whose first part has a fixed length (S1A and S1B).
@@ -2221,7 +2221,7 @@
     const clock = (x) => pad2(Math.floor(x / 60)) + ':' + pad2(Math.round(x) % 60);
     $('tlAxis').innerHTML =
       `<span style="left:0">00:00</span>` +
-      `<span style="left:clamp(64px, ${pct(m.unlock)}, calc(100% - 64px));transform:translateX(-50%)">End unlocks ${clock(m.unlock)}</span>` +
+      `<span style="left:clamp(116px, ${pct(m.unlock)}, calc(100% - 116px));transform:translateX(-50%)">You can end the scenario at ${clock(m.unlock)}</span>` +
       `<span style="right:0">${clock(m.total)}</span>`;
   }
 
