@@ -1085,6 +1085,9 @@ class RealtimeVoiceSessionRunner:
         # are the measurement: each maps to ESCI items, and the participant's
         # response to it is what a rater scores.
         self._trigger_idx = 0
+        # The keep-going fallback's own counter (see _keep_going_trigger): it
+        # never touches _trigger_idx or _fired, which are the measurement.
+        self._after_idx = 0
         self._fired: List[str] = []
         self._last_activity = time.time()
         self._turns_this_interaction = 0
@@ -1676,6 +1679,46 @@ class RealtimeVoiceSessionRunner:
             return trig
         return None
 
+    # How many times an interaction's `after_beats` list is gone through before
+    # the fallback stops: a silent participant is prompted, not nagged to the
+    # ceiling.
+    KEEP_GOING_CYCLES = 2
+
+    def _keep_going_trigger(self) -> Optional[dict]:
+        """THE KEEP-GOING FALLBACK. A silent participant is only ever probed by
+        a planted beat that has not fired yet, so once every beat is spent
+        nothing prompts anyone again and the encounter sits in dead air until
+        the ceiling: nothing ends an encounter before it unless the participant
+        moves on (the end policy of 2026-09-28), and a character that tries to
+        wrap up is held to it. s_1792620472_d091ed (S3A, 2026-10-21) fired all
+        seven beats by 2:12, Casey said she should get back to her desk, Alex's
+        end_conversation was held to the ceiling, and the next three minutes had
+        no spoken line.
+
+        An interaction can list `after_beats`: [{agent, on_silence}, ...], the
+        moves its characters make once the planted beats are spent. They are
+        used ONLY to prompt a silent participant (never on a participant's turn),
+        cycle through the list KEEP_GOING_CYCLES times, and are not planted
+        beats: they write keep_going_probe, not trigger_fired, spend no
+        _trigger_idx and carry no ESCI items, so coverage is never overstated.
+        None when the interaction lists none or a planted beat is still to come."""
+        beats = self._interaction().get("after_beats") or []
+        if not beats or self._next_trigger() is not None:
+            return None
+        if self._after_idx >= self.KEEP_GOING_CYCLES * len(beats):
+            return None
+        b = beats[self._after_idx % len(beats)]
+        line = b.get("on_silence")
+        if not line:
+            return None
+        return {"id": f"keep_going_{self._after_idx + 1}", "agent": b.get("agent"),
+                "cue": line, "on_silence": line, "esci": [], "keep_going": True}
+
+    def _next_probe_trigger(self) -> Optional[dict]:
+        """What to say to a silent participant: the next planted beat, else the
+        interaction's keep-going move."""
+        return self._next_trigger() or self._keep_going_trigger()
+
     def _director_note(self, direction: str) -> str:
         """Wrap a stage direction the one way every path in this file wraps it.
 
@@ -1815,6 +1858,16 @@ class RealtimeVoiceSessionRunner:
         return f"Your next move, as {name}, now, in your own words: {trigger['cue']}"
 
     def _fire_trigger(self, trigger: dict, *, probing: bool) -> str:
+        if trigger.get("keep_going"):
+            # Not a planted beat: nothing here is coverage (see
+            # _keep_going_trigger).
+            self.session.store.event(
+                "keep_going_probe", trigger_id=trigger["id"],
+                interaction=self._interaction().get("id"),
+                segment=self.segment, agent_id=trigger.get("agent"),
+                index=self._after_idx)
+            self._after_idx += 1
+            return self._trigger_instruction(trigger, probing=True)
         self._fired.append(trigger["id"])
         self.session.store.event(
             "trigger_fired",
@@ -1949,6 +2002,7 @@ class RealtimeVoiceSessionRunner:
             self.segment += 1
             self._series_idx = 0
             self._trigger_idx = 0
+            self._after_idx = 0
             self._turns_this_interaction = 0
             self._handoff_briefed = False
             self._handoff_probed = False
@@ -8222,7 +8276,8 @@ class RealtimeVoiceSessionRunner:
         async with self._brief_lock:
             if self._handoff_briefed:
                 return  # the closing line is briefed; no beat goes in over it
-            trigger = self._next_trigger()
+            trigger = self._next_trigger() or (
+                self._keep_going_trigger() if probing else None)
             if trigger is None:
                 return
             direction = self._trigger_instruction(trigger, probing=probing)
@@ -8311,7 +8366,8 @@ class RealtimeVoiceSessionRunner:
         prev_agent, prev_id = self.agent, self.agent_id
         self.agent, self.agent_id = agent, agent_id
         try:
-            trigger = self._next_trigger()
+            trigger = self._next_trigger() or (
+                self._keep_going_trigger() if probing else None)
             if trigger is None:
                 return
             direction = self._trigger_instruction(trigger, probing=probing)
@@ -8532,7 +8588,7 @@ class RealtimeVoiceSessionRunner:
                 # produced a silent WAV and an empty transcript — missing data
                 # where the study design wants scoreable avoidance, and every
                 # on_silence line authored for a group trigger was dead text.
-                trigger = self._next_trigger()
+                trigger = self._next_probe_trigger()
                 if trigger is None or not trigger.get("on_silence"):
                     continue
                 # The idle clock is deliberately NOT reset here. _probe_room
@@ -8548,7 +8604,7 @@ class RealtimeVoiceSessionRunner:
                 # leaving it holding the floor into the next scene.
                 self._spawn_group_turn(self._probe_room())
                 continue
-            trigger = self._next_trigger()
+            trigger = self._next_probe_trigger()
             if trigger is None or not trigger.get("on_silence"):
                 continue
             self._last_activity = time.time()
@@ -8638,7 +8694,7 @@ class RealtimeVoiceSessionRunner:
             room = self.room
             if room is None or self._closed:
                 return
-            trigger = self._next_trigger()
+            trigger = self._next_probe_trigger()
             if trigger is None or not trigger.get("on_silence"):
                 return
             speaker = self._trigger_agent(trigger)

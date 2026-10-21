@@ -779,3 +779,24 @@ interactions:
         cue: "Late, if the meeting is still going, ask what they would tell the next person who asks why anyone is still here. Dryly, as a question, and leave it to them. Not a fresh round of the argument."
         on_silence: "what they would tell the next person who asks why anyone is still here."
         esci: [compelling_vision, not_inspire_r, inspires]
+    # Once every planted beat is spent, nothing prompts a silent participant
+    # again, and the encounter sits in dead air until the ceiling (S3A,
+    # 2026-10-21: all seven beats fired by 2:12, Casey said she had to get back
+    # to her desk, and nobody spoke for the last three minutes). These are the
+    # moves the characters make then, to a participant who has gone quiet:
+    # cycled twice, never on a participant's turn, and not planted beats (they
+    # carry no ESCI items and do not count as coverage). See
+    # RealtimeVoiceSessionRunner._keep_going_trigger.
+    after_beats:
+      - agent: toni
+        on_silence: "ask what exactly changes about the numbers next month, who answers for it when it slips, and wait."
+      - agent: lee
+        on_silence: "say one figure from your own accounts and stop; no explanation."
+      - agent: ari
+        on_silence: "check one detail of what you were told about your draw with one short question, the date or the amount, and thank them for answering."
+      - agent: toni
+        on_silence: "say what you would need to see in writing before you believed any of it, as a flat statement, and leave it standing."
+      - agent: lee
+        on_silence: "say a second figure from your own accounts, in a sentence, and stop."
+      - agent: ari
+        on_silence: "say what is still unclear to you about your draw, in one short sentence, and apologise once for asking."
