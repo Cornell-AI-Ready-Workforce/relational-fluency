@@ -891,9 +891,9 @@ const START = "You start the conversation. Say hello when you're ready.";
     $('stopBtn').click();
     assert(/^This conversation ends automatically in about 1 minute\./.test($('gateNote').textContent),
       $('gateNote').textContent);
+    const before = $('gateNote').textContent;
     p.frame({ type: 'floor_held', seconds_left: 50 });
-    assert.strictEqual($('gateNote').textContent,
-      'Keep going — this conversation ends automatically in about 1 minute.');
+    assert.strictEqual($('gateNote').textContent, before, 'floor_held no longer says anything');
   }
 
   // ---- A hand-off before any accepted line leaves one cue, not two

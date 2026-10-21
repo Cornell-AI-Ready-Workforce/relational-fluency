@@ -852,6 +852,10 @@ def _briefing(spec: dict) -> dict:
         # A scenario's own intro card (the spec's `intro_card`), which the page
         # draws in place of the generic situation card. None when it has none.
         "card": spec.get("intro_card"),
+        # 'bar': the page draws a names-free progress bar with the End-unlocks
+        # marker (S3A and S3B). Without it only a scenario whose first part has
+        # a fixed length gets a timeline (S1, with its two characters).
+        "timeline": spec.get("timeline") or "",
         # Facts the participant holds. S2's ladder is only winnable if they know
         # they have the precedent, so withholding these does not test skill,
         # it tests whether they guessed.

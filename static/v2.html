@@ -1901,6 +1901,7 @@
   // The conversation's plan (the briefing's parts), and the second on the
   // timer when each part actually began, for the timeline.
   let timelineParts = [];
+  let timelineKind = '';   // 'bar': a names-free progress bar (S3A, S3B)
   const partStartsS = [];
   let lastScenePeople = null;   // who was present at the previous segment_start (null before the first)
 
@@ -2195,6 +2196,12 @@
   // Only for a scenario whose first part has a fixed length (S1A and S1B).
   const HANDOFF_PAD_S = 20;   // the colleague's closing line, after the timebox
   function timelineModel(s) {
+    if (timelineKind === 'bar') {
+      // One room, one conversation: how far along it is, and when End unlocks.
+      const at = floorStartMs && timerStartMs ? Math.max(0, (floorStartMs - timerStartMs) / 1000) : 0;
+      return { plain: true, total: MAX_S, firstEnd: Math.min(s, MAX_S),
+               unlock: Math.min(at + MIN_S, MAX_S), n1: '', n2: '', now: Math.min(s, MAX_S) };
+    }
     const first = timelineParts[0];
     if (timelineParts.length < 2 || !first || !(first.timebox_seconds > 0)) return null;
     const offset = floorStartMs && timerStartMs ? Math.max(0, (floorStartMs - timerStartMs) / 1000) : 0;
@@ -4457,14 +4464,12 @@
         applyPresence();
       } else if (m.type === 'floor_held') {
         // The server declined to finish the encounter before the floor (the
-        // participant's move-on, or the character saying goodbye early).
-        // Nothing to do but say so; the conversation carries on.
-        // seconds_left is the nearer of the floor and the stop; when the stop
-        // is nearer, that is what the note says.
-        const left = Math.max(1, Math.ceil((m.seconds_left || 0) / 60));
-        showGateNote(stopBeforeFloor(encounterElapsedS())
-          ? `Keep going — this conversation ends automatically in about ${minutesText(m.seconds_left || 0)}.`
-          : `Keep going — ${canMoveOnIn(left)}.`);
+        // participant's move-on, or the character saying goodbye early). The
+        // conversation carries on and the page says nothing: it used to print
+        // "Keep going — you can end this conversation in about 4 minutes."
+        // (removed 2026-10-22: the End button's own state, its label and the
+        // timeline already say when it unlocks, and a character saying
+        // goodbye early is carried on by the room, not by a notice).
       } else if (m.type === 'encounter_clock') {
         // The runner's own floor, wrap and stop, on every link type (a direct
         // link has no run to read them from), and where its clock stands: the
@@ -5196,6 +5201,7 @@
       showTitle(d);
       goalText = (d.briefing && d.briefing.goal) || '';
       timelineParts = (d.briefing && d.briefing.parts) || [];
+      timelineKind = (d.briefing && d.briefing.timeline) || '';
       const refHtml = briefingHtml(d, true);
       if (refHtml) {
         $('briefBody').classList.add('rich');

@@ -385,6 +385,7 @@ def test_the_timeline_puts_the_hand_off_where_it_happened_and_unlock_at_the_floo
     b = src.index("  function renderTimeline(s)")
     body = src[a:b]
     script = """
+    let timelineKind = "";
     let timelineParts = [{ with: ['Riley'], timebox_seconds: 60 }, { with: ['Sam'], timebox_seconds: 0 }];
     let floorStartMs = 0, timerStartMs = 0, MAX_S = 600, MIN_S = 300;
     const partStartsS = [];

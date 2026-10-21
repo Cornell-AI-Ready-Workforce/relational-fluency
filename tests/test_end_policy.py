@@ -400,12 +400,10 @@ function page(search, runObj) {
       label + ': ' + $('gateLabel').textContent);
     // The character saying goodbye early: the conversation carries on.
     p.frame({ type: 'floor_held', seconds_left: 180 });
-    const held = $('gateNote').textContent;
-    assert(/^Keep going — you can (move on to the next conversation|end this conversation) in about 3 minutes\.$/.test(held),
-      label + ': ' + held);
+    assert.strictEqual($('gateNote').textContent, early, label + ': floor_held said something: ' + $('gateNote').textContent);
     assert.strictEqual(p.moveOns().length, 0, label + ': a move-on notice before the floor');
-    // Both replies stay readable after they fade, once each.
-    assert.deepStrictEqual(p.notices(), [early, held], label + ': ' + JSON.stringify(p.notices()));
+    // Nothing new is said or kept: only the reply to the press.
+    assert.deepStrictEqual(p.notices(), [early], label + ': ' + JSON.stringify(p.notices()));
 
     // At the floor: unlocked, and told once, neutrally.
     p.at(301);
