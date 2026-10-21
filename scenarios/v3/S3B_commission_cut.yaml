@@ -31,6 +31,10 @@ setup: >-
 # What the participant is told they are there to do. Shown on the situation
 # card and kept on screen under the header for the whole conversation. It is
 # the task, in their terms; never the construct or what the raters look for.
+# The page draws a progress bar with the End-unlocks marker for this scenario
+# (no names on it: one room, one conversation).
+timeline: bar
+
 goal: >-
   You want to help the team cope with the cut: be honest about what has changed, and leave with commitments you can actually keep.
 
@@ -489,6 +493,9 @@ agents:
         any wording.
 
       In the team meeting:
+      - The first thing you say in this meeting is a hello to the room, a few
+        plain words, the way anyone greets a new lead, and then you go on. One
+        short sentence, no warm-up speech. What you came to say follows it.
       - Early, out loud, with Lee and Ari right there, put it to your new lead
         that corporate cut the team's pay and sent them down here to sell it
         back to the people it was taken from. You have nothing prepared. It
@@ -560,6 +567,9 @@ agents:
         something.
 
       In the team meeting:
+      - The first time you speak in this meeting you begin with a hello of a word
+        or two, flat, the way you would greet anyone, and then you say the rest.
+        The hello is not an opening.
       - Until your new lead turns to you, you let Toni carry it. She says what
         you both think and you do not add to it or agree with it out loud.
       - You do not get to call the end of this meeting and you do not narrate
@@ -670,6 +680,9 @@ agents:
         are allowed to, which is the thing you are most afraid of doing.
 
       In the team meeting:
+      - The first time you speak you begin with a quiet hello, a few words, and
+        then the rest. The hello does not count as your apology, and it is not a
+        reason to say less of what you came to say.
       - You keep out of it until you are brought in. Toni is angry and Lee is
         saying nothing and you are eleven weeks in — you are not going to be
         the one who speaks first, and you do not raise your pay on your own.
@@ -736,7 +749,7 @@ interactions:
       # hands the floor to first.
       - id: t1_public_challenge
         agent: toni
-        cue: "Early, and with Lee and Ari listening, accuse them to their face of having been sent down here to sell this team its own pay cut. THE ACCUSATION IS THE BEAT and it leads — put it first, flat, as a statement they have to answer in front of the others; corporate having taken the money, and their job being to make that sound reasonable to the people it was taken from, is what you back it up with. In front of the others, not privately afterwards."
+        cue: "Open with a short, plain hello to the room, a few words, the way anyone greets a new lead. Then, early, and with Lee and Ari listening, accuse them to their face of having been sent down here to sell this team its own pay cut. THE ACCUSATION IS THE BEAT and it leads — put it first, flat, as a statement they have to answer in front of the others; corporate having taken the money, and their job being to make that sound reasonable to the people it was taken from, is what you back it up with. In front of the others, not privately afterwards."
         # Substance, not a described move: this completes the probe wrapper's
         # "say this now in your own words: …". See the header, and S3A's longer
         # note, for what the described-move version was making the actor say.
@@ -747,7 +760,7 @@ interactions:
       # first time the lead turns to Lee, or on the probe if nobody does.
       - id: t2_resignation_in_place
         agent: lee
-        cue: "The first time they turn to you in this meeting, whatever they have asked: make it transactional in front of the others before they can make it anything else. THE GIVING-UP IS THE BEAT and it leads — assert first that you have stopped tracking what the restructuring costs you personally, before you answer any part of what they asked; only then request the quota figure, and nothing besides. Flat, civil, incurious, offering them no opening, and said to the lead, not to Toni or Ari."
+        cue: "A hello of a word or two comes first, flat, the way you would greet anyone. Then, the first time they turn to you in this meeting, whatever they have asked: make it transactional in front of the others before they can make it anything else. THE GIVING-UP IS THE BEAT and it leads — assert first that you have stopped tracking what the restructuring costs you personally, before you answer any part of what they asked; only then request the quota figure, and nothing besides. Flat, civil, incurious, offering them no opening, and said to the lead, not to Toni or Ari."
         on_silence: "that you have stopped keeping score of what the restructuring costs you, and then the only question you want out of this — what your number is for the year."
         esci: [brings_out_best, inspires]
       # Bound to Ari and performed in the meeting, matching S3A's t3. The probe
@@ -756,7 +769,7 @@ interactions:
       # himself has answered his own question.
       - id: t3_anxious_junior
         agent: ari
-        cue: "The first turn they give you in this meeting — by name, or by asking the room what people need — finally raise, in front of everyone, the two things you have been sitting on: your draw came through different from what you expected, and you have concluded it must be because of something you did. BOTH have to be said, in this turn, however clumsily. That nobody explained it to you is worth saying as well, but it is not one of the two. Apologise for asking, and frame it as a question, because you are not certain you are allowed to raise it in front of the others at all."
+        cue: "A quiet hello comes first, a few words, and it does not count as the apology. Then, the first turn they give you in this meeting — by name, or by asking the room what people need — finally raise, in front of everyone, the two things you have been sitting on: your draw came through different from what you expected, and you have concluded it must be because of something you did. BOTH have to be said, in this turn, however clumsily. That nobody explained it to you is worth saying as well, but it is not one of the two. Apologise for asking, and frame it as a question, because you are not certain you are allowed to raise it in front of the others at all."
         on_silence: "that your draw came through different from what you expected, and that you think the reason is something you did."
         esci: [brings_out_best, builds_pride]
       - id: t4_what_the_team_is_for
