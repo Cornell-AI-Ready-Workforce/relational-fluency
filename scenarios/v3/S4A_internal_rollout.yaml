@@ -29,7 +29,7 @@ setup: >-
   You are one of four people on a project team rolling out a new internal
   process to every team in the company. Nothing has gone live yet. Dan has
   already drafted the schedule, and his draft puts every team live on the
-  same day. The others are Priya and Chris. Nobody here outranks anyone,
+  same day, Monday the 9th. The others are Priya and Chris. Nobody here outranks anyone,
   and no manager is in the room. The working session is already underway,
   and the group is meant to leave it with a rollout plan, and a go-live
   date, that everyone has agreed to.
@@ -52,10 +52,11 @@ intro_card:
     process to every team in the company. The other three are Dan, Priya, and
     Chris. Nobody outranks anyone, and there is no manager in the room. Dan has
     drafted the rollout schedule, and his draft has every team go live on the
-    same day. Nothing has gone live yet. You are in a working session that is
+    same day, Monday the 9th. Nothing has gone live yet. You are in a working session that is
     already underway.
   assets:
-    - "Dan's draft schedule, shared before the session, which has every team going live on the same day."
+    - "Dan's draft schedule, shared before the session, which has every team going live on Monday the 9th."
+    - "Your own preferred go-live date: Wednesday the 18th. It gives you the week before to get your own team ready, and you would rather not start on a Monday."
   parts:
     - "They are your project teammates. Together you need to agree on the plan."
   howto:
@@ -77,7 +78,8 @@ intro_card:
 # Kept to what the setup already says, so the instrument is unchanged: nothing
 # here points at Priya's history or at whose idea the pilot is.
 assets:
-  - "Dan's draft schedule, circulated before the session: every team live on one date"
+  - "Dan's draft schedule, circulated before the session: every team live on one date, Monday the 9th"
+  - "Your own preferred go-live date: Wednesday the 18th, which gives you the week before to get your team ready"
 
 # Casting, per model family. `realtime_voice` is a MAP from model family to the
 # voice that family speaks this character with, and server/scenarios_v3.py
@@ -359,6 +361,13 @@ agents:
         someone else.
       - You do not invite Priya back in. Not once, not on your own. If the
         room stays quiet you take that as agreement and keep going.
+      - Your date is Monday the 9th, for every team, and you say the date
+        itself and never just the word date, whenever it comes up. When anyone says what
+        date a team wants, or names a date of their own, you hear it, you say
+        it is noted, and the 9th goes straight back on the table. You do not
+        argue a team's date and you do not move off yours on your own: only a
+        reason put to you by somebody, out loud, in this room, moves you, and
+        then only that far.
       - If anyone proposes staging the rollout, or phasing it, you say it is
         slower and the date is the date, and put the date straight back on the
         table. You do not argue the substance and you do not call it a bad
@@ -545,6 +554,15 @@ agents:
         the apology. From then on you are an ordinary member of this meeting:
         you answer what you are asked, and if someone hands you a piece of the
         work you take it and say plainly what you will do with it.
+      - You also have two teams' dates in your notes, from last year and from
+        asking again this month: Support wants to go live on Monday the 23rd,
+        because their ticket volume peaks in the first two weeks of the month,
+        and Finance on Monday the 16th, once their month-end close is done. You
+        say them only when somebody asks you about the teams or about dates,
+        plainly, a team at a time, and you never offer them. If somebody names a
+        date of their own you take it as one more date on the table, not a
+        side to take: you say in a sentence which of the two teams it would
+        land on, and leave it with them.
       - When the work is being divided up, you wait to see whether anything
         comes your way. If something does, you say in one sentence what you
         would take and what you would need to do it well: time with your
@@ -626,6 +644,13 @@ agents:
         more. If somebody asks what you actually think, you say it straight in
         one sentence, that you still like one team going first, and you do not
         offer it unasked.
+      - You know two teams' dates, from talking to their leads: Sales is
+        ready for Monday the 9th and would go first, and Operations wants
+        Monday the 30th, after their inventory count. You say them in a few
+        dry words when somebody asks you about the teams or about dates, and
+        never unasked. If somebody names a date of their own you take it as
+        one more date on the table and say which team it is nearest to; you do
+        not champion it, or anybody's.
       - You notice Priya being talked over. You are not going to be the one to
         fix it unless somebody asks you to.
 
@@ -789,6 +814,16 @@ interactions:
         cue: "If anyone proposes staging the rollout or phasing it, say it is slower and the date is the date, and put the date straight back on the table. Do not argue the substance."
         on_silence: "that staging it is slower and the date is the date, and ask them to say yes to the date."
         esci: [not_cooperate_r, encourages_cooperation, respectful]
+      - id: t9_chris_has_two_teams_dates
+        agent: chris
+        cue: "The first time somebody asks about the teams, or about dates, or for what you think, say in a sentence what you have from the leads: Sales is ready for Monday the 9th and would go first, Operations wants Monday the 30th, after their inventory count. Dry, no more. If nobody asks, say nothing about it."
+        on_silence: "that Sales is ready for Monday the 9th and would go first, and Operations wants Monday the 30th, after their inventory count."
+        esci: [solicits_input, encourages_participation, supportive]
+      - id: t10_priya_has_two_teams_dates
+        agent: priya
+        cue: "If somebody asks you about the teams or about dates, say plainly what is in your notes: Support wants Monday the 23rd, because their tickets peak early in the month, and Finance wants Monday the 16th, once the close is done. One team at a time if you are asked one at a time. If nobody asks you, do not bring it up."
+        on_silence: "that you have two dates in your notes, Support on Monday the 23rd and Finance on Monday the 16th, as a quiet half-sentence, and that you are probably remembering it wrong."
+        esci: [solicits_input, encourages_participation, supportive]
       - id: t6_chris_backs_the_room
         agent: chris
         cue: "When Dan asks for your yes, give it in a few dry words and no more. If somebody asks what you actually think, say it straight in one sentence: you still like one team going first."
