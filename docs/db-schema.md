@@ -1,7 +1,10 @@
 # Analysis database schema (draft 1)
 
 Draft of 2026-09-22. DDL is in [`db-schema.sql`](db-schema.sql) (PostgreSQL;
-loads clean on Postgres 16). The loader is
+loads clean on Postgres 16). An entity-relationship diagram of every table
+and column, generated from the DDL, is [`db-schema-erd.html`](db-schema-erd.html)
+(open it in a browser; regenerate with `python tools/db_schema_erd.py` after a
+schema change). The loader is
 [`tools/load_analysis_db.py`](../tools/load_analysis_db.py); it has been run
 against the full S3 archive (66 encounters: 20 with records, 46 rebuilt from
 video) into a local Postgres. This is a proposal for review, not something the

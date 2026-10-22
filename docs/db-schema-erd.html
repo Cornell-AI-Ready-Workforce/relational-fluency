@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rf Analysis Schema</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column; diagrams may run wider inside their own scroll box. */
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --fg: #1b2230; --muted: #5b6577; --rule: #d9dee6;
+  --accent: #0f6e6a; --accent-ink: #ffffff; --accent-soft: #dff0ee; --code-bg: #eef1f5;
+  --sans: "Public Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161d; --panel: #1a2029; --fg: #e6eaf0; --muted: #9aa5b5; --rule: #2b333f;
+  --accent: #4fb8b1; --accent-ink: #0b1a19; --accent-soft: #163a38; --code-bg: #222a35; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12161d; --panel: #1a2029; --fg: #e6eaf0; --muted: #9aa5b5; --rule: #2b333f;
+  --accent: #4fb8b1; --accent-ink: #0b1a19; --accent-soft: #163a38; --code-bg: #222a35; color-scheme: dark }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 48px; }
+.wrap { max-width: 1120px; margin: 0 auto; }
+header { padding-block: 36px 20px; border-bottom: 1px solid var(--rule); }
+h1 { font-size: clamp(1.7rem, 3.5vw, 2.4rem); font-weight: 800; letter-spacing: -0.02em; margin: 0 0 6px; text-wrap: balance; }
+.sub { color: var(--muted); margin: 0; max-width: 70ch; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 16px 0 0; padding: 0; list-style: none; font-size: 0.92rem; color: var(--muted); }
+.facts b { color: var(--fg); font-variant-numeric: tabular-nums; }
+code { font-family: var(--mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--rule); }
+nav ul { display: flex; gap: 4px 14px; flex-wrap: wrap; list-style: none; margin: 0; padding: 10px 0; font-size: 0.86rem; }
+nav a { color: var(--muted); text-decoration: none; font-weight: 600; letter-spacing: 0.01em; }
+nav a:hover, nav a:focus-visible { color: var(--accent); outline: none; text-decoration: underline; }
+section { padding-block: 34px 6px; border-bottom: 1px solid var(--rule); }
+h2 { font-size: 1.3rem; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 6px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lede { color: var(--muted); max-width: 72ch; margin: 0 0 6px; }
+.src { font-size: 0.86rem; color: var(--muted); margin: 0 0 14px; }
+.src code { color: var(--fg); }
+.chip { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); }
+.step2 { border-left: 4px solid var(--accent); padding-left: 16px; margin-left: -20px; }
+.diagram { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; overflow-x: auto; padding: 14px; }
+.diagram pre.mermaid { margin: 0; min-width: 0; font-family: var(--mono); }
+figure { margin: 0 0 14px; }
+figcaption { font-size: 0.86rem; color: var(--muted); margin-top: 8px; max-width: 80ch; }
+.howto { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 24px; margin: 14px 0 0; padding: 0; list-style: none; font-size: 0.9rem; color: var(--muted); }
+.howto b { color: var(--fg); font-weight: 600; }
+.tables { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px 18px; margin: 10px 0 14px; padding: 0; list-style: none; font-size: 0.9rem; }
+.tables li { min-width: 0; }
+.tables .pk { color: var(--muted); }
+.views li { margin-bottom: 6px; }
+footer { padding-top: 22px; color: var(--muted); font-size: 0.86rem; max-width: 80ch; }
+@media (max-width: 600px) { .step2 { margin-left: 0; padding-left: 12px; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>rf Analysis Schema</h1>
+  <p class="sub">The Relational Fluency analysis database as declared in <code>docs/db-schema.sql</code> (file last changed in commit <code>c17f79d</code>). It runs as PostgreSQL 16 on RDS, instance <code>relational-fluency-analysis</code>, database <code>rf</code>, schema <code>rf</code>. S3 stays the record; this database is a copy loaded from it by <code>tools/load_analysis_db.py</code>.</p>
+  <ul class="facts">
+    <li><b>29</b> tables</li><li><b>262</b> columns</li><li><b>38</b> foreign keys</li><li><b>3</b> views</li>
+  </ul>
+  <ul class="howto">
+    <li><b>Crow's foot</b> on an edge: the many side. A double bar is exactly one; a circle means optional (the column is nullable).</li>
+    <li><b>Edge label</b> is the referencing column or columns in the child table.</li>
+    <li><b>PK / FK</b> after a column mark primary and foreign keys. Composite keys are marked on each column.</li>
+    <li><b>Types</b> are Postgres types with precision dropped: <code>numeric(8,1)</code> shows as <code>numeric</code>.</li>
+  </ul>
+</header>
+<nav aria-label="Sections"><ul>
+  <li><a href="#overview">Overview</a></li>
+  <li><a href="#g1">Scenario bank</a></li>
+  <li><a href="#g2">People and runs</a></li>
+  <li><a href="#g3">Encounters</a></li>
+  <li><a href="#g4">Media and transcripts</a></li>
+  <li><a href="#g5">Surveys</a></li>
+  <li><a href="#g6">Ratings and scores</a></li>
+  <li><a href="#g7">RCT</a></li>
+  <li><a href="#g8">Operations</a></li>
+  <li><a href="#views">Views</a></li>
+</ul></nav>
+<section id="overview">
+  <h2>Overview</h2>
+  <p class="lede">Every table and every foreign key, without columns. Group 1 is reference data; groups 2 to 4 are loaded from the S3 archive; group 5 from Qualtrics exports; group 6 is where step 2 writes; groups 7 and 8 are not produced yet.</p>
+  <figure>
+    <div class="diagram"><pre class="mermaid">
+erDiagram
+    construct
+    esci_item
+    scenario
+    scenario_agent
+    interaction
+    planted_trigger
+    participant
+    participant_identity
+    run
+    run_slot
+    withdrawal
+    encounter
+    encounter_cast
+    turn
+    stage_direction
+    trigger_firing
+    director_route
+    event
+    media
+    transcript_version
+    survey
+    survey_response
+    rater
+    rating_assignment
+    rating
+    model_score
+    rct_assignment
+    feedback_delivery
+    deployment
+    construct ||--o{ esci_item : "construct"
+    construct ||--o{ scenario : "construct"
+    scenario |o--o{ scenario : "parallel_form"
+    scenario ||--o{ scenario_agent : "scenario_id"
+    scenario ||--o{ interaction : "scenario_id"
+    interaction ||--o{ planted_trigger : "scenario_id,interaction_id"
+    participant ||--|| participant_identity : "participant_id"
+    participant |o--o{ run : "participant_id"
+    run |o--o{ run : "sibling_run_id"
+    run ||--o{ run_slot : "run_id"
+    construct ||--o{ run_slot : "construct"
+    scenario ||--o{ run_slot : "scenario_id"
+    run ||--|| withdrawal : "run_id"
+    run ||--o{ withdrawal : "withdrawn_on_run_id"
+    run |o--o{ encounter : "run_id"
+    participant |o--o{ encounter : "participant_id"
+    scenario |o--o{ encounter : "scenario_id"
+    run_slot |o--o{ encounter : "run_id,slot"
+    encounter ||--o{ encounter_cast : "encounter_id"
+    encounter ||--o{ turn : "encounter_id"
+    encounter ||--o{ stage_direction : "encounter_id"
+    turn |o--o{ stage_direction : "reply_turn_id"
+    encounter ||--o{ trigger_firing : "encounter_id"
+    encounter ||--o{ director_route : "encounter_id"
+    encounter ||--o{ event : "encounter_id"
+    encounter ||--o{ media : "encounter_id"
+    encounter ||--o{ transcript_version : "encounter_id"
+    survey ||--o{ survey_response : "survey_id"
+    participant |o--o{ survey_response : "participant_id"
+    run |o--o{ survey_response : "run_id"
+    encounter ||--o{ rating_assignment : "encounter_id"
+    rater ||--o{ rating_assignment : "rater_id"
+    rating_assignment ||--o{ rating : "assignment_id"
+    esci_item ||--o{ rating : "construct,item_key"
+    encounter ||--o{ model_score : "encounter_id"
+    esci_item ||--o{ model_score : "construct,item_key"
+    participant ||--|| rct_assignment : "participant_id"
+    run ||--o{ feedback_delivery : "run_id"
+    </pre></div>
+    <figcaption>All 29 tables and 38 foreign keys. <code>encounter</code> is the hub: seven child tables hang off it and the rating and scoring tables point back at it.</figcaption>
+  </figure>
+</section>
+<section id="g1">
+  <h2>1 · Scenario bank</h2>
+  <p class="lede">The instrument: the eight forms (S1A to S4B), their casts and actor briefs, the two interactions each, and the planted triggers with their high and low anchors. ESCI items key on the construct because parallel forms share them.</p>
+  <p class="src">Loaded from <code>scenarios/v3/*.yaml</code></p>
+  <ul class="tables"><li><code>construct</code> <span class="pk">PK construct</span></li><li><code>esci_item</code> <span class="pk">PK construct, item_key</span></li><li><code>scenario</code> <span class="pk">PK scenario_id</span></li><li><code>scenario_agent</code> <span class="pk">PK scenario_id, agent_id</span></li><li><code>interaction</code> <span class="pk">PK scenario_id, interaction_id</span></li><li><code>planted_trigger</code> <span class="pk">PK scenario_id, trigger_id</span></li></ul>
+  <figure>
+    <div class="diagram"><pre class="mermaid">
+erDiagram
+    construct {
+        text construct PK
+        text label
+        text esci_cluster
+    }
+    esci_item {
+        text construct PK,FK
+        text item_key PK
+        text label
+        boolean reverse_keyed
+    }
+    scenario {
+        text scenario_id PK
+        text construct FK
+        char variant
+        text parallel_form FK
+        text title
+        smallint duration_min_minutes
+        smallint duration_max_minutes
+        text skill_measured
+        text setup
+        text spec_sha256
+        text spec_version
+        date fielded_from
+        date fielded_to
+    }
+    scenario_agent {
+        text scenario_id PK,FK
+        text agent_id PK
+        text name
+        text display_role
+        text internal_role
+        text voice_gemini_live
+        text voice_gpt_realtime
+        text system_prompt
+        text system_prompt_sha256
+    }
+    interaction {
+        text scenario_id PK,FK
+        text interaction_id PK
+        smallint position
+        text mode
+        text kind
+        text label
+        text opening
+        text observe
+        text[] agents
+    }
+    planted_trigger {
+        text scenario_id PK,FK
+        text interaction_id FK
+        text trigger_id PK
+        smallint position
+        text cue
+        text on_silence
+        text[] esci_items
+        text high_answer
+        text high_why
+        text low_answer
+        text low_why
+    }
+    construct ||--o{ esci_item : "construct"
+    construct ||--o{ scenario : "construct"
+    scenario |o--o{ scenario : "parallel_form"
+    scenario ||--o{ scenario_agent : "scenario_id"
+    scenario ||--o{ interaction : "scenario_id"
+    interaction ||--o{ planted_trigger : "scenario_id,interaction_id"
+    </pre></div>
+    <figcaption>6 tables, every column.</figcaption>
+  </figure>
+</section>
+<section id="g2">
+  <h2>2 · People and runs</h2>
+  <p class="lede">One row per participant, with the CloudResearch key split into a restricted identity table. A run is the four-slot assignment with its arm and Williams row; slots exist whether or not the encounter happened. Withdrawal is the stop-button stamp.</p>
+  <p class="src">Loaded from <code>data/runs/&lt;run_id&gt;.json, data/participants/&lt;pid&gt;.json</code></p>
+  <ul class="tables"><li><code>participant</code> <span class="pk">PK participant_id</span></li><li><code>participant_identity</code> <span class="pk">PK participant_id</span></li><li><code>run</code> <span class="pk">PK run_id</span></li><li><code>run_slot</code> <span class="pk">PK run_id, slot</span></li><li><code>withdrawal</code> <span class="pk">PK run_id</span></li></ul>
+  <figure>
+    <div class="diagram"><pre class="mermaid">
+erDiagram
+    participant {
+        text participant_id PK
+        text cohort
+        timestamptz created_at
+        text minted_for_run_id
+        timestamptz withdrawn_at
+    }
+    participant_identity {
+        text participant_id PK,FK
+        text participant_key
+        text participant_key_status
+        text raw_participant_key
+    }
+    run {
+        text run_id PK
+        text participant_id FK
+        text cohort
+        timestamptz created_at
+        text arm
+        jsonb construct_pool
+        text order_scheme
+        smallint order_row
+        jsonb form_exclusions
+        jsonb variants
+        text survey1_response_id
+        text survey2_response_id
+        text completion_code
+        timestamptz completed_at
+        smallint attempt_number
+        text sibling_run_id FK
+        jsonb other_arm_runs
+    }
+    run_slot {
+        text run_id PK,FK
+        smallint slot PK
+        text construct FK
+        text scenario_id FK
+        text encounter_id
+    }
+    withdrawal {
+        text run_id PK,FK
+        timestamptz withdrawn_at
+        text reason
+        text encounter_id
+        smallint slot_index
+        smallint completed_count
+        text withdrawn_on_run_id FK
+    }
+    construct
+    scenario
+    participant ||--|| participant_identity : "participant_id"
+    participant |o--o{ run : "participant_id"
+    run |o--o{ run : "sibling_run_id"
+    run ||--o{ run_slot : "run_id"
+    construct ||--o{ run_slot : "construct"
+    scenario ||--o{ run_slot : "scenario_id"
+    run ||--|| withdrawal : "run_id"
+    run ||--o{ withdrawal : "withdrawn_on_run_id"
+    </pre></div>
+    <figcaption>5 tables, every column. Tables from other groups (<code>construct</code>, <code>scenario</code>) are drawn without columns; their definitions are in their own section.</figcaption>
+  </figure>
+</section>
+<section id="g3">
+  <h2>3 · Encounters</h2>
+  <p class="lede">The conversation as recorded: every turn on both sides, each stage direction paired to the reply it produced, each planted trigger as it fired or was retracted, who the director chose to speak, and the raw event trail. Provenance and integrity counts sit on the encounter row.</p>
+  <p class="src">Loaded from <code>manifest.json, record.json, events.jsonl</code></p>
+  <ul class="tables"><li><code>encounter</code> <span class="pk">PK encounter_id</span></li><li><code>encounter_cast</code> <span class="pk">PK encounter_id, agent_id</span></li><li><code>turn</code> <span class="pk">PK turn_id</span></li><li><code>stage_direction</code> <span class="pk">PK direction_id</span></li><li><code>trigger_firing</code> <span class="pk">PK firing_id</span></li><li><code>director_route</code> <span class="pk">PK encounter_id, t</span></li><li><code>event</code> <span class="pk">PK event_id</span></li></ul>
+  <figure>
+    <div class="diagram"><pre class="mermaid">
+erDiagram
+    encounter {
+        text encounter_id PK
+        text run_id FK
+        smallint slot FK
+        text participant_id FK
+        text scenario_id FK
+        text cohort
+        timestamptz started_at
+        timestamptz ended_at
+        numeric duration_s
+        text status
+        text gateway
+        text realtime_model
+        text text_model
+        text director_model
+        text steering_model
+        text pipeline_version
+        text room_pacing_version
+        jsonb pipeline_provenance
+        int deploy_revision
+        text spec_sha256
+        text[] spec_trigger_ids
+        int participant_turns
+        int agent_turns
+        int stage_directions
+        int script_mismatch_turns
+        int unheard_turns
+        text participant_channel_state
+        int participant_channel_losses
+        numeric untranscribed_s
+        text video_upload_state
+        int video_upload_attempts
+        text video_upload_error
+        text archive_uri
+    }
+    encounter_cast {
+        text encounter_id PK,FK
+        text agent_id PK
+        text name
+        text voice
+    }
+    turn {
+        bigserial turn_id PK
+        text encounter_id FK
+        int seq
+        numeric t
+        timestamptz wall
+        text role
+        text agent_id
+        smallint segment
+        text interaction_id
+        text text
+        boolean interrupted
+        boolean transcript_missing
+        boolean garbled
+        boolean script_mismatch
+        text participant_channel
+        int audio_ms
+        numeric latency_s
+    }
+    stage_direction {
+        bigserial direction_id PK
+        text encounter_id FK
+        int turn_index
+        bigint reply_turn_id FK
+        numeric t
+        text agent_id
+        smallint segment
+        text interaction_id
+        text direction
+        text trigger_id
+        text[] esci_items
+        boolean probing
+        boolean opening
+        text via
+        boolean acked
+        text director_model
+        text instructions_sha256
+    }
+    trigger_firing {
+        bigserial firing_id PK
+        text encounter_id FK
+        text trigger_id
+        text interaction_id
+        smallint plan_index
+        numeric t
+        text agent_id
+        boolean probing
+        text[] esci_items
+        text outcome
+        text reason
+        text routed_to
+    }
+    director_route {
+        text encounter_id PK,FK
+        numeric t PK
+        text[] speakers
+        text addressed
+        boolean fallback
+        text fallback_reason
+        text fallback_detail
+    }
+    event {
+        bigserial event_id PK
+        text encounter_id FK
+        int seq
+        numeric t
+        timestamptz wall
+        text type
+        text agent_id
+        jsonb payload
+    }
+    participant
+    run
+    run_slot
+    scenario
+    run |o--o{ encounter : "run_id"
+    participant |o--o{ encounter : "participant_id"
+    scenario |o--o{ encounter : "scenario_id"
+    run_slot |o--o{ encounter : "run_id,slot"
+    encounter ||--o{ encounter_cast : "encounter_id"
+    encounter ||--o{ turn : "encounter_id"
+    encounter ||--o{ stage_direction : "encounter_id"
+    turn |o--o{ stage_direction : "reply_turn_id"
+    encounter ||--o{ trigger_firing : "encounter_id"
+    encounter ||--o{ director_route : "encounter_id"
+    encounter ||--o{ event : "encounter_id"
+    </pre></div>
+    <figcaption>7 tables, every column. Tables from other groups (<code>participant</code>, <code>run</code>, <code>run_slot</code>, <code>scenario</code>) are drawn without columns; their definitions are in their own section.</figcaption>
+  </figure>
+</section>
+<section id="g4">
+  <h2>4 · Media and transcripts</h2>
+  <p class="lede">Pointers to the audio and video objects in S3 (files never go in the database) and the alternative transcripts: live, offline re-transcription of the participant channel, and dialogue recovered from video.</p>
+  <p class="src">Loaded from <code>record.json, S3 listing, recovered_transcript.md</code></p>
+  <ul class="tables"><li><code>media</code> <span class="pk">PK media_id</span></li><li><code>transcript_version</code> <span class="pk">PK transcript_id</span></li></ul>
+  <figure>
+    <div class="diagram"><pre class="mermaid">
+erDiagram
+    media {
+        bigserial media_id PK
+        text encounter_id FK
+        text kind
+        text agent_id
+        text s3_key
+        bigint bytes
+        numeric duration_s
+        int sample_rate
+        smallint channels
+        text format
+        timestamptz uploaded_at
+    }
+    transcript_version {
+        bigserial transcript_id PK
+        text encounter_id FK
+        text source
+        text scope
+        text model
+        text text
+        timestamptz created_at
+    }
+    encounter
+    encounter ||--o{ media : "encounter_id"
+    encounter ||--o{ transcript_version : "encounter_id"
+    </pre></div>
+    <figcaption>2 tables, every column. Tables from other groups (<code>encounter</code>) are drawn without columns; their definitions are in their own section.</figcaption>
+  </figure>
+</section>
+<section id="g5">
+  <h2>5 · Surveys</h2>
+  <p class="lede">Qualtrics Survey 1 and Survey 2 responses, joined to the run by ResponseID and by the run id and completion code piped back. Answers stay JSON until instrument scoring is decided.</p>
+  <p class="src">Loaded from <code>python -m server.qualtrics export / join</code></p>
+  <ul class="tables"><li><code>survey</code> <span class="pk">PK survey_id</span></li><li><code>survey_response</code> <span class="pk">PK response_id</span></li></ul>
+  <figure>
+    <div class="diagram"><pre class="mermaid">
+erDiagram
+    survey {
+        text survey_id PK
+        text role
+        text title
+    }
+    survey_response {
+        text response_id PK
+        text survey_id FK
+        text participant_id FK
+        text participant_key
+        text run_id FK
+        text completion_code
+        timestamptz started_at
+        timestamptz recorded_at
+        boolean finished
+        int duration_s
+        jsonb embedded
+        jsonb answers
+    }
+    participant
+    run
+    survey ||--o{ survey_response : "survey_id"
+    participant |o--o{ survey_response : "participant_id"
+    run |o--o{ survey_response : "run_id"
+    </pre></div>
+    <figcaption>2 tables, every column. Tables from other groups (<code>participant</code>, <code>run</code>) are drawn without columns; their definitions are in their own section.</figcaption>
+  </figure>
+</section>
+<section id="g6" class="step2">
+  <h2>6 · Ratings and scores <span class="chip">step 2 writes here</span></h2>
+  <p class="lede">Phase 2: which rater watched which encounter, one score per ESCI item with the turns they pointed at. Phase 3: the model scorer's item scores, versioned so runs can be compared with the human ratings. Step 2 (the rater app) writes the first three tables.</p>
+  <p class="src">Loaded from <code>step 2 rater app (planned); Phase 3 scorer</code></p>
+  <ul class="tables"><li><code>rater</code> <span class="pk">PK rater_id</span></li><li><code>rating_assignment</code> <span class="pk">PK assignment_id</span></li><li><code>rating</code> <span class="pk">PK rating_id</span></li><li><code>model_score</code> <span class="pk">PK score_id</span></li></ul>
+  <figure>
+    <div class="diagram"><pre class="mermaid">
+erDiagram
+    rater {
+        text rater_id PK
+        text display_name
+        date trained_at
+        boolean active
+    }
+    rating_assignment {
+        bigserial assignment_id PK
+        text encounter_id FK
+        text rater_id FK
+        timestamptz assigned_at
+        date due_at
+        text status
+    }
+    rating {
+        bigserial rating_id PK
+        bigint assignment_id FK
+        text construct FK
+        text item_key FK
+        smallint score
+        text evidence
+        bigint[] evidence_turn_ids
+        timestamptz rated_at
+    }
+    model_score {
+        bigserial score_id PK
+        text encounter_id FK
+        text scorer_model
+        text scorer_version
+        text construct FK
+        text item_key FK
+        numeric score
+        jsonb evidence
+        timestamptz scored_at
+    }
+    encounter
+    esci_item
+    encounter ||--o{ rating_assignment : "encounter_id"
+    rater ||--o{ rating_assignment : "rater_id"
+    rating_assignment ||--o{ rating : "assignment_id"
+    esci_item ||--o{ rating : "construct,item_key"
+    encounter ||--o{ model_score : "encounter_id"
+    esci_item ||--o{ model_score : "construct,item_key"
+    </pre></div>
+    <figcaption>4 tables, every column. Tables from other groups (<code>encounter</code>, <code>esci_item</code>) are drawn without columns; their definitions are in their own section.</figcaption>
+  </figure>
+</section>
+<section id="g7">
+  <h2>7 · RCT</h2>
+  <p class="lede">Phase 4: the arm per participant, and what feedback was delivered when. Second attempts live on run.attempt_number and run.sibling_run_id.</p>
+  <p class="src">Loaded from <code>not yet produced</code></p>
+  <ul class="tables"><li><code>rct_assignment</code> <span class="pk">PK participant_id</span></li><li><code>feedback_delivery</code> <span class="pk">PK delivery_id</span></li></ul>
+  <figure>
+    <div class="diagram"><pre class="mermaid">
+erDiagram
+    rct_assignment {
+        text participant_id PK,FK
+        text arm
+        timestamptz assigned_at
+        text seed
+    }
+    feedback_delivery {
+        bigserial delivery_id PK
+        text run_id FK
+        text kind
+        text content_uri
+        jsonb content
+        timestamptz delivered_at
+        int viewed_s
+    }
+    participant
+    run
+    participant ||--|| rct_assignment : "participant_id"
+    run ||--o{ feedback_delivery : "run_id"
+    </pre></div>
+    <figcaption>2 tables, every column. Tables from other groups (<code>participant</code>, <code>run</code>) are drawn without columns; their definitions are in their own section.</figcaption>
+  </figure>
+</section>
+<section id="g8">
+  <h2>8 · Operations</h2>
+  <p class="lede">Task-definition revisions with their image and models, so an analysis can bracket encounters by what was running.</p>
+  <p class="src">Loaded from <code>ECS task-definition history</code></p>
+  <ul class="tables"><li><code>deployment</code> <span class="pk">PK revision</span></li></ul>
+  <figure>
+    <div class="diagram"><pre class="mermaid">
+erDiagram
+    deployment {
+        int revision PK
+        text image_tag
+        text realtime_model
+        text director_model
+        timestamptz applied_at
+        text applied_by
+    }
+    </pre></div>
+    <figcaption>1 table, every column.</figcaption>
+  </figure>
+</section>
+<section id="views">
+  <h2>9 · Views</h2>
+  <p class="lede">The three questions asked most often, kept as views so analysts do not re-derive them.</p>
+  <ul class="views"><li><code>v_encounter_summary</code>: one row per encounter: scenario, construct, models, turn counts, triggers fired against planned, whether video exists</li><li><code>v_participant_progress</code>: one row per run: encounters done, completed, has survey 1 and 2, withdrawn_at</li><li><code>v_esci_coverage</code>: per encounter: the ESCI items the stage directions exercised against the items in the construct</li></ul>
+</section>
+<footer>
+  Generated by <code>tools/db_schema_erd.py</code> from the DDL, not drawn by hand: a parser reads each <code>CREATE TABLE</code>, its <code>PRIMARY KEY</code>, <code>REFERENCES</code> and <code>FOREIGN KEY</code> clauses, and emits the diagrams. Re-run it after a schema change. Views and <code>CHECK</code> constraints are listed, not drawn.
+</footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js" integrity="sha512-6a80OTZVmEJhqYJUmYd5z8yHUCDlYnj6q9XwB/gKOEyNQV/Q8u+XeSG59a2ZKFEHGTYzgfOQKYEBtrZV7vBr+Q==" crossorigin="anonymous"></script>
+<script>
+  var dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+</body>
+</html>
