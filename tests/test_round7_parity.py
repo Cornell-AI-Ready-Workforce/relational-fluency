@@ -116,7 +116,7 @@ def _performer_brief(sid: str) -> str:
     assert len(meeting) == 1, f"{sid}: expected exactly one group interaction"
     beats = meeting[0]["triggers"]
     assert len(beats) >= 2, f"{sid}: the shut-down beat is missing from the meeting"
-    return spec["agents"][beats[1]["agent"]]["system_prompt"]
+    return spec["agents"][beats[2]["agent"]]["system_prompt"]
 
 
 def _influencer_brief(sid: str) -> str:

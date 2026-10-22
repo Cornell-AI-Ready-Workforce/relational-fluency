@@ -75,6 +75,19 @@ def test_every_character_greets_before_what_they_came_to_say(sid):
         section = prompt.split("In the team meeting:\n", 1)[1]
         first_bullet = re.split(r"\n- ", "\n" + section.lstrip("\n"), maxsplit=2)[1]
         assert re.search(r"\bhello\b", first_bullet), (sid, aid, first_bullet[:120])
-    cues = [t["cue"] for t in spec["interactions"][0]["triggers"][:3]]
-    for cue in cues:
-        assert re.search(r"\bhello\b", cue[:260], re.I), (sid, cue[:120])
+    beats = spec["interactions"][0]["triggers"]
+    first = beats[0]
+    assert first["id"] == "t0_hello" and first["esci"] == []
+    assert re.search(r"\bhello\b", first["cue"], re.I)
+    assert "good morning" in first["cue"] and "never a time of day" in first["cue"]
+    assert not re.search(r"resign|pay|plan", first["on_silence"], re.I), "the opening beat is a hello and nothing else"
+    # what each came to say waits for the lead to ask, or to turn to them
+    assert re.match(r"When they ask", beats[1]["cue"])
+    for cue in (beats[2]["cue"], beats[3]["cue"]):
+        assert re.search(r"\bhello\b", cue[:260], re.I)
+
+
+@pytest.mark.parametrize("sid", sorted(S3))
+def test_the_card_tells_the_participant_to_greet_and_ask_each_to_share(sid):
+    card = v3.compile_scenario(sid).briefing["card"]
+    assert any("ask each of them what is going on" in (h.get("text") or "") for h in card["howto"])

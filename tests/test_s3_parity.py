@@ -95,14 +95,14 @@ def beat(sid, iid, index):
 
 
 def performer_beat(sid):
-    """t2, the performer's shut-down: the second beat of the meeting since
+    """t2, the performer's shut-down: the third beat of the meeting (after the hello beat, 2026-10-22) since
     2026-09-23, when the one-on-one interaction that used to carry it was
     removed and the beat re-planted in the room."""
-    return beat(sid, "i1", 1)
+    return beat(sid, "i1", 2)
 
 
 def junior_beat(sid):
-    return beat(sid, "i1", 2)
+    return beat(sid, "i1", 3)
 
 
 def norm(text):
