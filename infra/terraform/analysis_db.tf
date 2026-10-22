@@ -83,9 +83,14 @@ resource "aws_db_parameter_group" "analysis" {
   name   = "${var.project}-analysis-pg16"
   family = "postgres16"
 
+  # apply_method is spelled out because RDS reports this parameter as
+  # pending-reboot whatever was requested; leaving the default ("immediate")
+  # made every plan show a no-op change to it. The value is 1, which is also
+  # what the instance already runs with, so nothing is rebooted or altered.
   parameter {
-    name  = "rds.force_ssl"
-    value = "1"
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot"
   }
   tags = { project = var.project }
 }
