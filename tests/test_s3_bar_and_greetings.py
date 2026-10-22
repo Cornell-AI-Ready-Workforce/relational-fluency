@@ -26,10 +26,10 @@ V2 = ROOT / "static" / "v2.html"
 S3 = {"S3A": ("alex", "jordan", "casey"), "S3B": ("toni", "lee", "ari")}
 
 
-def test_only_s3_asks_for_the_plain_bar():
+def test_only_s2_s3_and_s4_ask_for_the_plain_bar():
     for sid in v3.available():
         flag = v3.compile_scenario(sid).briefing["timeline"]
-        assert (flag == "bar") == (sid in S3), (sid, flag)
+        assert (flag == "bar") == (sid[:2] in ("S2", "S3", "S4")), (sid, flag)
 
 
 def test_floor_held_no_longer_prints_a_notice():

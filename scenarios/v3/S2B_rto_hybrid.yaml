@@ -60,6 +60,10 @@ setup: >-
 # What the participant is told they are there to do. Shown on the situation
 # card and kept on screen under the header for the whole conversation. It is
 # the task, in their terms; never the construct or what the raters look for.
+# The page draws a progress bar with the End-unlocks marker for this scenario
+# (no names on it), as S3A does.
+timeline: bar
+
 goal: >-
   You want to keep your two remote days a week, or leave with a clear path to keeping them, and you want to stay on good terms with Sasha.
 
