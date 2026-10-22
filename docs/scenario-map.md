@@ -63,6 +63,7 @@ participant who never opens produces an empty encounter until the 12:00 stop
 | `S2B` | `i2` | `t7_what_gets_measured` | through_discussion, multiple_approaches, anticipates | probe |
 | `S2B` | `i2` | `t8_what_do_i_tell_the_team` | self_interest, anticipates, behind_scenes | probe |
 | `S2B` | `i2` | `t9_settling` | through_discussion, multiple_approaches | probe |
+| `S3A` | `i1` | `t0_hello` |  | probe |
 | `S3A` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe |
 | `S3A` | `i1` | `t2_jordans_flat_fine` | brings_out_best, inspires | probe |
 | `S3A` | `i1` | `t3_caseys_overload` | brings_out_best, builds_pride | probe |
@@ -70,6 +71,7 @@ participant who never opens produces an empty encounter until the 12:00 stop
 | `S3A` | `i1` | `t5_a_fact_left_on_the_table` | brings_out_best, inspires, builds_pride | probe |
 | `S3A` | `i1` | `t6_one_clarifying_question` | brings_out_best, builds_pride | probe |
 | `S3A` | `i1` | `t7_why_would_anyone_stay` | compelling_vision, not_inspire_r, inspires | probe |
+| `S3B` | `i1` | `t0_hello` |  | probe |
 | `S3B` | `i1` | `t1_public_challenge` | compelling_vision, builds_pride, not_inspire_r | probe |
 | `S3B` | `i1` | `t2_resignation_in_place` | brings_out_best, inspires | probe |
 | `S3B` | `i1` | `t3_anxious_junior` | brings_out_best, builds_pride | probe |
