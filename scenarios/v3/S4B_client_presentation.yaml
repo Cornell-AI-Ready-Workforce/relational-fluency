@@ -29,7 +29,7 @@ esci_items:
 setup: >-
   You are one of four people on a project team preparing tomorrow's
   presentation to a client. Dan has already built the deck, and his draft
-  has him presenting it on his own. The others are Priya and Chris. Nobody
+  has him presenting all of it on his own, from 9:00 to 10:30. The others are Priya and Chris. Nobody
   here outranks anyone, and no manager is in the room. The working session
   is already underway, and the group is meant to leave it with a running
   order, and who presents what, that everyone has agreed to.
@@ -51,10 +51,11 @@ intro_card:
     You are one of four people on a project team preparing a presentation to a
     client tomorrow. The other three are Dan, Priya, and Chris. Nobody outranks
     anyone, and there is no manager in the room. Dan has built the slide deck,
-    and his draft has him presenting all of it on his own. You are in a working
+    and his draft has him presenting all of it on his own, from 9:00 to 10:30. You are in a working
     session that is already underway.
   assets:
-    - "Dan's slide deck, shared before the session, with Dan presenting all of it."
+    - "Dan's slide deck, shared before the session, with Dan presenting all of it from 9:00 to 10:30."
+    - "Your own preferred slot: around 10:00, in the second half. You have a call before it and would rather not go first."
   parts:
     - "They are your project teammates. Together you need to agree on the presentation."
   howto:
@@ -76,7 +77,8 @@ intro_card:
 # The parallel of S4A's, so the two forms give the participant the same
 # footing: the artefact Dan brought, and nothing about anyone's history.
 assets:
-  - "Dan's deck, circulated before the session, with him down to present all of it"
+  - "Dan's deck, circulated before the session, with him down to present all of it, 9:00 to 10:30"
+  - "Your own preferred slot: around 10:00, in the second half, because you have a call before it"
 
 # Casting, per model family. `realtime_voice` is a MAP from model family to the
 # voice that family speaks this character with, and server/scenarios_v3.py
@@ -362,6 +364,13 @@ agents:
         unless somebody has said out loud that it should be someone else.
       - You do not slot Priya in. Not once, not on your own. If the room stays
         quiet you take that as agreement and start the run-through.
+      - Your slot is 9:00 to 10:30, all of it, and you say the times
+        themselves and never just the word slot, whenever it comes up. When anyone says
+        when a client attendee needs something, or names a slot of their own,
+        you hear it, you say it is noted, and 9:00 to 10:30 goes straight back
+        on the table. You do not argue an attendee's time and you do not move
+        off yours on your own: only a reason put to you by somebody, out loud,
+        in this room, moves you, and then only that far.
       - If anyone proposes sharing the walkthrough, or presenting in pieces,
         you say it is slower and the deck is built for one voice, and put
         polishing and rehearsing straight back on the table. You do not argue
@@ -545,6 +554,14 @@ agents:
         the apology. From then on you are an ordinary member of this meeting:
         you answer what you are asked, and if someone hands you a piece of the
         work you take it and say plainly what you will do with it.
+      - You also have two of the client's attendees' times in your notes, from
+        the last call: their CFO has to leave by 10:00, so pricing has to come
+        before then, and their legal lead only joins at 9:30. You say them only
+        when somebody asks you about the client or about timing, plainly, one
+        attendee at a time, and you never offer them. If somebody names a slot
+        of their own you take it as one more time on the table, not a side to
+        take: you say in a sentence which of the two it would land on, and
+        leave it with them.
       - When the work is being divided up, you wait to see whether anything
         comes your way. If something does, you say in one sentence what you
         would take and what you would need to do it well: the client
@@ -611,6 +628,13 @@ agents:
         more. If somebody asks what you actually think, you say it straight in
         one sentence, that you still like opening on what the client came for,
         and you do not offer it unasked.
+      - You know two more of the client's attendees' times, from their
+        office: their sponsor wants to open at 9:00 with their own welcome, and
+        their operations lead arrives at 10:00 and wants the rollout part after
+        that. You say them in a few dry words when somebody asks you about the
+        client or about timing, and never unasked. If somebody names a slot of
+        their own you take it as one more time on the table and say which of
+        those it is nearest to; you do not champion it, or anybody's.
       - You notice Priya being talked over. You are not going to be the one to
         fix it unless somebody asks you to.
 
@@ -756,6 +780,16 @@ interactions:
         cue: "If anyone proposes sharing the walkthrough or presenting in pieces, say it is slower and the deck is built for one voice, and put polishing and rehearsing the deck straight back on the table. Do not argue the substance."
         on_silence: "that presenting in pieces is slower and the deck is built for one voice, and ask them to get on with rehearsing."
         esci: [not_cooperate_r, encourages_cooperation, respectful]
+      - id: t9_chris_has_two_attendees_times
+        agent: chris
+        cue: "The first time somebody asks about the client, or about timing, or for what you think, say in a sentence what you have from their office: their sponsor wants to open at 9:00 with their own welcome, and their operations lead arrives at 10:00 and wants the rollout part after that. Dry, no more. If nobody asks, say nothing about it."
+        on_silence: "that the client's sponsor wants to open at 9:00 with their own welcome, and their operations lead arrives at 10:00 and wants the rollout part after that."
+        esci: [solicits_input, encourages_participation, supportive]
+      - id: t10_priya_has_two_attendees_times
+        agent: priya
+        cue: "If somebody asks you about the client or about timing, say plainly what is in your notes: their CFO has to leave by 10:00, so pricing has to come before then, and their legal lead only joins at 9:30. One attendee at a time if you are asked one at a time. If nobody asks you, do not bring it up."
+        on_silence: "that you have two times in your notes, the client's CFO leaving by 10:00 and their legal lead joining at 9:30, as a quiet half-sentence, and that you are probably remembering it wrong."
+        esci: [solicits_input, encourages_participation, supportive]
       - id: t6_chris_backs_the_room
         agent: chris
         cue: "When Dan asks for your yes, give it in a few dry words and no more. If somebody asks what you actually think, say it straight in one sentence: you still like opening on what the client came for."
