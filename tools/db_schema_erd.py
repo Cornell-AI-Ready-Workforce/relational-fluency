@@ -34,6 +34,10 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SQL = ROOT / "docs" / "db-schema.sql"
 OUT = ROOT / "docs" / "db-schema-erd.html"
 MERMAID_JS = "https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"
+# Subresource integrity of that exact file, as published by cdnjs
+# (https://api.cdnjs.com/libraries/mermaid/10.9.1?fields=sri) and checked against
+# the served bytes on 2026-10-22. Bump both lines together when moving versions.
+MERMAID_SRI = "sha512-6a80OTZVmEJhqYJUmYd5z8yHUCDlYnj6q9XwB/gKOEyNQV/Q8u+XeSG59a2ZKFEHGTYzgfOQKYEBtrZV7vBr+Q=="
 
 # (anchor, heading, tables, what it holds, loaded from). Same order as the DDL
 # and docs/db-schema.md; group 9 (views) is listed from the SQL.
@@ -373,7 +377,7 @@ def render(tables: dict, order: list[str], views: list[str], *, artifact: bool) 
         + page.split("\n", 1)[1].split("<div class=\"wrap\">", 1)[0]  # fonts + style
         + "</head>\n<body>\n"
         + '<div class="wrap">' + page.split("<div class=\"wrap\">", 1)[1]
-        + f'<script src="{MERMAID_JS}"></script>\n'
+        + f'<script src="{MERMAID_JS}" integrity="{MERMAID_SRI}" crossorigin="anonymous"></script>\n'
         '<script>\n'
         '  var dark = matchMedia("(prefers-color-scheme: dark)").matches;\n'
         '  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });\n'
