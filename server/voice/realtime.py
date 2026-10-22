@@ -104,6 +104,7 @@ import websockets
 # Config comes from server.llm so the .env file wins over ambient environment:
 # a stray exported variable must not be able to redirect study traffic.
 from ..llm import gateway_api_key, gateway_base_url, setting, setting_if_set
+from . import transcript_gates as _gates
 from .turn_audio import WPM as _WPM
 from .turn_audio import shortfall as _audio_shortfall, word_count as _word_count
 
@@ -291,6 +292,10 @@ class RealtimeCapabilities:
     # owns the input buffer, since that is where a commit's audio is exactly
     # known (owns_input_buffer): the gpt row.
     participant_speech_check: bool = False
+    # Whether the session asks the transcriber for per-token logprobs, which
+    # the confidence gate reads (voice/transcript_gates.py; pipeline
+    # 2026-10-12a). Only where the key was probed live: the gpt row.
+    transcription_logprobs: bool = False
     # Session-level cap on a reply's output tokens (audio tokens included), or
     # None to leave the family's default. Audio costs ~20 tokens per second of
     # voice and the reply's text shares the same budget, so a cap is a length
@@ -595,6 +600,11 @@ REALTIME_FAMILIES = {
         # (s_1790781273_b8b7cc: "Democrat", "Tuurlijk.", "Sexuality"; see
         # server/speech_check.py).
         participant_speech_check=True,
+        # `include: ["item.input_audio_transcription.logprobs"]` probed live
+        # 2026-10-12 on gpt-realtime-2.1 with gpt-4o-transcribe: acked in
+        # session.updated, and every completed transcript then carried
+        # `logprobs` (voice/transcript_gates.py has the measurement).
+        transcription_logprobs=True,
         # The scenario bank names Gemini voices and a bank entry is not a typo.
         # Each maps to the nearest voice on this roster, stable per character,
         # so a character cast as Kore is `shimmer` on every gpt run rather than
@@ -976,6 +986,16 @@ def input_transcription_model_for(caps: Optional[RealtimeCapabilities]) -> str:
     return setting("INPUT_TRANSCRIPTION_MODEL", "") or caps.input_transcription_model
 
 
+def transcription_logprobs_for(caps: Optional[RealtimeCapabilities]) -> bool:
+    """Whether this family's sessions ask for the transcriber's logprobs:
+    the row says so, TRANSCRIPTION_LOGPROBS is on, and the transcriber is the
+    one it was probed with (gpt-4o-transcribe; whisper-1, which
+    INPUT_TRANSCRIPTION_MODEL can restore, was not)."""
+    return bool(caps and caps.transcription_logprobs
+                and _gates.logprobs_enabled()
+                and input_transcription_model_for(caps).startswith("gpt-4o"))
+
+
 def max_output_tokens_for(caps: Optional[RealtimeCapabilities]) -> Optional[int]:
     """The reply cap this family's sessions send, or None for no cap.
 
@@ -1254,6 +1274,12 @@ def turn_gate_provenance(model: Optional[str] = None) -> dict:
         # what, within how long. Absent on every other route.
         from ..speech_check import provenance as _speech_check_provenance
         out["participant_speech_check"] = _speech_check_provenance()
+    # Pipeline 2026-10-12a: the English gate runs on every route; the
+    # confidence gate only where the session asks for logprobs.
+    gates = _gates.provenance()
+    if model and not transcription_logprobs_for(capabilities_for(model)):
+        gates["transcription_logprobs"] = False
+    out["participant_transcript_gates"] = gates
     return out
 
 
@@ -2678,6 +2704,11 @@ class RealtimeVoiceSession:
             hint = dict(session.get("input_audio_transcription") or {})
             hint["language"] = lang
             session["input_audio_transcription"] = hint
+        if transcription_logprobs_for(caps):
+            # The transcriber's confidence, for the confidence gate
+            # (voice/transcript_gates.py). On every session.update too: it is
+            # a whole-session statement.
+            session["include"] = [_gates.LOGPROBS_INCLUDE]
         if caps.needs_turn_detection_null:
             session["turn_detection"] = None
         elif self.turn_detection is not _UNSET:
@@ -5505,7 +5536,11 @@ class RealtimeVoiceSession:
                             # (pipeline 2026-09-30a); None where not kept,
                             # and the check on_commit started for it.
                             "pcm": tag.get("pcm"),
-                            "check": tag.get("check")}
+                            "check": tag.get("check"),
+                            # The transcriber's own word scores, where the
+                            # session asked for them (pipeline 2026-10-12a);
+                            # None anywhere else.
+                            "confidence": _gates.confidence(ev.get("logprobs"))}
                     if text:
                         yield {"type": "user_transcript", "text": text,
                                "garbled": garbled, **meta}
