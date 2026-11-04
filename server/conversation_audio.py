@@ -37,6 +37,11 @@ from array import array
 from pathlib import Path
 from typing import Dict, List, Optional
 
+try:  # removed in Python 3.13 (PEP 594); the per-sample loop below is the fallback
+    import audioop as _audioop  # type: ignore
+except ImportError:  # pragma: no cover - 3.13+
+    _audioop = None
+
 log = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
@@ -159,6 +164,15 @@ def render(session_dir: Path) -> Optional[Path]:
                     mix[start:start + len(pcm)] = pcm
                     if filled is not None:
                         filled[start:start + len(pcm)] = array("b", b"\x01" * len(pcm))
+                    continue
+                if _audioop is not None and pcm:
+                    # The loop below, in C: an unfilled sample of `mix` is 0,
+                    # so "copy" and "add" agree there, and audioop.add clips
+                    # to int16 exactly as the loop does. Byte-identical
+                    # (tests/test_audit_latency.py).
+                    end = start + len(pcm)
+                    mix[start:end] = array("h", _audioop.add(
+                        mix[start:end].tobytes(), pcm.tobytes(), BYTES_PER_SAMPLE))
                     continue
                 for k, s in enumerate(pcm):
                     j = start + k

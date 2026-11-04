@@ -370,3 +370,34 @@ def test_the_audit_room_pacing_version_and_its_history_line():
     src = (Path(__file__).resolve().parents[1] / "server" / "llm.py").read_text(encoding="utf-8")
     # One history line under each version list.
     assert src.count("#   2026-11-04a") == 2
+
+
+# --- finding 6: the conversation mix, in C, byte for byte ---------------------
+
+def test_the_mix_is_byte_identical_with_and_without_audioop(tmp_path, monkeypatch):
+    import random
+    from array import array
+    from server import conversation_audio as ca
+
+    rnd = random.Random(11)
+    runs = {}
+    for name, n in (("user_audio.wav", 48000), ("assistant_audio_a.wav", 20000),
+                    ("assistant_audio_b.wav", 20000), ("assistant_audio_c.wav", 9000)):
+        # Loud enough that overlaps clip both ways.
+        pcm = array("h", (rnd.choice((32767, -32768, rnd.randint(-32768, 32767)))
+                          for _ in range(n))).tobytes()
+        (tmp_path / name).write_bytes(ca._wav_header(len(pcm)) + pcm)
+        if name == "user_audio.wav":
+            runs[name] = [[0, 0, len(pcm)]]
+        else:
+            # Overlapping runs, inside the channel and across channels.
+            runs[name] = [[rnd.randint(0, 30000), 0, len(pcm) // 2],
+                          [rnd.randint(0, 30000), len(pcm) // 4, len(pcm) // 2],
+                          [rnd.randint(40000, 60000), len(pcm) // 2, len(pcm) // 2]]
+    (tmp_path / ca.TIMELINE_NAME).write_text(json.dumps({"runs": runs}), encoding="utf-8")
+
+    assert ca._audioop is not None, "the C path is what is under test"
+    fast = ca.render(tmp_path).read_bytes()
+    monkeypatch.setattr(ca, "_audioop", None)
+    slow = ca.render(tmp_path).read_bytes()
+    assert len(fast) > 44 and fast == slow
