@@ -662,7 +662,17 @@ def text_client() -> AsyncAnthropic:
 #                floor_regranted, floor_regrant_skipped,
 #                stage_direction_redelivered; provenance `reconnect`. The
 #                scribe is untouched.
-PIPELINE_VERSION = "2026-10-14a"
+#   2026-11-04a  latency audit, cascade family only. turn_timing carries
+#                `cascade`, the reply's own step times (stt_ms, tts_slot_wait_ms,
+#                tts_connect_ms, llm_first_token_ms, first_audio_ms,
+#                llm_total_ms). The ElevenLabs stream opens while Argon
+#                thinks instead of before it, and only that stream holds an
+#                ELEVENLABS_CONCURRENCY slot, so Argon is no longer capped
+#                by it. Gateway requests share one keep-alive client per
+#                process. The words, voice and audio are unchanged; a reply
+#                reaches the participant sooner (first audio -304 ms with a
+#                300 ms ElevenLabs open, measured with fakes).
+PIPELINE_VERSION = "2026-11-04a"
 ROOM_PACING_VERSION = "2026-09-29b"
 
 

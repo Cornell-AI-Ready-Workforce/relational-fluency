@@ -353,3 +353,11 @@ def test_the_shared_gateway_client_has_no_process_wide_connection_cap():
         await sock.close()
         return pool._max_connections
     assert asyncio.run(go()) >= 10 ** 9      # httpcore stores "no cap" as sys.maxsize
+
+
+def test_the_audit_pipeline_version_and_its_history_line():
+    from pathlib import Path
+    from server import llm
+    assert llm.PIPELINE_VERSION == "2026-11-04a"
+    src = (Path(__file__).resolve().parents[1] / "server" / "llm.py").read_text(encoding="utf-8")
+    assert src.count("#   2026-11-04a") == 1
