@@ -865,7 +865,9 @@
   // encounter the participant is on, so a refresh or a rejoin lands correctly.
   const runId = params.get('run');
   let run = null;
-  let scenario = params.get('scenario') || 'missed_deadlines';
+  // A bare /v2 (no ?scenario and no ?run) opens the first study scenario. The
+  // old default named a legacy scenario that no longer exists and 404ed.
+  let scenario = params.get('scenario') || 'S1A';
 
   // Returns true if the boot sequence should continue loading an encounter,
   // false if it must stop (run finished, or a blocking error was shown).
