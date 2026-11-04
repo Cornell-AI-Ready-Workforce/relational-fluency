@@ -192,3 +192,85 @@ def test_an_llm_failure_closes_the_tts_stream_it_was_opening(monkeypatch):
     frames = asyncio.run(go())
     assert any(f["type"] == "error" and "llm 500" in json.dumps(f) for f in frames)
     assert closed == [True]
+
+
+# --- finding 4: the ElevenLabs slot covers the stream, not the LLM -----------
+
+def _paced_handler(first_token_s, rest_s):
+    async def handle(req):
+        body = json.loads(req.content)
+        if not body.get("stream"):
+            return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+
+        async def gen():
+            await asyncio.sleep(first_token_s)
+            yield ("data: " + json.dumps({"choices": [{"delta": {
+                "content": "Sure, I hear you. "}}]}) + "\n\n").encode()
+            await asyncio.sleep(rest_s)
+            yield ("data: " + json.dumps({"choices": [{"delta": {
+                "content": "Tell me more about it."}}]}) + "\n\n").encode()
+            yield b"data: [DONE]\n\n"
+        return httpx.Response(200, content=gen(),
+                              headers={"content-type": "text/event-stream"})
+    return handle
+
+
+def _four_at_once(monkeypatch, *, first_token_s=1.0, rest_s=1.0, open_s=0.3):
+    """Four sockets reply at once with ELEVENLABS_CONCURRENCY=3."""
+    _fake_tts(monkeypatch, open_delay_s=open_s)
+    monkeypatch.setenv("ELEVENLABS_CONCURRENCY", "3")
+    cascade._TTS_SLOTS.clear()
+
+    async def go():
+        socks = [cascade.CascadeSocket(api_key="gw", http=httpx.AsyncClient(
+            transport=httpx.MockTransport(_paced_handler(first_token_s, rest_s))))
+            for _ in range(4)]
+        dones = await asyncio.gather(*(_one_reply(s) for s in socks))
+        for s in socks:
+            await s.close()
+        return [d["response"]["metadata"]["timings"] for d in dones]
+    return asyncio.run(go())
+
+
+def test_a_fourth_reply_thinks_while_it_waits_for_an_elevenlabs_slot(monkeypatch):
+    got = _four_at_once(monkeypatch)
+    print("finding4 timings", got)
+    waited = max(got, key=lambda t: t["tts_slot_wait_ms"])
+    assert waited["tts_slot_wait_ms"] >= 1500       # one reply had to wait
+    # It still started thinking at once: its first token is not behind the
+    # wait, and its first audio is the wait plus the connect, not the wait
+    # plus the connect plus the first token.
+    assert waited["llm_first_token_ms"] < 1300, waited
+    assert waited["first_audio_ms"] < waited["tts_slot_wait_ms"] + 300 + 400, waited
+
+
+def test_every_path_gives_the_elevenlabs_slot_back(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_CONCURRENCY", "2")
+    cascade._TTS_SLOTS.clear()
+    monkeypatch.setattr(cascade, "eleven_key", lambda: "k")
+    mode = {"open": "ok"}
+
+    async def opener():
+        await asyncio.sleep(0.02)
+        if mode["open"] == "fail":
+            raise RuntimeError("no stream")
+        return FakeTTS()
+    monkeypatch.setattr(cascade, "open_tts", opener)
+
+    async def go():
+        sock = cascade.CascadeSocket(api_key="gw", http=httpx.AsyncClient(
+            transport=httpx.MockTransport(_paced_handler(0.2, 0.2))))
+        await _one_reply(sock)                     # completed
+        mode["open"] = "fail"
+        await _one_reply(sock)                     # TTS open failed
+        mode["open"] = "ok"
+        await sock.send(json.dumps({"type": "response.create"}))
+        await asyncio.sleep(0.1)                   # stream open, model thinking
+        await sock.send(json.dumps({"type": "response.cancel"}))
+        while json.loads(await asyncio.wait_for(sock.recv(), 5))["type"] != "response.done":
+            pass
+        await asyncio.sleep(0.05)
+        value = cascade._tts_slot()._value
+        await sock.close()
+        return value
+    assert asyncio.run(go()) == 2

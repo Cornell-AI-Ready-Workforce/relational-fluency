@@ -519,17 +519,16 @@ class CascadeSocket:
             self._emit({"type": "response.output_item.added", "response_id": rid,
                         "output_index": 0, "item": {"id": iid, "type": "message",
                                                     "role": "assistant", "content": []}})
-            slot_asked = time.time()
-            async with _tts_slot():
-                self.timings["tts_slot_wait_ms"] = int((time.time() - slot_asked) * 1000)
-                voice_id = voice_id_for(self.voice)
-                # The ElevenLabs stream opens while the model thinks; the
-                # first sentence waits for it (say() in _stream_llm).
-                tts = self._spawn(self._open_reply_tts(voice_id, rid, iid, started))
-                call = await self._stream_llm(tts, voice_id, spoken, rid, iid, started)
-                ws, reader = await tts
-                await ws.send(json.dumps({"close_socket": True}))
-                await reader
+            voice_id = voice_id_for(self.voice)
+            # The ElevenLabs stream opens while the model thinks; the first
+            # sentence waits for it (say() in _stream_llm). Only the stream
+            # holds an ElevenLabs slot (_open_reply_tts): the model starts at
+            # once even when every slot is taken.
+            tts = self._spawn(self._open_reply_tts(voice_id, rid, iid, started))
+            call = await self._stream_llm(tts, voice_id, spoken, rid, iid, started)
+            ws, reader, _slot = await tts
+            await ws.send(json.dumps({"close_socket": True}))
+            await reader
             if call:
                 await self._finish_call(rid, call)
         except asyncio.CancelledError:
@@ -560,18 +559,26 @@ class CascadeSocket:
 
     async def _open_reply_tts(self, voice_id: str, rid: str, iid: str,
                               started: float):
-        """Open the reply's ElevenLabs stream, register the voice and start
-        relaying its audio. Returns (ws, reader)."""
-        connect_at = time.time()
-        ws = await self._connect_tts()
-        self.timings["tts_connect_ms"] = int((time.time() - connect_at) * 1000)
+        """Take an ElevenLabs slot, open the reply's stream, register the
+        voice and start relaying its audio. Returns (ws, reader, slot); the
+        slot is held until _close_reply_tts releases it."""
+        slot = _tts_slot()
+        asked = time.time()
+        await slot.acquire()
+        ws = None
         try:
+            self.timings["tts_slot_wait_ms"] = int((time.time() - asked) * 1000)
+            connect_at = time.time()
+            ws = await self._connect_tts()
+            self.timings["tts_connect_ms"] = int((time.time() - connect_at) * 1000)
             await ws.send(json.dumps({"voices": [voice_id]}))
             reader = self._spawn(self._relay_audio(ws, rid, iid, started))
         except BaseException:
-            await ws.close()
+            slot.release()
+            if ws is not None:
+                await ws.close()
             raise
-        return ws, reader
+        return ws, reader, slot
 
     @staticmethod
     async def _close_reply_tts(tts: asyncio.Task) -> None:
@@ -585,10 +592,13 @@ class CascadeSocket:
             return
         if tts.cancelled() or tts.exception() is not None:
             return
-        ws, reader = tts.result()
-        if not reader.done():
-            reader.cancel()
-        await ws.close()
+        ws, reader, slot = tts.result()
+        try:
+            if not reader.done():
+                reader.cancel()
+            await ws.close()
+        finally:
+            slot.release()
 
     async def _connect_tts(self):
         """Open the reply's stream; a 429 (the plan's concurrency) or 409 (the
@@ -619,7 +629,7 @@ class CascadeSocket:
             payload["tools"] = self.tools
 
         async def say(sentence: str) -> None:
-            ws, _reader = await tts
+            ws = (await tts)[0]
             spoken.append(sentence)
             self._emit({"type": "response.output_audio_transcript.delta",
                         "response_id": rid, "item_id": iid, "delta": sentence + " "})
@@ -629,7 +639,7 @@ class CascadeSocket:
         # The stream closes itself after 20 s without a message; Argon can
         # think for longer than that on a slow turn.
         async def keep_alive() -> None:
-            ws, _reader = await tts
+            ws = (await tts)[0]
             while True:
                 await asyncio.sleep(10)
                 await ws.send(json.dumps({"keep_alive": True}))
