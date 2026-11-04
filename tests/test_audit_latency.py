@@ -360,4 +360,13 @@ def test_the_audit_pipeline_version_and_its_history_line():
     from server import llm
     assert llm.PIPELINE_VERSION == "2026-11-04a"
     src = (Path(__file__).resolve().parents[1] / "server" / "llm.py").read_text(encoding="utf-8")
-    assert src.count("#   2026-11-04a") == 1
+    assert src.count("#   2026-11-04a") == 2   # PIPELINE_ and ROOM_PACING_VERSION lists
+
+
+def test_the_audit_room_pacing_version_and_its_history_line():
+    from pathlib import Path
+    from server import llm
+    assert llm.ROOM_PACING_VERSION == "2026-11-04a"
+    src = (Path(__file__).resolve().parents[1] / "server" / "llm.py").read_text(encoding="utf-8")
+    # One history line under each version list.
+    assert src.count("#   2026-11-04a") == 2

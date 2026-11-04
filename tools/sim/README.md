@@ -94,8 +94,8 @@ shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
 check fails for it, saying so, until it is recorded. All four are pending as
-committed: the latency audit of 2026-11-04 bumped PIPELINE_VERSION without
-a live run (see `pending`). Before that, all four
+committed: the latency audit of 2026-11-04 bumped PIPELINE_VERSION and
+ROOM_PACING_VERSION without a live run (see `pending`). Before that, all four
 were recorded on the cascade (`cascade-argon-elevenlabs`:
 Argon hears and replies, flash-lite transcribes, ElevenLabs eleven_v4 speaks),
 pipeline 2026-10-14a / room pacing 29b, on 2026-10-15: S1A, S2A and S4A from
