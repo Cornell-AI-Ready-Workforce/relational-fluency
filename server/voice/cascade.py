@@ -37,6 +37,7 @@ import re
 import time
 import uuid
 import wave
+import weakref
 from typing import Optional
 
 import httpx
@@ -170,6 +171,50 @@ def _tts_slot() -> asyncio.Semaphore:
     return sem
 
 
+# Keep a gateway connection open between turns. httpx's default is 5 s, which
+# is shorter than the gap between two turns of a conversation, so every turn
+# paid a new TCP and TLS handshake. Kept under the 60 s idle timeout common on
+# load balancers, so a pooled connection is not one the far end has dropped.
+GATEWAY_KEEPALIVE_S = 55.0
+
+_HTTP_CLIENTS: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _shared_http() -> httpx.AsyncClient:
+    """One gateway client per event loop, shared by every CascadeSocket on
+    it (a connection pool belongs to the loop it was opened on; tests and
+    workers run their own). Never closed by a socket."""
+    loop = asyncio.get_running_loop()
+    client = _HTTP_CLIENTS.get(loop)
+    if client is None or client.is_closed:
+        client = _HTTP_CLIENTS[loop] = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            # No cap on open connections: each socket's own client had a
+            # cap of 100, so a process-wide 100 would be a new queue.
+            limits=httpx.Limits(max_connections=None,
+                                max_keepalive_connections=20,
+                                keepalive_expiry=GATEWAY_KEEPALIVE_S))
+    return client
+
+
+# How long a reply's stream is read past [DONE] for the body's end.
+DRAIN_AFTER_DONE_S = 0.25
+
+
+async def _drain(lines, within_s: float) -> None:
+    """Consume what is left of a streamed body, for `within_s` at most.
+    Never raises: an unread end only costs the pooled connection."""
+    async def rest():
+        async for _ in lines:
+            pass
+    try:
+        await asyncio.wait_for(rest(), within_s)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - see the docstring
+        pass
+
+
 def voice_ids() -> dict:
     ids = dict(PREMADE_VOICES)
     extra = setting("ELEVENLABS_VOICE_IDS", "")
@@ -258,8 +303,9 @@ class CascadeSocket:
         self.voice = voice
         self.instructions = ""
         self.tools: list = []
-        self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
-        self._owns_http = http is None
+        # The process's shared gateway client (_shared_http) unless one is
+        # handed in. Taken lazily: a socket may be built off the loop.
+        self._given_http = http
         self._out: asyncio.Queue = asyncio.Queue()
         self._closed = False
         self._audio = bytearray()
@@ -275,6 +321,10 @@ class CascadeSocket:
         self._finished: set = set()
         # Latencies of the latest turn, for the record and the benchmark.
         self.timings: dict = {}
+
+    @property
+    def _http(self) -> httpx.AsyncClient:
+        return self._given_http or _shared_http()
 
     # -- the websockets surface ------------------------------------------------
     async def send(self, raw) -> None:
@@ -301,11 +351,6 @@ class CascadeSocket:
         for t in list(self._tasks):
             t.cancel()
         self._out.put_nowait(None)
-        if self._owns_http:
-            try:
-                await self._http.aclose()
-            except Exception:  # noqa: BLE001
-                pass
 
     # -- plumbing --------------------------------------------------------------
     def _emit(self, ev: dict) -> None:
@@ -525,9 +570,9 @@ class CascadeSocket:
             # holds an ElevenLabs slot (_open_reply_tts): the model starts at
             # once even when every slot is taken.
             tts = self._spawn(self._open_reply_tts(voice_id, rid, iid, started))
+            # _stream_llm has sent close_socket once the words were all in.
             call = await self._stream_llm(tts, voice_id, spoken, rid, iid, started)
             ws, reader, _slot = await tts
-            await ws.send(json.dumps({"close_socket": True}))
             await reader
             if call:
                 await self._finish_call(rid, call)
@@ -652,11 +697,14 @@ class CascadeSocket:
                 if r.status_code >= 400:
                     body = (await r.aread()).decode("utf-8", "replace")[:300]
                     raise RuntimeError(f"llm {r.status_code}: {body}")
-                async for line in r.aiter_lines():
+                lines = r.aiter_lines()
+                ended = False
+                async for line in lines:
                     if not line.startswith("data:"):
                         continue
                     data = line[5:].strip()
                     if data == "[DONE]":
+                        ended = True
                         break
                     try:
                         delta = ((json.loads(data).get("choices") or [{}])[0]
@@ -679,9 +727,20 @@ class CascadeSocket:
                     for sentence in sentences:
                         first = False
                         await say(sentence)
-            sentences, buffer = split_sentences(buffer, first=first, final=True)
-            for sentence in sentences:
-                await say(sentence)
+                sentences, buffer = split_sentences(buffer, first=first, final=True)
+                for sentence in sentences:
+                    await say(sentence)
+                # Every word is in: ElevenLabs may finish the reply now,
+                # before the drain below.
+                alive.cancel()
+                ws = (await tts)[0]
+                await ws.send(json.dumps({"close_socket": True}))
+                if ended:
+                    # Read the body's end after [DONE], briefly, so the
+                    # connection goes back to the pool instead of being
+                    # dropped (a new TLS handshake on the next request).
+                    # The reply's audio is not waiting on it.
+                    await _drain(lines, DRAIN_AFTER_DONE_S)
         finally:
             alive.cancel()
         self.timings["llm_total_ms"] = int((time.time() - started) * 1000)

@@ -274,3 +274,82 @@ def test_every_path_gives_the_elevenlabs_slot_back(monkeypatch):
         await sock.close()
         return value
     assert asyncio.run(go()) == 2
+
+
+# --- finding 5: one gateway client per loop, kept alive between turns --------
+
+def test_cascade_sockets_on_one_loop_share_a_long_lived_gateway_client():
+    async def go():
+        a, b = cascade.CascadeSocket(api_key="gw"), cascade.CascadeSocket(api_key="gw")
+        same = a._http is b._http
+        pool = a._http._transport._pool
+        await a.close()
+        still_open = not b._http.is_closed
+        await b.close()
+        return same, pool._keepalive_expiry, still_open
+    same, expiry, still_open = asyncio.run(go())
+    assert same and still_open
+    assert expiry == cascade.GATEWAY_KEEPALIVE_S >= 30
+
+
+def test_the_drain_after_done_is_bounded():
+    async def forever():
+        while True:
+            await asyncio.sleep(1)
+            yield "x"
+
+    async def go():
+        t0 = time.perf_counter()
+        await cascade._drain(forever(), 0.1)
+        return time.perf_counter() - t0
+    assert asyncio.run(go()) < 0.5
+
+
+def test_elevenlabs_is_told_the_reply_is_over_before_the_drain(monkeypatch):
+    """A gateway that holds its body open after [DONE] must not delay the
+    reply's end: close_socket goes out at [DONE], the drain after it."""
+    marks = {}
+
+    class Timed(FakeTTS):
+        async def send(self, raw):
+            if json.loads(raw).get("close_socket"):
+                marks["close_socket"] = time.perf_counter()
+            await super().send(raw)
+    monkeypatch.setattr(cascade, "eleven_key", lambda: "k")
+
+    async def opener():
+        return Timed()
+    monkeypatch.setattr(cascade, "open_tts", opener)
+    cascade._TTS_SLOTS.clear()
+
+    async def handle(req):
+        async def gen():
+            yield ("data: " + json.dumps({"choices": [{"delta": {
+                "content": "Sure, I hear you."}}]}) + "\n\n").encode()
+            marks["done"] = time.perf_counter()
+            yield b"data: [DONE]\n\n"
+            await asyncio.sleep(1.0)          # the body's end comes late
+        return httpx.Response(200, content=gen(),
+                              headers={"content-type": "text/event-stream"})
+
+    async def go():
+        sock = cascade.CascadeSocket(api_key="gw", http=httpx.AsyncClient(
+            transport=httpx.MockTransport(handle)))
+        t0 = time.perf_counter()
+        done = await _one_reply(sock)
+        took = time.perf_counter() - t0
+        await sock.close()
+        return done, took
+    done, took = asyncio.run(go())
+    assert done["response"]["status"] == "completed"
+    assert marks["close_socket"] - marks["done"] < 0.1
+    assert took < 0.6, "the drain is bounded at 250 ms"
+
+
+def test_the_shared_gateway_client_has_no_process_wide_connection_cap():
+    async def go():
+        sock = cascade.CascadeSocket(api_key="gw")
+        pool = sock._http._transport._pool
+        await sock.close()
+        return pool._max_connections
+    assert asyncio.run(go()) >= 10 ** 9      # httpcore stores "no cap" as sys.maxsize
