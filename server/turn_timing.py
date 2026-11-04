@@ -27,6 +27,11 @@ every event's `t` is on):
     first_audio_played        the page says the first chunk started playing
     play_end                  the page says this turn's scheduled audio ended
                               (or was stopped: play_end_interrupted)
+    cascade                   cascade family only: the reply's own step
+                              latencies from CascadeSocket.timings, in ms from
+                              the reply's start (stt_ms, tts_slot_wait_ms,
+                              tts_connect_ms, llm_first_token_ms,
+                              first_audio_ms, llm_total_ms); null elsewhere
 
 The participant-side stages belong to the participant turn the reply answered
 and are shared by every reply to it; `reply_index` says which one this is (0 is
@@ -171,7 +176,7 @@ class TurnTimer:
             "first_audio_from_gateway": None, "first_audio_to_client": None,
             "assistant_done": None, "first_audio_played": None,
             "play_end": None, "play_end_interrupted": None,
-            "ack_lag_s": None, "output_latency_s": None,
+            "ack_lag_s": None, "output_latency_s": None, "cascade": None,
         }
         if pt is not None:
             pt.replies += 1
@@ -193,10 +198,14 @@ class TurnTimer:
             rec["first_audio_from_gateway"] = self._t(gateway_first_audio_at)
 
     @_guard
-    def done(self, agent_id: Optional[str]) -> None:
+    def done(self, agent_id: Optional[str],
+             cascade: Optional[dict] = None) -> None:
         for rec in reversed(list(self._open.values())):
             if rec["agent_id"] == agent_id and rec["assistant_done"] is None:
                 rec["assistant_done"] = self._t()
+                if isinstance(cascade, dict) and cascade:
+                    rec["cascade"] = {k: v for k, v in cascade.items()
+                                      if isinstance(v, (int, float))}
                 break
         self._by_agent.pop(agent_id, None)
         self._current = None
@@ -281,6 +290,7 @@ class TurnTimer:
             play_end_interrupted=rec["play_end_interrupted"],
             ack_lag_s=rec["ack_lag_s"],
             output_latency_s=rec["output_latency_s"],
+            cascade=rec.get("cascade"),
             # Why it was written now: "play_end" (complete), "encounter_end"
             # or "evicted" (the page never confirmed the end).
             written_at=reason,

@@ -11715,7 +11715,8 @@ class RealtimeVoiceSessionRunner:
                 if seq is not None:
                     payload = {**payload, "turn": seq}
             elif kind == "assistant_done":
-                timing.done(payload.get("agent_id"))
+                timing.done(payload.get("agent_id"),
+                            self._cascade_timings(payload.get("agent_id")))
             else:
                 timing.interrupted()
         if kind in ("assistant_started", "assistant_done", "assistant_interrupted",
@@ -11729,6 +11730,21 @@ class RealtimeVoiceSessionRunner:
         if kind in ("assistant_done", "assistant_interrupted"):
             # A line that sent the page no audio has nothing to wait for.
             await self._maybe_turn_open()
+
+    def _cascade_timings(self, agent_id: Optional[str]) -> Optional[dict]:
+        """The latest reply's step latencies on the cascade
+        (CascadeSocket.timings), for turn_timing; None on any other family."""
+        try:
+            rt = None
+            room = getattr(self, "room", None)
+            if room is not None and agent_id is not None:
+                rt = room.session_for(agent_id)
+            if rt is None:
+                rt = getattr(self, "rt", None)
+            got = getattr(getattr(rt, "ws", None), "timings", None)
+            return dict(got) if isinstance(got, dict) else None
+        except Exception:  # noqa: BLE001 - instrumentation only
+            return None
 
     def _first_gateway_audio_at(self, agent_id: Optional[str]) -> Optional[float]:
         """When the bridge serving `agent_id` saw its latest reply's first

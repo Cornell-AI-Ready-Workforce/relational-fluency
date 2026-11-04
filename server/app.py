@@ -457,6 +457,13 @@ async def _sweep_video_streams_on_startup() -> None:
 
 app.router.on_startup.append(_sweep_video_streams_on_startup)
 
+# Event-loop lag probe (server/loop_lag.py): p99 and max overshoot of a 50 ms
+# sleep, printed every LOOP_LAG_REPORT_S (60 by default; 0 switches it off).
+from . import loop_lag as _loop_lag  # noqa: E402
+
+app.router.on_startup.append(_loop_lag.start_app_probe)
+app.router.on_shutdown.append(_loop_lag.stop_app_probe)
+
 
 
 
