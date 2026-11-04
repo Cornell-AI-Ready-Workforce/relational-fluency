@@ -509,7 +509,7 @@ class CascadeSocket:
         spoken: list = []
         item = self._add_item("assistant", "")
         iid = item["id"]
-        ws = reader = None
+        tts = None
         cancelled = False
         try:
             # The turn is not awaited: the model hears the audio itself (see
@@ -523,15 +523,13 @@ class CascadeSocket:
             async with _tts_slot():
                 self.timings["tts_slot_wait_ms"] = int((time.time() - slot_asked) * 1000)
                 voice_id = voice_id_for(self.voice)
-                connect_at = time.time()
-                ws = await self._connect_tts()
-                self.timings["tts_connect_ms"] = int((time.time() - connect_at) * 1000)
-                await ws.send(json.dumps({"voices": [voice_id]}))
-                reader = self._spawn(self._relay_audio(ws, rid, iid, started))
-                call = await self._stream_llm(ws, voice_id, spoken, rid, iid, started)
+                # The ElevenLabs stream opens while the model thinks; the
+                # first sentence waits for it (say() in _stream_llm).
+                tts = self._spawn(self._open_reply_tts(voice_id, rid, iid, started))
+                call = await self._stream_llm(tts, voice_id, spoken, rid, iid, started)
+                ws, reader = await tts
                 await ws.send(json.dumps({"close_socket": True}))
                 await reader
-                reader = None
             if call:
                 await self._finish_call(rid, call)
         except asyncio.CancelledError:
@@ -539,10 +537,8 @@ class CascadeSocket:
         except Exception as exc:  # noqa: BLE001 - one reply, not the session
             self._error("cascade_failed", f"{type(exc).__name__}: {exc}"[:300])
         finally:
-            if reader is not None:
-                reader.cancel()
-            if ws is not None:
-                await ws.close()
+            if tts is not None:
+                await self._close_reply_tts(tts)
             text = " ".join(spoken).strip()
             for it in self.items:
                 if it["id"] == iid:
@@ -562,6 +558,38 @@ class CascadeSocket:
         if cancelled:
             raise asyncio.CancelledError
 
+    async def _open_reply_tts(self, voice_id: str, rid: str, iid: str,
+                              started: float):
+        """Open the reply's ElevenLabs stream, register the voice and start
+        relaying its audio. Returns (ws, reader)."""
+        connect_at = time.time()
+        ws = await self._connect_tts()
+        self.timings["tts_connect_ms"] = int((time.time() - connect_at) * 1000)
+        try:
+            await ws.send(json.dumps({"voices": [voice_id]}))
+            reader = self._spawn(self._relay_audio(ws, rid, iid, started))
+        except BaseException:
+            await ws.close()
+            raise
+        return ws, reader
+
+    @staticmethod
+    async def _close_reply_tts(tts: asyncio.Task) -> None:
+        """Stop the reply's stream whatever state its opening is in."""
+        if not tts.done():
+            tts.cancel()
+            try:
+                await tts
+            except BaseException:  # noqa: BLE001 - it is being torn down
+                pass
+            return
+        if tts.cancelled() or tts.exception() is not None:
+            return
+        ws, reader = tts.result()
+        if not reader.done():
+            reader.cancel()
+        await ws.close()
+
     async def _connect_tts(self):
         """Open the reply's stream; a 429 (the plan's concurrency) or 409 (the
         first use of a library voice being added to the account) is waited out
@@ -577,10 +605,12 @@ class CascadeSocket:
                     f"elevenlabs {exc.response.status_code}: "
                     f"{exc.response.body.decode('utf-8', 'replace')[:300]}")
 
-    async def _stream_llm(self, ws, voice_id: str, spoken: list,
+    async def _stream_llm(self, tts: asyncio.Task, voice_id: str, spoken: list,
                           rid: str, iid: str, started: float) -> Optional[dict]:
         """Stream the reply; each sentence goes into the stream the moment it
-        is whole. Returns a function call if the model made one."""
+        is whole. `tts` is the task opening the ElevenLabs stream
+        (_open_reply_tts); the first sentence waits for it. Returns a
+        function call if the model made one."""
         payload = {"model": llm_model(), "messages": self._messages(),
                    "stream": True, "max_tokens": 1200}
         if reasoning_effort():
@@ -589,6 +619,7 @@ class CascadeSocket:
             payload["tools"] = self.tools
 
         async def say(sentence: str) -> None:
+            ws, _reader = await tts
             spoken.append(sentence)
             self._emit({"type": "response.output_audio_transcript.delta",
                         "response_id": rid, "item_id": iid, "delta": sentence + " "})
@@ -598,6 +629,7 @@ class CascadeSocket:
         # The stream closes itself after 20 s without a message; Argon can
         # think for longer than that on a slow turn.
         async def keep_alive() -> None:
+            ws, _reader = await tts
             while True:
                 await asyncio.sleep(10)
                 await ws.send(json.dumps({"keep_alive": True}))

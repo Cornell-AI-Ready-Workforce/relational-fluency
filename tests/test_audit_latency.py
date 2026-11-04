@@ -133,3 +133,62 @@ def test_the_loop_lag_probe_sees_a_blocking_call():
 def test_loop_lag_summary_of_nothing_is_nulls():
     assert loop_lag.summarize([]) == {"n": 0, "p50_ms": None,
                                       "p99_ms": None, "max_ms": None}
+
+
+# --- finding 3: the LLM stream does not wait for the ElevenLabs connect ------
+
+def _first_audio_ms(monkeypatch, *, open_delay_s, first_token_delay_s):
+    _fake_tts(monkeypatch, open_delay_s=open_delay_s)
+    cascade._TTS_SLOTS.clear()
+
+    async def go():
+        sock = cascade.CascadeSocket(api_key="gw", http=httpx.AsyncClient(
+            transport=httpx.MockTransport(_sse_handler(first_token_delay_s))))
+        done = await _one_reply(sock)
+        await sock.close()
+        return done["response"]["metadata"]["timings"]
+    return asyncio.run(go())
+
+
+def test_first_audio_overlaps_the_tts_connect_with_the_llm(monkeypatch):
+    """300 ms ElevenLabs open, 300 ms to the first token. In series that is
+    >= 600 ms to first audio; overlapped it is about 300 ms."""
+    t = _first_audio_ms(monkeypatch, open_delay_s=0.3, first_token_delay_s=0.3)
+    print("finding3 timings", t)
+    assert t["tts_connect_ms"] >= 280
+    assert t["first_audio_ms"] < 480, t
+
+
+def test_an_llm_failure_closes_the_tts_stream_it_was_opening(monkeypatch):
+    closed = []
+
+    class Tracked(FakeTTS):
+        async def close(self):
+            closed.append(True)
+    monkeypatch.setattr(cascade, "eleven_key", lambda: "k")
+
+    async def opener():
+        return Tracked()
+    monkeypatch.setattr(cascade, "open_tts", opener)
+    cascade._TTS_SLOTS.clear()
+
+    async def fail(req):
+        await asyncio.sleep(0.1)     # the stream has opened by now
+        return httpx.Response(500, text="boom")
+
+    async def go():
+        sock = cascade.CascadeSocket(api_key="gw", http=httpx.AsyncClient(
+            transport=httpx.MockTransport(fail)))
+        await sock.send(json.dumps({"type": "response.create"}))
+        frames = []
+        while True:
+            f = json.loads(await asyncio.wait_for(sock.recv(), 5))
+            frames.append(f)
+            if f["type"] == "response.done":
+                break
+        await asyncio.sleep(0.1)
+        await sock.close()
+        return frames
+    frames = asyncio.run(go())
+    assert any(f["type"] == "error" and "llm 500" in json.dumps(f) for f in frames)
+    assert closed == [True]
