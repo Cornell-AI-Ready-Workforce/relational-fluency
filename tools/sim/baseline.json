@@ -2,12 +2,109 @@
  "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
  "realtime_model": "cascade-argon-elevenlabs",
  "recorded": {
-  "build": "488ad6b",
-  "date": "2026-10-15",
-  "pipeline_version": "2026-10-14a",
-  "room_pacing_version": "2026-09-29b"
+  "build": "1469925",
+  "date": "2026-11-06",
+  "pipeline_version": "2026-11-04a",
+  "room_pacing_version": "2026-11-04a"
  },
- "scenarios": {},
+ "scenarios": {
+  "S1A": {
+   "error_frames": 0,
+   "lines_answered": 8,
+   "lines_heard": 8,
+   "lines_said": 8,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "1469925",
+    "date": "2026-11-06",
+    "pipeline_version": "2026-11-04a",
+    "room_pacing_version": "2026-11-04a",
+    "session_id": "s_1794004505_c4ac55"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "a4b2d90dd4da7ac2",
+   "speech_end_to_first_played_s": {
+    "n": 9,
+    "p50": 2.163,
+    "p90": 2.638
+   },
+   "triggers_fired": 7,
+   "voice_error": 0
+  },
+  "S2A": {
+   "error_frames": 0,
+   "lines_answered": 24,
+   "lines_heard": 25,
+   "lines_said": 25,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "1469925",
+    "date": "2026-11-06",
+    "pipeline_version": "2026-11-04a",
+    "room_pacing_version": "2026-11-04a",
+    "session_id": "s_1794004721_1cc043"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "4ae8133b9c6e2fef",
+   "speech_end_to_first_played_s": {
+    "n": 25,
+    "p50": 2.108,
+    "p90": 2.998
+   },
+   "triggers_fired": 9,
+   "voice_error": 0
+  },
+  "S3A": {
+   "error_frames": 0,
+   "lines_answered": 8,
+   "lines_heard": 9,
+   "lines_said": 9,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "1469925",
+    "date": "2026-11-06",
+    "pipeline_version": "2026-11-04a",
+    "room_pacing_version": "2026-11-04a",
+    "session_id": "s_1794005326_9528db"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "b839d60a54bb1537",
+   "speech_end_to_first_played_s": {
+    "n": 9,
+    "p50": 2.813,
+    "p90": 3.268
+   },
+   "triggers_fired": 7,
+   "voice_error": 0
+  },
+  "S4A": {
+   "error_frames": 0,
+   "lines_answered": 28,
+   "lines_heard": 34,
+   "lines_said": 35,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "1469925",
+    "date": "2026-11-06",
+    "pipeline_version": "2026-11-04a",
+    "room_pacing_version": "2026-11-04a",
+    "session_id": "s_1794005518_4eacdb"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "8efdc0004450ad17",
+   "speech_end_to_first_played_s": {
+    "n": 32,
+    "p50": 2.647,
+    "p90": 3.581
+   },
+   "triggers_fired": 10,
+   "voice_error": 0
+  }
+ },
  "tolerances": {
   "answered_rate_drop": 0.2,
   "error_frames_extra": 0,
@@ -21,11 +118,5 @@
   "reply_missing_extra": 1,
   "triggers_fired_drop": 1,
   "voice_error_extra": 0
- },
- "pending": {
-  "S1A": "not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
-  "S2A": "not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
-  "S3A": "not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
-  "S4A": "not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline"
  }
 }
