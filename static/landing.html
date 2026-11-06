@@ -352,11 +352,12 @@
         <span class="sub">a research prototype</span>
       </div>
     </div>
-    <!-- Filled from /api/consent's `contact:` block, and left empty until that
-         block is filled in. A footer that prints "[FILL IN: ...]" to a visitor
-         is worse than one that says nothing, and a hardcoded name here would be
-         the same defect the participant pages route through contactWho() to
-         avoid: a screen asserting a contact the consent form does not carry. -->
+    <!-- Filled from /api/run/config's contact_name and contact_email
+         (STUDY_CONTACT_NAME / STUDY_CONTACT_EMAIL), and left empty until they
+         are set. A footer that prints "[FILL IN: ...]" to a visitor is worse
+         than one that says nothing, and a hardcoded name here would be the same
+         defect the participant pages route through contactWho() to avoid: a
+         screen asserting a contact the deployment does not carry. -->
     <div class="foot-contact" id="footContact" hidden></div>
   </div>
 </footer>
@@ -597,11 +598,12 @@
     if ($('modal').classList.contains('show')) closeModal();
   });
 
-  /* The footer contact, from the consent config and nowhere else.
+  /* The footer contact, from the deployment's run config and nowhere else.
 
-     A value is only printed when it is really there: the shipped config carries
-     "[FILL IN: principal investigator's name]" and friends, and a footer that
-     prints one of those to a visitor is worse than a footer that says nothing.
+     A value is only printed when it is really there: a deployment may still
+     carry "[FILL IN: principal investigator's name]" and friends, and a footer
+     that prints one of those to a visitor is worse than a footer that says
+     nothing.
      The participant pages route every mention of a researcher through
      contactPhrase() for the same reason, and this is that rule on the one page
      that has no such helper.
@@ -617,16 +619,16 @@
   async function loadFooterContact() {
     let cfg;
     try {
-      cfg = await (await fetch('/api/consent' + keyParamFirst)).json();
+      cfg = await (await fetch('/api/run/config' + keyParamFirst)).json();
     } catch { return; }
-    const c = (cfg && cfg.contact) || {};
+    const c = { pi_name: cfg && cfg.contact_name, email: cfg && cfg.contact_email };
     const box = $('footContact');
 
     /* An unfilled field shows an empty slot rather than disappearing.
 
        Hiding the block made the gap invisible: the footer simply looked like it
-       had no contact by design, and nobody was reminded that three facts are
-       still missing from config/consent.yaml. A labelled dashed slot says what
+       had no contact by design, and nobody was reminded that two facts are
+       still missing from the environment. A labelled dashed slot says what
        belongs there and that it is not set.
 
        This is deliberately NOT what the participant-facing screens do. There, a
