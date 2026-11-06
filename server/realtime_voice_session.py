@@ -1035,6 +1035,11 @@ class RealtimeVoiceSessionRunner:
         self._turn_end_speech_began: Optional[float] = None
         self._unrouted_user_texts: List[str] = []
         self._last_unrouted_at = 0.0
+        # Set when a routed line lands or a speech check ends, so the group
+        # routing wait (_run_group_turn) wakes at once instead of on its
+        # next poll. The poll stays as the fallback for everything else.
+        # Made per wait, on the loop that waits on it.
+        self._route_wake: Optional[asyncio.Event] = None
         # Participant transcripts that arrived and that a gate judged not to
         # be speech ({reason, text}): implausible_rate, no_speech, probe_pad.
         # A room turn whose only words are these is skipped rather than
@@ -5181,6 +5186,7 @@ class RealtimeVoiceSessionRunner:
         if unrouted is not None and to_director and not moved:
             unrouted.append(text)
             self._last_unrouted_at = now
+            RealtimeVoiceSessionRunner._wake_routing(self)
         heard_seq = None
         if not moved:
             # The room's conversation, as a member rebuilt later is given it
@@ -5360,6 +5366,7 @@ class RealtimeVoiceSessionRunner:
         finally:
             self._speech_checks_pending -= 1
             self._speech_checking_text = None
+            RealtimeVoiceSessionRunner._wake_routing(self)
         result = {**result, "reason": reason}
         self.session.store.event(
             "speech_check", text=text, reason=reason,
@@ -9071,8 +9078,11 @@ class RealtimeVoiceSessionRunner:
             # within the check's own bound: routing then would route on
             # nothing, which is what the check exists to stop.
             late = deadline + _speech_check.timeout_s() + 1.0
+            wake = self._route_wake = asyncio.Event()
             while time.time() < deadline or (
                     getattr(self, "_speech_checks_pending", 0) and time.time() < late):
+                if wake is not None:
+                    wake.clear()
                 waiting = bool(self._unrouted_user_texts) and (
                     counts_owed
                     or getattr(self, "_last_unrouted_at", 0.0) >= began)
@@ -9089,7 +9099,14 @@ class RealtimeVoiceSessionRunner:
                     # Meanwhile, ask the director on the line's live text
                     # (_speculative_route; pipeline 2026-09-30a).
                     spec = RealtimeVoiceSessionRunner._speculative_route(self, room)
-                await asyncio.sleep(0.05 if checking else 0.15)
+                pause = 0.05 if checking else 0.15
+                if wake is None:
+                    await asyncio.sleep(pause)
+                else:
+                    try:
+                        await asyncio.wait_for(wake.wait(), pause)
+                    except asyncio.TimeoutError:
+                        pass
             if self._closed or self.room is not room:
                 if spec is not None:
                     spec["task"].cancel()
@@ -11730,6 +11747,12 @@ class RealtimeVoiceSessionRunner:
         if kind in ("assistant_done", "assistant_interrupted"):
             # A line that sent the page no audio has nothing to wait for.
             await self._maybe_turn_open()
+
+    def _wake_routing(self) -> None:
+        """Wake the group routing wait now (see _route_wake)."""
+        wake = getattr(self, "_route_wake", None)
+        if wake is not None:
+            wake.set()
 
     def _cascade_timings(self, agent_id: Optional[str]) -> Optional[dict]:
         """The latest reply's step latencies on the cascade

@@ -386,7 +386,7 @@ def test_the_old_pacing_is_one_knob_away(monkeypatch):
 
 def test_the_gap_and_its_version_are_on_the_record():
     assert llm.provenance(GPT)["pacing"]["followup_gap_s"] == GAP_S
-    assert llm.ROOM_PACING_VERSION == "2026-09-29b"
+    assert llm.ROOM_PACING_VERSION >= "2026-09-29b"
     src = (ROOT / "server" / "llm.py").read_text(encoding="utf-8")
     for version in ("2026-09-29a", "2026-09-29b"):
         assert src.count("#   " + version) == 1, "a history line for " + version

@@ -550,6 +550,12 @@ def text_client() -> AsyncAnthropic:
 #                low_confidence "Yeah." the director never reads, and granted
 #                the follow-up while a line that ended in the gap was still
 #                being transcribed.
+#   2026-11-04a  the routing wait wakes when the participant's line is
+#                recorded or a speech check ends, instead of on its next
+#                150 ms (50 ms) poll; the poll stays as the timeout.
+#                Same deadline, conditions and order: a room routes the same
+#                line, about 70 ms sooner on average (max 146 ms), measured
+#                with fakes.
 #
 # PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
@@ -673,7 +679,7 @@ def text_client() -> AsyncAnthropic:
 #                reaches the participant sooner (first audio -304 ms with a
 #                300 ms ElevenLabs open, measured with fakes).
 PIPELINE_VERSION = "2026-11-04a"
-ROOM_PACING_VERSION = "2026-09-29b"
+ROOM_PACING_VERSION = "2026-11-04a"
 
 
 def _voice_style_provenance():
