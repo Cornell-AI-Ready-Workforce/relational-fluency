@@ -9,6 +9,7 @@ import json
 import time
 
 import httpx
+import pytest
 
 from server import loop_lag
 from server.turn_timing import TurnTimer
@@ -396,7 +397,10 @@ def test_the_mix_is_byte_identical_with_and_without_audioop(tmp_path, monkeypatc
                           [rnd.randint(40000, 60000), len(pcm) // 2, len(pcm) // 2]]
     (tmp_path / ca.TIMELINE_NAME).write_text(json.dumps({"runs": runs}), encoding="utf-8")
 
-    assert ca._audioop is not None, "the C path is what is under test"
+    if ca._audioop is None:
+        # 3.13+ (PEP 594): no C path to compare against. The loop is then
+        # the only path, and tests/test_conversation_audio.py covers it.
+        pytest.skip("audioop absent: the C path is what is under test")
     fast = ca.render(tmp_path).read_bytes()
     monkeypatch.setattr(ca, "_audioop", None)
     slow = ca.render(tmp_path).read_bytes()
