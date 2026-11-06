@@ -519,9 +519,13 @@ class CascadeSocket:
             self._emit({"type": "response.output_item.added", "response_id": rid,
                         "output_index": 0, "item": {"id": iid, "type": "message",
                                                     "role": "assistant", "content": []}})
+            slot_asked = time.time()
             async with _tts_slot():
+                self.timings["tts_slot_wait_ms"] = int((time.time() - slot_asked) * 1000)
                 voice_id = voice_id_for(self.voice)
+                connect_at = time.time()
                 ws = await self._connect_tts()
+                self.timings["tts_connect_ms"] = int((time.time() - connect_at) * 1000)
                 await ws.send(json.dumps({"voices": [voice_id]}))
                 reader = self._spawn(self._relay_audio(ws, rid, iid, started))
                 call = await self._stream_llm(ws, voice_id, spoken, rid, iid, started)
