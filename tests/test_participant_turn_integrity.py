@@ -513,6 +513,12 @@ def test_the_gate_is_in_provenance_with_its_defaults():
             "timeout_s": 2.5, "max_words": 3, "playback_max_words": 7,
             "playback_tail_s": 1.0, "at_commit": True,
             "room_route_during_check": True},
+        # 2026-10-12a: the confidence gate (gpt) and the English gate.
+        "participant_transcript_gates": {
+            "transcription_logprobs": True,
+            "participant_min_word_logprob": -2.0,
+            "participant_language_gate": True,
+            "participant_language_gate_max_words": 6},
     }
 
 
