@@ -9,7 +9,6 @@ import json
 import time
 
 import httpx
-import pytest
 
 from server import loop_lag
 from server.turn_timing import TurnTimer
@@ -397,10 +396,15 @@ def test_the_mix_is_byte_identical_with_and_without_audioop(tmp_path, monkeypatc
                           [rnd.randint(40000, 60000), len(pcm) // 2, len(pcm) // 2]]
     (tmp_path / ca.TIMELINE_NAME).write_text(json.dumps({"runs": runs}), encoding="utf-8")
 
+    total = max(start + nb // 2 for rs in runs.values() for start, _src, nb in rs)
     if ca._audioop is None:
-        # 3.13+ (PEP 594): no C path to compare against. The loop is then
-        # the only path, and tests/test_conversation_audio.py covers it.
-        pytest.skip("audioop absent: the C path is what is under test")
+        # 3.13+ (PEP 594): no C path to compare against, so assert the
+        # fallback's contract instead (as tests/test_deploy_portability.py
+        # does for RMS): a well-formed 16 kHz s16le WAV of the mix's length.
+        slow = ca.render(tmp_path).read_bytes()
+        assert slow[:4] == b"RIFF" and slow[8:12] == b"WAVE"
+        assert len(slow) == 44 + total * 2
+        return
     fast = ca.render(tmp_path).read_bytes()
     monkeypatch.setattr(ca, "_audioop", None)
     slow = ca.render(tmp_path).read_bytes()
