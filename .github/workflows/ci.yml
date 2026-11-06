@@ -212,7 +212,7 @@ jobs:
           print(f"{total} collected: {total - n_err - n_fail - n_skip} ran clean, "
                 f"{n_fail} failed, {n_err} errored, {n_skip} skipped")
 
-          errored, skips = [], collections.Counter()
+          errored, skips, xfails = [], collections.Counter(), collections.Counter()
           for case in suite.iter("testcase"):
               err = case.find("error")
               if err is not None:
@@ -225,11 +225,23 @@ jobs:
                   # printout: a wave guard whose wording explains itself at
                   # length would otherwise be judged on its first 120
                   # characters and fail this step for being verbose.
-                  skips[" ".join((skipped.get("message") or "").split())] += 1
+                  reason = " ".join((skipped.get("message") or "").split())
+                  # pytest files an expected failure under <skipped> as well.
+                  # It is not a skip: the test ran and failed as its marker
+                  # says it must (a strict xfail goes green the day the bug is
+                  # fixed). It still has to say why; an empty reason fails below.
+                  if skipped.get("type") == "pytest.xfail":
+                      xfails[reason] += 1
+                  else:
+                      skips[reason] += 1
 
           print("\nskipped, by reason:")
           for reason, count in skips.most_common():
               print(f"  {count:>4}  {(reason or '(no reason given)')[:120]}")
+          if xfails:
+              print("\nexpected failures (xfail), by reason:")
+              for reason, count in xfails.most_common():
+                  print(f"  {count:>4}  {(reason or '(no reason given)')[:120]}")
 
           bad = []
           if errored:
@@ -239,6 +251,9 @@ jobs:
                   bad.append(f"    ... and {len(errored) - 25} more")
               bad.append("  An error is a test that never got to run. Fix the "
                          "setup, do not read past it.")
+          if "" in xfails:
+              bad.append(f"{xfails['']} expected failure(s) give no reason: an xfail "
+                         "marker needs a reason= naming the bug it waits on.")
           unknown = [r for r in skips if not any(p in r.lower() for p in ALLOWED)]
           if unknown:
               bad.append("skipped for a reason this job does not expect:")
