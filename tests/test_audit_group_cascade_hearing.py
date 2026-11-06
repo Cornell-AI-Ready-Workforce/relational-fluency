@@ -80,6 +80,9 @@ async def _scene(monkeypatch):
 
     transport = httpx.MockTransport(handle)
     monkeypatch.setattr(cascade, "eleven_key", lambda: "k")
+    # The room builds its sessions with no api_key, so connect() reads the
+    # gateway key; CI has none (and .env wins over the environment in _cfg).
+    monkeypatch.setattr(rt, "gateway_api_key", lambda: "k")
 
     async def opener():
         return _FakeTTS()
@@ -139,7 +142,7 @@ def test_the_scene_runs_and_the_scribe_hears_the_participant(monkeypatch):
     assert got["audio_before_grant"] == FRAMES * len(FRAME)
 
 
-@pytest.mark.xfail(strict=True, reason=(
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
     "AUDIT 2026-11-04: on the cascade a room member's reply is built without "
     "the participant's words. The fanned PCM is never committed on a member "
     "and nothing tells the member the transcript. Study-design matter for "
@@ -150,7 +153,7 @@ def test_a_granted_member_is_given_what_the_participant_said(monkeypatch):
     assert _has_participant(messages), json.dumps(messages, indent=1)
 
 
-@pytest.mark.xfail(strict=True, reason=(
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
     "AUDIT 2026-11-04: CascadeSocket._audio on a room member is never "
     "committed or cleared, so it grows by 32 KB per second of participant "
     "audio for the whole encounter."))
