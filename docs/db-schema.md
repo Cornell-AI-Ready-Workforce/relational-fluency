@@ -25,7 +25,7 @@ aws s3 sync s3://relational-fluency-study-data/encounters/ ~/Desktop/RF_archive/
 # 3. Optional: the run documents (fills order row, arm, Qualtrics id, withdrawals)
 curl -s "https://rf.ai-ready-workforce.ai.cornell.edu/api/runs?key=$SESSION_KEY" > ~/Desktop/RF_archive/runs.json
 
-# 4. Load (re-run any time; it replaces per-encounter rows)
+# 4. Load (re-run any time; encounters and turns are updated in place, the rest replaced)
 .venv/bin/pip install "psycopg[binary]"
 .venv/bin/python tools/load_analysis_db.py --dsn postgresql://postgres:rf@localhost:5433/rf \
     --archive ~/Desktop/RF_archive/encounters --scenarios scenarios/v3 --s3-media [--runs ~/Desktop/RF_archive/runs.json]
@@ -176,8 +176,13 @@ live service.
    running the same script nightly is the natural next step; the security
    group already admits the platform tasks.
 3. **Turn alignment for ratings.** Raters point at turns; `rating.evidence_turn_ids`
-   assumes the rating UI shows `turn.seq`. Confirm against the Phase 2 rater
-   pipeline when it is revived.
+   names `turn.turn_id`. Since the loader refresh of 2026-11-06 those ids are
+   stable: the encounter row and its turns are upserted on their natural keys
+   (`encounter_id`; `encounter_id, seq`), never deleted and re-inserted, so a
+   refresh neither renumbers the turns a rating cites nor fails on the
+   foreign key from `rating_assignment` or `model_score`. Only a transcript
+   that got shorter drops its trailing turns. A rating UI can therefore
+   store `turn_id` directly, or `(encounter_id, seq)` and join.
 4. **Retention.** PI decision on 2026-09-17: recordings are kept. The database
    inherits that. On a withdrawal the loader can skip that participant's rows
    on the next load, but rows already loaded and the files in S3 need a
