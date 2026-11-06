@@ -294,7 +294,7 @@ class RealtimeCapabilities:
     participant_speech_check: bool = False
     # Whether the session asks the transcriber for per-token logprobs, which
     # the confidence gate reads (voice/transcript_gates.py; pipeline
-    # 2026-10-12a). Only where the key was probed live: the gpt row.
+    # 2026-11-06a). Only where the key was probed live: the gpt row.
     transcription_logprobs: bool = False
     # Session-level cap on a reply's output tokens (audio tokens included), or
     # None to leave the family's default. Audio costs ~20 tokens per second of
@@ -1274,7 +1274,7 @@ def turn_gate_provenance(model: Optional[str] = None) -> dict:
         # what, within how long. Absent on every other route.
         from ..speech_check import provenance as _speech_check_provenance
         out["participant_speech_check"] = _speech_check_provenance()
-    # Pipeline 2026-10-12a: the English gate runs on every route; the
+    # Pipeline 2026-11-06a: the English gate runs on every route; the
     # confidence gate only where the session asks for logprobs.
     gates = _gates.provenance()
     if model and not transcription_logprobs_for(capabilities_for(model)):
@@ -5538,7 +5538,7 @@ class RealtimeVoiceSession:
                             "pcm": tag.get("pcm"),
                             "check": tag.get("check"),
                             # The transcriber's own word scores, where the
-                            # session asked for them (pipeline 2026-10-12a);
+                            # session asked for them (pipeline 2026-11-06a);
                             # None anywhere else.
                             "confidence": _gates.confidence(ev.get("logprobs"))}
                     if text:

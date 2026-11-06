@@ -1,5 +1,5 @@
 """Two more participant-transcript gates: the transcriber's own confidence,
-and whether a line has any English in it (pipeline 2026-10-12a).
+and whether a line has any English in it (pipeline 2026-11-06a).
 
 The speech check (server/speech_check.py, 30a) hears a suspect line again on
 a second model. It still lets a few phantoms through in production: a check
@@ -8,6 +8,16 @@ select (four words or more, not over a character's playback) is never heard
 again; and a line it hears words in keeps the LIVE text, so "Tuurlijk." stays
 "Tuurlijk." whatever the check heard. These two gates ask different questions
 of different evidence, and neither calls a model.
+
+WHAT A GATE MAY DO ON ITS OWN (2026-11-06a, after review of PR #81). Neither
+gate silences a line by itself where the speech check could still hear it.
+An `unsure` line waits for the check it was selected for: words heard keep
+the line (flagged `transcriber_unsure`), nothing heard or no hearing at all
+suppresses it. A `not_english` line is suppressed only where the check also
+heard nothing English; where NO check ran (the cascade route, production
+since 2026-10-20, where the confidence gate is inert because that route
+sends no logprobs) or the check could not decide, the line is KEPT and the
+user_turn carries `language_unknown`. A word list is evidence, not a verdict.
 
 THE CONFIDENCE GATE (gpt route). gpt-4o-transcribe returns a log-probability
 for every token it wrote when the session asks for them (`include:
@@ -49,11 +59,16 @@ wrong script than an invention (script_mismatch still flags them).
 
   The word list is Webster's Second (1934, public domain; /usr/share/dict/web2
   on BSD and macOS) plus its propernames list, lowercased, letters only:
-  234,454 words, english_words.txt.gz beside this file. It has no inflections
-  and nothing modern, so a word is also tried without its common endings
-  ("talked" -> "talk", "deadlines" -> "deadline", "we're" -> "we"), with
-  a held sound squeezed ("Ehh" -> "eh"), and against _EXTRA; a short
-  all-capitals word ("TC") is taken as an initialism.
+  234,454 words, english_words.txt.gz beside this file (LICENSE-english-words.txt).
+  It is loaded once at import, so the first participant line of a process
+  does not pay for it on the event loop. It has no inflections and nothing
+  modern, so a word is also tried without its common endings ("talked" ->
+  "talk", "deadlines" -> "deadline", "we're" -> "we"), with a held sound
+  squeezed ("Ehh" -> "eh"), against _EXTRA, and against a short explicit list
+  of initialisms ("HR", "OK"); any other all-capitals token is judged as a
+  word, so an "SP"-style phantom does not pass as an acronym. The names the
+  caller passes are the cast's AND every capitalised word of the scenario's
+  own text, so a name only a brief mentions ("Priya" in S3A) is not foreign.
 
 Knobs, read per call:
   TRANSCRIPTION_LOGPROBS              default on; "0" stops asking for them
@@ -87,6 +102,15 @@ oh ooh wow whoa oops yikes ugh hey hiya bye lol gonna wanna gotta kinda sorta du
 gimme lemme ya y'all email e-mail online offline internet website app
 smartphone laptop text zoom slack teammate cofounder co-worker coworker
 feedback deadline workflow onboard onboarding standup sync async
+gotcha welp meh hmph phew whew shoot dang darn jeez gosh yay woohoo yeesh
+sheesh uh-huh uh-uh mm-hmm okey dokey righto yessir
+""".split())
+
+# Initialisms a participant says as letters. Explicit, because "any short
+# all-capitals token" also passed "SP", one of the measured phantoms.
+_INITIALISMS = frozenset("""
+ok hr pr it ai ml ui ux api qa pto ooo asap fyi eta eod eow btw ceo cto cfo
+coo cmo vp svp evp kpi okr roi sla sow rfp nda tbd tbh imo irl faq diy
 """.split())
 
 # Endings tried, longest first, with what to put back.
@@ -209,9 +233,8 @@ def _fold(word: str) -> str:
 
 
 def is_english_word(word: str, names: Iterable[str] = ()) -> bool:
-    if word.isupper() and len(word) <= 4 and word.isascii():
-        # An initialism or a name said as letters ("TC", "HR", "OK").
-        return True
+    if word.isascii() and word.isupper() and word.lower() in _INITIALISMS:
+        return True  # said as letters: "HR", "OK"
     w = _fold(word)
     known = _lexicon()
     extra = _EXTRA | {_fold(n) for n in names if n}
@@ -231,6 +254,16 @@ def is_english_word(word: str, names: Iterable[str] = ()) -> bool:
                     and stem[:-1] in known):
                 return True
     return False
+
+
+_CAPITALISED = re.compile(r"\b[A-Z][a-z]{2,}\b")
+
+
+def names_in(text: str) -> frozenset:
+    """Every capitalised word of a scenario's own text, for the gate's
+    `names`: the cast, and anyone a brief or the scene mentions. Ordinary
+    sentence-initial words come along; they are English already."""
+    return frozenset(_CAPITALISED.findall(text or ""))
 
 
 def not_english(text: str, names: Iterable[str] = ()) -> Optional[dict]:
@@ -255,3 +288,8 @@ def provenance() -> dict:
             "participant_min_word_logprob": min_word_logprob(),
             "participant_language_gate": language_gate_enabled(),
             "participant_language_gate_max_words": language_max_words()}
+
+
+# Loaded once, here, rather than on the first participant line of a process
+# (40-110 ms, synchronously, on the event loop: review of PR #81, point 6).
+_lexicon()

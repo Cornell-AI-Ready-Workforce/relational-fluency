@@ -1,4 +1,4 @@
-"""The confidence gate and the English gate (pipeline 2026-10-12a).
+"""The confidence gate and the English gate (pipeline 2026-11-06a).
 
 Built on top of the speech check (tests/test_speech_check.py), which still
 lets a few phantoms through in production. The confidence gate reads the
@@ -121,8 +121,8 @@ def test_a_short_line_with_no_english_in_it_is_not_english(text):
     # Real lines, and the ways a word list goes wrong.
     "Okay.", "Yeah, totally.", "We're gonna miss the deadlines.", "Um",
     "Mhm.", "Hmmm.", "Texted you.", "Stopped.", "Emailed it.", "Kinda.",
-    "Nope.", "TC?", "Hi Barley", "I'm organ.", "Yikes", "résumé", "Two.",
-    "7", "Riley?",
+    "Nope.", "HR?", "OK", "Hi Barley", "I'm organ.", "Yikes", "résumé", "Two.",
+    "7", "Riley?", "Gotcha.", "Welp.", "Meh.", "Hmph.",
 ])
 def test_english_lines_are_kept(text):
     assert G.not_english(text, ["Riley", "Morgan"]) is None
@@ -131,6 +131,29 @@ def test_english_lines_are_kept(text):
 def test_names_count_as_english():
     assert G.not_english("Priyanka?") is not None
     assert G.not_english("Priyanka?", ["Priyanka"]) is None
+
+
+def test_names_only_a_brief_mentions_count_too():
+    # Review of #81, point 3: "Priya" is cast only in S4 but a brief in S3A
+    # mentions her leaving, and a participant saying "Priya?" was suppressed.
+    brief = "Jordan has stopped his extra review pass since Priya left. The team is tired."
+    names = G.names_in(brief)
+    assert {"Jordan", "Priya", "The"} <= names
+    assert G.not_english("Priya?", names) is None
+    assert G.not_english("Priya?") is not None
+
+
+def test_only_listed_initialisms_pass_as_letters():
+    # Point 7: "SP" was one of the measured phantoms and any short all-caps
+    # token used to count as an initialism.
+    assert G.not_english("SP") is not None
+    assert G.not_english("HR?") is None and G.not_english("OK") is None
+    assert G.not_english("TC?") is not None and G.not_english("TC?", ["TC"]) is None
+
+
+def test_the_word_list_is_loaded_at_import():
+    # Point 6: not on the event loop, on the first participant line.
+    assert G._lexicon.cache_info().currsize == 1
 
 
 def test_a_long_line_is_left_alone_and_the_knobs_move_it(monkeypatch):
@@ -179,7 +202,7 @@ def test_provenance_says_which_gates_ran():
     assert gpt["participant_language_gate"] is True
     gem = llm.provenance(GEMINI)["turn_gate"]["participant_transcript_gates"]
     assert gem["transcription_logprobs"] is False
-    assert llm.PIPELINE_VERSION >= "2026-10-12a"
+    assert llm.PIPELINE_VERSION >= "2026-11-06a"
 
 
 # --------------------------------------------------------------------------
@@ -196,8 +219,11 @@ def withdrawals(runner):
 
 
 @in_a_loop
-async def test_an_unsure_line_is_suppressed_before_the_speech_check(answers):
-    a = answers("Sure.")
+async def test_an_unsure_line_the_check_hears_nothing_in_is_suppressed(answers):
+    # Two independent readings agree: the transcriber was guessing and the
+    # second model hears no speech. The check decides first (no_speech), and
+    # the transcriber's scores are on the record with it.
+    a = answers("[no speech]")
     runner, session, ws = gpt_runner()
     withdrawn = withdrawals(runner)
     await runner._await_participant("start")
@@ -206,24 +232,76 @@ async def test_an_unsure_line_is_suppressed_before_the_speech_check(answers):
         confidence=G.confidence(INVENTED["Sure."]))
     assert not session.store.of("user_turn")
     (sup,) = session.store.of("user_turn_suppressed")
-    assert sup["reason"] == "low_transcriber_confidence"
-    assert sup["mean_word_logprob"] == -3.512 and sup["text"] == "Sure."
-    assert withdrawn == [("Sure.", "low_transcriber_confidence")]
-    assert a.payloads == [], "no second hearing for a line already dropped"
+    assert sup["reason"] == "no_speech" and sup["text"] == "Sure."
+    assert withdrawn == [("Sure.", "no_speech")]
+    assert len(a.payloads) == 1, "the hearing ran; the gate did not pre-empt it"
     assert not ws.frames("user_transcript")
     assert runner._awaiting_participant
 
 
 @in_a_loop
-async def test_a_hearing_begun_at_the_commit_is_cancelled_by_the_gate():
+async def test_an_unsure_line_the_check_hears_words_in_is_kept_and_flagged(answers):
+    # Review of #81, point 4: a confident four-token name sums to about -2.2
+    # and was suppressed with the hearing that could rescue it cancelled.
+    answers("Priyanka.")
+    runner, session, ws = gpt_runner()
+    withdrawn = withdrawals(runner)
+    conf = G.confidence(toks(("Pri", -0.6), ("yan", -0.6), ("k", -0.6), ("a", -0.6), (".", -0.3)))
+    assert G.unsure(conf)
+    await runner._record_user_turn("Priyanka.", voiced_ms=700, pcm=PCM, confidence=conf)
+    (turn,) = session.store.of("user_turn")
+    assert turn["text"] == "Priyanka." and turn["speech_check"] == "heard"
+    assert turn["transcriber_unsure"] is True and turn["transcriber_confidence"] == conf
+    assert turn["language_unknown"] == ["Priyanka"]  # not in the list, not in S2A's text
+    assert withdrawn == [] and not session.store.of("user_turn_suppressed")
+    assert [f["text"] for f in ws.frames("user_transcript")] == ["Priyanka."]
+
+
+@pytest.mark.parametrize("answer", [RuntimeError("gateway down")])
+def test_an_unsure_line_the_check_cannot_decide_on_is_suppressed(answers, answer):
+    answers(answer)
     runner, session, _ = gpt_runner()
-    withdrawals(runner)
-    task = asyncio.ensure_future(asyncio.sleep(10))
+    withdrawn = withdrawals(runner)
+    asyncio.run(runner._record_user_turn(
+        "Sure.", voiced_ms=900, pcm=PCM, confidence=G.confidence(INVENTED["Sure."])))
+    assert not session.store.of("user_turn")
+    (sup,) = session.store.of("user_turn_suppressed")
+    assert sup["reason"] == "low_transcriber_confidence"
+    assert sup["mean_word_logprob"] == -3.512 and sup["speech_check"] == "error"
+    assert withdrawn == [("Sure.", "low_transcriber_confidence")]
+
+
+@in_a_loop
+async def test_an_unsure_line_with_no_hearing_for_it_is_suppressed(answers):
+    # Four words or more, not over playback: the check does not select it,
+    # so the transcriber's own doubt is all there is.
+    a = answers("whatever")
+    runner, session, _ = gpt_runner()
+    withdrawn = withdrawals(runner)
+    conf = G.confidence(toks(("Foul", -6.0), (" language", -8.0), (" in", -5.0),
+                             (" here", -4.0), (" now", -6.0)))
+    await runner._record_user_turn("Foul language in here now", voiced_ms=1500,
+                                   pcm=PCM, confidence=conf)
+    (sup,) = session.store.of("user_turn_suppressed")
+    assert sup["reason"] == "low_transcriber_confidence" and "speech_check" not in sup
+    assert a.payloads == [] and withdrawn == [("Foul language in here now",
+                                               "low_transcriber_confidence")]
+
+
+@in_a_loop
+async def test_a_hearing_begun_at_the_commit_is_awaited_not_cancelled():
+    runner, session, _ = gpt_runner()
+    withdrawn = withdrawals(runner)
+
+    async def hearing():
+        return {"outcome": "heard", "text": "What?", "model": "m", "ms": 5, "audio_ms": 900}
+    task = asyncio.ensure_future(hearing())
     await runner._record_user_turn(
         "What?", voiced_ms=900, pcm=PCM, check={"task": task, "started": 0},
         confidence=G.confidence(INVENTED["What?"]))
-    await asyncio.sleep(0)
-    assert task.cancelled()
+    assert task.done() and not task.cancelled()
+    (turn,) = session.store.of("user_turn")
+    assert turn["transcriber_unsure"] is True and withdrawn == []
 
 
 @in_a_loop
@@ -249,9 +327,10 @@ async def test_not_english_is_written_as_the_english_the_check_heard(answers):
     assert [f["text"] for f in ws.frames("user_transcript")] == ["Totally."]
 
 
-@pytest.mark.parametrize("answer", [
-    RuntimeError("gateway down"), "Tuurlijk.", "Natuurlijk."])
-def test_not_english_with_no_english_heard_is_suppressed(answers, answer):
+@pytest.mark.parametrize("answer", ["Natuurlijk.", "Vanzelfsprekend."])
+def test_not_english_where_the_check_hears_other_non_english_is_suppressed(answers, answer):
+    # Two readings of the same audio, neither English and not the same word:
+    # the transcriber's line is not something anybody said.
     answers(answer)
     runner, session, ws = gpt_runner()
     withdrawn = withdrawals(runner)
@@ -259,9 +338,34 @@ def test_not_english_with_no_english_heard_is_suppressed(answers, answer):
     assert not session.store.of("user_turn")
     (sup,) = session.store.of("user_turn_suppressed")
     assert sup["reason"] == "not_english" and sup["unknown"] == ["Tuurlijk"]
-    assert "speech_check" in sup
+    assert sup["speech_check"] == "heard"
     assert withdrawn == [("Tuurlijk.", "not_english")]
     assert not ws.frames("user_transcript")
+
+
+def test_the_same_word_heard_back_is_kept_and_flagged(answers):
+    # Two models wrote the same word from the same audio: it was said, and
+    # the list is what is short (a name, a loanword). Kept, flagged.
+    answers("Tuurlijk.")
+    runner, session, _ = gpt_runner()
+    withdrawn = withdrawals(runner)
+    asyncio.run(runner._record_user_turn("Tuurlijk.", voiced_ms=900, pcm=PCM))
+    (turn,) = session.store.of("user_turn")
+    assert turn["text"] == "Tuurlijk." and turn["language_unknown"] == ["Tuurlijk"]
+    assert withdrawn == [] and not session.store.of("user_turn_suppressed")
+
+
+def test_not_english_where_the_check_could_not_decide_is_kept_and_flagged(answers):
+    # Review of #81, point 2: a word list alone must not silence anybody.
+    answers(RuntimeError("gateway down"))
+    runner, session, ws = gpt_runner()
+    withdrawn = withdrawals(runner)
+    asyncio.run(runner._record_user_turn("Tuurlijk.", voiced_ms=900, pcm=PCM))
+    (turn,) = session.store.of("user_turn")
+    assert turn["text"] == "Tuurlijk." and turn["language_unknown"] == ["Tuurlijk"]
+    assert turn["speech_check"] == "error"
+    assert withdrawn == [] and not session.store.of("user_turn_suppressed")
+    assert [f["text"] for f in ws.frames("user_transcript")] == ["Tuurlijk."]
 
 
 @in_a_loop
@@ -275,15 +379,18 @@ async def test_the_speech_check_still_decides_first(answers):
 
 
 @in_a_loop
-async def test_the_english_gate_runs_where_there_is_no_speech_check(answers):
+async def test_without_a_speech_check_the_english_gate_flags_and_keeps(answers):
+    # The cascade route, production since 2026-10-20: no check can hear the
+    # line again, so "լավ." is written and flagged, not silenced, and the
+    # participant's "Gotcha." is never at the mercy of a word list.
     a = answers()
     runner, session, _ = runner_for("S2A")
     runner.rt = bridge(GEMINI)
-    withdrawals(runner)
+    withdrawn = withdrawals(runner)
     await runner._record_user_turn("լավ.", voiced_ms=900)
-    (sup,) = session.store.of("user_turn_suppressed")
-    assert sup["reason"] == "not_english" and "speech_check" not in sup
-    assert a.payloads == []
     await runner._record_user_turn("Okay, sounds good.", voiced_ms=900)
-    assert [t["text"] for t in session.store.of("user_turn")] == [
-        "Okay, sounds good."]
+    turns = session.store.of("user_turn")
+    assert [t["text"] for t in turns] == ["լավ.", "Okay, sounds good."]
+    assert turns[0]["language_unknown"] == ["լավ"] and "language_unknown" not in turns[1]
+    assert not session.store.of("user_turn_suppressed") and withdrawn == []
+    assert a.payloads == []
