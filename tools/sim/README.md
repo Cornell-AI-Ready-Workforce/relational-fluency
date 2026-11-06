@@ -93,8 +93,10 @@ the 720 s ceiling where 24c ended it about 451 s in, and the count limits
 shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
-check fails for it, saying so, until it is recorded. None is pending as
-committed: all four are recorded on the cascade (`cascade-argon-elevenlabs`:
+check fails for it, saying so, until it is recorded. All four are pending as
+committed: the latency audit of 2026-11-04 bumped PIPELINE_VERSION without
+a live run (see `pending`). Before that, all four
+were recorded on the cascade (`cascade-argon-elevenlabs`:
 Argon hears and replies, flash-lite transcribes, ElevenLabs eleven_v4 speaks),
 pipeline 2026-10-14a / room pacing 29b, on 2026-10-15: S1A, S2A and S4A from
 build ac5e5c9 (s_1792090452_90b16a, s_1792090674_44dec7, s_1792091509_666571)
