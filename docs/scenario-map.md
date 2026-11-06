@@ -83,6 +83,8 @@ participant who never opens produces an empty encounter until the 12:00 stop
 | `S4A` | `i1` | `t2_idea_relabelled` | respectful, encourages_cooperation | probe |
 | `S4A` | `i1` | `t5_a_smaller_second_try` | solicits_input, encourages_participation, supportive | probe |
 | `S4A` | `i1` | `t8_splitting_it_up_is_slower` | not_cooperate_r, encourages_cooperation, respectful | probe |
+| `S4A` | `i1` | `t9_chris_has_two_teams_dates` | solicits_input, encourages_participation, supportive | probe |
+| `S4A` | `i1` | `t10_priya_has_two_teams_dates` | solicits_input, encourages_participation, supportive | probe |
 | `S4A` | `i1` | `t6_chris_backs_the_room` | solicits_input, encourages_participation, encourages_cooperation | probe |
 | `S4A` | `i1` | `t3_decisions_close_with_priya_silent` | encourages_participation, solicits_input | probe |
 | `S4A` | `i2` | `t4_dan_claims_the_writeup` | supportive, respectful, encourages_cooperation, not_cooperate_r | probe |
@@ -91,6 +93,8 @@ participant who never opens produces an empty encounter until the 12:00 stop
 | `S4B` | `i1` | `t2_idea_relabelled` | respectful, encourages_cooperation | probe |
 | `S4B` | `i1` | `t5_a_smaller_second_try` | solicits_input, encourages_participation, supportive | probe |
 | `S4B` | `i1` | `t8_splitting_it_up_is_slower` | not_cooperate_r, encourages_cooperation, respectful | probe |
+| `S4B` | `i1` | `t9_chris_has_two_attendees_times` | solicits_input, encourages_participation, supportive | probe |
+| `S4B` | `i1` | `t10_priya_has_two_attendees_times` | solicits_input, encourages_participation, supportive | probe |
 | `S4B` | `i1` | `t6_chris_backs_the_room` | solicits_input, encourages_participation, encourages_cooperation | probe |
 | `S4B` | `i1` | `t3_runthrough_without_priya` | encourages_participation, solicits_input | probe |
 | `S4B` | `i2` | `t4_dan_claims_the_walkthrough` | supportive, respectful, encourages_cooperation, not_cooperate_r | probe |
