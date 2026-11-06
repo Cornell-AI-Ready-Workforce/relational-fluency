@@ -26,11 +26,11 @@
 #      up-to-date main; it refuses to plan from anywhere else
 #   4. tofu -chdir=infra/terraform apply tfplan.bin, then check /health "build"
 #
-# deployed: relational-fluency-agent:73 carries af71286, verified 2026-10-22
-#   (describe-services, rollout COMPLETED; /health build af71286); this tag
-#   (db5f320, main with #138) is built with BUILD_SHA and pushed, awaiting
-#   the apply that registers 74.
-container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:db5f320"
+# deployed: relational-fluency-agent:74 carries db5f320, verified 2026-11-06
+#   (describe-services, rollout COMPLETED; /health build db5f320); this tag
+#   (1469925, main with #141-#145, #148 (= #146), #135, #140) is built with
+#   BUILD_SHA and pushed, awaiting the apply that registers 75.
+container_image = "540586745717.dkr.ecr.us-east-1.amazonaws.com/relational-fluency/platform:1469925"
 
 # Live voice model. gpt-realtime-2.1 since 2026-09-18: the Gemini live routes
 # are being deprecated and the native-audio one is losing sessions to a gateway-side Vertex credentials error.
