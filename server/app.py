@@ -457,6 +457,13 @@ async def _sweep_video_streams_on_startup() -> None:
 
 app.router.on_startup.append(_sweep_video_streams_on_startup)
 
+# Event-loop lag probe (server/loop_lag.py): p99 and max overshoot of a 50 ms
+# sleep, printed every LOOP_LAG_REPORT_S (60 by default; 0 switches it off).
+from . import loop_lag as _loop_lag  # noqa: E402
+
+app.router.on_startup.append(_loop_lag.start_app_probe)
+app.router.on_shutdown.append(_loop_lag.stop_app_probe)
+
 
 
 
@@ -3063,13 +3070,20 @@ async def api_video_chunk(request: Request, session_id: str, seq: int,
 
     from starlette.concurrency import run_in_threadpool
 
-    sdir = _session_dir(session_id)
-    _require_session_owner(_load_manifest(sdir), participant_id)
-    _refuse_if_withdrawn(participant_id, key, action="a webcam chunk")
-    if seq < 0:
-        raise HTTPException(400, "bad seq")
-    if video._local_size(session_id) > 0 or video.upload_receipt(session_id) is not None:
-        raise HTTPException(409, "video already uploaded")
+    def gate() -> None:
+        # The same checks in the same order, off the event loop: this route
+        # runs every 2 s per filmed encounter, and the withdrawal backstop
+        # reads every run file (runs.withdrawal_for_record). Not cached: it is
+        # the consent gate.
+        sdir = _session_dir(session_id)
+        _require_session_owner(_load_manifest(sdir), participant_id)
+        _refuse_if_withdrawn(participant_id, key, action="a webcam chunk")
+        if seq < 0:
+            raise HTTPException(400, "bad seq")
+        if video._local_size(session_id) > 0 or video.upload_receipt(session_id) is not None:
+            raise HTTPException(409, "video already uploaded")
+
+    await run_in_threadpool(gate)
 
     declared = request.headers.get("content-length")
     if declared and declared.strip().isdigit() and int(declared) > video.MAX_STREAM_CHUNK_BYTES:
