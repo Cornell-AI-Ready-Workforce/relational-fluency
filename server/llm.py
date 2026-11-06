@@ -678,7 +678,34 @@ def text_client() -> AsyncAnthropic:
 #                process. The words, voice and audio are unchanged; a reply
 #                reaches the participant sooner (first audio -304 ms with a
 #                300 ms ElevenLabs open, measured with fakes).
-PIPELINE_VERSION = "2026-11-04a"
+#   2026-11-06a  two participant-transcript gates beside the speech check
+#                (voice/transcript_gates.py; PR #81's work, re-based on the
+#                2026-11-04a history it had rewound). THE CONFIDENCE GATE,
+#                gpt route only: the session asks gpt-4o-transcribe for
+#                per-token logprobs; a line whose mean word score is under
+#                PARTICIPANT_MIN_WORD_LOGPROB (-2.0) is `unsure`. An unsure
+#                line is NOT dropped on its own: the speech check it was
+#                selected for still runs (nothing is cancelled), a hearing
+#                that finds words keeps the line (`transcriber_unsure` on the
+#                user_turn), a hearing that cannot decide (timeout, error, no
+#                audio, nothing heard) or no hearing at all suppresses it as
+#                low_transcriber_confidence with the reply withdrawn. Inert
+#                on the cascade route, which sends no logprobs: `transcription
+#                _logprobs` false in provenance there. THE ENGLISH GATE, every
+#                route: a line of up to PARTICIPANT_LANGUAGE_GATE_MAX_WORDS (6)
+#                words with no English word in it (Webster's Second plus
+#                propernames, common endings stripped, a held sound squeezed,
+#                an explicit initialism list, the cast's names AND every
+#                capitalised word of the scenario's own text, so a name only a
+#                brief mentions counts) is written as the English the speech
+#                check heard where it heard some; suppressed as not_english
+#                only where that check heard nothing English or nothing at
+#                all; and KEPT, flagged `language_unknown`, where no check ran
+#                (the cascade route) or the check could not decide. Nobody's
+#                real one-word line is silenced on the strength of a word
+#                list alone. The word list loads at import, off the live
+#                path. Suppressed lines keep their text in the record.
+PIPELINE_VERSION = "2026-11-06a"
 ROOM_PACING_VERSION = "2026-11-04a"
 
 

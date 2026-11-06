@@ -739,6 +739,41 @@ Caveats for analysis:
   conversation seeded with dozens of them. Read the first re-recorded S4A
   run, or a run with a forced close, before a wave.
 
+## What changed on 2026-11-06, two transcript gates beside the speech check (pipeline_version 2026-11-06a)
+
+The speech check of 2026-09-30 still let a few phantom participant lines
+through in production (S4A `s_1790781273_b8b7cc`: "լավ.", "Democrat",
+"Tuurlijk.", "Post.", "Hi.", "Sexuality"): a check that fails or times out
+keeps the line as it came, a line it does not select is never heard again,
+and a line it hears words in keeps the live text whatever it heard. Two gates
+now sit beside it (`server/voice/transcript_gates.py`); neither calls a model,
+and neither silences a line on its own where the check could still hear it.
+This is PR #81's work, re-based on the 2026-11-04a history (its own merge had
+rewound `PIPELINE_VERSION` to 2026-10-01a) and reworked after review so that
+no real one-word line is dropped on the strength of a word list alone.
+
+| Version | Change | Knob (default) / to reverse |
+|---|---|---|
+| 11-06a | **The confidence gate, gpt route only.** The session asks gpt-4o-transcribe for per-token logprobs (`include: ["item.input_audio_transcription.logprobs"]`). A word's score is the sum of its tokens' logprobs; a line whose mean word score is under the bar is `unsure`. An unsure line is NOT dropped on its own: it goes to the speech check it was selected for (nothing is cancelled), words heard keep it (`transcriber_unsure: true` on the `user_turn`), and it is suppressed as `user_turn_suppressed{low_transcriber_confidence}` with its scores, and the 1:1 reply withdrawn, only where the check hears nothing, cannot decide (`timeout`, `error`, `no_audio`), or there is no check for it (four words or more, not over playback). Every `user_turn` on this route carries `transcriber_confidence` {mean_word_logprob, min_word_logprob, words}, so the bar can be re-read off production. Inert on the cascade route, which sends no logprobs: provenance `participant_transcript_gates.transcription_logprobs` is false there. | `TRANSCRIPTION_LOGPROBS` (1; 0 stops asking and turns the gate off), `PARTICIPANT_MIN_WORD_LOGPROB` (-2.0; `off` turns the gate off) |
+| 11-06a | **The English gate, every route.** A line of at most six words of which not one is English (Webster's Second plus its proper names, common endings stripped, a held sound squeezed, an explicit initialism list, the cast's names and every capitalised word of the scenario's own text, so a name only a brief mentions counts) is: written as the English the speech check heard, where it heard some (`transcript_original` keeps the transcriber's); suppressed as `user_turn_suppressed{not_english, unknown: [...]}` with the reply withdrawn only where the check heard DIFFERENT words that are not English either, or heard nothing at all (`empty`); and otherwise KEPT with `language_unknown: [...]` on the `user_turn`: where no check ran (the cascade route), where it could not decide, or where it heard the same word back (two models agree it was said; the list is what is short). A room routes a kept line as any other. | `PARTICIPANT_LANGUAGE_GATE` (1; 0 turns it off), `PARTICIPANT_LANGUAGE_GATE_MAX_WORDS` (6; 0 applies it at any length) |
+| 11-06a | A `user_turn_suppressed` by either gate keeps the line's text, so the research record is intact; a room turn whose only words were suppressed is skipped, as since 24a. The word list (734 KB, public domain, `server/voice/LICENSE-english-words.txt`) loads once at import, not on the first participant line. | record only |
+
+Caveats for analysis:
+
+- On the cascade route (production since 2026-10-20) only the English gate
+  runs, and it never suppresses there: look for `language_unknown` on
+  `user_turn`, not for `not_english` suppressions, to find the lines it
+  doubted. The phantoms the speech check and the confidence gate catch on
+  the gpt route are not caught on this route by this release.
+- `transcriber_confidence` is absent on every route but gpt, on a fake
+  bridge, and when `TRANSCRIPTION_LOGPROBS=0`. Its bar (-2.0) was calibrated
+  on synthetic speech; real microphones score lower, and a name split into
+  several tokens scores as their sum, which is why the hearing, not the bar,
+  has the last word.
+- Spoken character names, loanwords and interjections the list lacks
+  ("Gotcha.", "Welp.") show up as `language_unknown` on the cascade route.
+  That flag is a reason to read the line, not to drop it.
+
 ## The seven-minute floor, and the twelve-minute stop
 
 Every encounter runs **at least 5:00** and **at most 10:00** (7:00 / 12:00 until 2026-10-15; the figures below are from that period). Since `28b` the

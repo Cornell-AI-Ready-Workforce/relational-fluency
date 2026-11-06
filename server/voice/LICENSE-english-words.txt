@@ -1,0 +1,8 @@
+english_words.txt.gz
+
+Webster's Second International Dictionary word list (1934), as distributed
+with BSD and macOS at /usr/share/dict/web2, together with its propernames
+list, lowercased and reduced to letters only: 234,454 words. The dictionary's
+copyright has expired; the list is in the public domain. It is used by
+server/voice/transcript_gates.py as the English gate's lexicon, and nothing
+else in this repository reads it.
