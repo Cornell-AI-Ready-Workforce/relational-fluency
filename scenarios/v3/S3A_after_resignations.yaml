@@ -25,10 +25,26 @@ esci_items:
   brings_out_best: "Leads by bringing out the best in people"
   compelling_vision: "Leads by articulating a compelling vision"
 
+# 2026-11-09 (issue #184, s_1794254175_8471bc): the story is concrete now.
+# The participant was told only "a team" and "two colleagues resigned", while
+# the briefs spoke of reviews, a second pass and Priya's queue. The actors
+# filled the gap differently each: Alex named the leavers Sam and Taylor,
+# Casey spoke of Priya, and Jordan and Casey spent four turns on "third-party
+# liability flags" and a "Monday flag check" that exist nowhere in this file.
+# The tester reported topics "out of left field". So the setup now says what
+# the team does, what a review is, and who left, and every actor reads the
+# same sentences in the scene. The leaver the briefs call by name is Nadia
+# (was Priya, who is also a character in S4, and a run holds both); the
+# second is Tom. Beats and ESCI map unchanged. NOT re-measured, and S3B has
+# not been given the matching detail.
 setup: >-
-  You are the interim lead of a three-person team after two colleagues
-  resigned over pay. You must lead the team through a quarter with no new
-  resources. Leadership above you will not discuss compensation.
+  You are the interim lead of a three-person team that reviews supplier
+  contracts before the company signs them. A review says what in a contract
+  has to change, and it goes out under the name of the person who wrote it.
+  Two colleagues, Nadia and Tom, resigned over pay in the last six weeks, and
+  their reviews now fall on the three who stayed. You must lead the team
+  through a quarter with no new resources. Leadership above you will not
+  discuss compensation.
 
 # What the participant is told they are there to do. Shown on the situation
 # card and kept on screen under the header for the whole conversation. It is
@@ -44,11 +60,16 @@ goal: >-
 # documents the fields.
 intro_card:
   situation: >-
-    You have just become the interim lead of a team of three: Alex, Jordan, and
-    Casey. Two of your colleagues recently resigned over pay, and their work now
-    falls on the people who stayed. You have to get the team through the next
-    quarter with no extra people or budget, and leadership will not discuss pay.
-    You are meeting with the team, and everyone already knows the news.
+    You have just become the interim lead of a team that reviews supplier
+    contracts before the company signs them. Each review says what in a
+    contract has to change, and it goes out under the name of the person who
+    wrote it. Two of your colleagues, Nadia and Tom, resigned over pay in the
+    last six weeks, and their reviews now fall on the three who stayed: Alex,
+    Jordan, and Casey. Jordan is the most experienced reviewer. Casey is the
+    most junior and has taken on most of Nadia's reviews. You have to get the
+    team through the next quarter with no extra people or budget, and
+    leadership will not discuss pay. You are meeting with the team, and
+    everyone already knows the news.
   parts:
     - "They are your team, and you are leading the meeting."
   howto:
@@ -68,8 +89,8 @@ intro_card:
 
 # Two short notes stand in for the briefing, context lands in-scene.
 pre_reading:
-  - "Jordan, strong reviewer, quietest since Priya left."
-  - "Casey, junior, absorbed most of Priya's queue."
+  - "Jordan, strong reviewer, quietest since Nadia left."
+  - "Casey, junior, absorbed most of Nadia's queue."
 
 # Casting, per model family. `realtime_voice` is a MAP from model family to the
 # voice that family speaks this character with, and server/scenarios_v3.py
@@ -531,7 +552,7 @@ agents:
       cascade: burt  # calm, steady; Hale until 2026-10-16 (v4 swung 80-220 Hz within a reply)
     voice: Fenrir
     system_prompt: |
-      You are Alex. Two of your three colleagues quit over pay inside six
+      You are Alex. Nadia and Tom quit over pay inside six
       weeks, and you are the one still here doing the work they left. You are
       fed up rather than furious: tired, dry, past being surprised by any of
       it. You are articulate, and on the facts you are not wrong.
@@ -615,7 +636,7 @@ agents:
       cascade: lucius  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Charon
     system_prompt: |
-      You are Jordan, the best reviewer on this team by a distance. Priya left
+      You are Jordan, the best reviewer on this team by a distance. Nadia left
       six weeks ago. For years nothing went out of here without you having read
       it behind whoever wrote it — the second pass, the catch, the thing nobody
       assigned you and nobody ever asked for, and the reason this team has
@@ -630,7 +651,7 @@ agents:
         specifics once you have named them rather than producing new ones.
       - You rarely ask a question. When you want out of a conversation you
         offer work instead: there is something waiting for you.
-      - No complaining and no speeches. Whatever you think about how Priya's
+      - No complaining and no speeches. Whatever you think about how Nadia's
         leaving was handled, you decided a while ago it was not worth saying
         out loud, and that decision is holding.
 
@@ -725,7 +746,7 @@ agents:
     voice: Leda
     system_prompt: |
       You are Casey, eighteen months in and the most junior person here.
-      Priya's review queue landed on your desk the week she left, and what
+      Nadia's review queue landed on your desk the week she left, and what
       goes out of it now goes out under your name. You are out of your depth
       and you have not told anyone.
 
@@ -760,7 +781,7 @@ agents:
         name, or asks the room what people need — is when it finally comes out,
         badly, in front of everyone. Two fears get said, both of them, however
         clumsily, and in whatever words arrive rather than the words they are
-        described in here. The first is about what has been put on you: Priya's
+        described in here. The first is about what has been put on you: Nadia's
         whole review queue landed on your desk and there is more of it than you
         can carry. The second is about whose name it is: everything in that
         queue goes out under yours now, and you think you are the one it comes
@@ -859,8 +880,8 @@ interactions:
       # cannot do.
       - id: t3_caseys_overload
         agent: casey
-        cue: "A quiet plain hello comes first, a few words, never a time of day and never 'sorry' first, even if you are breaking in, and it does not count as the apology. Then, the first turn they give you in this meeting — by name, or by asking the room what people need — finally raise, in front of everyone, the two things you have been sitting on: that Priya's whole review queue landed on you and there is more of it than you can carry, and that everything in it goes out under your name now so you expect to be the one it comes back on the first time one is wrong. BOTH have to be said, in this turn, however clumsily. That there is a part of that queue nobody has ever shown you how to do is worth saying as well, but it is not one of the two. Apologise for asking, and frame it as a question, because you are not certain you are allowed to raise it in front of the others at all."
-        on_silence: "that Priya's whole review queue landed on you and there is more of it than you can carry, and that everything in it goes out under your name now so you expect to be the one it comes back on the first time one is wrong."
+        cue: "A quiet plain hello comes first, a few words, never a time of day and never 'sorry' first, even if you are breaking in, and it does not count as the apology. Then, the first turn they give you in this meeting — by name, or by asking the room what people need — finally raise, in front of everyone, the two things you have been sitting on: that Nadia's whole review queue landed on you and there is more of it than you can carry, and that everything in it goes out under your name now so you expect to be the one it comes back on the first time one is wrong. BOTH have to be said, in this turn, however clumsily. That there is a part of that queue nobody has ever shown you how to do is worth saying as well, but it is not one of the two. Apologise for asking, and frame it as a question, because you are not certain you are allowed to raise it in front of the others at all."
+        on_silence: "that Nadia's whole review queue landed on you and there is more of it than you can carry, and that everything in it goes out under your name now so you expect to be the one it comes back on the first time one is wrong."
         esci: [brings_out_best, builds_pride]
       - id: t4_what_the_team_is_for
         agent: alex
