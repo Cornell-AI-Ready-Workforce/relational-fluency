@@ -47,21 +47,26 @@
      list of headings. It looks as the plain line it was. */
   header .title { font-size: 16px; font-weight: 600; margin: 0; }
   header .meta { font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
-  /* Lower area: description (left) and live transcript (right), side by side. */
-  .lower-row { display: flex; gap: 16px; width: 100%; max-width: 1600px; align-items: stretch; }
-  /* The transcript is what the participant reads while talking, so give it the
-     larger share: description narrow, conversation wide. */
-  .lower-row > * { min-width: 0; }
-  .lower-row > *:first-child { flex: 0 1 560px; }
-  .lower-row > *:last-child { flex: 1 1 auto; }
+  /* The room (2026-11-08 layout revision): the setup panel is a column of its
+     own on the left, beside everything the conversation shows, so what the
+     participant was told is in view for the whole of it, next to what is
+     being said. The right column (.stage) stacks the goal, the timeline,
+     one row of tiles and the transcript. Before, the goal and the timeline
+     ran the page's width, the tiles below them did too, and the panel and
+     the transcript shared a row under the tiles. */
+  .stage { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
   .brief {
-    padding: 18px 20px;
+    flex: 1 1 300px; max-width: 340px; min-width: 0;
+    padding: 18px 16px;
     background: #ffffff;
     border: 1px solid var(--line-soft);
-    border-radius: 12px;
+    border-radius: 10px;
     box-shadow: 0 1px 0 rgba(47,47,47,0.03), 0 4px 14px rgba(47,47,47,0.04);
-    overflow-y: auto;
-    max-height: 560px;
+    /* As tall as the column beside it, as a panel is; a setup longer than
+       that scrolls inside its box. Not pinned: on a phone only the banner
+       and the status row are (the small-screen rules), and a test holds the
+       page to that. */
+    align-self: stretch; overflow-y: auto;
   }
   /* The brief is read while talking, a glance away from the camera: 15px for
      what it says (the situation card's size), 12px and more for its labels.
@@ -89,33 +94,36 @@
   }
   .brief .cast-line strong { color: var(--fg); font-weight: 600; }
   @media (max-width: 900px) {
-    .lower-row { flex-direction: column; }
-    .lower-row > *:first-child, .lower-row > *:last-child { flex: 1 1 auto; }
-    .brief { max-height: none; }
+    main { flex-direction: column; }
+    .stage { flex: 1 1 auto; }
     /* Stacked, the captions and the page's notices come right under the
        tiles and the setup card after them. The other way round, everything
        the transcript says (the captions, the move-on notice) started 900 px
        and more down a phone, below a card the participant had already read. */
-    .lower-row > .transcript { order: -1; }
+    .brief { order: 1; flex: 1 1 auto; max-width: none; }
   }
-  main { flex: 1; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
-  /* Photos in a single row across the top, large for immersion. */
-  .grid { display: grid; gap: 14px; width: 100%; max-width: 1600px;
-          grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
-  .tile { background: var(--tile-bg); color: var(--fg-on-dark); border-radius: 14px;
-          aspect-ratio: 4/3; display: flex; flex-direction: column;
+  main { flex: 1; padding: 12px 16px 16px; display: flex; align-items: stretch; gap: 12px; }
+  /* One row of tiles: the participant's own, a third of the row and never
+     narrower than a webcam picture needs, then the characters sharing the
+     rest equally. A fixed height, as a row of video tiles has, whether the
+     room holds one character or three. */
+  .grid { display: flex; gap: 10px; width: 100%; }
+  .tile { background: var(--tile-bg); color: var(--fg-on-dark); border-radius: 10px;
+          flex: 1 1 0; min-width: 0; height: 223px; display: flex; flex-direction: column;
           align-items: center; justify-content: center; gap: 7px;
           position: relative; transition: box-shadow 0.2s, transform 0.15s;
           padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }
+  .tile.self { flex: 0 0 clamp(220px, 33%, 300px); }
   .tile.speaking { box-shadow: 0 0 0 3px var(--accent), 0 8px 24px rgba(179,24,27,0.25); }
   .tile.self { background: var(--surface); color: var(--fg); border: 1px solid var(--line-soft); }
   .tile.self.speaking { box-shadow: 0 0 0 3px var(--accent); }
-  .avatar { width: 108px; height: 108px; border-radius: 50%; display: flex;
-            align-items: center; justify-content: center; font-size: 38px;
+  .avatar { width: 82px; height: 82px; border-radius: 50%; display: flex;
+            align-items: center; justify-content: center; font-size: 30px;
             font-weight: 600; color: white; user-select: none; flex-shrink: 0; }
   .avatar.self { background: var(--surface-2); color: var(--fg); }
-  .name { font-size: 15px; font-weight: 500; }
-  .role { font-size: 12px; opacity: 0.7; margin-top: -8px; }
+  .tile:not(.self) .avatar { width: 60px; height: 60px; font-size: 26px; }
+  .name { font-size: 14px; font-weight: 500; }
+  .role { font-size: 11px; line-height: 1.35; opacity: 0.8; margin-top: -4px; text-align: center; }
   /* Hidden with visibility as well as opacity: opacity alone left
      "SPEAKING" in the accessibility tree on every tile all the time, so a
      screen reader was told everyone was speaking. The fade is kept. */
@@ -256,9 +264,9 @@
   [tabindex="0"]:focus-visible {
     outline: 2px solid var(--fg); outline-offset: 2px; }
   .tile :focus-visible { outline-color: var(--fg-on-dark); }
-  .transcript { width: 100%; max-height: 52vh; min-height: 340px; overflow-y: auto;
-                background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px;
-                padding: 14px 18px; font-size: 15px; line-height: 1.55; }
+  .transcript { width: 100%; flex: 1 1 auto; max-height: 52vh; min-height: 340px; overflow-y: auto;
+                background: var(--surface); border: 2px solid var(--fg); border-radius: 12px;
+                padding: 16px; font-size: 15px; line-height: 1.55; }
   .transcript .turn { margin-bottom: 8px; }
   /* Scene change: the participant must never be unsure who they are talking to. */
   .transcript .scene { margin: 14px 0 10px; padding: 6px 10px; border-radius: 6px;
@@ -376,16 +384,16 @@
      to do is in view while they talk and not only on a card they closed. */
   .sit-goal { font-size: 15px; line-height: 1.5; margin: 0 0 14px; padding: 10px 14px;
     border-left: 3px solid var(--accent, #b3181b); background: #f6f6f4; border-radius: 0 6px 6px 0; }
-  .goal-strip { margin: 10px 20px 0; padding: 8px 14px; font-size: 14px; line-height: 1.5;
+  .goal-strip { margin: 0; padding: 10px 16px; font-size: 14px; line-height: 1.5;
     border-left: 3px solid var(--accent, #b3181b); background: var(--surface, #f6f6f4);
     color: var(--fg); border-radius: 0 6px 6px 0; }
-  @media (max-width: 640px) { .goal-strip { margin: 8px 14px 0; font-size: 13.5px; } }
+  @media (max-width: 640px) { .goal-strip { font-size: 13.5px; } }
   /* The conversation's timeline (renderTimeline): where the participant is on
      the clock, who they are with and when End unlocks. Only for scenarios whose
      first part has a fixed length (S1: a minute with the colleague, then the
      counterpart for the rest). Decorative, aria-hidden: the same facts are in
      the timer and the gate label. */
-  .timeline { margin: 10px 20px 0; }
+  .timeline { margin: 0; }
   .tl-track { position: relative; height: 26px; display: flex; border-radius: 6px;
     overflow: hidden; background: var(--surface-2); border: 1px solid var(--line-strong); }
   .tl-seg { position: relative; height: 100%; min-width: 0; }
@@ -400,7 +408,7 @@
   @media (prefers-reduced-motion: reduce) { .tl-now { transition: none; } }
   .tl-axis { position: relative; height: 20px; font-size: 13px; color: var(--muted); }
   .tl-axis span { position: absolute; top: 3px; white-space: nowrap; }
-  @media (max-width: 640px) { .timeline { margin: 8px 14px 0; } }
+
   .sit-assets { background: #f6f6f4; border-left: 3px solid var(--accent, #b3181b);
     padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 14px; }
   .sit-assets h4 { margin-top: 0; }
@@ -513,10 +521,11 @@
        to shrink every button to 35-37px on the one kind of screen people tap. */
     button { padding: 10px 16px; font-size: 15px; min-height: 44px; }
     main { padding: 14px; gap: 14px; }
-    /* Two compact, square tiles per row instead of one tall stacked column. */
-    .grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-    .tile { aspect-ratio: 1 / 1; gap: 8px; padding: 12px; border-radius: 12px; }
-    .avatar { width: 56px; height: 56px; font-size: 21px; }
+    .stage { gap: 10px; }
+    /* Two compact, square tiles per row instead of one long row of slivers. */
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .tile, .tile.self { flex: none; height: auto; aspect-ratio: 1 / 1; gap: 8px; padding: 12px; border-radius: 12px; }
+    .avatar, .tile:not(.self) .avatar { width: 56px; height: 56px; font-size: 21px; }
     .name { font-size: 13px; }
     .role { font-size: 12px; }
     .speaking-indicator { top: 8px; right: 8px; font-size: 12px; padding: 2px 7px; }
@@ -587,7 +596,7 @@
   }
   /* Very narrow phones: keep tiles legible. */
   @media (max-width: 360px) {
-    .avatar { width: 48px; height: 48px; font-size: 18px; }
+    .avatar, .tile:not(.self) .avatar { width: 48px; height: 48px; font-size: 18px; }
     .mic-level { width: 38px; }
   }
   /* Somebody who has asked their system for less motion gets none: three
@@ -821,30 +830,31 @@
      (showCaptureFailure): under the header, next to the Start button whose
      press it answers. -->
 <div class="capture-slot" id="captureSlot" aria-live="polite"></div>
-<!-- The participant's goal, in view for the whole conversation (showGoalStrip). -->
-<div class="goal-strip" id="goalStrip" role="note" style="display:none"></div>
-<!-- Who the participant is with, and when End unlocks (renderTimeline). -->
-<div class="timeline" id="timeline" aria-hidden="true" style="display:none">
-  <div class="tl-track">
-    <div class="tl-seg tl-seg-1" id="tlSeg1"></div>
-    <div class="tl-seg tl-seg-2" id="tlSeg2"></div>
-    <div class="tl-tick" id="tlUnlock"></div>
-    <div class="tl-now" id="tlNow"></div>
-    <!-- The names sit above the needle so it never hides a letter. -->
-    <div class="tl-labels"><span id="tlName1" style="left:10px"></span><span id="tlName2"></span></div>
-  </div>
-  <div class="tl-axis" id="tlAxis"></div>
-</div>
-
 <main>
-  <div class="grid" id="grid"></div>
-  <div class="lower-row">
-    <div class="brief" id="brief" style="display:none">
-      <img class="intro-photo" id="introPhoto" alt="" style="display:none" />
-      <div class="label">Your setup</div>
-      <div class="body" id="briefBody"></div>
-      <div class="cast-line" id="castLine"></div>
+  <!-- The setup panel, a column of its own beside the conversation (see the
+       .stage comment in the styles). Hidden until the brief lands (loadBrief). -->
+  <aside class="brief" id="brief" style="display:none" aria-label="Your setup">
+    <img class="intro-photo" id="introPhoto" alt="" style="display:none" />
+    <div class="label">Your setup</div>
+    <div class="body" id="briefBody"></div>
+    <div class="cast-line" id="castLine"></div>
+  </aside>
+  <div class="stage">
+    <!-- The participant's goal, in view for the whole conversation (showGoalStrip). -->
+    <div class="goal-strip" id="goalStrip" role="note" style="display:none"></div>
+    <!-- Who the participant is with, and when End unlocks (renderTimeline). -->
+    <div class="timeline" id="timeline" aria-hidden="true" style="display:none">
+      <div class="tl-track">
+        <div class="tl-seg tl-seg-1" id="tlSeg1"></div>
+        <div class="tl-seg tl-seg-2" id="tlSeg2"></div>
+        <div class="tl-tick" id="tlUnlock"></div>
+        <div class="tl-now" id="tlNow"></div>
+        <!-- The names sit above the needle so it never hides a letter. -->
+        <div class="tl-labels"><span id="tlName1" style="left:10px"></span><span id="tlName2"></span></div>
+      </div>
+      <div class="tl-axis" id="tlAxis"></div>
     </div>
+    <div class="grid" id="grid"></div>
     <!-- A log, and not read out as it changes (A11Y-02): a character's line
          is rewritten sentence by sentence while the voice says it, and the
          participant's own words on every interim result while they talk, so
