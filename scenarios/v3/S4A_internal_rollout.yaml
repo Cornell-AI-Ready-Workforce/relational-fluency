@@ -39,8 +39,8 @@ esci_items:
 setup: >-
   You are one of four people on a project team moving every team in the
   company onto a new system for booking time off and filing expenses: Sales,
-  Finance, Support, Operations, and Marketing. You are on the project team
-  for Marketing. Nothing has gone live yet. Dan has already drafted the
+  Finance, Support, Operations, and Marketing. You work in Marketing and
+  speak for it on the project team. Nothing has gone live yet. Dan has already drafted the
   schedule, and his draft puts every team live on the same day, Monday the
   9th. The others are Priya and Chris. Nobody here outranks anyone, and no
   manager is in the room. The four of you are in a working session, and the
@@ -63,16 +63,17 @@ intro_card:
   situation: >-
     Your company is moving every team onto a new system for booking time off
     and filing expenses: Sales, Finance, Support, Operations, and Marketing.
-    You are one of four people on the project team running the rollout, and
-    you are there for Marketing. The other three are Dan, Priya, and Chris.
+    You work in Marketing. You are one of four people on the project team
+    running the rollout, and you speak for Marketing on it. The other three
+    are Dan, Priya, and Chris.
     Nobody outranks anyone, and there is no manager in the room. Dan has
     drafted the rollout schedule, and his draft has every team go live on the
     same day, Monday the 9th. Nothing has gone live yet. The four of you are
     meeting now to settle the plan.
   assets:
     - "Dan's draft schedule, shared before the session, which has every team going live on Monday the 9th."
-    - "Marketing's calendar: your team has a campaign launching on Wednesday the 11th, and nobody on it will have time to learn a new system before then."
-    - "Your own preferred go-live date: Wednesday the 18th. It gives Marketing a week after the launch to get ready."
+    - "Your team's calendar: Marketing, your own team, has a campaign launching on Wednesday the 11th, and nobody on it will have time to learn a new system before then."
+    - "The go-live date you want for your team: Wednesday the 18th. It gives Marketing a week after the campaign launches to get ready."
   parts:
     - "They are your project teammates. Together you need to agree on the plan."
   howto:
@@ -92,12 +93,15 @@ intro_card:
 
 # Participant-only (the "What you have" card; actors never see this list).
 # The campaign is the participant's own reason for the 18th and theirs to
-# say; nothing here points at Priya's history, at whose idea the pilot is, or
+# say. Reworded 2026-11-09 after s_1794253712_581349: "Marketing's calendar"
+# beside "Your own preferred go-live date" read as two parties, and the
+# participant told Priya the campaign was hers and said "my date is the 18th,
+# I know Marketing's is not that". Both lines now say the team is theirs; nothing here points at Priya's history, at whose idea the pilot is, or
 # at who holds the other teams' dates.
 assets:
   - "Dan's draft schedule, circulated before the session: every team live on one date, Monday the 9th"
-  - "Marketing's calendar: your team has a campaign launching on Wednesday the 11th, and nobody on it will have time to learn a new system before then"
-  - "Your own preferred go-live date: Wednesday the 18th, which gives Marketing a week after the launch to get ready"
+  - "Your team's calendar: Marketing, your own team, has a campaign launching on Wednesday the 11th, and nobody on it will have time to learn a new system before then"
+  - "The go-live date you want for your team: Wednesday the 18th, which gives Marketing a week after the campaign launches to get ready"
 
 # Casting, per model family. `realtime_voice` is a MAP from model family to the
 # voice that family speaks this character with, and server/scenarios_v3.py

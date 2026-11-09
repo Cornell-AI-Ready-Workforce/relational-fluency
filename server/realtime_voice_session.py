@@ -1119,6 +1119,11 @@ class RealtimeVoiceSessionRunner:
         self._move_on_noted = False
         self._held_call_reply_at = 0.0
         self._held_call_tasks: set = set()
+        # A ROOM member's end_conversation call that was held (issue #181,
+        # s_1794253712_581349): the task answering it, by member, and the
+        # members whose call was held. See _held_end_left_floor_silent.
+        self._end_call_tasks: dict = {}
+        self._held_end_calls: set = set()
         # THE TURN CUE (issue #49; see _maybe_turn_open). Whether turn_open has
         # gone to the page since the last line started or the participant last
         # began to speak; every character turn the page was told of and has
@@ -3312,7 +3317,12 @@ class RealtimeVoiceSessionRunner:
                         "tool_call", name=ev.get("name"), segment=self.segment,
                         agent_id=agent.id,
                     )
-                    asyncio.ensure_future(self._advance_from_tool(agent.id, rt, ev))
+                    # Kept by member, so the room turn that granted this
+                    # member the floor can wait for the call to be answered
+                    # before it asks the member to speak after all
+                    # (_held_end_left_floor_silent).
+                    self._end_call_tasks[agent.id] = asyncio.ensure_future(
+                        self._advance_from_tool(agent.id, rt, ev))
                     # Keep relaying. Ending the pump here killed this character
                     # for the rest of a KEPT room: S4's working session and its
                     # close share a cast, so _enter takes the keep_room branch,
@@ -3466,6 +3476,8 @@ class RealtimeVoiceSessionRunner:
         room's floor decides who speaks next, so no reply is asked for."""
         try:
             if await self._hold_to_ceiling("end_conversation"):
+                if agent_id:
+                    self._held_end_calls.add(agent_id)
                 if rt is not None and ev is not None:
                     await self._answer_held_call(rt, ev, agent_id=agent_id,
                                                  ask_reply=False)
@@ -3481,6 +3493,39 @@ class RealtimeVoiceSessionRunner:
                 "voice_error", detail=f"advance_from_tool: {exc}",
                 severity="error",
             )
+
+    async def _held_end_left_floor_silent(self, agent_id: str) -> bool:
+        """True when the floor holder's whole reply was an end_conversation
+        call that was held, so the participant's line drew no speech at all.
+
+        Issue #181 (s_1794253712_581349, S4A, 2026-11-09): Chris answered the
+        participant with the call alone at 294.8 s, it was held, the floor was
+        released, and nobody was asked to speak. "Did you hear me?" drew the
+        same from Dan, and the room then sat silent for 87 s until the
+        participant pressed End. The call's output already tells the member
+        the conversation goes on; what was missing is anybody asking it to
+        say something. The room turn asks it, once (_run_group_turn).
+
+        Waits, briefly, for the call to have been answered: a reply asked for
+        while a function call is still open is refused on gpt. False when the
+        member spoke before calling (the participant heard a line), when the
+        call was not held (the encounter is moving on), or when the room is
+        closing or changing interaction."""
+        task = self._end_call_tasks.pop(agent_id, None)
+        if task is not None and not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=3.0)
+            except Exception:  # noqa: BLE001 - the turn stands either way
+                pass
+        held = agent_id in self._held_end_calls
+        self._held_end_calls.discard(agent_id)
+        if not held or self._floor_reply_began:
+            return False
+        if self._closed or self.room is None:
+            return False
+        if self._advancing or self._transitioning:
+            return False
+        return True
 
     def _advance_play_cursor(self, agent_id: str, st, pcm: bytes) -> None:
         """THE SERVER-SIDE PLAYBACK CLOCK (origin/main 169310c).
@@ -9607,6 +9652,7 @@ class RealtimeVoiceSessionRunner:
                 self._drop_undelivered_intent(first, "floor_grant_failed")
                 return
             regranted = False
+            asked_after_held_end = False
             while True:
                 try:
                     await asyncio.wait_for(self._response_done.wait(), timeout=45)
@@ -9629,6 +9675,26 @@ class RealtimeVoiceSessionRunner:
                         rt_dbg.clear_response_state()
                 if self._closed or self.room is not room:
                     return
+                if (not asked_after_held_end
+                        and await self._held_end_left_floor_silent(first)):
+                    # Its whole reply was a held end_conversation call, so the
+                    # participant's line drew no speech (issue #181). The
+                    # floor is its again, once; a second call in that reply
+                    # is answered and not asked after, so the two cannot loop.
+                    asked_after_held_end = True
+                    if self._closed or self.room is not room:
+                        return
+                    self._response_done.clear()
+                    again = await self._grant(first)
+                    self.session.store.event(
+                        "held_call_reply", requested=again is not None,
+                        agent_id=first, segment=self.segment,
+                        interaction=self._interaction_id(), room=True)
+                    if again is not None:
+                        granted = again
+                        continue
+                    if room.speaking == first:
+                        room.speaking = None
                 if self._dropped_unanswered.get(first) is not granted:
                     # Nothing dropped, or a session this grant never went to.
                     self._dropped_unanswered.pop(first, None)
