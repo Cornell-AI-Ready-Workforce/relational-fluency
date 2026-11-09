@@ -1,0 +1,255 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "488ad6b",
+   "date": "2026-10-15",
+   "pipeline_version": "2026-10-14a",
+   "room_pacing_version": "2026-09-29b"
+  }
+ },
+ "build": "1469925",
+ "build_from": "HEAD (its image contents differ from the pinned tag)",
+ "failures": [
+  "S1A: no baseline yet: not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
+  "S2A: no baseline yet: not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
+  "S3A: no baseline yet: not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
+  "S4A: no baseline yet: not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline"
+ ],
+ "generated_at": "2026-11-06T23:01:59Z",
+ "health": {
+  "build": "1469925",
+  "pipeline_version": "2026-11-04a",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S1A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 11,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 8,
+    "lines_said": 8,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "1469925",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-04a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794004505_c4ac55",
+    "speech_end_to_first_played_s": {
+     "n": 9,
+     "p50": 2.163,
+     "p90": 2.638
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_retaliation_fork",
+     "t2_the_opening",
+     "t3_defensiveness",
+     "t5_brush_it_off",
+     "t6_how_it_works",
+     "t4_half_concession",
+     "t7_time_runs_out"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {
+     "probe_pad": 2
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794004505_c4ac55"
+  },
+  "S2A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 26,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 24,
+    "lines_heard": 25,
+    "lines_said": 25,
+    "participant_turns": 25,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "1469925",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-04a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794004721_1cc043",
+    "speech_end_to_first_played_s": {
+     "n": 25,
+     "p50": 2.108,
+     "p90": 2.998
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_the_opening",
+     "t2_the_money_is_not_there",
+     "t3_the_argument_lands_flat",
+     "t4_everyone_is_stretched",
+     "t5_the_door",
+     "t6_who_else_has_to_back_it",
+     "t7_what_goes_in_writing",
+     "t8_what_do_i_tell_the_others",
+     "t9_settling"
+    ],
+    "triggers_fired": 9,
+    "turns_suppressed": {
+     "probe_pad": 1
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 1,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794004721_1cc043"
+  },
+  "S3A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 10,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 9,
+    "lines_said": 9,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "1469925",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-04a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794005326_9528db",
+    "speech_end_to_first_played_s": {
+     "n": 9,
+     "p50": 2.813,
+     "p90": 3.268
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t0_hello",
+     "t1_public_challenge",
+     "t2_jordans_flat_fine",
+     "t3_caseys_overload",
+     "t4_what_the_team_is_for",
+     "t5_a_fact_left_on_the_table",
+     "t6_one_clarifying_question"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794005326_9528db"
+  },
+  "S4A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "metrics": {
+    "assistant_turns": 34,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 28,
+    "lines_heard": 34,
+    "lines_said": 35,
+    "participant_turns": 34,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "1469925",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-04a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794005518_4eacdb",
+    "speech_end_to_first_played_s": {
+     "n": 32,
+     "p50": 2.647,
+     "p90": 3.581
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_priya_interrupted",
+     "t2_idea_relabelled",
+     "t5_a_smaller_second_try",
+     "t8_splitting_it_up_is_slower",
+     "t9_chris_has_two_teams_dates",
+     "t10_priya_has_two_teams_dates",
+     "t6_chris_backs_the_room",
+     "t3_decisions_close_with_priya_silent",
+     "t4_dan_claims_the_writeup",
+     "t7_priya_waits_to_be_handed_work"
+    ],
+    "triggers_fired": 10,
+    "turns_suppressed": {
+     "no_speech": 1
+    },
+    "unheard_lines": [
+     "s4"
+    ],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 3,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794005518_4eacdb"
+  }
+ },
+ "server": "http://127.0.0.1:55610"
+}

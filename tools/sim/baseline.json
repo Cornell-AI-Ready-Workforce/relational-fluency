@@ -1,31 +1,31 @@
 {
- "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
- "realtime_model": "cascade-argon-elevenlabs",
- "recorded": {
-  "build": "488ad6b",
-  "date": "2026-10-15",
-  "pipeline_version": "2026-10-14a",
-  "room_pacing_version": "2026-09-29b"
- },
- "scenarios": {},
- "tolerances": {
-  "answered_rate_drop": 0.2,
-  "error_frames_extra": 0,
-  "heard_rate_drop": 0.15,
-  "latency_p50_ratio": 1.5,
-  "latency_p50_slack_s": 0.5,
-  "latency_p90_ratio": 1.5,
-  "latency_p90_slack_s": 1.0,
-  "phantom_turns_extra": 1,
-  "refused_creates_extra": 3,
-  "reply_missing_extra": 1,
-  "triggers_fired_drop": 1,
-  "voice_error_extra": 0
- },
- "pending": {
-  "S1A": "not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
-  "S2A": "not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
-  "S3A": "not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline",
-  "S4A": "not recorded on pipeline 2026-11-04a / room pacing 2026-11-04a (latency audit, 2026-11-04): the run needs the live gateway and ElevenLabs. The 2026-10-14a / 29b values are in git at b2f8785. Record it with python -m tools.sim.check --write-baseline"
- }
+  "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+    "build": "1469925",
+    "date": "2026-11-06",
+    "pipeline_version": "2026-11-04a",
+    "room_pacing_version": "2026-11-04a"
+  },
+  "scenarios": {},
+  "tolerances": {
+    "answered_rate_drop": 0.2,
+    "error_frames_extra": 0,
+    "heard_rate_drop": 0.15,
+    "latency_p50_ratio": 1.5,
+    "latency_p50_slack_s": 0.5,
+    "latency_p90_ratio": 1.5,
+    "latency_p90_slack_s": 1.0,
+    "phantom_turns_extra": 1,
+    "refused_creates_extra": 3,
+    "reply_missing_extra": 1,
+    "triggers_fired_drop": 1,
+    "voice_error_extra": 0
+  },
+  "pending": {
+    "S1A": "not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
+    "S2A": "not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
+    "S3A": "not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
+    "S4A": "not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline"
+  }
 }
