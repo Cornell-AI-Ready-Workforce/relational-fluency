@@ -689,6 +689,28 @@
     .brief .body.rich .sc + .sc { border-top: 1px solid var(--line-soft); padding-top: 14px; }
   }
 
+  /* ---------- Three columns on a wide screen ---------- */
+  /* From 1360px: the goal and the setup on the left, the room in the middle,
+     the transcript on the right. The room's section steps aside
+     (display: contents) so its goal, setup and room card are placed on the
+     page's grid directly. The setup's three parts stack again in the narrow
+     column. Narrower, the page keeps the setup across the top (above). */
+  @media (min-width: 1360px) {
+    main { max-width: 1680px;
+           grid-template-columns: minmax(280px, 22%) minmax(0, 1fr) minmax(340px, 27%);
+           grid-template-rows: auto auto 1fr;
+           grid-template-areas: "goal room tx" "brief room tx" ". room tx"; }
+    .room { display: contents; }
+    .goal-strip { grid-area: goal; }
+    .brief { grid-area: brief; }
+    .room-card { grid-area: room; align-self: start; }
+    .side { grid-area: tx; }
+    .brief .body.rich .setup-cols { grid-template-columns: 1fr; }
+    .brief .body.rich .sc { padding: 0; border-left: 0; }
+    .brief .body.rich .sc + .sc { border-top: 1px solid var(--line-soft); padding-top: 14px; margin-top: 2px; }
+    /* With nothing above the room, the tiles take the window's height. */
+    .room-card > .grid { height: clamp(300px, calc(100vh - 230px), 480px); }
+  }
   .press-next { margin-top: 14px; padding: 10px 14px; border-radius: 10px; background: var(--accent-soft);
     border: 1px solid #e3c2c2; color: var(--fg); }
 
