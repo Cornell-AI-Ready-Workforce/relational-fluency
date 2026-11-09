@@ -668,6 +668,9 @@ interactions:
     mode: group
     agents: [dan, priya, chris]
     label: "Working session"
+    # Shown to the participant under this step in "How it runs": the task, in
+    # their terms. Never the construct or what the raters look for.
+    guide: "Negotiate the running order for tomorrow."
     kind: planted_triggers
     # A stage note rather than the quoted line this used to open on, matching
     # S4A. _open_group_scene handles both ("if that quotes a line of dialogue,
@@ -834,6 +837,7 @@ interactions:
     mode: group
     agents: [dan, priya, chris]
     label: "The close, speaking roles & credit"
+    guide: "Decide who presents which part."
     kind: allocation
     observe: "Speaking roles rebalanced · deck credits contributors · Priya owns the priorities section."
     triggers:

@@ -867,7 +867,12 @@ def _briefing(spec: dict) -> dict:
                       ([i["agent"]] if isinstance(i.get("agent"), str) else i.get("agents", []))],
              # What the page's timeline draws: this part's fixed length (S1's
              # opening with the instigating colleague), 0 for no fixed length.
-             "timebox_seconds": i.get("timebox_seconds") or 0}
+             "timebox_seconds": i.get("timebox_seconds") or 0,
+             # What this part is for, in the participant's terms (the spec's
+             # optional `guide:`): drawn under the step in "How it runs" and
+             # on the divider when the same people carry on. The task only,
+             # never the construct or what the raters look for.
+             "guide": str(i.get("guide") or "").strip()}
             for i in interactions
         ],
         "duration": spec.get("duration_minutes", [5, 10]),

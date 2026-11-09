@@ -656,6 +656,8 @@
   .step.now .dot i { display: block; }
   .step.now .lbl { font-weight: 600; }
   .step .tm { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* What the step is for, in the participant's terms (a part's `guide`). */
+  .step .lbl .guide { display: block; font-weight: 400; font-size: 13px; color: var(--muted); }
   .prog { margin: 12px 0 14px; }
   .prog .bar { height: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; position: relative; }
   .prog .bar > i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width 1s linear; }
@@ -2017,6 +2019,23 @@
     return xs.length > 0 && xs.every(n => l.includes(n));
   }
 
+  // A step as the participant reads it. ', with <names>' is added only when
+  // the label does not name them already AND they are not the people the step
+  // before was with: S4A's second step is the same room carrying on, and
+  // 'The close, who owns what, with Dan, Priya, and Chris' read as though
+  // they had just arrived.
+  function samePeopleAsBefore(parts, i) {
+    if (i <= 0) return false;
+    const key = (p) => ((p && p.with) || []).slice().sort().join('|');
+    return key(parts[i]) === key(parts[i - 1]);
+  }
+  function partLabelHtml(parts, i) {
+    const p = parts[i] || {};
+    const who = p.with?.length && !labelNamesAll(p.label, p.with) && !samePeopleAsBefore(parts, i)
+      ? `, with ${listPhrase(p.with.map(esc))}` : '';
+    return `${esc(p.label)}${who}`;
+  }
+
   // ---------- the page's cards (issue #43) ----------
   // Every card opens and closes through these two. They used to set `display`
   // and nothing else, so a screen reader stayed on the page behind with
@@ -2120,13 +2139,13 @@
       `<li><span class="avatar" aria-hidden="true" style="background:${colorFor(p.name)}">${esc(initialsOf(p.name))}</span>` +
       `<span><b>${esc(p.name)}</b>${p.role ? `<span class="r">${esc(p.role)}</span>` : ''}</span></li>`).join('');
     const parts = (b.parts || []).map((p, i) =>
-      `<li>${esc(p.label)}${p.with?.length && !labelNamesAll(p.label, p.with) ? `, with ${listPhrase(p.with.map(esc))}` : ''}</li>`).join('');
+      `<li>${partLabelHtml(b.parts, i)}${p.guide ? `: ${esc(p.guide)}` : ''}</li>`).join('');
     const how = (b.howto || []).map(h => `<li>${esc(h)}</li>`).join('');
     // The room's setup card draws each part as a step (done, now, to come,
     // renderTimeline) with the clock under them.
     const steps = (b.parts || []).map((p, i) =>
       `<li class="step"><span class="dot" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg><i></i></span>` +
-      `<span class="lbl">${esc(p.label)}${p.with?.length && !labelNamesAll(p.label, p.with) ? `, with ${listPhrase(p.with.map(esc))}` : ''}</span>` +
+      `<span class="lbl">${partLabelHtml(b.parts, i)}${p.guide ? `<span class="guide">${esc(p.guide)}</span>` : ''}</span>` +
       `<span class="tm"></span></li>`).join('');
     const dur = b.duration ? `${b.duration[0]}–${b.duration[1]} minutes` : '';
     const situation = `
@@ -4877,6 +4896,10 @@
         const peopleKey = presentIds.slice().sort().join(',');
         const single = presentIds.length <= 1;
         const showScene = !(single && (lastScenePeople === null || lastScenePeople === peopleKey));
+        // The same room carrying on (S4A's close): nobody has arrived, so
+        // 'you are now with Dan · Priya · Chris' is wrong. The divider says
+        // what this part is for instead, when the spec gives a `guide`.
+        const sameRoom = lastScenePeople !== null && lastScenePeople === peopleKey;
         lastScenePeople = peopleKey;
         if (showScene) {
           const names = (m.present || []).map(p => esc(p.name)).join(' · ');
@@ -4884,9 +4907,12 @@
           const el = document.createElement('div');
           el.className = 'scene';
           // 'Hallway run-in with Sam, you are now with Sam' said it twice.
-          el.innerHTML = labelNamesAll(m.label, (m.present || []).map(p => p.name))
-            ? label
-            : `${label}<span class="with">, you are now with ${names}</span>`;
+          const guide = esc(((timelineParts || [])[m.index] || {}).guide || '');
+          el.innerHTML = sameRoom
+            ? `<span>${label}${guide ? `<span class="with">: ${guide}</span>` : ''}</span>`
+            : labelNamesAll(m.label, (m.present || []).map(p => p.name))
+              ? label
+              : `${label}<span class="with">, you are now with ${names}</span>`;
           $('transcript').appendChild(el);
           $('transcript').scrollTop = $('transcript').scrollHeight;
           announce(el.textContent);
