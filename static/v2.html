@@ -583,6 +583,25 @@
   .name { font-weight: 600; }
   .role { font-size: 12px; opacity: .78; }
   .tile:not(.self):not(.absent):not(.upnext) .avatar { width: 120px; height: 120px; font-size: 44px; }
+  /* Three or more people: a 2x2 grid instead of one row of narrow columns.
+     Every tile is half the row wide and half its height; with three, the
+     third sits centred under the first two. Two people stay side by side,
+     each half the row and its full height (the rules above). A phone has
+     its own two-per-row grid (the small-screen rules). */
+  /* By id, to outrank the self tile's two-row rule above. */
+  @media (min-width: 641px) {
+    #grid:has(> .tile:nth-child(3)) { grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-rows: repeat(2, minmax(0, 1fr)); grid-auto-flow: row; }
+    #grid:has(> .tile:nth-child(3)) > .tile { grid-column: span 2; grid-row: auto; }
+    #grid:has(> .tile:nth-child(3)):not(:has(> .tile:nth-child(4))) > .tile:nth-child(3) { grid-column: 2 / span 2; }
+    #grid:has(> .tile:nth-child(3)) > .tile:not(.self):not(.absent):not(.upnext) .avatar { width: 88px; height: 88px; font-size: 34px; }
+  }
+  /* Below the three columns the row of tiles shrinks with the window
+     (clamp above); two rows need the height back, or a face and its name no
+     longer fit a tile. */
+  @media (min-width: 641px) and (max-width: 1359px) {
+    #grid:has(> .tile:nth-child(3)) { height: 420px; }
+  }
   .speaking-indicator { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; letter-spacing: .05em; }
   .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 10px; }
   .bars i { width: 2px; background: #fff; border-radius: 1px; animation: bar 1s infinite ease-in-out; }
