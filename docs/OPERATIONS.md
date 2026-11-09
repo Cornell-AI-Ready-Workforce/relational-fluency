@@ -823,6 +823,10 @@ were spent or the character had called `end_conversation`.
 in [The participant URL](#the-participant-url-qualtrics--app--qualtrics)
 below. This section documents a second way in that also works.
 
+To run the four conversations inside one Qualtrics survey, each in its own
+block with the survey's Next button between them, use the framed link and block
+script in [qualtrics-embed.md](qualtrics-embed.md) instead.
+
 The base URL forwards a visitor to the study entry when an id is in the query,
 so this is a whole, working link on its own:
 

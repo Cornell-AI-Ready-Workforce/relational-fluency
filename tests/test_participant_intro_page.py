@@ -862,7 +862,10 @@ def test_on_a_phone_only_the_banner_and_the_status_row_are_pinned():
     assert re.findall(r'\bid="(\w+)"', status) == ["statusGroup", "turnState", "gate", "gateFill",
                                                    "gateLabel", "timer"], status
     assert "<button" not in status
-    assert re.findall(r'<button id="(\w+)"', actions) == ["startBtn", "advanceBtn", "stopBtn", "leaveBtn"]
+    assert re.findall(r'<button id="(\w+)"', actions) == ["startBtn", "advanceBtn", "stopBtn"]
+    # No study-stop control in the room (2026-11-08): the study is left from
+    # the survey around it, and from the cards' own doors (stopTheStudy).
+    assert 'id="leaveBtn"' not in src
 
     css = src[src.index("<style>"):src.index("</style>")]
     sticky = sorted(sel.strip().split("\n")[-1].strip()

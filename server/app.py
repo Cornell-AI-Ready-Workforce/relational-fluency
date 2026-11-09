@@ -1004,6 +1004,8 @@ def entry_params(
     variant: Optional[str] = None,
     qid: Optional[str] = None,
     cohort: Optional[str] = None,
+    embed: Optional[str] = None,
+    step: Optional[str] = None,
 ) -> dict:
     """The query parameters every participant entry link accepts.
 
@@ -1025,6 +1027,7 @@ def entry_params(
         "participantId": participantId,
         "PROLIFIC_PID": PROLIFIC_PID, "variant": variant, "qid": qid,
         "cohort": cohort, "request": request,
+        "embed": embed, "step": step,
     }
 
 
@@ -1655,6 +1658,7 @@ async def _enter_study(arm: Optional[str], p: dict):
                                    and get_participant(participant_id) else None)
     if effective_pid:
         q += f"&participant_id={effective_pid}"
+    q += _embed_query(p.get("embed"), p.get("step"))
     # 307 preserves the method, which is what a GET arrival wants and what every
     # caller of this link already expects. The Continue button's POST must NOT
     # be preserved — a 307 there would have the browser POST to /v2, which
@@ -1662,6 +1666,28 @@ async def _enter_study(arm: Optional[str], p: dict):
     # POST was accepted, now GET this".
     return RedirectResponse(url=f"/v2{q}",
                             status_code=303 if confirmed else 307)
+
+
+# A run embedded in a Qualtrics survey: each of the four conversation blocks
+# frames the same /start link with ?embed=qualtrics&step=<1..4>, and the
+# survey's own Next button moves on (docs/qualtrics-embed.md). /start only
+# carries the two flags through to the room page, which does the rest: it
+# tells the survey when the conversation is done instead of starting the next
+# one itself. Anything else in either parameter is a stray value in a pasted
+# link and is dropped, never refused: the run is the same either way.
+_EMBED_MODES = ("qualtrics",)
+_MAX_EMBED_STEP = 20
+
+
+def _embed_query(embed: Optional[str], step: Optional[str]) -> str:
+    mode = (embed or "").strip().lower()
+    if mode not in _EMBED_MODES:
+        return ""
+    q = f"&embed={mode}"
+    raw = (step or "").strip()
+    if raw.isdigit() and 1 <= int(raw) <= _MAX_EMBED_STEP:
+        q += f"&step={int(raw)}"
+    return q
 
 
 def _cross_link_arms(prior: dict, current: dict, arm_name: str, runs) -> None:
