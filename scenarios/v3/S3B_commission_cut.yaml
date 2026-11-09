@@ -44,9 +44,10 @@ intro_card:
   situation: >-
     You are the interim lead of a sales team of three: Toni, Lee, and Ari. A
     restructuring decided two levels above you has cut the team's commission, so
-    their take-home pay is lower. The decision is final, and leadership will not
-    revisit it. You are meeting with the team, and everyone already knows about
-    the cut.
+    their take-home pay is lower. Lee's enterprise accounts carried the team
+    last year. Ari is the newest and most junior. The decision is final, and
+    leadership will not revisit it. You are meeting with the team, and
+    everyone already knows about the cut.
   parts:
     - "They are your team, and you are leading the meeting."
   howto:
