@@ -32,7 +32,17 @@
 <script>
   // ?app=<the app's origin>&pid=<participant key>[&key=<researcher key>&cohort=internal]
   const qs = new URLSearchParams(location.search);
-  const APP = (qs.get('app') || 'http://localhost:8765').replace(/\/$/, '');
+  // Only an http(s) origin, and only its origin: ?app= is a URL parameter, so
+  // anything else (a javascript: URL, a path carrying markup) is refused and
+  // the default used. CodeQL js/xss, PR #165.
+  function appOrigin(given) {
+    try {
+      const u = new URL(given);
+      if (u.protocol === 'http:' || u.protocol === 'https:') return u.origin;
+    } catch (e) { /* not a URL */ }
+    return 'http://localhost:8765';
+  }
+  const APP = appOrigin(qs.get('app') || 'http://localhost:8765');
   const PID = qs.get('pid') || ('RFLOCAL' + Math.floor(Math.random() * 1e6));
   const RID = 'R_local' + PID;
   const embedded = {};
@@ -70,8 +80,14 @@
       $('question').innerHTML = '<p>Consent and the pre-survey questions would be here.</p>';
     } else if (step <= 4) {
       $('head').textContent = `Conversation block ${step} of 4`;
-      $('question').innerHTML = `<iframe data-rf title="Conversation" src="${link(step)}"
-        allow="microphone; camera; autoplay; fullscreen"></iframe>`;
+      // Built with the DOM, not an HTML string, so no part of the link is
+      // ever parsed as markup.
+      const frame = document.createElement('iframe');
+      frame.setAttribute('data-rf', '');
+      frame.title = 'Conversation';
+      frame.allow = 'microphone; camera; autoplay; fullscreen';
+      frame.src = link(step);
+      $('question').replaceChildren(frame);
       // The block script, run fresh for this page as Qualtrics does.
       const src = await (await fetch('conversation_block.js', { cache: 'no-store' })).text();
       onload = null;
