@@ -567,18 +567,14 @@
   .room-count svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .controls .timer { position: absolute; top: 22px; right: 18px; }
   .timer { padding: 6px 11px; border-radius: 999px; gap: 7px; }
-  /* The control row: whose turn it is and the ring on the left; the
-     microphone and camera, then End, on the right. */
+  /* The control row: whose turn it is and the ring on the left; Start or
+     End on the right. */
   .controls { margin-top: 0; }
   .turn-state { gap: 8px; padding: 6px 12px; }
   .turn-state.agent { color: var(--muted); font-weight: 500; }
-  #micInd { margin-left: auto; }
-  .round-ind { width: 44px; height: 44px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
-    background: var(--surface); color: var(--fg); border: 1px solid var(--line-soft); flex-shrink: 0; }
-  .round-ind svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  .round-ind.off { background: var(--surface-2); color: var(--muted); }
-  .round-ind .slash { display: none; }
-  .round-ind.off .slash { display: inline; }
+  /* With the microphone and camera circles gone, the buttons keep to the
+     right as a group of their own. */
+  @media (min-width: 641px) { .action-group { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; } }
   #startBtn, #advanceBtn, #stopBtn { border-radius: 999px; min-height: 44px; padding: 0 18px; }
   button#stopBtn { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #fff; border: 0; }
   button#stopBtn[style*="none"] { display: none; }
@@ -698,18 +694,26 @@
   @media (min-width: 1360px) {
     main { max-width: 1680px;
            grid-template-columns: minmax(280px, 22%) minmax(0, 1fr) minmax(340px, 27%);
-           grid-template-rows: auto auto 1fr;
-           grid-template-areas: "goal room tx" "brief room tx" ". room tx"; }
+           grid-template-rows: auto minmax(0, 1fr);
+           grid-template-areas: "goal room tx" "brief room tx"; }
     .room { display: contents; }
     .goal-strip { grid-area: goal; }
     .brief { grid-area: brief; }
-    .room-card { grid-area: room; align-self: start; }
+    .room-card { grid-area: room; }
     .side { grid-area: tx; }
     .brief .body.rich .setup-cols { grid-template-columns: 1fr; }
     .brief .body.rich .sc { padding: 0; border-left: 0; }
     .brief .body.rich .sc + .sc { border-top: 1px solid var(--line-soft); padding-top: 14px; margin-top: 2px; }
-    /* With nothing above the room, the tiles take the window's height. */
-    .room-card > .grid { height: clamp(300px, calc(100vh - 230px), 480px); }
+    /* The three columns end on one line, the window's bottom: the page is
+       the window's height, the setup card and the row of tiles take what
+       their column has left, and the setup and the transcript scroll inside
+       when there is more than fits. */
+    .brief { min-height: 0; overflow-y: auto; }
+    .room-card > .grid { flex: 1 1 auto; height: auto; min-height: 280px; }
+  }
+  @media (min-width: 1360px) and (min-height: 640px) {
+    body { height: 100vh; height: 100svh; }
+    main { min-height: 0; }
   }
   .press-next { margin-top: 14px; padding: 10px 14px; border-radius: 10px; background: var(--accent-soft);
     border: 1px solid #e3c2c2; color: var(--fg); }
@@ -767,8 +771,6 @@
     .controls .timer { position: static; }
     header > div:first-child { padding: 11px 14px 0; }
     .room-count, .room-sub { display: none; }
-    #micInd { margin-left: 0; }
-    .round-ind { display: none; }
     .transcript { padding: 12px 14px; }
     header > div:first-child { padding-top: 11px; }
     .status-group { position: sticky; top: var(--banner-h, 0px); z-index: 39;
@@ -1058,9 +1060,6 @@
            startCapture, which turns on the microphone and the webcam. It is armed
            at the end of loadBrief, i.e. only once consent is on record and there
            is a briefed scenario to start. startSession re-checks anyway. -->
-      <!-- What the microphone and camera are doing: shown, not switched. -->
-      <span class="round-ind" id="micInd" role="img" aria-label="Microphone"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/><path class="slash" d="M3 3l18 18"/></svg></span>
-      <span class="round-ind off" id="camInd" role="img" aria-label="Camera"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/><path class="slash" d="M3 3l18 18"/></svg></span>
       <button id="startBtn" disabled>Start conversation</button>
       <button id="advanceBtn" style="display:none"></button>
       <button id="stopBtn" class="secondary" style="display:none">End conversation</button>
@@ -2465,10 +2464,8 @@
     if (hasVideo) {
       if (v.srcObject !== mediaStream) v.srcObject = mediaStream;
       selfTile.classList.add('cam-on');
-      { const c = $('camInd'); if (c) { c.classList.remove('off'); c.setAttribute('aria-label', 'Camera on'); } }
     } else {
       selfTile.classList.remove('cam-on');
-      { const c = $('camInd'); if (c) { c.classList.add('off'); c.setAttribute('aria-label', 'Camera off'); } }
     }
   }
 
@@ -2949,11 +2946,6 @@
     const el = $('selfMic');
     if (!el) return;
     el.className = 'mic-icon ' + (state === 'live' ? 'live' : state === 'muted' ? 'muted' : '');
-    const ind = $('micInd');
-    if (ind) {
-      ind.classList.toggle('off', state !== 'live');
-      ind.setAttribute('aria-label', state === 'live' ? 'Microphone on' : 'Microphone off');
-    }
   }
 
   // ---------- transcript ----------
