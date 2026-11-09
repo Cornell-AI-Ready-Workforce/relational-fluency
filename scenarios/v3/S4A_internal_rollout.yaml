@@ -681,6 +681,9 @@ interactions:
     mode: group
     agents: [dan, priya, chris]
     label: "Working session"
+    # Shown to the participant under this step in "How it runs": the task, in
+    # their terms. Never the construct or what the raters look for.
+    guide: "Negotiate the rollout plan and the go-live date."
     kind: planted_triggers
     # A stage note, not a quoted line, and the same kind of note S4B opens on.
     # _open_group_scene handles both ("if that quotes a line of dialogue, say
@@ -865,6 +868,7 @@ interactions:
     mode: group
     agents: [dan, priya, chris]
     label: "The close, who owns what"
+    guide: "Decide who does what next."
     kind: allocation
     observe: "Fair, named split of visible work · does Priya get the risk section her insight earned."
     triggers:
