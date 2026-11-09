@@ -1437,6 +1437,26 @@
   // would on a finished one (the server records how many turns it had), and
   // the screen after says the conversation stopped early rather than that it
   // is finished, because the participant knows which it was.
+  // A direct link (?scenario=, no run) has nothing to advance to, and until
+  // 2026-11-09 it had nothing to say either: End conversation tore the session
+  // down and put the page back to its Start state with no word that it had
+  // ended (#183), so a tester carried on talking to a room that had gone
+  // (#181). This card covers the page the moment the conversation ends, by
+  // the button or by the hard stop, and says what happened.
+  function showDirectEndCard() {
+    $('nextTitle').textContent = 'Conversation ended';
+    $('nextBody').innerHTML =
+      '<p>This conversation has ended. The characters can no longer hear you, ' +
+      'and nothing more is being recorded.</p>' +
+      '<p>You can close this tab. To run it again from the beginning, close this ' +
+      'message and press Start conversation.</p>';
+    $('nextAlt').style.display = 'none';
+    $('nextBtn').textContent = 'Close';
+    $('nextBtn').style.display = 'inline-block';
+    $('nextBtn').onclick = () => { hideOverlay($('nextOverlay')); };
+    showOverlay($('nextOverlay'));
+  }
+
   async function onEncounterComplete(opts = {}) {
     const { stoppedEarly = false } = opts;
     // An encounter that finished is proof the condition cleared, so the next
@@ -1444,7 +1464,7 @@
     // failure two encounters ago.
     fatalDrops = 0;
     encounterDrops = 0;
-    if (!runId) return;   // single-scenario link: nothing to advance to
+    if (!runId) { showDirectEndCard(); return; }   // single-scenario link: nothing to advance to
     if (advancing) return;   // a second call (e.g. End button after ws complete) is a no-op
     advancing = true;
     if (!sessionId) {
@@ -5545,7 +5565,17 @@
       endSession();
       onEncounterComplete();
     } else {
+      // A direct link: ask first, as a run link does, then say it has ended.
+      if (started && !confirm('End this conversation now?')) return;
+      const wasStarted = started;
       endSession();
+      if (wasStarted) {
+        const el = document.createElement('div');
+        el.className = 'scene';
+        el.textContent = 'Conversation ended.';
+        $('transcript').appendChild(el);
+        showDirectEndCard();
+      }
     }
   });
   // The consent form promises "You may stop at any time by clicking Stop", and
