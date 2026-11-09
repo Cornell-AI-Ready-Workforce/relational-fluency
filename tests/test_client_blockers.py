@@ -1012,7 +1012,7 @@ function primed(putAtMs, advanceDelayMs, advanced) {
     const { b, gone } = primed(null, 3000);
     b.ctx.onEncounterComplete();
     await b.clock.advance(1000);
-    $(b, 'leaveBtn').click();           // the page's own Stop-the-study handler
+    b.ctx.stopTheStudy('Stop?', $(b, 'nextAlt'));   // the wait card's own Stop-the-study door
     await b.clock.advance(500);
     assert(/You have stopped the study/.test($(b, 'nextTitle').textContent),
       'the withdrawal card never appeared: ' + $(b, 'nextTitle').textContent);

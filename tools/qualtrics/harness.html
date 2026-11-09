@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qualtrics stand-in</title>
+<style>
+  /* A local stand-in for the Qualtrics survey (docs/qualtrics-embed.md): four
+     conversation blocks, each framing the app's /start link with its step,
+     and a Next button the block script (conversation_block.js, the very file
+     pasted into Qualtrics) hides and shows. Serve this folder on a port other
+     than the app's, so the frame is cross-origin as it is in Qualtrics. */
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: #e9ecef; color: #222; }
+  .bar { background: #1f2d3d; color: #fff; padding: 10px 20px; font-size: 13px; }
+  .page { max-width: 1440px; margin: 18px auto; background: #fff; border-radius: 8px; padding: 18px 20px 22px;
+          box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  iframe[data-rf] { width: 100%; height: 85vh; min-height: 720px; border: 0; border-radius: 12px; background: #ededec; }
+  .nav { display: flex; justify-content: flex-end; margin-top: 14px; }
+  #next { font: inherit; font-weight: 600; padding: 10px 26px; border: 0; border-radius: 6px; background: #0b6fd6; color: #fff; cursor: pointer; }
+  .data { margin-top: 14px; font: 12px/1.5 ui-monospace, Menlo, monospace; background: #f6f8fa; border-radius: 6px; padding: 10px 12px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div class="bar">Qualtrics stand-in · <span id="who"></span></div>
+<div class="page">
+  <h1 id="head"></h1>
+  <div id="question"></div>
+  <div class="nav"><button id="next" type="button">Next →</button></div>
+  <div class="data" id="data"></div>
+</div>
+<script>
+  // ?app=<the app's origin>&pid=<participant key>[&key=<researcher key>&cohort=internal]
+  const qs = new URLSearchParams(location.search);
+  // Only an http(s) origin, and only its origin: ?app= is a URL parameter, so
+  // anything else (a javascript: URL, a path carrying markup) is refused and
+  // the default used. CodeQL js/xss, PR #165.
+  function appOrigin(given) {
+    try {
+      const u = new URL(given);
+      if (u.protocol === 'http:' || u.protocol === 'https:') return u.origin;
+    } catch (e) { /* not a URL */ }
+    return 'http://localhost:8765';
+  }
+  const APP = appOrigin(qs.get('app') || 'http://localhost:8765');
+  const PID = qs.get('pid') || ('RFLOCAL' + Math.floor(Math.random() * 1e6));
+  const RID = 'R_local' + PID;
+  const embedded = {};
+  let onload = null, unloads = [], step = 0;
+  const $ = (id) => document.getElementById(id);
+  $('who').textContent = `participantId ${PID} · ResponseID ${RID} · app ${APP}`;
+
+  // The slice of Qualtrics.SurveyEngine the block script uses.
+  window.Qualtrics = { SurveyEngine: {
+    addOnload(fn) { onload = fn; },
+    addOnUnload(fn) { unloads.push(fn); },
+    setEmbeddedData(k, v) { embedded[k] = v; showData(); },
+  } };
+  function showData() {
+    $('data').textContent = 'Embedded data\n' + (Object.keys(embedded).length
+      ? Object.entries(embedded).map(([k, v]) => `  ${k} = ${v}`).join('\n') : '  (none yet)');
+  }
+
+  function link(n) {
+    const p = new URLSearchParams({ participantId: PID, qid: RID, embed: 'qualtrics', step: String(n) });
+    for (const k of ['key', 'cohort']) if (qs.get(k)) p.set(k, qs.get(k));
+    return `${APP}/start?${p}`;
+  }
+
+  async function render() {
+    unloads.forEach(f => f()); unloads = [];
+    const q = {
+      hideNextButton() { $('next').style.display = 'none'; },
+      showNextButton() { $('next').style.display = ''; },
+      getQuestionContainer() { return $('question'); },
+    };
+    $('next').style.display = '';
+    if (step === 0) {
+      $('head').textContent = 'Before the conversations';
+      $('question').innerHTML = '<p>Consent and the pre-survey questions would be here.</p>';
+    } else if (step <= 4) {
+      $('head').textContent = `Conversation block ${step} of 4`;
+      // Built with the DOM, not an HTML string, so no part of the link is
+      // ever parsed as markup.
+      const frame = document.createElement('iframe');
+      frame.setAttribute('data-rf', '');
+      frame.title = 'Conversation';
+      frame.allow = 'microphone; camera; autoplay; fullscreen';
+      frame.src = link(step);
+      $('question').replaceChildren(frame);
+      // The block script, run fresh for this page as Qualtrics does.
+      const src = await (await fetch('conversation_block.js', { cache: 'no-store' })).text();
+      onload = null;
+      new Function(src)();
+      if (onload) onload.call(q);
+    } else {
+      $('head').textContent = 'After the conversations';
+      $('question').innerHTML = '<p>The post-survey questions would be here. End of the stand-in.</p>';
+      $('next').style.display = 'none';
+    }
+    showData();
+  }
+  $('next').onclick = () => {
+    // The survey flow's branch: a study that ended early skips the remaining blocks.
+    const st = embedded.rf_status;
+    step = (step >= 1 && step <= 4 && st && st !== 'in_progress' && st !== 'complete') ? 5 : step + 1;
+    render();
+  };
+  render();
+</script>
+</body>
+</html>

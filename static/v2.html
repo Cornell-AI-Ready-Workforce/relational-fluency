@@ -41,87 +41,113 @@
   /* Inter is drawn for text sizes; a heading is tightened a little, as the
      typeface's own spacing guide has it for 16px and up. */
   h1, h2 { letter-spacing: -0.011em; }
-  header { padding: 14px 20px 10px; border-bottom: 1px solid var(--line-soft); background: var(--surface);
-           display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  /* The room (2026-11-08 layout revision, V1 "studio"): the page is two
+     columns of cards on the grey. The left card is the room itself: a title
+     row, the tiles, and under them one row of controls (whose turn it is, the
+     ring, the timer, then the buttons). The transcript is a card of its own
+     below it. The right column holds the goal, the setup and the timeline, in
+     view for the whole conversation. The header element has no box: its two
+     children (the title row and the controls) are laid out by the room card
+     directly, the title first and the controls after the tiles. */
+  header { display: contents; }
+  header > div:first-child { display: flex; align-items: center; gap: 12px; padding: 14px 18px 0; order: 0; }
+  .room-mark { width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0; background: var(--tile-bg); color: #fff;
+    display: inline-flex; align-items: center; justify-content: center; }
+  .room-mark svg, .brief .label .ic svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   /* The page's one h1 (#43): what the page is about, for a screen reader's
      list of headings. It looks as the plain line it was. */
-  header .title { font-size: 16px; font-weight: 600; margin: 0; }
+  header .title { font-size: 18px; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 10px; }
   header .meta { font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
-  /* The room (2026-11-08 layout revision): the setup panel is a column of its
-     own on the left, beside everything the conversation shows, so what the
-     participant was told is in view for the whole of it, next to what is
-     being said. The right column (.stage) stacks the goal, the timeline,
-     one row of tiles and the transcript. Before, the goal and the timeline
-     ran the page's width, the tiles below them did too, and the panel and
-     the transcript shared a row under the tiles. */
-  .stage { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
-  .brief {
-    flex: 1 1 300px; max-width: 340px; min-width: 0;
-    padding: 18px 16px;
-    background: #ffffff;
-    border: 1px solid var(--line-soft);
-    border-radius: 10px;
-    box-shadow: 0 1px 0 rgba(47,47,47,0.03), 0 4px 14px rgba(47,47,47,0.04);
-    /* As tall as the column beside it, as a panel is; a setup longer than
-       that scrolls inside its box. Not pinned: on a phone only the banner
-       and the status row are (the small-screen rules), and a test holds the
-       page to that. */
-    align-self: stretch; overflow-y: auto;
-  }
-  /* The brief is read while talking, a glance away from the camera: 15px for
-     what it says (the situation card's size), 12px and more for its labels.
-     It was 13.5-14px, its labels 10-11px; a phone already had 16px. */
+  main { flex: 1; width: 100%; max-width: 1480px; margin: 0 auto; padding: 16px 20px 20px;
+         display: grid; grid-template-columns: minmax(0, 1fr) 392px; gap: 16px; align-items: start; }
+  .card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 18px;
+          box-shadow: 0 1px 2px rgba(47,47,47,.05), 0 2px 8px rgba(47,47,47,.05); }
+  .card-h { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line-soft);
+            font-weight: 600; font-size: 14.5px; }
+  .card-h .ic { width: 30px; height: 30px; border-radius: 9px; background: var(--accent-soft); color: var(--accent);
+                display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .card-h .ic svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .room { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .room-card { display: flex; flex-direction: column; gap: 14px; padding-bottom: 16px; }
+  .room-card > .capture-slot, .room-card > .grid { order: 1; }
+  .room-card > .grid { padding: 0 18px; }
+  .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .brief { padding: 0; }
   .brief .label {
-    font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--accent); margin: 0 0 8px;
+    display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line-soft);
+    font-size: 14.5px; font-weight: 600; letter-spacing: normal; text-transform: none; color: var(--fg); margin: 0;
   }
+  .brief .label .ic { width: 30px; height: 30px; border-radius: 9px; background: var(--accent-soft); color: var(--accent);
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .brief .label .ic svg { width: 16px; height: 16px; }
+  /* The brief is read while talking, a glance away from the camera: 15px for
+     what it says (the situation card's size), 12px and more for its labels. */
   .brief .body {
-    font-size: 15px; line-height: 1.6; color: var(--fg); white-space: pre-wrap;
-    margin: 0 0 12px;
+    font-size: 14.5px; line-height: 1.6; color: var(--fg); white-space: pre-wrap;
+    margin: 0; padding: 14px 18px 4px;
   }
-  /* Rich briefing inside the reference panel: same sections as the situation
-     popup, sized down to sit beside the transcript. */
   .brief .body.rich { white-space: normal; }
-  .brief .body.rich h4 { font-size: 12px; letter-spacing: .05em; text-transform: uppercase;
-    color: var(--muted); margin: 14px 0 5px; }
-  .brief .body.rich ul { margin: 0; padding-left: 18px; font-size: 15px; line-height: 1.55; }
-  .brief .body.rich li { margin-bottom: 3px; }
-  .brief .body.rich .sit-lead { margin: 0; font-size: 15px; line-height: 1.6; }
-  .brief .body.rich .sit-note { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+  .brief .body.rich h4 { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; font-weight: 700;
+    color: var(--muted); margin: 0 0 8px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+  .brief .body.rich .sit-lead + h4, .brief .body.rich .sit-goal + h4, .brief .body.rich .sit-assets + h4 { margin-top: 14px; }
+  /* The goal is the callout above this card (showGoalStrip, from loadBrief on),
+     so the card itself does not say it again. The situation popup keeps its line. */
+  .brief .body.rich .sit-goal { display: none; }
+  .brief .body.rich ul { margin: 0 0 14px; padding-left: 18px; font-size: 14.5px; line-height: 1.55; }
+  .brief .body.rich li { margin-bottom: 4px; }
+  .brief .body.rich .sit-lead { margin: 0 0 14px; font-size: 14.5px; line-height: 1.6; }
+  .brief .body.rich .sit-lead::before { content: "The situation"; display: block; font-size: 11.5px; letter-spacing: .08em;
+    text-transform: uppercase; font-weight: 700; color: var(--muted); margin-bottom: 8px; }
+  .brief .body.rich .sit-note { font-size: 13px; color: var(--muted); margin: -6px 0 14px; }
+  /* Who they will speak with: a face (the tile's initials and colour) beside
+     each name, as in the room. */
+  .brief .body.rich ul.people { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .brief .body.rich ul.people li { display: flex; align-items: center; gap: 11px; margin: 0; }
+  .brief .body.rich ul.people .avatar { width: 34px; height: 34px; font-size: 13px; }
+  .brief .body.rich ul.people .r { display: block; color: var(--muted); font-size: 12.5px; }
   .brief .cast-line {
     font-size: 13px; color: var(--muted);
-    border-top: 1px solid var(--line-soft); padding-top: 10px; margin-top: 10px;
+    border-top: 1px solid var(--line-soft); padding: 12px 18px 14px; margin: 0;
   }
+  .brief .cast-line:empty { display: none; }
   .brief .cast-line strong { color: var(--fg); font-weight: 600; }
-  @media (max-width: 900px) {
-    main { flex-direction: column; }
-    .stage { flex: 1 1 auto; }
+  @media (max-width: 1100px) {
+    main { grid-template-columns: 1fr; }
     /* Stacked, the captions and the page's notices come right under the
-       tiles and the setup card after them. The other way round, everything
-       the transcript says (the captions, the move-on notice) started 900 px
-       and more down a phone, below a card the participant had already read. */
-    .brief { order: 1; flex: 1 1 auto; max-width: none; }
+       tiles and the setup card after them. */
+    .side { order: 1; }
   }
-  main { flex: 1; padding: 12px 16px 16px; display: flex; align-items: stretch; gap: 12px; }
   /* One row of tiles: the participant's own, a third of the row and never
      narrower than a webcam picture needs, then the characters sharing the
      rest equally. A fixed height, as a row of video tiles has, whether the
      room holds one character or three. */
-  .grid { display: flex; gap: 10px; width: 100%; }
-  .tile { background: var(--tile-bg); color: var(--fg-on-dark); border-radius: 10px;
-          flex: 1 1 0; min-width: 0; height: 223px; display: flex; flex-direction: column;
+  /* The tiles: whoever is in the conversation is large, on the right; the
+     participant's own tile and anyone absent or up next are stacked in a
+     narrow column on the left, as a meeting's other faces are. Two rows of
+     one height, whether the room holds one character or three (each present
+     character takes a column of their own). A self tile with nobody under it
+     takes both rows. */
+  .grid { display: grid; grid-template-columns: 232px; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column;
+          grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 12px; width: 100%; height: 420px; }
+  .tile { background: var(--tile-bg); color: var(--fg-on-dark); border-radius: 16px;
+          min-width: 0; min-height: 0; display: flex; flex-direction: column;
           align-items: center; justify-content: center; gap: 7px;
           position: relative; transition: box-shadow 0.2s, transform 0.15s;
-          padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }
-  .tile.self { flex: 0 0 clamp(220px, 33%, 300px); }
+          padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden;
+          grid-row: 1 / span 2; }
+  .tile.self { grid-column: 1; grid-row: 1; background: linear-gradient(160deg, #3b3b3b, #232323); color: var(--fg-on-dark); }
+  .tile.absent, .tile.upnext { grid-column: 1; grid-row: 2; }
+  .grid:not(:has(.tile.absent, .tile.upnext)) .tile.self { grid-row: 1 / span 2; }
+  .tile:not(.self) { background: radial-gradient(120% 90% at 50% 20%, #4a4a4a 0%, #2f2f2f 60%); }
   .tile.speaking { box-shadow: 0 0 0 3px var(--accent), 0 8px 24px rgba(179,24,27,0.25); }
-  .tile.self { background: var(--surface); color: var(--fg); border: 1px solid var(--line-soft); }
   .tile.self.speaking { box-shadow: 0 0 0 3px var(--accent); }
   .avatar { width: 82px; height: 82px; border-radius: 50%; display: flex;
             align-items: center; justify-content: center; font-size: 30px;
             font-weight: 600; color: white; user-select: none; flex-shrink: 0; }
-  .avatar.self { background: var(--surface-2); color: var(--fg); }
-  .tile:not(.self) .avatar { width: 60px; height: 60px; font-size: 26px; }
+  .avatar.self { background: var(--surface-2); color: var(--fg); font-size: 22px; width: 68px; height: 68px; }
+  .tile:not(.self) .avatar { width: 112px; height: 112px; font-size: 42px; box-shadow: 0 0 0 10px rgba(255,255,255,.06); }
+  .tile.absent .avatar, .tile.upnext .avatar { width: 60px; height: 60px; font-size: 24px; box-shadow: none; }
+  .tile:not(.self):not(.absent):not(.upnext) .name { font-size: 17px; }
   .name { font-size: 14px; font-weight: 500; }
   .role { font-size: 11px; line-height: 1.35; opacity: 0.8; margin-top: -4px; text-align: center; }
   /* Hidden with visibility as well as opacity: opacity alone left
@@ -144,9 +170,11 @@
     100% { box-shadow: 0 0 0 0 rgba(179,24,27,0);}
   }
   .mic-level { position: absolute; bottom: 12px; right: 12px; width: 70px; height: 5px;
-               background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+               background: rgba(255,255,255,.25); border-radius: 3px; overflow: hidden; }
   .mic-level > div { height: 100%; width: 0%; background: var(--accent); transition: width 80ms linear; }
-  .controls { display: flex; gap: 10px; align-items: center; padding: 8px 0; flex-wrap: wrap; }
+  .controls { display: flex; gap: 10px; align-items: center; padding: 0 18px; flex-wrap: wrap; order: 2; }
+  /* The status on the left, the buttons on the right: the timer is the last
+     of the status items, so it pushes the buttons over. */
   /* The status and the buttons are grouped for the phone's pinned row (see
      the small-screen rules). Here the groups have no box, so the row is laid
      out as it always was. */
@@ -265,8 +293,9 @@
     outline: 2px solid var(--fg); outline-offset: 2px; }
   .tile :focus-visible { outline-color: var(--fg-on-dark); }
   .transcript { width: 100%; flex: 1 1 auto; max-height: 52vh; min-height: 340px; overflow-y: auto;
-                background: var(--surface); border: 2px solid var(--fg); border-radius: 12px;
-                padding: 16px; font-size: 15px; line-height: 1.55; }
+                background: var(--surface); border: 0; border-radius: 0 0 18px 18px;
+                padding: 14px 18px 18px; font-size: 15px; line-height: 1.55; }
+  .transcript:focus-visible { outline-offset: -2px; }
   .transcript .turn { margin-bottom: 8px; }
   /* Scene change: the participant must never be unsure who they are talking to. */
   .transcript .scene { margin: 14px 0 10px; padding: 6px 10px; border-radius: 6px;
@@ -384,16 +413,18 @@
      to do is in view while they talk and not only on a card they closed. */
   .sit-goal { font-size: 15px; line-height: 1.5; margin: 0 0 14px; padding: 10px 14px;
     border-left: 3px solid var(--accent, #b3181b); background: #f6f6f4; border-radius: 0 6px 6px 0; }
-  .goal-strip { margin: 0; padding: 10px 16px; font-size: 14px; line-height: 1.5;
-    border-left: 3px solid var(--accent, #b3181b); background: var(--surface, #f6f6f4);
-    color: var(--fg); border-radius: 0 6px 6px 0; }
+  .goal-strip { margin: 0; padding: 12px 14px 12px 50px; font-size: 14.5px; line-height: 1.55; position: relative;
+    border: 1px solid #e9cfcf; border-left: 4px solid var(--accent, #b3181b);
+    background: linear-gradient(135deg, #fbf3f3, #f6ecec); color: var(--fg); border-radius: 12px; }
+  .goal-strip::before { content: ""; position: absolute; left: 14px; top: 13px; width: 26px; height: 26px; border-radius: 8px;
+    background: radial-gradient(circle, #fff 0 1.5px, var(--accent) 2px 4px, #fff 4.5px 6px, var(--accent) 6.5px 8px, #fff 8.5px 10px, var(--accent) 10.5px); }
+  .goal-strip b { display: block; font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 3px; }
   @media (max-width: 640px) { .goal-strip { font-size: 13.5px; } }
   /* The conversation's timeline (renderTimeline): where the participant is on
      the clock, who they are with and when End unlocks. Only for scenarios whose
      first part has a fixed length (S1: a minute with the colleague, then the
      counterpart for the rest). Decorative, aria-hidden: the same facts are in
      the timer and the gate label. */
-  .timeline { margin: 0; }
   .tl-track { position: relative; height: 26px; display: flex; border-radius: 6px;
     overflow: hidden; background: var(--surface-2); border: 1px solid var(--line-strong); }
   .tl-seg { position: relative; height: 100%; min-width: 0; }
@@ -406,8 +437,11 @@
   .tl-now { position: absolute; top: -2px; bottom: -2px; width: 3px; border-radius: 2px;
     background: var(--accent); transition: left 1s linear; z-index: 1; }
   @media (prefers-reduced-motion: reduce) { .tl-now { transition: none; } }
-  .tl-axis { position: relative; height: 20px; font-size: 13px; color: var(--muted); }
+  .tl-axis { position: relative; height: 40px; font-size: 13px; color: var(--muted); }
   .tl-axis span { position: absolute; top: 3px; white-space: nowrap; }
+  /* The unlock note on a line of its own under the two clocks: in the side
+     column (392px) and on a phone it is wider than the room between them. */
+  .tl-axis span:nth-child(2) { top: 22px; left: 0 !important; transform: none !important; color: var(--fg); font-weight: 600; }
 
   .sit-assets { background: #f6f6f4; border-left: 3px solid var(--accent, #b3181b);
     padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 14px; }
@@ -513,6 +547,114 @@
     flex-shrink: 0; }
   .quiet-notice b { display: block; font-size: 15.5px; margin-bottom: 3px; }
 
+
+  /* ---------- The room, as drawn in the studio mockup (2026-11-08) ---------- */
+  /* Title row: the mark, the title with the subtitle under it (which
+     conversation, and with whom), then how many are in the room; the timer
+     sits at the card's top right (it is the status group's, so on a phone it
+     joins the pinned row instead). */
+  .room-card { position: relative; }
+  header > div:first-child { padding: 16px 150px 0 18px; }
+  .room-mark { width: 40px; height: 40px; }
+  .room-titles { min-width: 0; }
+  header .title { font-size: 18px; font-weight: 700; }
+  .room-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .room-sub:empty { display: none; }
+  .room-count { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500;
+    color: var(--muted); background: var(--surface); border: 1px solid var(--line-soft); border-radius: 999px;
+    padding: 5px 11px; white-space: nowrap; }
+  .room-count svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .controls .timer { position: absolute; top: 22px; right: 18px; }
+  .timer { padding: 6px 11px; border-radius: 999px; gap: 7px; }
+  /* The control row: whose turn it is and the ring on the left; the
+     microphone and camera, then End, on the right. */
+  .controls { margin-top: 0; }
+  .turn-state { gap: 8px; padding: 6px 12px; }
+  .turn-state.agent { color: var(--muted); font-weight: 500; }
+  #micInd { margin-left: auto; }
+  .round-ind { width: 44px; height: 44px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    background: var(--surface); color: var(--fg); border: 1px solid var(--line-soft); flex-shrink: 0; }
+  .round-ind svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .round-ind.off { background: var(--surface-2); color: var(--muted); }
+  .round-ind .slash { display: none; }
+  .round-ind.off .slash { display: inline; }
+  #startBtn, #advanceBtn, #stopBtn { border-radius: 999px; min-height: 44px; padding: 0 18px; }
+  button#stopBtn { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #fff; border: 0; }
+  button#stopBtn[style*="none"] { display: none; }
+  button#stopBtn:hover:not(:disabled):not(.locked) { background: var(--accent-deep); }
+  button#stopBtn::before { content: ""; width: 18px; height: 18px; flex-shrink: 0; background: currentColor;
+    -webkit-mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCcgZmlsbD0nbm9uZScgc3Ryb2tlPSdibGFjaycgc3Ryb2tlLXdpZHRoPScxLjgnIHN0cm9rZS1saW5lY2FwPSdyb3VuZCcgc3Ryb2tlLWxpbmVqb2luPSdyb3VuZCc+PHBhdGggZD0nTTMgMTVjNS00IDEzLTQgMTggMGwtMiAzYy0xIDEtMyAwLTQtMXYtMmMtMy0xLTUtMS04IDB2MmMtMSAxLTMgMi00IDF6Jy8+PC9zdmc+") center / contain no-repeat;
+            mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCcgZmlsbD0nbm9uZScgc3Ryb2tlPSdibGFjaycgc3Ryb2tlLXdpZHRoPScxLjgnIHN0cm9rZS1saW5lY2FwPSdyb3VuZCcgc3Ryb2tlLWxpbmVqb2luPSdyb3VuZCc+PHBhdGggZD0nTTMgMTVjNS00IDEzLTQgMTggMGwtMiAzYy0xIDEtMyAwLTQtMXYtMmMtMy0xLTUtMS04IDB2MmMtMSAxLTMgMi00IDF6Jy8+PC9zdmc+") center / contain no-repeat; }
+  button#stopBtn.locked, button#stopBtn.locked:hover { background: var(--surface-2); color: #4a4a48; }
+  /* Tiles: the speaking badge carries a small level meter; whoever has left
+     says when they spoke. */
+  .name { font-weight: 600; }
+  .role { font-size: 12px; opacity: .78; }
+  .tile:not(.self):not(.absent):not(.upnext) .avatar { width: 120px; height: 120px; font-size: 44px; }
+  .speaking-indicator { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; letter-spacing: .05em; }
+  .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 10px; }
+  .bars i { width: 2px; background: #fff; border-radius: 1px; animation: bar 1s infinite ease-in-out; }
+  .bars i:nth-child(1) { height: 40%; } .bars i:nth-child(2) { height: 100%; animation-delay: .15s; }
+  .bars i:nth-child(3) { height: 60%; animation-delay: .3s; } .bars i:nth-child(4) { height: 85%; animation-delay: .45s; }
+  @keyframes bar { 0%, 100% { transform: scaleY(.4); } 50% { transform: scaleY(1); } }
+  .tile.absent { opacity: .45; }
+  .tile .spoke { position: absolute; top: 10px; left: 10px; font-size: 11px; font-weight: 600; background: rgba(255,255,255,.14);
+    color: #fff; padding: 3px 8px; border-radius: 999px; }
+  /* The transcript: a face, the name and the time, then the line; the
+     participant's own lines in a balloon. Who said it is also written out for
+     a screen reader (.speaker, "Name:"), and the drawn name is hidden from it. */
+  .tx-card .card-h .tx-chip { margin-left: auto; font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--surface);
+    border: 1px solid var(--line-soft); border-radius: 999px; padding: 5px 11px; }
+  .transcript { display: flex; flex-direction: column; gap: 16px; padding: 8px 18px 18px; }
+  .transcript .turn { display: flex; gap: 12px; align-items: flex-start; margin: 0; }
+  .transcript .tx-av { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600; color: #fff; flex-shrink: 0; margin-top: 2px; user-select: none; }
+  .transcript .tx-av.self { background: var(--surface-2); color: var(--fg); font-size: 10.5px; }
+  .transcript .tx-body { min-width: 0; }
+  .transcript .who { font-size: 13px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; }
+  .transcript .who .t { font-size: 12px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .transcript .text { display: block; font-size: 15px; line-height: 1.55; margin-top: 3px; }
+  .transcript .turn.you .text { display: inline-block; background: #f5f5f4; border: 1px solid var(--line-soft);
+    border-radius: 0 14px 14px 14px; padding: 9px 13px; margin-top: 5px; }
+  .transcript .turn.live .text { color: var(--muted); }
+  .transcript .turn.live .who::after { content: "speaking\2026"; font-size: 12px; font-weight: 500; color: var(--muted); }
+  .transcript .meta { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 0; }
+  /* A scene change and the start cue: a line across the transcript with the
+     words in the middle. */
+  .transcript .scene, .transcript .scene.start-cue { margin: 6px 0 -2px; padding: 0; background: none; border: 0; border-radius: 0;
+    color: var(--muted); font-size: 13px; font-weight: 400; letter-spacing: normal;
+    display: flex; align-items: center; gap: 12px; text-align: center; }
+  .transcript .scene::before, .transcript .scene::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
+  .transcript .system-note { margin: 0; }
+  .transcript .director-note { display: block; }
+  /* How it runs: one step per part, done, now or to come, and the clock
+     under it with the moment End unlocks. */
+  .brief .body.rich ol.steps { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
+  .brief .body.rich .step { display: grid; grid-template-columns: 22px 1fr auto; gap: 0 10px; align-items: start; font-size: 14px;
+    line-height: 1.45; padding-bottom: 14px; margin: 0; position: relative; }
+  .brief .body.rich .step:last-child { padding-bottom: 0; }
+  .brief .body.rich .step::before { content: ""; position: absolute; left: 10px; top: 20px; bottom: 0; width: 2px; background: var(--line-soft); }
+  .brief .body.rich .step:last-child::before { display: none; }
+  .step .dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); background: #fff;
+    display: inline-flex; align-items: center; justify-content: center; position: relative; z-index: 1; }
+  .step .dot svg { display: none; width: 12px; height: 12px; fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .step .dot i { display: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .step.done .dot { border-color: var(--green, #3a9a5c); background: var(--green, #3a9a5c); }
+  .step.done .dot svg { display: block; }
+  .step.now .dot { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .step.now .dot i { display: block; }
+  .step.now .lbl { font-weight: 600; }
+  .step .tm { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .prog { margin: 12px 0 14px; }
+  .prog .bar { height: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; position: relative; }
+  .prog .bar > i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width 1s linear; }
+  .prog .bar > b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--fg); }
+  .prog .ax { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .prog .ax .mid { color: var(--fg); font-weight: 600; }
+
+  .press-next { margin-top: 14px; padding: 10px 14px; border-radius: 10px; background: var(--accent-soft);
+    border: 1px solid #e3c2c2; color: var(--fg); }
+
   /* ---------- Mobile / small screens ---------- */
   @media (max-width: 640px) {
     header .title { font-size: 15px; }
@@ -520,12 +662,27 @@
     /* 44px touch targets, and no smaller than on a desktop: this rule used
        to shrink every button to 35-37px on the one kind of screen people tap. */
     button { padding: 10px 16px; font-size: 15px; min-height: 44px; }
-    main { padding: 14px; gap: 14px; }
-    .stage { gap: 10px; }
-    /* Two compact, square tiles per row instead of one long row of slivers. */
-    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-    .tile, .tile.self { flex: none; height: auto; aspect-ratio: 1 / 1; gap: 8px; padding: 12px; border-radius: 12px; }
-    .avatar, .tile:not(.self) .avatar { width: 56px; height: 56px; font-size: 21px; }
+    /* No cards on a phone: the room's parts are laid out by the page itself,
+       in the order they were (title, the pinned status row, the buttons, the
+       notices, the goal, the tiles, the captions, then the setup), each with
+       its own gutter. */
+    main, .room, .room-card, .tx-card, .side { display: contents; }
+    header > div:first-child { order: 1; } .status-group { order: 2; } .action-group { order: 3; }
+    .room-card > .capture-slot { order: 4; } .goal-strip { order: 5; } .room-card > .grid { order: 7; }
+    .tx-card > .card-h { display: none; } .transcript { order: 8; } .brief { order: 9; } .build-tag { order: 10; }
+    .goal-strip, .grid, .transcript, .brief { margin: 14px 14px 0; width: auto; }
+    .brief { border: 1px solid var(--line-soft); border-radius: 12px; }
+    .transcript { border-radius: 12px; border: 1px solid var(--line-soft); }
+    .build-tag { padding-top: 14px; }
+    .room-mark { display: none; }
+    /* Two compact, square tiles per row instead of the stage's columns. */
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); grid-template-rows: none; grid-auto-flow: row; gap: 10px; height: auto; }
+    .tile, .tile.self, .tile.absent, .tile.upnext, .grid:not(:has(.tile.absent, .tile.upnext)) .tile.self {
+      grid-column: auto; grid-row: auto; flex: none; height: auto; aspect-ratio: 1 / 1; gap: 8px; padding: 12px; border-radius: 12px; }
+    .tile:not(.self) .avatar { box-shadow: none; }
+    .tile:not(.self):not(.absent):not(.upnext) .name { font-size: 13px; }
+    .avatar, .avatar.self, .tile:not(.self) .avatar, .tile.absent .avatar, .tile.upnext .avatar,
+    .tile:not(.self):not(.absent):not(.upnext) .avatar { width: 56px; height: 56px; font-size: 21px; }
     .name { font-size: 13px; }
     .role { font-size: 12px; }
     .speaking-indicator { top: 8px; right: 8px; font-size: 12px; padding: 2px 7px; }
@@ -548,6 +705,12 @@
     header, .controls { display: contents; }
     header > div:first-child, .status-group, .action-group { display: flex; flex-wrap: wrap;
       align-items: center; gap: 8px; padding: 0 14px; background: var(--surface); }
+    .controls .timer { position: static; }
+    header > div:first-child { padding: 11px 14px 0; }
+    .room-count, .room-sub { display: none; }
+    #micInd { margin-left: 0; }
+    .round-ind { display: none; }
+    .transcript { padding: 12px 14px; }
     header > div:first-child { padding-top: 11px; }
     .status-group { position: sticky; top: var(--banner-h, 0px); z-index: 39;
       padding-top: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
@@ -669,9 +832,7 @@
            untrue on every link type (#34). -->
       <p>Each conversation lasts at least <span id="fictionMin">5</span> minutes.
       After that you can move on whenever you are ready, or keep talking until it
-      ends by itself at <span id="fictionMax">10</span> minutes.<span id="fictionLeave"
-      style="display:none"> You can stop taking part in the study at any time with
-      “Stop and leave the study”.</span></p>
+      ends by itself at <span id="fictionMax">10</span> minutes.</p>
     </div>
     </div>
     <div class="actions"><button id="fictionAck">I understand, continue</button></div>
@@ -787,14 +948,26 @@
 <div class="ai-banner" id="aiBanner">
   You are speaking with an AI character. This is a fictional scenario.
 </div>
+</div>
 
+<main>
+<section class="room">
+<div class="card room-card">
 <header>
   <div>
     <!-- A neutral name until the scenario's own title lands, which the boot
          sequence asks for before the intro overlays (issue #44): the header
          used to read "Loading…" for the whole of them and looked stuck. -->
-    <h1 class="title"><span id="title">Conversation</span><span id="runChip" class="run-chip" style="display:none"></span></h1>
+    <span class="room-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 20l1.3-3.9A9 8 0 1 1 7.7 19L3 20"/></svg></span>
+    <div class="room-titles">
+      <h1 class="title"><span id="title">Conversation</span><span id="runChip" class="run-chip" style="display:none"></span></h1>
+      <!-- Which conversation of the scenario, and with whom (renderRoomMeta). -->
+      <div class="room-sub" id="roomSub"></div>
+    </div>
+    <span class="room-count" id="roomCount" style="display:none"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 21a8 8 0 0 1 16 0"/></svg><span id="roomCountN"></span></span>
   </div>
+  <!-- Under the tiles on a wide screen (the header has no box; see its
+       styles), the status first and the buttons after. -->
   <div class="controls" id="controls">
     <!-- Whose turn it is, the ring and the timer; then the buttons. One row
          on a wide screen; on a phone only this first group is pinned (see
@@ -815,46 +988,23 @@
            startCapture, which turns on the microphone and the webcam. It is armed
            at the end of loadBrief, i.e. only once consent is on record and there
            is a briefed scenario to start. startSession re-checks anyway. -->
+      <!-- What the microphone and camera are doing: shown, not switched. -->
+      <span class="round-ind" id="micInd" role="img" aria-label="Microphone"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/><path class="slash" d="M3 3l18 18"/></svg></span>
+      <span class="round-ind off" id="camInd" role="img" aria-label="Camera"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/><path class="slash" d="M3 3l18 18"/></svg></span>
       <button id="startBtn" disabled>Start conversation</button>
       <button id="advanceBtn" style="display:none"></button>
       <button id="stopBtn" class="secondary" style="display:none">End conversation</button>
-      <!-- "End conversation" ends the encounter and enrols them in the next one,
-           so it is not the control the consent form promises ("You may stop at
-           any time by clicking Stop"). This one stops the study itself. -->
-      <button id="leaveBtn" class="secondary" style="display:none">Stop and leave the study</button>
     </span>
   </div>
 </header>
-</div>
 <!-- The notice for a microphone or camera that would not start
      (showCaptureFailure): under the header, next to the Start button whose
      press it answers. -->
 <div class="capture-slot" id="captureSlot" aria-live="polite"></div>
-<main>
-  <!-- The setup panel, a column of its own beside the conversation (see the
-       .stage comment in the styles). Hidden until the brief lands (loadBrief). -->
-  <aside class="brief" id="brief" style="display:none" aria-label="Your setup">
-    <img class="intro-photo" id="introPhoto" alt="" style="display:none" />
-    <div class="label">Your setup</div>
-    <div class="body" id="briefBody"></div>
-    <div class="cast-line" id="castLine"></div>
-  </aside>
-  <div class="stage">
-    <!-- The participant's goal, in view for the whole conversation (showGoalStrip). -->
-    <div class="goal-strip" id="goalStrip" role="note" style="display:none"></div>
-    <!-- Who the participant is with, and when End unlocks (renderTimeline). -->
-    <div class="timeline" id="timeline" aria-hidden="true" style="display:none">
-      <div class="tl-track">
-        <div class="tl-seg tl-seg-1" id="tlSeg1"></div>
-        <div class="tl-seg tl-seg-2" id="tlSeg2"></div>
-        <div class="tl-tick" id="tlUnlock"></div>
-        <div class="tl-now" id="tlNow"></div>
-        <!-- The names sit above the needle so it never hides a letter. -->
-        <div class="tl-labels"><span id="tlName1" style="left:10px"></span><span id="tlName2"></span></div>
-      </div>
-      <div class="tl-axis" id="tlAxis"></div>
-    </div>
     <div class="grid" id="grid"></div>
+</div>
+  <div class="card tx-card">
+    <div class="card-h"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13"/></svg></span>Live transcript<span class="tx-chip">Captions follow the voice</span></div>
     <!-- A log, and not read out as it changes (A11Y-02): a character's line
          is rewritten sentence by sentence while the voice says it, and the
          participant's own words on every interim result while they talk, so
@@ -864,6 +1014,19 @@
     <div class="transcript" id="transcript" role="log" aria-live="off"
          aria-label="Conversation transcript" tabindex="0"></div>
   </div>
+</section>
+<aside class="side">
+    <!-- The participant's goal, in view for the whole conversation (showGoalStrip). -->
+    <div class="goal-strip" id="goalStrip" role="note" style="display:none"></div>
+    <!-- The setup panel, a column of its own beside the conversation (see the
+         .room comment in the styles). Hidden until the brief lands (loadBrief). -->
+    <div class="card brief" id="brief" style="display:none" role="complementary" aria-label="Your setup">
+      <img class="intro-photo" id="introPhoto" alt="" style="display:none" />
+      <div class="label"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7a3 3 0 0 1 3 3v12a2 2 0 0 0-2-2H4zM20 5h-7a3 3 0 0 0-3 3v12a2 2 0 0 1 2-2h8z"/></svg></span>Your setup</div>
+      <div class="body" id="briefBody"></div>
+      <div class="cast-line" id="castLine"></div>
+    </div>
+</aside>
 </main>
 <!-- Which build served this page (see showBuild). Empty and hidden when the
      server does not say. -->
@@ -878,6 +1041,49 @@
   // A bare /v2 (no ?scenario and no ?run) opens the first study scenario. The
   // old default named a legacy scenario that no longer exists and 404ed.
   let scenario = params.get('scenario') || 'S1A';
+
+  // ---------- inside a Qualtrics survey (embed=qualtrics) ----------
+  // The survey frames the same /start link once per conversation block, with
+  // the block's place in the run (step=1..4), and moves on with its own Next
+  // button (docs/qualtrics-embed.md). In this mode the page never starts the
+  // next conversation and never navigates to a survey link itself: it tells
+  // the survey what happened and asks the participant to press Next, which
+  // the survey shows only then. Only a study run is embedded.
+  const embedded = !!runId && params.get('embed') === 'qualtrics';
+  const embedStep = embedded ? (parseInt(params.get('step'), 10) || 0) : 0;
+  // The page that frames this one, when it is a Qualtrics survey; null
+  // otherwise, and then nothing is said to it. The completion code goes to the
+  // survey and to nobody else.
+  function surveyOrigin() {
+    if (!embedded || window.parent === window) return null;
+    let o = '';
+    try { o = (location.ancestorOrigins && location.ancestorOrigins[0]) || ''; } catch {}
+    if (!o) { try { o = new URL(document.referrer).origin; } catch {} }
+    try {
+      const u = new URL(o);
+      const h = u.hostname;
+      if (u.protocol === 'https:' && (h === 'qualtrics.com' || h.endsWith('.qualtrics.com'))) return u.origin;
+      // A local stand-in for the survey (tools/qualtrics_embed_harness.html),
+      // and only while this page is itself served locally.
+      const local = /^(localhost|127\.0\.0\.1)$/;
+      if (local.test(location.hostname || '') && local.test(h)) return u.origin;
+    } catch {}
+    return null;
+  }
+  // One message per thing the survey needs to know. Every message names the
+  // run and the block it is for; the survey's script (docs/qualtrics-embed.md)
+  // shows its Next button on conversation_complete for its own step,
+  // run_complete and study_ended.
+  function tellSurvey(type, extra = {}) {
+    const o = surveyOrigin();
+    if (!o) return false;
+    try {
+      window.parent.postMessage(Object.assign(
+        { source: 'relational-fluency', type, run: runId, step: embedStep }, extra), o);
+      return true;
+    } catch { return false; }
+  }
+  const PRESS_NEXT = '<p class="press-next">Press <b>Next</b> below this window to continue the survey.</p>';
 
   // Returns true if the boot sequence should continue loading an encounter,
   // false if it must stop (run finished, or a blocking error was shown).
@@ -912,6 +1118,18 @@
       return false;
     }
     if (run.done) { await showRunComplete(); return false; }
+    if (embedded && embedStep && run.position > embedStep) {
+      // This block's conversation is behind the participant (the survey page
+      // was reloaded after it finished): never start the next one here, in
+      // the wrong block. Say so and let the survey move on.
+      $('nextTitle').textContent = `Conversation ${embedStep} of ${run.total} is done`;
+      $('nextBody').innerHTML = '<p>You have already finished this conversation.</p>' + PRESS_NEXT;
+      $('nextBtn').style.display = 'none';
+      $('nextAlt').style.display = 'none';
+      showOverlay($('nextOverlay'));
+      tellSurvey('conversation_complete', { position: embedStep, total: run.total, already: true });
+      return false;
+    }
     scenario = run.current.id;
     const chip = $('runChip');
     // "Conversation" is the unit's one name on the participant's screens, and
@@ -920,10 +1138,6 @@
     // 2 of 4)" did not say which of them it ended.
     chip.textContent = `Conversation ${run.position} of ${run.total}`;
     chip.style.display = 'inline-block';
-    // Offered from the moment we know there is a run to leave, and kept
-    // available for the rest of the page: the promise to stop is not honoured
-    // by a control that only appears once a conversation is already running.
-    $('leaveBtn').style.display = 'inline-block';
     return true;
   }
 
@@ -965,6 +1179,20 @@
       takeVideoNotice();
 
     $('nextAlt').style.display = 'none';   // no second door needed: they finished
+    if (embedded) {
+      // The survey records the code itself (embedded data), so nothing has to
+      // be copied; it stays on screen as proof all the same.
+      $('nextBody').innerHTML = $('nextBody').innerHTML
+        .replace(' Go back to the Qualtrics survey now and enter this code there.', '') + PRESS_NEXT;
+      $('nextBtn').style.display = 'none';
+      showOverlay($('nextOverlay'));
+      // The scenario only when a conversation ran in this page (a reload of a
+      // finished run has none to name).
+      const total = run ? run.total : 4;
+      tellSurvey('run_complete', Object.assign({ code, total, position: total },
+        sessionId ? { scenario } : {}));
+      return;
+    }
     if (cfg.return_url) {
       const sep = cfg.return_url.includes('?') ? '&' : '?';
       const back = `${cfg.return_url}${sep}` + new URLSearchParams({
@@ -1026,6 +1254,18 @@
     showOverlay($('nextOverlay'));
     // Held config where there is some, as showRunComplete: the card grew in
     // steps as the fetch and then the contact landed, moving its button.
+    if (embedded) {
+      // Hold for a recording still being saved, as the button below does, and
+      // then let the survey go on: it is told the study ended and how.
+      if (videoUpload) {
+        const pending = videoUpload;
+        videoUpload = null;
+        await Promise.race([pending.catch(() => null), wait(CLOSING_UPLOAD_WAIT_MS)]);
+      }
+      $('nextBody').innerHTML += PRESS_NEXT;
+      tellSurvey('study_ended', { status: opts.status || 'withdrawn', code: code || '' });
+      return;
+    }
     const cfg = (await loadRunCfg()) || { return_url: '', return_label: 'Return to the survey' };
     if (cfg.return_url) {
       const sep = cfg.return_url.includes('?') ? '&' : '?';
@@ -1232,7 +1472,9 @@
         'waiting if you would rather, the upload keeps going, and we hold the ' +
         'next page for up to a minute so it can finish.</p>';
       $('nextBtn').textContent = 'Continue without waiting';
-      $('nextBtn').style.display = 'inline-block';
+      // In a survey there is no "without waiting": the survey's Next unloads
+      // this page, and the upload with it, so the page waits it out.
+      $('nextBtn').style.display = embedded ? 'none' : 'inline-block';
       let skip = null;
       // `pending` rather than `silent`: neither a skip nor a deadline is a
       // verdict on the recording, but neither is it the plain success screen.
@@ -1297,7 +1539,32 @@
         : '';
     }
     $('nextAlt').style.display = 'none';   // the advance landed and the wait is over: no exit to offer
+    if (embedded && liveUpload && !liveUpload.settled) {
+      // The longer hold the next-conversation button gives, here before the
+      // survey is told, since its Next ends this page.
+      $('nextTitle').textContent = 'Saving your recording…';
+      $('nextBody').innerHTML = '<p>One moment, your video is still being saved.</p>';
+      $('nextBtn').style.display = 'none';
+      await Promise.race([liveUpload.promise.catch(() => null), wait(NEXT_UPLOAD_HOLD_MS)]);
+      if (closing) return;
+    }
     if (run.done) { await showRunComplete(); return; }
+    if (embedded) {
+      $('nextTitle').textContent = stoppedEarly
+        ? `Conversation ${run.position - 1} of ${run.total} stopped early`
+        : `Conversation ${run.position - 1} of ${run.total} complete`;
+      $('nextBody').innerHTML =
+        (stoppedEarly
+          ? '<p>That conversation could not be finished. What was recorded of it is ' +
+            'kept, and the study team can see that it stopped early.</p>'
+          : '<p>That conversation is finished.</p>') +
+        takeVideoNotice() + PRESS_NEXT;
+      $('nextBtn').style.display = 'none';
+      showOverlay($('nextOverlay'));
+      tellSurvey('conversation_complete', {
+        position: run.position - 1, total: run.total, scenario, stopped_early: !!stoppedEarly });
+      return;
+    }
     $('nextTitle').textContent = stoppedEarly
       ? `Conversation ${run.position - 1} of ${run.total} stopped early`
       : `Conversation ${run.position - 1} of ${run.total} complete`;
@@ -1772,9 +2039,20 @@
     if (!b) return null;
     const people = (b.people || []).map(p =>
       `<li><b>${esc(p.name)}</b>${p.role ? `, ${esc(p.role)}` : ''}</li>`).join('');
+    // The compact list (the room's setup card) shows each face as the tile
+    // does: the initials on the name's colour, then the name and the role.
+    const faces = (b.people || []).map(p =>
+      `<li><span class="avatar" aria-hidden="true" style="background:${colorFor(p.name)}">${esc(initialsOf(p.name))}</span>` +
+      `<span><b>${esc(p.name)}</b>${p.role ? `<span class="r">${esc(p.role)}</span>` : ''}</span></li>`).join('');
     const parts = (b.parts || []).map((p, i) =>
       `<li>${esc(p.label)}${p.with?.length && !labelNamesAll(p.label, p.with) ? `, with ${listPhrase(p.with.map(esc))}` : ''}</li>`).join('');
     const how = (b.howto || []).map(h => `<li>${esc(h)}</li>`).join('');
+    // The room's setup card draws each part as a step (done, now, to come,
+    // renderTimeline) with the clock under them.
+    const steps = (b.parts || []).map((p, i) =>
+      `<li class="step"><span class="dot" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg><i></i></span>` +
+      `<span class="lbl">${esc(p.label)}${p.with?.length && !labelNamesAll(p.label, p.with) ? `, with ${listPhrase(p.with.map(esc))}` : ''}</span>` +
+      `<span class="tm"></span></li>`).join('');
     const dur = b.duration ? `${b.duration[0]}–${b.duration[1]} minutes` : '';
     return `
       <p class="sit-lead">${esc(b.situation || d.intro || '')}</p>
@@ -1783,9 +2061,10 @@
         <h4>What you have</h4>
         <ul>${b.assets.map(a => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
       ${compact ? `
-        <h4>Who you'll speak with</h4><ul>${people}</ul>
-        <h4>How it runs</h4><ul>${parts}</ul>
-        ${dur ? `<p class="sit-note">About ${esc(dur)} in total.</p>` : ''}`
+        <h4>Who you'll speak with</h4><ul class="people">${faces}</ul>
+        <h4>How it runs</h4><ol class="steps" id="planSteps">${steps}</ol>
+        <div class="prog" id="planProg" aria-hidden="true"><div class="bar"><i id="planFill"></i><b id="planTick"></b></div>
+          <div class="ax"><span>00:00</span><span class="mid" id="planUnlock"></span><span id="planEnd"></span></div></div>`
       : `
         <div class="sit-cols">
           <div><h4>Who you'll speak with</h4><ul>${people}</ul></div>
@@ -1915,6 +2194,9 @@
   let timelineParts = [];
   let timelineKind = '';   // 'bar': a names-free progress bar (S3A, S3B)
   const partStartsS = [];
+  // The part the conversation is in (segment_start's index), and when each
+  // character was in it, on the timer: { from, to } in seconds.
+  let curPart = -1, spokeSpan = {};
   let lastScenePeople = null;   // who was present at the previous segment_start (null before the first)
 
   let upNext = null;   // {agent_id, agent_name, label} for the following beat
@@ -1958,6 +2240,13 @@
       const next = upNext && upNext.agent_id === a.id && !here;
       t.classList.toggle('absent', !here && !next);
       t.classList.toggle('upnext', !!next);
+      // Whoever has left says when they were in the conversation.
+      const span = spokeSpan[a.id], mss = (x) => { x = Math.round(x); return Math.floor(x / 60) + ':' + pad2(x % 60); };
+      let badge = t.querySelector('.spoke');
+      if (!here && !next && span && span.to != null) {
+        if (!badge) { badge = document.createElement('span'); badge.className = 'spoke'; t.appendChild(badge); }
+        badge.textContent = `Spoke ${mss(span.from)}\u2013${mss(span.to)}`;
+      } else if (badge) badge.remove();
 
       const existing = t.querySelector('.talk-btn');
       // Same floor as the header control: this tile button routes to the same
@@ -1976,6 +2265,8 @@
       }
     });
     renderAdvance();
+    renderRoomMeta();
+    renderTimeline(encounterElapsedS());
   }
 
   // The per-tile "Talk to X" button only appears when the next beat's lead is
@@ -2044,7 +2335,7 @@
       <div class="avatar self" aria-hidden="true">YOU</div>
       <div class="name">You</div>
       <div class="name cam">You</div>
-      <div class="speaking-indicator">SPEAKING</div>
+      <div class="speaking-indicator"><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>SPEAKING</div>
       <div class="mic-icon" id="selfMic"></div>
       <div class="mic-level"><div id="micLevel"></div></div>
     `;
@@ -2091,7 +2382,7 @@
       }
       const spk = document.createElement('div');
       spk.className = 'speaking-indicator';
-      spk.textContent = 'SPEAKING';
+      spk.innerHTML = '<span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>SPEAKING';
       t.appendChild(spk);
       g.appendChild(t);
     });
@@ -2106,8 +2397,10 @@
     if (hasVideo) {
       if (v.srcObject !== mediaStream) v.srcObject = mediaStream;
       selfTile.classList.add('cam-on');
+      { const c = $('camInd'); if (c) { c.classList.remove('off'); c.setAttribute('aria-label', 'Camera on'); } }
     } else {
       selfTile.classList.remove('cam-on');
+      { const c = $('camInd'); if (c) { c.classList.add('off'); c.setAttribute('aria-label', 'Camera off'); } }
     }
   }
 
@@ -2163,7 +2456,7 @@
     if (turn.revealedAll && turn.latency != null && !turn.metaAdded) {
       const meta = document.createElement('span'); meta.className = 'meta';
       meta.textContent = `${turn.latency}s`;
-      turn.el.appendChild(meta); turn.metaAdded = true;
+      (turn.el.querySelector('.who') || turn.el).appendChild(meta); turn.metaAdded = true;
     }
   }
 
@@ -2224,24 +2517,54 @@
              unlock: Math.min(offset + MIN_S, MAX_S),
              n1: names(first), n2: names(timelineParts[1]), now: Math.min(s, MAX_S) };
   }
+  // The clock as the timer shows it, mm:ss.
+  function clockOf(x) { x = Math.max(0, Math.round(x)); return pad2(Math.floor(x / 60)) + ':' + pad2(x % 60); }
+  // Where End unlocks on the timer: the floor counts from the participant's
+  // first line, the timer from the start of the conversation.
+  function unlockOnTimerS() {
+    const offset = floorStartMs && timerStartMs ? Math.max(0, (floorStartMs - timerStartMs) / 1000) : 0;
+    return Math.min(offset + MIN_S, MAX_S);
+  }
+  // How it runs, in the setup card: the step the participant is on, the
+  // clock, and when End unlocks (a direct link never holds End).
   function renderTimeline(s) {
-    const el = $('timeline');
-    if (!el) return;
-    const m = started ? timelineModel(s) : null;
-    if (!m) { el.style.display = 'none'; return; }
-    el.style.display = 'block';
-    const pct = (x) => (Math.max(0, Math.min(1, x / m.total)) * 100).toFixed(2) + '%';
-    $('tlSeg1').style.flex = '0 0 ' + pct(m.firstEnd);
-    $('tlName1').textContent = m.n1;
-    $('tlName2').textContent = m.n2;
-    $('tlName2').style.left = `calc(${pct(m.firstEnd)} + 10px)`;
-    $('tlUnlock').style.left = pct(m.unlock);
-    $('tlNow').style.left = `calc(${pct(m.now)} - 1px)`;
-    const clock = (x) => pad2(Math.floor(x / 60)) + ':' + pad2(Math.round(x) % 60);
-    $('tlAxis').innerHTML =
-      `<span style="left:0">00:00</span>` +
-      `<span style="left:clamp(116px, ${pct(m.unlock)}, calc(100% - 116px));transform:translateX(-50%)">You can end the scenario at ${clock(m.plain ? Math.round(m.unlock / 30) * 30 : m.unlock)}</span>` +
-      `<span style="right:0">${clock(m.total)}</span>`;
+    const steps = document.querySelectorAll('#planSteps .step');
+    steps.forEach((el, i) => {
+      el.classList.toggle('done', started && curPart >= 0 && i < curPart);
+      el.classList.toggle('now', started && i === curPart);
+      const p = timelineParts[i] || {};
+      el.querySelector('.tm').textContent = p.timebox_seconds > 0
+        ? `${Math.max(1, Math.round(p.timebox_seconds / 60))} min`
+        : (i === steps.length - 1 ? `to ${clockOf(MAX_S)}` : '');
+    });
+    const fill = $('planFill');
+    if (!fill) return;
+    const m = timelineModel(s || 0);
+    const unlock = m ? (m.plain ? Math.round(m.unlock / 30) * 30 : m.unlock) : unlockOnTimerS();
+    const pct = (x) => (Math.max(0, Math.min(1, x / MAX_S)) * 100).toFixed(2) + '%';
+    fill.style.width = pct(started ? s : 0);
+    $('planTick').style.left = pct(unlock);
+    $('planTick').style.display = runId ? '' : 'none';
+    $('planUnlock').textContent = runId ? `You can end at ${clockOf(unlock)}` : 'You can end any time';
+    $('planEnd').textContent = clockOf(MAX_S);
+  }
+
+  // The title row's second line and the head count: which conversation of
+  // the scenario this is and who it is with, from the plan and who is here.
+  function renderRoomMeta() {
+    const sub = $('roomSub'), cnt = $('roomCount');
+    if (!sub || !cnt) return;
+    const convs = conversationsOf(timelineParts || []);
+    const here = presentIds.length
+      ? cast.filter(a => presentIds.includes(a.id)).map(a => a.name)
+      : ((convs[0] && convs[0].with) || []);
+    if (!here.length) { sub.textContent = ''; cnt.style.display = 'none'; return; }
+    const key = here.slice().sort().join('|');
+    const i = convs.findIndex(v => v.with.slice().sort().join('|') === key);
+    sub.textContent = (convs.length > 1 && i >= 0 ? `Conversation ${i + 1} of ${convs.length} \u00b7 ` : '') +
+      `with ${listPhrase(here)}`;
+    $('roomCountN').textContent = `${here.length + 1} in the room`;
+    cnt.style.display = '';
   }
 
   function renderTimer() {
@@ -2331,8 +2654,6 @@
     $('fictionMax').textContent = mins(MAX_S);
     $('checkMin').textContent = mins(MIN_S);
     $('checkMax').textContent = mins(MAX_S);
-    // The study's own stop control exists only on a run link.
-    $('fictionLeave').style.display = runId ? 'inline' : 'none';
   }
   function moveOnText() {
     return (runId && run && !run.done && run.position < run.total)
@@ -2366,8 +2687,7 @@
     g.classList.add('show');
     // From the clock, which the runner's encounter_clock can reset mid-page;
     // the markup's "7 minutes" would not follow it.
-    g.title = `Each conversation runs at least ${minutesText(MIN_S)}; End unlocks then. ` +
-      'You can stop taking part at any time with “Stop and leave the study”.';
+    g.title = `Each conversation runs at least ${minutesText(MIN_S)}; End unlocks then.`;
     const pct = Math.min(1, floorElapsedS() / MIN_S);
     $('gateFill').style.strokeDashoffset = String(RING * (1 - pct));
     // A direct link (?scenario=..., no run) is a researcher testing one
@@ -2392,16 +2712,15 @@
       const left = minutesText(stopFirst ? MAX_S - s : MIN_S - floorElapsedS());
       $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up'
         : stopFirst ? `Ends automatically in about ${left}`
-        : floorStartMs ? `You can move on in about ${left}`
-        : `You can move on ${minutesText(MIN_S)} after you start`;
+        : floorStartMs ? `End unlocks at ${clockOf(unlockOnTimerS())}`
+        : `End unlocks ${minutesText(MIN_S)} after you start`;
       // Held until the floor. Not `disabled`, so the click can still explain
       // itself (see the handler); aria-disabled says what the styling shows.
       $('stopBtn').classList.add('locked');
       $('stopBtn').setAttribute('aria-disabled', 'true');
       $('stopBtn').title = (stopFirst ? `This conversation ends automatically in about ${left}.`
         : floorStartMs ? `End unlocks in about ${left}.`
-        : `End unlocks ${minutesText(MIN_S)} after you start.`) +
-        (runId ? ' To stop taking part, use “Stop and leave the study”.' : '');
+        : `End unlocks ${minutesText(MIN_S)} after you start.`);
       // The warning is the page's own here too, as past the floor above.
       if (s >= WRAP_S) noteWrap(MAX_S - s);
     }
@@ -2553,18 +2872,30 @@
     const el = $('selfMic');
     if (!el) return;
     el.className = 'mic-icon ' + (state === 'live' ? 'live' : state === 'muted' ? 'muted' : '');
+    const ind = $('micInd');
+    if (ind) {
+      ind.classList.toggle('off', state !== 'live');
+      ind.setAttribute('aria-label', state === 'live' ? 'Microphone on' : 'Microphone off');
+    }
   }
 
   // ---------- transcript ----------
   function appendTranscript(role, agentId, text, latency) {
     const el = document.createElement('div');
-    el.className = 'turn';
-    const name = role === 'user' ? 'You' : (cast.find(a => a.id === agentId)?.name || agentId);
-    // Color each agent's name to match their tile avatar so the transcript is
-    // easy to follow in a multi-party meeting.
-    const style = (role !== 'user' && name) ? ` style="color:${colorFor(name)}"` : '';
-    el.innerHTML = `<span class="speaker ${role === 'user' ? 'self' : ''}"${style}>${esc(name)}:</span> <span class="text"></span>` +
-      (latency != null ? `<span class="meta">${esc(String(latency))}s</span>` : '');
+    const self = role === 'user';
+    el.className = 'turn' + (self ? ' you' : '');
+    const name = self ? 'You' : (cast.find(a => a.id === agentId)?.name || agentId);
+    // Each character's face and name in their tile's colour, so the
+    // transcript is easy to follow in a multi-party meeting. "Name:" is said
+    // to a screen reader (.speaker); the drawn face and name are not.
+    const color = !self && name ? colorFor(name) : '';
+    el.innerHTML = `<span class="speaker ${self ? 'self ' : ''}sr-only">${esc(name)}:</span>` +
+      `<span class="tx-av${self ? ' self' : ''}" aria-hidden="true"${color ? ` style="background:${color}"` : ''}>` +
+      `${self ? 'YOU' : esc(initialsOf(name || '?'))}</span>` +
+      `<div class="tx-body"><div class="who" aria-hidden="true"><span class="nm"${color ? ` style="color:${color}"` : ''}>${esc(name)}</span>` +
+      `<span class="t">${clockOf(encounterElapsedS())}</span>` +
+      (latency != null ? `<span class="meta">${esc(String(latency))}s</span>` : '') +
+      `</div><span class="text"></span></div>`;
     el.querySelector('.text').textContent = text;
     $('transcript').appendChild(el);
     $('transcript').scrollTop = $('transcript').scrollHeight;
@@ -4442,7 +4773,11 @@
       } else if (m.type === 'segment_start') {
         // A new interaction: say plainly who the participant is now with, and
         // grey out anyone not in the room for this beat.
-        presentIds = (m.present || []).map(p => p.id);
+        { const before = presentIds, at = encounterElapsedS();
+          presentIds = (m.present || []).map(p => p.id);
+          before.forEach(id => { if (!presentIds.includes(id) && spokeSpan[id]) spokeSpan[id].to = at; });
+          presentIds.forEach(id => { if (!spokeSpan[id]) spokeSpan[id] = { from: at }; else delete spokeSpan[id].to; }); }
+        if (typeof m.index === 'number') curPart = m.index;
         upNext = m.next || null;
         // Restart the advance floor: it is per-interaction, matching the
         // server's _interaction_started_at, not per-encounter.
@@ -4607,6 +4942,7 @@
   async function startSession() {
     $('startBtn').disabled = true;
     partStartsS.length = 0;
+    curPart = -1; spokeSpan = {};
     lastScenePeople = null;   // a fresh conversation: the first one-to-one opens without a divider
     // A participant_id is NOT evidence of consent. /start mints the record
     // before anyone has agreed to anything and puts it in the redirect with
@@ -4972,7 +5308,16 @@
       const b = document.createElement('button');
       b.className = 'secondary';
       b.textContent = cfg.return_label || 'Return to the survey';
-      b.onclick = () => { location.href = back; };
+      b.onclick = () => {
+        if (embedded) {
+          // Never the survey inside this frame: the survey moves on itself.
+          tellSurvey('study_ended', { status: 'encounter_failed', code: '' });
+          b.disabled = true;
+          b.textContent = 'Press Next below this window';
+          return;
+        }
+        location.href = back;
+      };
       wrap.appendChild(b);
       $('dropDoors').appendChild(wrap);
     }).catch(() => {});
@@ -5109,8 +5454,7 @@
       const s = encounterElapsedS();
       showGateNote((stopBeforeFloor(s)
         ? `This conversation ends automatically in about ${minutesText(MAX_S - s)}.`
-        : `${when[0].toUpperCase()}${when.slice(1)} — the ring next to the timer fills when you can.`) +
-        (runId ? ' If you want to stop taking part in the study, use “Stop and leave the study”.' : ''));
+        : `${when[0].toUpperCase()}${when.slice(1)} — the ring next to the timer fills when you can.`));
       return;
     }
     if (runId) {
@@ -5128,9 +5472,6 @@
   // and then handed another conversation. This is what stops the study: the
   // header's control, and the door that stands in for it on the upload wait,
   // whose card covers the header (FLOW-05). Nothing else does.
-  $('leaveBtn').addEventListener('click', () => stopTheStudy(
-    'Stop the study and leave? This ends your participation now. You will not be asked to do the remaining conversations.',
-    $('leaveBtn')));
   async function stopTheStudy(question, btn) {
     if (!confirm(question)) return;
     btn.disabled = true;
@@ -5212,6 +5553,9 @@
       const d = await fetchBrief();
       showTitle(d);
       goalText = (d.briefing && d.briefing.goal) || '';
+      // In the side column from here on, above the setup card (and again at
+      // the start of the conversation, which changes nothing).
+      showGoalStrip();
       timelineParts = (d.briefing && d.briefing.parts) || [];
       timelineKind = (d.briefing && d.briefing.timeline) || '';
       const refHtml = briefingHtml(d, true);
@@ -5229,6 +5573,10 @@
         $('castLine').innerHTML = `You will be talking with ${listPhrase(names)}.`;
       }
       $('brief').style.display = 'block';
+      // A direct link has no run to number, so the chip names the scenario.
+      if (!run && d.id && $('runChip').style.display === 'none') {
+        $('runChip').textContent = d.id; $('runChip').style.display = 'inline-block';
+      }
       // Render preview tiles so the user sees who they'll meet before pressing Start.
       cast = d.cast || [];
       renderGrid();

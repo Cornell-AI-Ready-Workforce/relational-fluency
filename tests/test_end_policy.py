@@ -396,7 +396,7 @@ function page(search, runObj) {
     assert(!/more minutes|runs about/.test(early), label + ': counts down to an end: ' + early);
     $('stopBtn').click();
     assert.strictEqual(p.notices().length, 1, label + ': a second press stacked the same reply');
-    assert(/can move on in about 4 minutes/.test($('gateLabel').textContent),
+    assert(/^End unlocks at \d\d:\d\d$/.test($('gateLabel').textContent),
       label + ': ' + $('gateLabel').textContent);
     // The character saying goodbye early: the conversation carries on.
     p.frame({ type: 'floor_held', seconds_left: 180 });
@@ -466,8 +466,6 @@ function page(search, runObj) {
     p.set('MIN_S = 5 * 60; MAX_S = 10 * 60; describeEncounterLength();');
     assert.strictEqual(p.b.dom.$('fictionMin').textContent, '5', label);
     assert.strictEqual(p.b.dom.$('fictionMax').textContent, '10', label);
-    const leave = p.b.dom.$('fictionLeave').style.display;
-    assert.strictEqual(leave, runObj ? 'inline' : 'none', label + ': the stop sentence ' + leave);
   }
   console.log('END POLICY PAGE OK');
 })().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
@@ -641,8 +639,10 @@ def test_the_first_screen_says_how_long_a_conversation_runs():
     assert "end a conversation at any" not in text and "at any time." not in text.replace(
         "stop taking part in the study at any time", ""), text
     assert "at least 5 minutes" in text and "at 10 minutes" in text, text
-    for span in ('id="fictionMin"', 'id="fictionMax"', 'id="fictionLeave"'):
+    for span in ('id="fictionMin"', 'id="fictionMax"'):
         assert span in card
+    # No sentence pointing at a study-stop control: the room has none (2026-11-08).
+    assert 'fictionLeave' not in src and "Stop and leave the study" not in text
     boot = src[src.index("if (needsFictionAck()) {"):][:200]
     assert "describeEncounterLength();" in boot
 

@@ -842,7 +842,7 @@ const START = "You start the conversation. Say hello when you're ready.";
     // 1:00 on the timer, nothing said: worded on the floor's clock, not the
     // timer's (review of 28b: "End unlocks at 07:00.").
     p.set('timerStartMs = Date.now() - 60 * 1000; renderTimer();');
-    assert.strictEqual($('gateLabel').textContent, 'You can move on 7 minutes after you start');
+    assert.strictEqual($('gateLabel').textContent, 'End unlocks 7 minutes after you start');
     assert($('stopBtn').title.startsWith('End unlocks 7 minutes after you start.'), $('stopBtn').title);
     // 7:40 on the timer, and nobody has spoken: the floor has not started,
     // and could no longer come before the 12:00 stop, so the stop is said.
@@ -854,7 +854,8 @@ const START = "You start the conversation. Say hello when you're ready.";
     // 6:40 of conversation (8:40 on the timer): still held.
     p.set('floorStartMs = Date.now() - 400 * 1000; timerStartMs = Date.now() - 520 * 1000; renderTimer();');
     assert($('stopBtn').classList.contains('locked'), 'End unlocked before 7:00 of conversation');
-    assert(/move on in about 1 minute/.test($('gateLabel').textContent), $('gateLabel').textContent);
+    // On the timer: the floor began 2:00 in, so End unlocks at 2:00 + 7:00.
+    assert.strictEqual($('gateLabel').textContent, 'End unlocks at 09:00');
     assert($('stopBtn').title.startsWith('End unlocks in about 1 minute.'), $('stopBtn').title);
     // A later participant_opened (a hand-off) does not restart it.
     p.frame({ type: 'participant_opened', reason: 'handoff', first_of_encounter: false });

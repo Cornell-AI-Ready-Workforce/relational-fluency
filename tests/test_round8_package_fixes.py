@@ -263,7 +263,7 @@ def test_a_withdrawal_marks_itself_before_it_tears_down_capture():
     of the withdrawal card they just asked for.
     """
     src = V2.read_text(encoding="utf-8")
-    handler = src[src.index("$('leaveBtn').addEventListener("):]
+    handler = src[src.index("async function stopTheStudy("):]
     handler = handler[:handler.index("showClosing(")]
     assert "withdrawing = true" in handler, (
         "the withdrawal control never marks itself, so the upload path cannot "
