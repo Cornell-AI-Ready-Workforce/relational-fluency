@@ -26,13 +26,27 @@ esci_items:
 # reason: it is what makes "wants this wrapped up" a position rather than a
 # personality, and the two forms have to hand him the same standing or one of
 # them is the easier room to push back in.
+# 2026-11-09: made concrete in step with S4A, so the two forms give the
+# participant the same footing. S4A gained what the rollout is, which teams it
+# covers, the participant's own team and a real reason for their date; this
+# form gains what is being proposed (moving the client's staff onto the
+# company's scheduling software), the parts of the deck (the ones the briefs
+# already name — background, pricing, the rollout — plus the participant's),
+# the participant's own part (training) and a real reason for their slot. The
+# parts are listed and not counted, as S4A's teams are. What the client's CFO
+# actually cares about is still Priya's and still not written down anywhere.
+# The beats and the briefs are unchanged. NOT re-measured after this change.
 setup: >-
   You are one of four people on a project team preparing tomorrow's
-  presentation to a client. Dan has already built the deck, and his draft
-  has him presenting all of it on his own, from 9:00 to 10:30. The others are Priya and Chris. Nobody
-  here outranks anyone, and no manager is in the room. The working session
-  is already underway, and the group is meant to leave it with a running
-  order, and who presents what, that everyone has agreed to.
+  presentation to a client, a proposal to move the client's staff onto your
+  company's scheduling software. The deck covers background on your company,
+  pricing, the rollout plan, and staff training. You would be the one
+  running the training. Dan has already built the deck, and his draft
+  has him presenting all of it on his own, from 9:00 to 10:30. The others
+  are Priya and Chris. Nobody here outranks anyone, and no manager is in the
+  room. The four of you are in a working session, and the group is meant to
+  leave it with a running order, and who presents what, that everyone has
+  agreed to.
 
 # What the participant is told they are there to do. Shown on the situation
 # card and kept on screen under the header for the whole conversation. It is
@@ -48,14 +62,19 @@ goal: >-
 # documents the fields.
 intro_card:
   situation: >-
-    You are one of four people on a project team preparing a presentation to a
-    client tomorrow. The other three are Dan, Priya, and Chris. Nobody outranks
-    anyone, and there is no manager in the room. Dan has built the slide deck,
-    and his draft has him presenting all of it on his own, from 9:00 to 10:30. You are in a working
-    session that is already underway.
+    Tomorrow your company presents a proposal to a client: moving the
+    client's staff onto your company's scheduling software. The deck covers
+    background on your company, pricing, the rollout plan, and staff training.
+    You are one of four people on the project team preparing it, and you would
+    be the one running the training. The other three are Dan, Priya, and
+    Chris. Nobody outranks anyone, and there is no manager in the room. Dan
+    has built the slide deck, and his draft has him presenting all of it on
+    his own, from 9:00 to 10:30. The four of you are meeting now to settle
+    the presentation.
   assets:
     - "Dan's slide deck, shared before the session, with Dan presenting all of it from 9:00 to 10:30."
-    - "Your own preferred slot: around 10:00, in the second half. You have a call before it and would rather not go first."
+    - "Your own calendar: you are on a call with another client until 9:45 tomorrow and cannot be in the room before then."
+    - "Your own preferred slot: around 10:00, in the second half, presenting the training part yourself."
   parts:
     - "They are your project teammates. Together you need to agree on the presentation."
   howto:
@@ -75,10 +94,12 @@ intro_card:
 
 # Participant-only (the "What you have" card; actors never see this list).
 # The parallel of S4A's, so the two forms give the participant the same
-# footing: the artefact Dan brought, and nothing about anyone's history.
+# footing: the artefact Dan brought, the participant's own reason for their
+# slot, and nothing about anyone's history or who holds the client's times.
 assets:
   - "Dan's deck, circulated before the session, with him down to present all of it, 9:00 to 10:30"
-  - "Your own preferred slot: around 10:00, in the second half, because you have a call before it"
+  - "Your own calendar: you are on a call with another client until 9:45 tomorrow and cannot be in the room before then"
+  - "Your own preferred slot: around 10:00, in the second half, presenting the training part yourself"
 
 # Casting, per model family. `realtime_voice` is a MAP from model family to the
 # voice that family speaks this character with, and server/scenarios_v3.py

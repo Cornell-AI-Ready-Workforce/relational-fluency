@@ -25,14 +25,27 @@ esci_items:
 # makes "wants this wrapped up" a position rather than a personality trait, and
 # the two forms have to give him the same amount of standing or A is the easier
 # room to push back in.
+# 2026-11-09: the story is concrete now. "A new internal process" gave the
+# participant nothing to reason about, no team of their own and a date with no
+# reason behind it ("would rather not start on a Monday"), so a quiet
+# participant could be a confused one rather than a low scorer. What is added
+# is what the rollout IS (one system for time off and expenses), which teams
+# it covers (the four whose dates Priya and Chris already hold, plus the
+# participant's), and that the participant is there for Marketing. The team
+# names are listed and not counted, on purpose: see the note on `opening`
+# about what Dan does with a countable. The beats, the briefs and the dates
+# Priya and Chris hold are unchanged. NOT re-measured after this change, and
+# S4B has not been given the matching detail yet.
 setup: >-
-  You are one of four people on a project team rolling out a new internal
-  process to every team in the company. Nothing has gone live yet. Dan has
-  already drafted the schedule, and his draft puts every team live on the
-  same day, Monday the 9th. The others are Priya and Chris. Nobody here outranks anyone,
-  and no manager is in the room. The working session is already underway,
-  and the group is meant to leave it with a rollout plan, and a go-live
-  date, that everyone has agreed to.
+  You are one of four people on a project team moving every team in the
+  company onto a new system for booking time off and filing expenses: Sales,
+  Finance, Support, Operations, and Marketing. You are on the project team
+  for Marketing. Nothing has gone live yet. Dan has already drafted the
+  schedule, and his draft puts every team live on the same day, Monday the
+  9th. The others are Priya and Chris. Nobody here outranks anyone, and no
+  manager is in the room. The four of you are in a working session, and the
+  group is meant to leave it with a rollout plan, and a go-live date, that
+  everyone has agreed to.
 
 # What the participant is told they are there to do. Shown on the situation
 # card and kept on screen under the header for the whole conversation. It is
@@ -48,15 +61,18 @@ goal: >-
 # documents the fields.
 intro_card:
   situation: >-
-    You are one of four people on a project team rolling out a new internal
-    process to every team in the company. The other three are Dan, Priya, and
-    Chris. Nobody outranks anyone, and there is no manager in the room. Dan has
+    Your company is moving every team onto a new system for booking time off
+    and filing expenses: Sales, Finance, Support, Operations, and Marketing.
+    You are one of four people on the project team running the rollout, and
+    you are there for Marketing. The other three are Dan, Priya, and Chris.
+    Nobody outranks anyone, and there is no manager in the room. Dan has
     drafted the rollout schedule, and his draft has every team go live on the
-    same day, Monday the 9th. Nothing has gone live yet. You are in a working session that is
-    already underway.
+    same day, Monday the 9th. Nothing has gone live yet. The four of you are
+    meeting now to settle the plan.
   assets:
     - "Dan's draft schedule, shared before the session, which has every team going live on Monday the 9th."
-    - "Your own preferred go-live date: Wednesday the 18th. It gives you the week before to get your own team ready, and you would rather not start on a Monday."
+    - "Marketing's calendar: your team has a campaign launching on Wednesday the 11th, and nobody on it will have time to learn a new system before then."
+    - "Your own preferred go-live date: Wednesday the 18th. It gives Marketing a week after the launch to get ready."
   parts:
     - "They are your project teammates. Together you need to agree on the plan."
   howto:
@@ -75,11 +91,13 @@ intro_card:
   start: "I am ready, let's start"
 
 # Participant-only (the "What you have" card; actors never see this list).
-# Kept to what the setup already says, so the instrument is unchanged: nothing
-# here points at Priya's history or at whose idea the pilot is.
+# The campaign is the participant's own reason for the 18th and theirs to
+# say; nothing here points at Priya's history, at whose idea the pilot is, or
+# at who holds the other teams' dates.
 assets:
   - "Dan's draft schedule, circulated before the session: every team live on one date, Monday the 9th"
-  - "Your own preferred go-live date: Wednesday the 18th, which gives you the week before to get your team ready"
+  - "Marketing's calendar: your team has a campaign launching on Wednesday the 11th, and nobody on it will have time to learn a new system before then"
+  - "Your own preferred go-live date: Wednesday the 18th, which gives Marketing a week after the launch to get ready"
 
 # Casting, per model family. `realtime_voice` is a MAP from model family to the
 # voice that family speaks this character with, and server/scenarios_v3.py
