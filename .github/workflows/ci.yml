@@ -196,6 +196,10 @@ jobs:
               # WSL launcher rather than Git Bash, so those cases skip there
               # and run on the other six cells. Nowhere else may say this.
               "tools/deploy.sh is bash for macos and linux",
+              # tests/test_load_analysis_db_postgres.py loads into a real
+              # Postgres, which no cell of this job has; the same statements
+              # are pinned offline by tests/test_load_analysis_db_refresh.py.
+              "rf_analysis_test_dsn not set",
           )
 
           report = Path("platform-tests.xml")

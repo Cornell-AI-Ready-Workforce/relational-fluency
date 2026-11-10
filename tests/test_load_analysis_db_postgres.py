@@ -26,9 +26,11 @@ for p in (ROOT, ROOT / "tests", ROOT / "tools"):
         sys.path.insert(0, str(p))
 
 DSN = os.environ.get("RF_ANALYSIS_TEST_DSN")
-pytestmark = pytest.mark.skipif(not DSN, reason="RF_ANALYSIS_TEST_DSN not set")
-psycopg = pytest.importorskip("psycopg")
-pytest.importorskip("yaml")
+# A per-test skip with its reason, not importorskip: a module skipped at
+# collection reaches the CI report as "collection skipped" and nothing else.
+# psycopg is imported in the fixture, so a set DSN without it is an error.
+pytestmark = pytest.mark.skipif(
+    not DSN, reason="RF_ANALYSIS_TEST_DSN not set: no Postgres to load the analysis DB into")
 
 from server import encounter_record  # noqa: E402
 from test_review_fixes import _encounter_dir  # noqa: E402
@@ -50,6 +52,7 @@ def _write(tmp_path, texts):
 
 @pytest.fixture
 def conn():
+    import psycopg
     with psycopg.connect(DSN) as c:
         c.execute("SET search_path TO rf, public")
         with c.cursor() as cur:
