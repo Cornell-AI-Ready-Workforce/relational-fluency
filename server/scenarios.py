@@ -45,6 +45,11 @@ class Agent:
     name: str
     system_prompt: str
     role: str = ""  # short title shown under the name in the UI (e.g. "Product Manager")
+    # One line under the role on the participant's tile (the spec's
+    # display_note). Only what the participant's own situation card already
+    # says about this character: never the research role, the brief or what
+    # the character has been told to do.
+    note: str = ""
     hidden_agenda: str = ""  # internal, never sent to the participant
     photo: str = "initials"  # "initials" or filename under static/agents/
     voice_id: Optional[str] = None

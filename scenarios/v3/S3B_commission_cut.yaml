@@ -459,6 +459,7 @@ agents:
     name: Toni
     role: top seller, openly cynical
     display_role: senior seller
+    display_note: "Takes home less after the commission cut"
     # CASTING IS PART OF PARALLEL FORM. Lee/Jordan and Ari/Casey were already
     # matched across the two forms; the challenger was not — Alex Fenrir
     # (~116 Hz) and Toni Aoede (~170 Hz). That is the one voice a participant
@@ -544,6 +545,7 @@ agents:
     name: Lee
     role: quietly disengaged top performer
     display_role: senior seller
+    display_note: "Enterprise accounts carried the team last year"
     realtime_voice:
       gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
       gpt-realtime: cedar  # 129 Hz measured 2026-10-01 (ash until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
@@ -655,6 +657,7 @@ agents:
     name: Ari
     role: anxious junior
     display_role: junior seller
+    display_note: "The newest and most junior seller"
     realtime_voice:
       gemini-live: Leda    # ~224 Hz earlier; 181 Hz re-measured 2026-09-12
       gpt-realtime: sage   # 187 Hz measured 2026-10-01 (marin until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)

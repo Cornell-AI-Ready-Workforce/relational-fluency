@@ -1845,7 +1845,7 @@ async def api_scenario_detail(scenario_id: str, key: Optional[str] = Query(None)
         "model": text_model,
         "intro_image": sc.intro_image,
         "cast": [
-            {"id": a.id, "name": a.name, "role": a.role, "photo": a.photo}
+            {"id": a.id, "name": a.name, "role": a.role, "note": a.note, "photo": a.photo}
             for a in sc.cast
         ],
         # Default persona values per agent, so the launch card can preselect
@@ -4142,7 +4142,8 @@ async def ws_participant_voice(
                 "mode": session.scenario.mode,
             },
             "cast": [
-                {"id": a.id, "name": a.name, "role": a.role, "photo": a.photo}
+                {"id": a.id, "name": a.name, "role": a.role,
+                 "note": getattr(a, "note", ""), "photo": a.photo}
                 for a in session.scenario.cast
             ],
             "audio": {"sample_rate": 16000, "channels": 1, "encoding": "pcm_s16le"},

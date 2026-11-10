@@ -740,6 +740,7 @@ def compile_scenario(scenario_id: str, participant_key: str = "") -> Scenario:
             id=aid,
             name=a["name"],
             role=a.get("display_role", ""),
+            note=a.get("display_note", ""),
             system_prompt=_render_prompt(spec, aid, a),
             voice_id=a.get("voice") or _VOICES[idx % len(_VOICES)],
         )

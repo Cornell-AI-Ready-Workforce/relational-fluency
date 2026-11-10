@@ -546,6 +546,7 @@ agents:
     name: Alex
     role: vocal cynic
     display_role: team member
+    display_note: "Covering the reviews Nadia and Tom left"
     realtime_voice:
       gemini-live: Fenrir  # ~116 Hz earlier; 115 Hz re-measured 2026-09-12
       gpt-realtime: ballad  # ~160 Hz measured 2026-10-01, unstable 125-195 (verse until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
@@ -630,6 +631,7 @@ agents:
     name: Jordan
     role: disengaged high performer
     display_role: team member
+    display_note: "The most experienced reviewer"
     realtime_voice:
       gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
       gpt-realtime: cedar  # 129 Hz measured 2026-10-01 (ash until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
@@ -744,6 +746,7 @@ agents:
     name: Casey
     role: anxious junior
     display_role: junior team member
+    display_note: "Has taken on most of Nadia's reviews"
     realtime_voice:
       gemini-live: Leda    # ~224 Hz earlier; 181 Hz re-measured 2026-09-12
       gpt-realtime: sage   # 187 Hz measured 2026-10-01 (marin until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)

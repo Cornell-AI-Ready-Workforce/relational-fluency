@@ -186,6 +186,7 @@ agents:
     name: Sasha
     role: manager, not opposed, squeezed from above
     display_role: your manager
+    display_note: "Meeting you one-on-one about the office return"
     # CASTING IS PART OF PARALLEL FORM. The two managers were pitched apart —
     # Morgan Kore (~222 Hz), Sasha Aoede (~170 Hz) — and a participant is
     # assigned one form, so which manager's voice they were refused by is one

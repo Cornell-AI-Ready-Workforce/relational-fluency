@@ -255,6 +255,7 @@ agents:
     name: Mel
     role: teammate urging a reply-all
     display_role: teammate
+    display_note: "Saw Drew's message last night"
     # CASTING IS PART OF PARALLEL FORM, and this pair was not matched. The
     # pusher was Fenrir (~116 Hz) on the A form and Leda (~224 Hz) here; the
     # counterpart was Charon (~91 Hz) there and Fenrir (~116 Hz) here. Both
@@ -412,6 +413,7 @@ agents:
     name: Drew
     role: the peer who sent the message
     display_role: your colleague
+    display_note: "Sent last night's message, copying Priya and Tom"
     realtime_voice:
       gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
       gpt-realtime: ash    # ~89 Hz earlier; 130 Hz re-measured 2026-09-12
