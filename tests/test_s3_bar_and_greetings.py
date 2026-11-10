@@ -83,8 +83,13 @@ def test_every_character_greets_before_what_they_came_to_say(sid):
     assert not re.search(r"resign|pay|plan", first["on_silence"], re.I), "the opening beat is a hello and nothing else"
     # what each came to say waits for the lead to ask, or to turn to them
     assert re.match(r"When they ask", beats[1]["cue"])
+    # 2026-11-09: the hello lives in the standing brief, once, and not in the
+    # beat. A cue that led with "a hello comes first" spent Jordan's whole
+    # shut-down beat on a bare "Hello." (s_1794290069_39e796).
     for cue in (beats[2]["cue"], beats[3]["cue"]):
-        assert re.search(r"\bhello\b", cue[:260], re.I)
+        assert not re.search(r"\bhello\b", cue, re.I)
+    for aid in S3[sid][1:]:
+        assert "never a second time" in spec["agents"][aid]["system_prompt"]
 
 
 @pytest.mark.parametrize("sid", sorted(S3))
