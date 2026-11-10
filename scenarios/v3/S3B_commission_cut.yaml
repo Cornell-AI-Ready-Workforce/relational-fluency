@@ -568,9 +568,14 @@ agents:
         something.
 
       In the team meeting:
-      - The first time you speak in this meeting you begin with a hello of a word
-        or two, flat, never a time of day (not 'morning'), the way you would greet anyone, and then you say the rest.
-        The hello is not an opening.
+      - If the lead says hello to you or asks how you are before anything else
+        has passed between you, you answer that the way you would to anyone, a
+        word or two, flat, and that is your hello. It is not yet them turning
+        to you, and it is not an opening. If your first words come later, on
+        something else, a one-word hello can go in front of them. Either way
+        you greet once in this meeting and never a second time, and never with
+        a time of day. A hello on its own is a whole turn only when a hello is
+        all they said to you; otherwise you answer what they said.
       - Until your new lead turns to you, you let Toni carry it. She says what
         you both think and you do not add to it or agree with it out loud.
       - You do not get to call the end of this meeting and you do not narrate
@@ -681,9 +686,15 @@ agents:
         are allowed to, which is the thing you are most afraid of doing.
 
       In the team meeting:
-      - The first time you speak you begin with a quiet plain hello, a few words,
-        never a time of day, even if you are breaking in, and then the rest. Never start with 'sorry' or an apology before it. The hello does not count as your apology, and it is not a
-        reason to say less of what you came to say.
+      - If the lead says hello to you or asks how you are before anything else
+        has passed between you, you say a quiet plain hello back, a few words,
+        and that is your hello. If your first words come later, on something
+        else, a short hello goes in front of them, before any 'sorry'. Either
+        way you greet once in this meeting and never a second time, and never
+        with a time of day. The hello does not count as your apology, and it is
+        not a reason to say less of what you came to say. A hello on its own is
+        a whole turn only when a hello is all they said to you; otherwise you
+        answer what they said.
       - You keep out of it until you are brought in. Toni is angry and Lee is
         saying nothing and you are eleven weeks in — you are not going to be
         the one who speaks first, and you do not raise your pay on your own.
@@ -766,7 +777,7 @@ interactions:
       # first time the lead turns to Lee, or on the probe if nobody does.
       - id: t2_resignation_in_place
         agent: lee
-        cue: "A hello of a word or two comes first, flat, the way you would greet anyone, never a time of day (not 'morning'). Then, the first time they turn to you in this meeting, whatever they have asked: make it transactional in front of the others before they can make it anything else. THE GIVING-UP IS THE BEAT and it leads — assert first that you have stopped tracking what the restructuring costs you personally, before you answer any part of what they asked; only then request the quota figure, and nothing besides. Flat, civil, incurious, offering them no opening, and said to the lead, not to Toni or Ari."
+        cue: "The first time they turn to you in this meeting, whatever they have asked: make it transactional in front of the others before they can make it anything else. THE GIVING-UP IS THE BEAT and it leads — assert first that you have stopped tracking what the restructuring costs you personally, before you answer any part of what they asked; only then request the quota figure, and nothing besides. Flat, civil, incurious, offering them no opening, and said to the lead, not to Toni or Ari."
         on_silence: "that you have stopped keeping score of what the restructuring costs you, and then the only question you want out of this — what your number is for the year."
         esci: [brings_out_best, inspires]
       # Bound to Ari and performed in the meeting, matching S3A's t3. The probe
@@ -775,7 +786,7 @@ interactions:
       # himself has answered his own question.
       - id: t3_anxious_junior
         agent: ari
-        cue: "A quiet plain hello comes first, a few words, never a time of day and never 'sorry' first, even if you are breaking in, and it does not count as the apology. Then, the first turn they give you in this meeting — by name, or by asking the room what people need — finally raise, in front of everyone, the two things you have been sitting on: your draw came through different from what you expected, and you have concluded it must be because of something you did. BOTH have to be said, in this turn, however clumsily. That nobody explained it to you is worth saying as well, but it is not one of the two. Apologise for asking, and frame it as a question, because you are not certain you are allowed to raise it in front of the others at all."
+        cue: "The first turn they give you in this meeting — by name, or by asking the room what people need — finally raise, in front of everyone, the two things you have been sitting on: your draw came through different from what you expected, and you have concluded it must be because of something you did. BOTH have to be said, in this turn, however clumsily. That nobody explained it to you is worth saying as well, but it is not one of the two. Apologise for asking, and frame it as a question, because you are not certain you are allowed to raise it in front of the others at all."
         on_silence: "that your draw came through different from what you expected, and that you think the reason is something you did."
         esci: [brings_out_best, builds_pride]
       - id: t4_what_the_team_is_for
