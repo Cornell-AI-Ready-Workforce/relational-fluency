@@ -11,9 +11,16 @@ Inputs, all files the platform already produces:
                     run rows properly; without it runs are stubbed from what the
                     encounters say about themselves.
 
-Idempotent: every row is upserted on its natural key and the per-encounter
-child rows are replaced, so re-running after a fresh `aws s3 sync` is the
-whole refresh. Requires psycopg 3 and pyyaml.
+Idempotent: every row is upserted on its natural key, so re-running after a
+fresh `aws s3 sync` is the whole refresh. The encounter row and its turns are
+UPDATED IN PLACE (ON CONFLICT ... DO UPDATE), never deleted and re-inserted:
+a `turn_id` stays what it was across refreshes, so a rating's
+`evidence_turn_ids` keeps pointing at the same lines, and a `rating_assignment`
+or `model_score` that references the encounter does not make the next refresh
+fail on its foreign key. Only child rows nothing else references (events,
+routes, trigger firings, stage directions, cast, media, transcript versions)
+are replaced wholesale; turns past the end of a shorter transcript are
+removed. Requires psycopg 3 and pyyaml.
 
   aws s3 sync s3://relational-fluency-study-data/encounters/ ~/Desktop/RF_archive/encounters/ \
       --exclude "*" --include "*.json" --include "*.jsonl" --include "*.md"
@@ -249,6 +256,19 @@ def ensure_pipeline_columns(cur) -> None:
         cur.execute(f"ALTER TABLE encounter ADD COLUMN IF NOT EXISTS {col} {typ}")
 
 
+# Every encounter column but the key, as "col = EXCLUDED.col", so a refresh
+# rewrites the row where it stands and a reference to it holds.
+ENCOUNTER_COLUMNS = (
+    "run_id", "slot", "participant_id", "scenario_id", "cohort", "started_at", "ended_at",
+    "duration_s", "status", "gateway", "realtime_model", "text_model", "director_model",
+    "steering_model", "pipeline_version", "room_pacing_version", "pipeline_provenance",
+    "spec_sha256", "spec_trigger_ids", "participant_turns", "agent_turns", "stage_directions",
+    "script_mismatch_turns", "unheard_turns", "participant_channel_state",
+    "participant_channel_losses", "untranscribed_s", "video_upload_state",
+    "video_upload_attempts", "video_upload_error", "archive_uri")
+ENCOUNTER_UPDATE_SET = ", ".join(f"{c} = EXCLUDED.{c}" for c in ENCOUNTER_COLUMNS)
+
+
 def load_encounter(cur, d: Path, s3_prefix: str) -> Optional[str]:
     manifest = read_json(d / "manifest.json")
     record = read_json(d / "record.json") or {}
@@ -300,11 +320,13 @@ def load_encounter(cur, d: Path, s3_prefix: str) -> Optional[str]:
     else:
         slot = None
 
-    # Replace the encounter and its children wholesale.
-    for table in ("event", "director_route", "trigger_firing", "stage_direction", "turn",
+    # Replace the children nothing else references wholesale. The encounter
+    # row and its turns are updated in place below: rating_assignment and
+    # model_score reference the encounter, and a rating's evidence_turn_ids
+    # name turn_ids, so neither may change or vanish on a refresh.
+    for table in ("event", "director_route", "trigger_firing", "stage_direction",
                   "encounter_cast", "media", "transcript_version"):
         cur.execute(f"DELETE FROM {table} WHERE encounter_id = %s", (sid,))
-    cur.execute("DELETE FROM encounter WHERE encounter_id = %s", (sid,))
     cur.execute(
         """INSERT INTO encounter (encounter_id, run_id, slot, participant_id, scenario_id, cohort,
                started_at, ended_at, duration_s, status, gateway, realtime_model, text_model,
@@ -314,7 +336,8 @@ def load_encounter(cur, d: Path, s3_prefix: str) -> Optional[str]:
                unheard_turns, participant_channel_state, participant_channel_losses,
                untranscribed_s, video_upload_state, video_upload_attempts, video_upload_error,
                archive_uri)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+           ON CONFLICT (encounter_id) DO UPDATE SET """ + ENCOUNTER_UPDATE_SET,
         (sid, run_id, slot, pid, scenario, cohort, ts(started) or ts(0), ts(ended),
          (round(ended - started, 1) if started and ended else None),
          m.get("status") or "closed",
@@ -353,7 +376,17 @@ def load_encounter(cur, d: Path, s3_prefix: str) -> Optional[str]:
             """INSERT INTO turn (encounter_id, seq, t, wall, role, agent_id, segment,
                    interaction_id, text, interrupted, transcript_missing, garbled,
                    script_mismatch, participant_channel, audio_ms, latency_s)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING turn_id""",
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (encounter_id, seq) DO UPDATE SET
+                   t = EXCLUDED.t, wall = EXCLUDED.wall, role = EXCLUDED.role,
+                   agent_id = EXCLUDED.agent_id, segment = EXCLUDED.segment,
+                   interaction_id = EXCLUDED.interaction_id, text = EXCLUDED.text,
+                   interrupted = EXCLUDED.interrupted,
+                   transcript_missing = EXCLUDED.transcript_missing,
+                   garbled = EXCLUDED.garbled, script_mismatch = EXCLUDED.script_mismatch,
+                   participant_channel = EXCLUDED.participant_channel,
+                   audio_ms = EXCLUDED.audio_ms, latency_s = EXCLUDED.latency_s
+               RETURNING turn_id""",
             (sid, seq, r.get("t", 0), ts(started + float(r.get("t", 0))) if started else None,
              role, r.get("agent_id") if role == "agent" else None, r.get("segment"),
              r.get("interaction"), r.get("text"), bool(r.get("interrupted")),
@@ -362,6 +395,9 @@ def load_encounter(cur, d: Path, s3_prefix: str) -> Optional[str]:
              audio_ms_by_t.get(round(float(r.get("t", 0)), 3)) if role == "agent" else None,
              r.get("latency_s")))
         turn_ids.append(cur.fetchone()[0])
+    # A transcript that got shorter (a record rewritten) leaves no stale turns
+    # behind. Shorter is rare; longer is the common refresh and adds rows.
+    cur.execute("DELETE FROM turn WHERE encounter_id = %s AND seq >= %s", (sid, len(turn_ids)))
     # Pair a steering row with the agent turn that carries the same direction.
     transcript = record.get("transcript") or []
     for s in record.get("steering_log") or []:
@@ -489,11 +525,15 @@ def load_recovered(cur, index_csv: Path, archive: Path, s3_prefix: str) -> int:
         upsert_participant(cur, pid, "study", None, None, None)
         for table in ("media", "transcript_version"):
             cur.execute(f"DELETE FROM {table} WHERE encounter_id = %s", (sid,))
-        cur.execute("DELETE FROM encounter WHERE encounter_id = %s", (sid,))
         cur.execute(
             """INSERT INTO encounter (encounter_id, participant_id, scenario_id, cohort, started_at,
                    ended_at, duration_s, status, gateway, realtime_model, archive_uri)
-               VALUES (%s,%s,%s,'study',%s,%s,%s,'recovered','unknown','unknown',%s)""",
+               VALUES (%s,%s,%s,'study',%s,%s,%s,'recovered','unknown','unknown',%s)
+               ON CONFLICT (encounter_id) DO UPDATE SET
+                   participant_id = EXCLUDED.participant_id, scenario_id = EXCLUDED.scenario_id,
+                   started_at = EXCLUDED.started_at, ended_at = EXCLUDED.ended_at,
+                   duration_s = EXCLUDED.duration_s, status = EXCLUDED.status,
+                   archive_uri = EXCLUDED.archive_uri""",
             (sid, pid, scenario, ts(started), ts(started + secs) if secs else None, secs,
              f"{s3_prefix}{sid}/"))
         cur.execute(
