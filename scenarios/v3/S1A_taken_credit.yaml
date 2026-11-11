@@ -49,6 +49,11 @@ goal: >-
 # in front of it from the interactions' timeboxes (or, for the last one, the
 # encounter's stop), so the lengths stay true when the timing changes.
 intro_card:
+  # The picture beside the situation text (static/scenarios/). `image_alt`
+  # is what a screen reader says in its place.
+  image: S1A.webp
+  image_alt: >-
+    Two drawings side by side. Left: a colleague leans over your desk and tells you about a meeting where a man presented a chart to three people. Right: you face that man in a corridor by the elevators.
   situation: >-
     You are a {role} at {org}. Over the past few months, your colleague Sam has
     twice presented your analysis in leadership meetings as his own work. You

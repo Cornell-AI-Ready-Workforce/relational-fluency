@@ -59,6 +59,11 @@ goal: >-
 # The intro card shown before the session starts; S1A_taken_credit.yaml
 # documents the fields.
 intro_card:
+  # The picture beside the situation text (static/scenarios/). `image_alt`
+  # is what a screen reader says in its place.
+  image: S3A.webp
+  image_alt: >-
+    A drawing of a team meeting: you, seen from behind, face three tired colleagues who each sit behind a tall pile of folders and papers. Two chairs at the table are empty.
   situation: >-
     You have just become the interim lead of a team that reviews supplier
     contracts before the company signs them. Each review says what in a
