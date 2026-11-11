@@ -454,6 +454,15 @@
   .situation-card .body.rich .ic-goal { border-left: 3px solid var(--accent); background: #f6f6f4;
     padding: 12px 16px; margin: 0 0 26px; font-size: 15px; line-height: 1.6; }
   .ic-goal b { display: block; font-weight: 600; }
+  .ic-top { display: flex; gap: 24px; align-items: flex-start; }
+  .ic-top-text { flex: 1; min-width: 0; }
+  .ic-image { flex: 0 0 46%; width: 46%; min-width: 0; height: auto; aspect-ratio: 16 / 9;
+    object-fit: cover; border-radius: 10px; margin: 4px 0 26px; display: block;
+    border: 1px solid #e6e6e2; }
+  @media (max-width: 760px) {
+    .ic-top { flex-direction: column-reverse; gap: 0; }
+    .ic-image { flex: none; width: 100%; margin: 0 0 18px; }
+  }
   .situation-card .body.rich h4.ic-label { font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
     color: var(--muted); font-weight: 500; margin: 0 0 10px; }
   .ic-rows { list-style: none; margin: 0 0 26px !important; padding: 0 !important; }
@@ -2236,9 +2245,18 @@
     const how = (c.howto || []).map(h =>
       `<li><svg class="ic-icon ${esc(h.icon || '')}" viewBox="0 0 24 24" aria-hidden="true">${IC_ICONS[h.icon] || ''}</svg>` +
       `<div>${h.lead ? `<b>${esc(h.lead)}</b> ` : ''}${esc(h.text || '')}</div></li>`).join('');
+    // The scenario's picture (the card's `image`, a file under
+    // static/scenarios/) sits beside the situation and the goal. A picture
+    // that fails to load takes its column with it.
+    const lead = `<p class="ic-lead">${esc(c.situation || b.situation || '')}</p>
+      ${b.goal ? `<p class="ic-goal"><b>Your goal</b>${esc(b.goal)}</p>` : ''}`;
+    const top = c.image
+      ? `<div class="ic-top"><div class="ic-top-text">${lead}</div>` +
+        `<img class="ic-image" src="/static/scenarios/${encodeURIComponent(c.image)}" ` +
+        `alt="${esc(c.image_alt || '')}" onerror="this.remove()" /></div>`
+      : lead;
     return `
-      <p class="ic-lead">${esc(c.situation || b.situation || '')}</p>
-      ${b.goal ? `<p class="ic-goal"><b>Your goal</b>${esc(b.goal)}</p>` : ''}
+      ${top}
       ${assets ? `<h4 class="ic-label">What you have</h4><ul class="ic-assets">${assets}</ul>` : ''}
       ${parts ? `<h4 class="ic-label">What happens in the scenario</h4><ol class="ic-rows">${parts}</ol>` : ''}
       ${how ? `<h4 class="ic-label">How to take part</h4><ul class="ic-rows">${how}</ul>` : ''}`;

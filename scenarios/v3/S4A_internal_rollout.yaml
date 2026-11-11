@@ -60,6 +60,11 @@ goal: >-
 # The intro card shown before the session starts; S1A_taken_credit.yaml
 # documents the fields.
 intro_card:
+  # The picture beside the situation text (static/scenarios/). `image_alt`
+  # is what a screen reader says in its place.
+  image: S4A.webp
+  image_alt: >-
+    A drawing of four colleagues with laptops around a meeting table, with an empty monthly calendar on the wall screen.
   situation: >-
     Your company is moving every team onto a new system for booking time off
     and filing expenses: Sales, Finance, Support, Operations, and Marketing.

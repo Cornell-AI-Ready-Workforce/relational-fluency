@@ -485,6 +485,8 @@ async def _no_store_html(request, call_next):
 # has one, the python:3.12-slim image has none, so production sent the font
 # as application/octet-stream.
 mimetypes.add_type("font/woff2", ".woff2")
+# The scenario pictures on the intro card (static/scenarios/), for the same reason.
+mimetypes.add_type("image/webp", ".webp")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
