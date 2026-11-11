@@ -90,6 +90,7 @@ Dockerfile.*     text eol=lf
 *.ico            binary
 *.woff           binary
 *.woff2          binary
+*.webp           binary
 # The sim check's synthetic stimulus (tools/sim/stim/*.ulaw, G.711 u-law):
 # raw audio bytes with no header for the content heuristic to read.
 *.ulaw           binary
