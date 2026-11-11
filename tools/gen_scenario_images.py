@@ -100,7 +100,7 @@ def _key() -> str:
     key = os.environ.get("ELEVENLABS_API_KEY", "")
     env = ROOT / ".env"
     if not key and env.exists():
-        for line in env.read_text().splitlines():
+        for line in env.read_text(encoding="utf-8").splitlines():
             if line.startswith("ELEVENLABS_API_KEY="):
                 key = line.split("=", 1)[1].strip().strip("'\"")
     if not key:
