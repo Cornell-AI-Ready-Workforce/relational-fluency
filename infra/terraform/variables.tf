@@ -129,3 +129,37 @@ variable "survey_return_url" {
   type        = string
   default     = ""
 }
+
+variable "monitoring_email" {
+  description = "Alarm email recipient. Empty creates no subscription. Confirm the SNS email after deployment."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.monitoring_email == "" || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.monitoring_email))
+    error_message = "Use an email address or an empty string."
+  }
+}
+
+variable "monitoring_thresholds" {
+  description = "Initial alert thresholds; tune from observed collection baselines. Latencies are milliseconds."
+  type = object({
+    loop_lag_ms            = number
+    first_played_ms        = number
+    tts_queue_ms           = number
+    upstream_error_percent = number
+    cpu_percent            = number
+    memory_percent         = number
+  })
+  default = {
+    loop_lag_ms            = 250
+    first_played_ms        = 8000
+    tts_queue_ms           = 2000
+    upstream_error_percent = 5
+    cpu_percent            = 80
+    memory_percent         = 85
+  }
+  validation {
+    condition     = alltrue([for value in values(var.monitoring_thresholds) : value > 0])
+    error_message = "All monitoring thresholds must be positive."
+  }
+}
