@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
+import io
 import time
 import types
 from pathlib import Path
-from typing import Callable
+import weakref
 
 import pytest
 
@@ -26,7 +26,10 @@ def samples(docs, name):
 @pytest.fixture(autouse=True)
 def reset_metrics(monkeypatch):
     monkeypatch.setenv("METRICS_EMF", "1")
+    from server import upstream_telemetry
+    monkeypatch.setattr(upstream_telemetry, "_listeners", [])
     monkeypatch.setattr(metrics, "_cohorts", {})
+    monkeypatch.setattr(metrics, "_stores", weakref.WeakSet())
     monkeypatch.setattr(metrics, "_upstream_module", None)
 
 
@@ -40,10 +43,10 @@ def stores(tmp_path, monkeypatch):
     monkeypatch.setattr(conversation_audio, "finish_later", lambda path: None)
     created = []
 
-    def make(group="study"):
+    def make(group="study", run_id="a" * 12):
         store = storage.SessionStore(
             f"s_1772460300_{len(created):06x}", scenario="S1A", model="test",
-            participant_id=None, capture_audio=False, cohort=group)
+            participant_id=None, capture_audio=False, cohort=group, run_id=run_id)
         created.append(store)
         return store
 
@@ -93,16 +96,20 @@ def test_emitter_disabled_and_swallows_output_and_encoding_errors(monkeypatch, c
     assert documents(capsys) == []
     monkeypatch.setenv("METRICS_EMF", "1")
     with monkeypatch.context() as patch:
-        patch.setattr("builtins.print", lambda *a, **k: (_ for _ in ()).throw(OSError("closed")))
+        patch.setattr(metrics.sys.stdout, "write", lambda *a, **k: (_ for _ in ()).throw(OSError("closed")))
         assert metrics.emit("ReplyMissing") is None
     monkeypatch.setattr(metrics.json, "dumps", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad")))
     assert metrics.emit("ReplyMissing") is None
 
 
-@pytest.mark.parametrize("group,expected", [("study", "study"), ("internal", "internal"),
-                                              ("unattributed", "internal"), (None, "internal")])
-def test_started_and_lifetime_once_from_store(stores, capsys, group, expected):
-    store = stores(group)
+@pytest.mark.parametrize("group,run_id,expected", [
+    ("study", "a" * 12, "study"), ("internal", "a" * 12, "internal"),
+    ("unattributed", "a" * 12, "study"), (None, "a" * 12, "study"),
+    ("study", None, "internal"), ("unattributed", None, "internal"),
+    (None, None, "internal"),
+])
+def test_started_and_lifetime_once_from_store(stores, capsys, group, run_id, expected):
+    store = stores(group, run_id=run_id)
     metrics.session_created(store)
     store.started_at = time.time() - 3
     store.close()
@@ -229,7 +236,7 @@ def test_withdrawal_without_encounter_does_not_invent_one(run_files, capsys):
 
 def test_archive_failure_is_from_completed_upload_result(tmp_path, capsys):
     from server import archive
-    (tmp_path / "manifest.json").write_text('{"cohort":"study"}', encoding="utf-8")
+    (tmp_path / "manifest.json").write_text('{"cohort":"study","run_id":"aaaaaaaaaaaa"}', encoding="utf-8")
     (tmp_path / "record.json").write_text("{}", encoding="utf-8")
 
     class S3:
@@ -281,59 +288,43 @@ def test_actual_lag_report_hook_and_gauge_interval(monkeypatch, capsys):
     assert samples(docs, "LoopLagMax") == [950]
 
 
-def frozen_upstream_standin():
-    """TEMPORARY: remove when Track 0 lands. Exactly the frozen public API."""
-    module = types.ModuleType("server.upstream_telemetry")
-    listeners = []
-
-    def add_listener(fn: Callable[[dict], None]) -> None:
-        listeners.append(fn)
-
-    def record(*, upstream: str, route: str, purpose: str, outcome: str,
-               duration_ms: float, status: int | None = None, attempt: int = 1,
-               queue_wait_ms: float | None = None, session_id: str | None = None,
-               detail: str | None = None) -> None:
-        event = dict(upstream=upstream, route=route, purpose=purpose, outcome=outcome,
-                     duration_ms=duration_ms, status=status, attempt=attempt,
-                     queue_wait_ms=queue_wait_ms, session_id=session_id, detail=detail,
-                     t=time.time())
-        for listener in listeners:
-            try:
-                listener(dict(event))
-            except Exception:
-                pass
-
-    module.record, module.add_listener = record, add_listener
-    return module
-
-
-def test_frozen_upstream_listener_wiring_once_in_startup(stores, monkeypatch, capsys):
-    from server import app as appmod
-    standin = frozen_upstream_standin()
-    monkeypatch.setitem(sys.modules, "server.upstream_telemetry", standin)
+def test_real_upstream_listener_wiring_once_and_no_session_event_double_count(stores, monkeypatch, capsys):
+    from server import app as appmod, upstream_telemetry
+    from server.session import Session
     store = stores()
+    session = object.__new__(Session)
+    session.store, session._closed = store, False
+    monkeypatch.setitem(appmod.registry._sessions, store.id, session)
     capsys.readouterr()
 
     async def check():
         await metrics.start(appmod.registry)
+        first_tasks = (metrics._gauge_task, metrics._sweep_task)
         await metrics.start(appmod.registry)
-        standin.record(upstream="gateway", route="chat_completions_stream", purpose="actor",
-                       outcome="http_error", duration_ms=3, status=429, session_id=store.id,
-                       detail="private error")
-        standin.record(upstream="gateway", route="chat_completions_stream", purpose="actor",
-                       outcome="ok", duration_ms=5, attempt=2, session_id=store.id)
-        standin.record(upstream="elevenlabs", route="tts_ws", purpose="tts", outcome="ok",
-                       duration_ms=20, queue_wait_ms=100, session_id=store.id)
+        assert (metrics._gauge_task, metrics._sweep_task) == first_tasks
+        assert upstream_telemetry._listeners == [metrics.upstream_attempt]
+        upstream_telemetry.record(upstream="gateway", route="chat_completions_stream", purpose="actor",
+                                  outcome="http_error", duration_ms=3, status=429, session_id=store.id,
+                                  detail="private error")
+        upstream_telemetry.record(upstream="gateway", route="chat_completions_stream", purpose="actor",
+                                  outcome="ok", duration_ms=5, attempt=2, session_id=store.id)
+        upstream_telemetry.record(upstream="elevenlabs", route="tts_ws", purpose="tts", outcome="ok",
+                                  duration_ms=20, queue_wait_ms=100, session_id=store.id)
         await metrics.stop()
+        assert all(task.done() for task in first_tasks)
 
     asyncio.run(check())
     docs = documents(capsys)
+    assert len(docs) == 3
     assert samples(docs, "UpstreamRequests") == [1, 1, 1]
     assert samples(docs, "UpstreamErrors") == [1, 0, 0]
     assert samples(docs, "UpstreamLatency") == [3, 5, 20]
     assert samples(docs, "TtsQueueWait") == [100]
     assert all(d["Cohort"] == "study" for d in docs)
     assert store.id not in json.dumps(docs) and "private" not in json.dumps(docs)
+    events = [json.loads(line) for line in store.events_path.read_text(encoding="utf-8").splitlines()]
+    assert [e["type"] for e in events] == ["upstream_attempt"] * 3
+    assert [e["duration_ms"] for e in events] == [3, 5, 20]
     hooks = appmod.app.router.on_startup
     assert hooks.index(appmod._start_metrics_on_startup) < hooks.index(appmod._run_preflights_on_startup)
     assert metrics.stop in appmod.app.router.on_shutdown
@@ -345,5 +336,155 @@ def test_each_upstream_outcome_is_an_attempt(outcome, capsys):
                                   outcome=outcome, duration_ms=1, session_id=None))
     docs = documents(capsys)
     assert samples(docs, "UpstreamRequests") == [1]
-    assert samples(docs, "UpstreamErrors") == [int(outcome != "ok")]
+    assert samples(docs, "UpstreamErrors") == [int(outcome in {"http_error", "timeout", "exception", "closed"})]
+    assert samples(docs, "UpstreamCancelled") == [int(outcome == "cancelled")]
+    assert len(docs) == 1
     assert docs[0]["Cohort"] == "internal"
+
+
+def test_one_stdout_write_and_all_metrics_per_upstream_attempt(monkeypatch):
+    class Sink(io.StringIO):
+        def __init__(self):
+            super().__init__()
+            self.writes = []
+
+        def write(self, line):
+            self.writes.append(line)
+            return super().write(line)
+
+    sink = Sink()
+    monkeypatch.setattr(metrics.sys, "stdout", sink)
+    metrics.upstream_attempt(dict(upstream="elevenlabs", route="tts_ws", purpose="tts",
+                                  outcome="cancelled", duration_ms=12, queue_wait_ms=20))
+    assert len(sink.writes) == 1 and sink.writes[0].endswith("\n")
+    doc = json.loads(sink.getvalue())
+    names = {m["Name"] for m in doc["_aws"]["CloudWatchMetrics"][0]["Metrics"]}
+    assert names == {"UpstreamRequests", "UpstreamErrors", "UpstreamCancelled", "UpstreamLatency", "TtsQueueWait"}
+    assert doc["UpstreamRequests"] == doc["UpstreamCancelled"] == 1
+    assert doc["UpstreamErrors"] == 0
+    assert ["Upstream"] in doc["_aws"]["CloudWatchMetrics"][0]["Dimensions"]
+
+
+def test_playback_finalizes_on_next_speech_with_earliest_member_ack(stores, capsys, monkeypatch):
+    from server.turn_timing import TurnTimer
+    from tools.sim.analyze import ANSWER_GRACE_S
+    assert metrics.ANSWER_GRACE_S == ANSWER_GRACE_S
+    store, other = stores(), stores()
+    now = [store.started_at + 1]
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    timer = TurnTimer(store)
+    timer.speech_end()
+    # One member's later record reports an earlier ACK, still within the hold.
+    store.event("turn_timing", vad_speech_end=1, first_audio_played=5)
+    other.event("turn_timing", vad_speech_end=1, first_audio_played=2)
+    now[0] += 6
+    store.event("turn_timing", vad_speech_end=1, first_audio_played=3)
+    assert samples(documents(capsys), "SpeechEndToFirstPlayed") == []
+    timer.speech_end()
+    doc, = documents(capsys)
+    assert doc["SpeechEndToFirstPlayed"] == 2000
+    assert doc["_aws"]["Timestamp"] == int((store.started_at + 3) * 1000)
+    assert not store.events_fh.closed and other._metrics_turns == {1: 2}
+    # Once finalized, late records and close cannot add another sample.
+    store.event("turn_timing", vad_speech_end=1, first_audio_played=2)
+    store.close()
+    assert samples(documents(capsys), "SpeechEndToFirstPlayed") == []
+
+
+def test_sweep_finalizes_after_hold_without_next_speech_or_session_close(stores, capsys, monkeypatch):
+    store = stores()
+    now = [store.started_at + 5]
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    metrics.speech_end(store, 1)
+    store.event("turn_timing", vad_speech_end=1, first_audio_played=4)
+    capsys.readouterr()
+    count = 0
+
+    async def sleep(seconds):
+        nonlocal count
+        assert seconds == 1
+        count += 1
+        if count == 1:
+            now[0] = store.started_at + 30.9
+        elif count == 2:
+            assert samples(documents(capsys), "SpeechEndToFirstPlayed") == []
+            now[0] = store.started_at + 31
+        else:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(metrics.asyncio, "sleep", sleep)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(metrics._sweep_loop())
+    doc, = documents(capsys)
+    assert doc["SpeechEndToFirstPlayed"] == 3000
+    assert doc["_aws"]["Timestamp"] == int((store.started_at + 4) * 1000)
+    assert not store.events_fh.closed and store._metrics_turns == {}
+    metrics.sweep_playback()
+    store.close()
+    assert samples(documents(capsys), "SpeechEndToFirstPlayed") == []
+
+
+def test_next_speech_can_finalize_a_play_start_before_play_end(stores, capsys, monkeypatch):
+    from server.turn_timing import TurnTimer
+    store = stores()
+    now = [store.started_at + 1]
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    timer = TurnTimer(store)
+    timer.speech_end()
+    turn = timer.started("member")
+    now[0] += 2
+    timer.ack({"phase": "start", "turn": turn})
+    now[0] += 1
+    capsys.readouterr()
+    timer.speech_end()
+    assert samples(documents(capsys), "SpeechEndToFirstPlayed") == [2000]
+    timer.ack({"phase": "end", "turn": turn})
+    store.close()
+    assert samples(documents(capsys), "SpeechEndToFirstPlayed") == []
+
+
+def test_missing_playback_skips_only_replies_cut_before_playback(stores, capsys):
+    store = stores()
+    store.event("turn_timing", vad_speech_end=1, first_audio_played=None, play_end_interrupted=True)
+    store.event("turn_timing", vad_speech_end=2, first_audio_played=None, play_end_interrupted=False)
+    store.event("turn_timing", vad_speech_end=3, first_audio_played=4, play_end_interrupted=True)
+    store.event("turn_timing", vad_speech_end=4, first_audio_played=None, play_end_interrupted=True)
+    store.event("turn_timing", vad_speech_end=4, first_audio_played=5, play_end_interrupted=False)
+    store.close()
+    docs = documents(capsys)
+    assert samples(docs, "FirstPlayedMissing") == [1]
+    assert samples(docs, "SpeechEndToFirstPlayed") == [1000, 1000]
+
+
+def test_speech_ends_do_not_create_background_tasks(stores, capsys):
+    store = stores()
+
+    async def check():
+        await metrics.start(types.SimpleNamespace(list_ids=lambda: []))
+        tasks = set(asyncio.all_tasks())
+        for ended in range(1, 101):
+            metrics.speech_end(store, ended)
+            store.event("turn_timing", vad_speech_end=ended, first_audio_played=ended + 1)
+        assert set(asyncio.all_tasks()) == tasks
+        assert not metrics._sweep_task.done()
+        await metrics.stop()
+
+    asyncio.run(check())
+    assert len(samples(documents(capsys), "SpeechEndToFirstPlayed")) == 99
+
+
+@pytest.mark.parametrize("group", ["study", "unattributed", None])
+def test_run_missing_cohort_and_unattributed_are_study(run_files, capsys, group):
+    runs, make = run_files
+    run = make("a" * 12)
+    if group is None:
+        run.pop("cohort")
+    else:
+        run["cohort"] = group
+    runs.save(run)
+    runs.advance("a" * 12, "first")
+    runs.withdraw("a" * 12, "second")
+    docs = documents(capsys)
+    assert samples(docs, "EncounterCompleted") == [1]
+    assert samples(docs, "EncounterWithdrawn") == [1]
+    assert all(doc["Cohort"] == "study" for doc in docs)

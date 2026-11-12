@@ -32,11 +32,12 @@ resource "aws_sns_topic_subscription" "monitoring_email" {
 
 locals {
   application_alarms = {
-    LoopLagMax             = { stat = "Maximum", threshold = var.monitoring_thresholds.loop_lag_ms, period = 60 }
-    SpeechEndToFirstPlayed = { stat = "p90", threshold = var.monitoring_thresholds.first_played_ms, period = 300 }
-    TtsQueueWait           = { stat = "p90", threshold = var.monitoring_thresholds.tts_queue_ms, period = 60 }
-    ReplyMissing           = { stat = "Sum", threshold = 0, period = 60 }
-    ArchiveFailed          = { stat = "Sum", threshold = 0, period = 60 }
+    LoopLagMax             = { stat = "Maximum", threshold = var.monitoring_thresholds.loop_lag_ms, period = 60, evaluation = 3, datapoints = 2 }
+    LoopLagP99             = { stat = "Maximum", threshold = var.monitoring_thresholds.loop_lag_ms, period = 60, evaluation = 3, datapoints = 2 }
+    SpeechEndToFirstPlayed = { stat = "p90", threshold = var.monitoring_thresholds.first_played_ms, period = 300, evaluation = 1, datapoints = 1 }
+    TtsQueueWait           = { stat = "p90", threshold = var.monitoring_thresholds.tts_queue_ms, period = 60, evaluation = 1, datapoints = 1 }
+    ReplyMissing           = { stat = "Sum", threshold = 0, period = 60, evaluation = 1, datapoints = 1 }
+    ArchiveFailed          = { stat = "Sum", threshold = 0, period = 60, evaluation = 1, datapoints = 1 }
   }
   ecs_dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -48,11 +49,18 @@ locals {
   }
   alb_alarms = {
     ALB5xx = {
-      metric     = "HTTPCode_ELB_5XX_Count", stat = "Sum", threshold = 0
+      metric     = "HTTPCode_ELB_5XX_Count", stat = "Sum", threshold = 3, period = 300
+      comparison = "GreaterThanOrEqualToThreshold", missing = "notBreaching"
       dimensions = { LoadBalancer = aws_lb.main.arn_suffix }
     }
     UnHealthyHostCount = {
-      metric     = "UnHealthyHostCount", stat = "Maximum", threshold = 0
+      metric     = "UnHealthyHostCount", stat = "Maximum", threshold = 0, period = 60
+      comparison = "GreaterThanThreshold", missing = "notBreaching"
+      dimensions = { LoadBalancer = aws_lb.main.arn_suffix, TargetGroup = aws_lb_target_group.agent.arn_suffix }
+    }
+    HealthyHostCount = {
+      metric     = "HealthyHostCount", stat = "Minimum", threshold = 1, period = 60
+      comparison = "LessThanThreshold", missing = "breaching"
       dimensions = { LoadBalancer = aws_lb.main.arn_suffix, TargetGroup = aws_lb_target_group.agent.arn_suffix }
     }
   }
@@ -63,7 +71,7 @@ locals {
 resource "aws_cloudwatch_metric_alarm" "application" {
   for_each                              = local.application_alarms
   alarm_name                            = "${var.project}-${each.key}"
-  alarm_description                     = "${each.key} > ${each.value.threshold}; see Watching a collection session in docs/OPERATIONS.md. Latency arrives at encounter close."
+  alarm_description                     = "${each.key} > ${each.value.threshold}; see Watching a collection session in docs/OPERATIONS.md."
   namespace                             = "RelationalFluency"
   metric_name                           = each.key
   statistic                             = startswith(each.value.stat, "p") ? null : each.value.stat
@@ -72,8 +80,8 @@ resource "aws_cloudwatch_metric_alarm" "application" {
   period                                = each.value.period
   threshold                             = each.value.threshold
   comparison_operator                   = "GreaterThanThreshold"
-  evaluation_periods                    = 1
-  datapoints_to_alarm                   = 1
+  evaluation_periods                    = each.value.evaluation
+  datapoints_to_alarm                   = each.value.datapoints
   treat_missing_data                    = "notBreaching"
   alarm_actions                         = [aws_sns_topic.monitoring.arn]
   ok_actions                            = [aws_sns_topic.monitoring.arn]
@@ -82,18 +90,18 @@ resource "aws_cloudwatch_metric_alarm" "application" {
 resource "aws_cloudwatch_metric_alarm" "upstream_error_rate" {
   for_each            = toset(["gateway", "elevenlabs"])
   alarm_name          = "${var.project}-UpstreamErrorRate-${each.key}"
-  alarm_description   = "Per-attempt error percent, including recovered retries and cancellations; inspect upstream_attempt events by route and purpose."
+  alarm_description   = "Per-attempt error percent, including recovered retries; cancellations are separate; inspect upstream_attempt events by route and purpose."
   threshold           = var.monitoring_thresholds.upstream_error_percent
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.monitoring.arn]
   ok_actions          = [aws_sns_topic.monitoring.arn]
 
   metric_query {
     id          = "rate"
-    expression  = "IF(requests > 0, 100 * FILL(errors, 0) / requests, 0)"
+    expression  = "IF(errors >= 3, 100 * errors / requests, 0)"
     label       = "${each.key} attempt error %"
     return_data = true
   }
@@ -150,17 +158,17 @@ resource "aws_cloudwatch_metric_alarm" "ecs_utilization" {
 resource "aws_cloudwatch_metric_alarm" "alb" {
   for_each            = local.alb_alarms
   alarm_name          = "${var.project}-${each.key}"
-  alarm_description   = "${each.value.metric} > 0; inspect ALB target health and ECS service events."
+  alarm_description   = each.key == "HealthyHostCount" ? "No healthy target, including a stopped task or missing health data; inspect ECS service events." : "${each.value.metric} ${each.value.comparison} ${each.value.threshold}; inspect ALB target health and ECS service events."
   namespace           = "AWS/ApplicationELB"
   metric_name         = each.value.metric
   dimensions          = each.value.dimensions
   statistic           = each.value.stat
-  period              = 60
+  period              = each.value.period
   threshold           = each.value.threshold
-  comparison_operator = "GreaterThanThreshold"
+  comparison_operator = each.value.comparison
   evaluation_periods  = 1
   datapoints_to_alarm = 1
-  treat_missing_data  = "notBreaching"
+  treat_missing_data  = each.value.missing
   alarm_actions       = [aws_sns_topic.monitoring.arn]
   ok_actions          = [aws_sns_topic.monitoring.arn]
 }
@@ -200,7 +208,7 @@ resource "aws_cloudwatch_dashboard" "collection" {
       {
         type = "metric", x = 0, y = 9, width = 12, height = 6
         properties = {
-          title  = "Speech end to earliest played reply (ms; emitted at session close)"
+          title  = "Speech end to earliest played reply (ms; next speech end or 30 s hold)"
           region = var.region, view = "timeSeries", period = 300, stat = "p90"
           metrics = [["RelationalFluency", "SpeechEndToFirstPlayed"],
           ["RelationalFluency", "SpeechEndToFirstPlayed", { stat = "SampleCount", label = "Played speech ends", yAxis = "right" }]]
@@ -249,11 +257,12 @@ resource "aws_cloudwatch_dashboard" "collection" {
       ], [for index, upstream in ["gateway", "elevenlabs"] : {
         type = "metric", x = index * 12, y = 27, width = 12, height = 6
         properties = {
-          title  = "${upstream} attempts and error percent"
+          title  = "${upstream} attempts, cancellations and error percent"
           region = var.region, view = "timeSeries", period = 60, stat = "Sum"
           metrics = [
             ["RelationalFluency", "UpstreamRequests", "Upstream", upstream, { id = "requests" }],
             ["RelationalFluency", "UpstreamErrors", "Upstream", upstream, { id = "errors" }],
+            ["RelationalFluency", "UpstreamCancelled", "Upstream", upstream, { id = "cancelled" }],
             [{ expression = "IF(requests > 0, 100 * FILL(errors, 0) / requests, 0)", label = "Attempt error %", yAxis = "right" }]
           ]
         }
@@ -280,9 +289,9 @@ resource "aws_cloudwatch_dashboard" "collection" {
       {
         type = "metric", x = 12, y = 39, width = 12, height = 6
         properties = {
-          title   = "Unhealthy targets"
+          title   = "Target health (healthy Minimum, unhealthy Maximum)"
           region  = var.region, view = "timeSeries", period = 60, stat = "Maximum"
-          metrics = [["AWS/ApplicationELB", "UnHealthyHostCount", "LoadBalancer", aws_lb.main.arn_suffix, "TargetGroup", aws_lb_target_group.agent.arn_suffix]]
+          metrics = [["AWS/ApplicationELB", "UnHealthyHostCount", "LoadBalancer", aws_lb.main.arn_suffix, "TargetGroup", aws_lb_target_group.agent.arn_suffix], ["AWS/ApplicationELB", "HealthyHostCount", "LoadBalancer", aws_lb.main.arn_suffix, "TargetGroup", aws_lb_target_group.agent.arn_suffix, { stat = "Minimum" }]]
         }
       }
     ])

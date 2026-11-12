@@ -1,8 +1,8 @@
 """Bounded CloudWatch EMF on stdout. No SDK, network calls or participant data.
 
-Playback samples are held until session close: a later room member's timing
-record can contain an earlier playback ACK. Only explicit study cohorts are
-study; internal, unattributed and standalone sessions use internal.
+Playback samples finalize at the next speech end or after a 30-second hold.
+Room records within that window can supply an earlier playback ACK. Runs are
+study unless explicitly internal; sessions without a run are internal.
 """
 from __future__ import annotations
 
@@ -11,8 +11,10 @@ import importlib
 import json
 import math
 import os
+import sys
 import threading
 import time
+import weakref
 from functools import wraps
 from pathlib import Path
 
@@ -28,7 +30,7 @@ UNITS = {
     **dict.fromkeys(("SpeechEndToFirstPlayed", "UpstreamLatency", "TtsQueueWait",
                      "LoopLagP99", "LoopLagMax"), "Milliseconds"),
     **dict.fromkeys(("FirstPlayedMissing", "ReplyMissing", "VoiceError",
-                     "UpstreamRequests", "UpstreamErrors", "RoomMemberDropped",
+                     "UpstreamRequests", "UpstreamErrors", "UpstreamCancelled", "RoomMemberDropped",
                      "RoomMemberLost", "ActiveSessions", "EncounterStarted",
                      "EncounterCompleted", "EncounterWithdrawn", "ArchiveFailed"), "Count"),
     "EncounterDurationS": "Seconds",
@@ -39,8 +41,14 @@ BENIGN_VOICE_ERRORS = ("extra response.create was refused", "already_has_active_
                        "response_cancel_not_active")
 _lock = threading.RLock()
 _cohorts: dict[str, str] = {}
+_stores: weakref.WeakSet = weakref.WeakSet()
 _upstream_module = None
 _gauge_task: asyncio.Task | None = None
+_sweep_task: asyncio.Task | None = None
+# Same answer window as tools/sim/analyze.py; no sim dependency in the server.
+ANSWER_GRACE_S = 30.0
+SWEEP_INTERVAL_S = 1.0
+UPSTREAM_ERRORS = frozenset(("http_error", "timeout", "exception", "closed"))
 
 
 def _safe(fn):
@@ -53,8 +61,12 @@ def _safe(fn):
     return guarded
 
 
-def cohort(value) -> str:
-    return "study" if value == "study" else "internal"
+def cohort(value, *, has_run: bool = True) -> str:
+    return "internal" if not has_run or value == "internal" else "study"
+
+
+def _store_cohort(store) -> str:
+    return cohort(store.cohort, has_run=bool(store.run_id))
 
 
 def _number(value) -> bool:
@@ -63,15 +75,17 @@ def _number(value) -> bool:
 
 
 @_safe
-def emit(name: str, value: float = 1, **dimensions) -> None:
-    """Emit a raw sample, plus global/cohort rollups. Reject unbounded values.
+def emit_many(values: dict, *, timestamp_ms: float | None = None, **dimensions) -> None:
+    """Emit raw samples in one document, plus global/cohort rollups.
 
     Unknown dimension names are discarded before serialization. Known names
     with unknown values reject the sample. Metric names and units are fixed.
     """
     if os.getenv("METRICS_EMF", "1").strip() == "0":
         return
-    if name not in UNITS or not _number(value):
+    values = {name: value for name, value in values.items()
+              if name in UNITS and _number(value)}
+    if not values or (timestamp_ms is not None and not _number(timestamp_ms)):
         return
     dims = {key: value for key, value in dimensions.items() if key in DIMENSIONS}
     if any(value not in DIMENSIONS[key] for key, value in dims.items()):
@@ -82,14 +96,20 @@ def emit(name: str, value: float = 1, **dimensions) -> None:
         if keys and all(key in dims for key in keys) and keys not in sets:
             sets.append(keys)
     record = {
-        "_aws": {"Timestamp": int(time.time() * 1000), "CloudWatchMetrics": [{
+        "_aws": {"Timestamp": int(time.time() * 1000 if timestamp_ms is None else timestamp_ms), "CloudWatchMetrics": [{
             "Namespace": NAMESPACE, "Dimensions": sets,
-            "Metrics": [{"Name": name, "Unit": UNITS[name]}],
+            "Metrics": [{"Name": name, "Unit": UNITS[name]} for name in values],
         }]},
-        **dims, name: value,
+        **dims, **values,
     }
     with _lock:
-        print(json.dumps(record, allow_nan=False, separators=(",", ":")), flush=True)
+        sys.stdout.write(json.dumps(record, allow_nan=False, separators=(",", ":")) + "\n")
+        sys.stdout.flush()
+
+
+@_safe
+def emit(name: str, value: float = 1, *, timestamp_ms: float | None = None, **dimensions) -> None:
+    emit_many({name: value}, timestamp_ms=timestamp_ms, **dimensions)
 
 
 @_safe
@@ -99,8 +119,11 @@ def session_created(store) -> None:
             return
         store._metrics_started = True
         store._metrics_turns = {}
-        _cohorts[store.id] = cohort(store.cohort)
-        emit("EncounterStarted", Cohort=cohort(store.cohort))
+        store._metrics_finalized = set()
+        store._metrics_speech_end = None
+        _stores.add(store)
+        _cohorts[store.id] = _store_cohort(store)
+        emit("EncounterStarted", Cohort=_store_cohort(store))
 
 
 def _voice_kind(fields) -> str | None:
@@ -119,7 +142,9 @@ def _voice_kind(fields) -> str | None:
 
 @_safe
 def session_event(store, type_: str, fields: dict) -> None:
-    dims = {"Cohort": cohort(store.cohort)}
+    # Every event can expire an old hold; a shared sweep also handles silence.
+    _flush_playback(store)
+    dims = {"Cohort": _store_cohort(store)}
     counters = {"reply_missing": "ReplyMissing", "room_member_dropped": "RoomMemberDropped",
                 "room_member_lost": "RoomMemberLost"}
     if type_ in counters:
@@ -133,12 +158,58 @@ def session_event(store, type_: str, fields: dict) -> None:
         if not _number(speech_end) or getattr(store, "_metrics_closed", False):
             return
         with _lock:
+            if speech_end in getattr(store, "_metrics_finalized", ()):
+                return
+            if fields.get("play_end_interrupted") and played is None:
+                return
             turns = getattr(store, "_metrics_turns", None)
             if turns is None:
                 store._metrics_turns = turns = {}
             previous = turns.setdefault(speech_end, None)
             if _number(played) and played >= speech_end:
                 turns[speech_end] = played if previous is None else min(previous, played)
+            _stores.add(store)
+            _flush_playback(store)
+
+
+@_safe
+def speech_end(store, at: float) -> None:
+    """The real TurnTimer's next speech end is a finalization boundary."""
+    if not _number(at) or getattr(store, "_metrics_closed", False):
+        return
+    with _lock:
+        previous = getattr(store, "_metrics_speech_end", None)
+        store._metrics_speech_end = at if previous is None else max(previous, at)
+        _flush_playback(store)
+
+
+@_safe
+def _flush_playback(store, *, final: bool = False) -> None:
+    with _lock:
+        now = time.time()
+        boundary = getattr(store, "_metrics_speech_end", None)
+        turns = getattr(store, "_metrics_turns", {})
+        for ended, played in list(turns.items()):
+            if not (final or (boundary is not None and ended < boundary)
+                    or now >= store.started_at + ended + ANSWER_GRACE_S):
+                continue
+            turns.pop(ended)
+            if not hasattr(store, "_metrics_finalized"):
+                store._metrics_finalized = set()
+            store._metrics_finalized.add(ended)
+            if played is None:
+                emit("FirstPlayedMissing", Cohort=_store_cohort(store))
+            else:
+                emit("SpeechEndToFirstPlayed", (played - ended) * 1000,
+                     timestamp_ms=(store.started_at + played) * 1000,
+                     Cohort=_store_cohort(store))
+
+
+@_safe
+def sweep_playback() -> None:
+    with _lock:
+        for store in list(_stores):
+            _flush_playback(store)
 
 
 @_safe
@@ -146,16 +217,13 @@ def session_closed(store, duration_s: float) -> None:
     with _lock:
         if getattr(store, "_metrics_closed", False):
             return
+        _flush_playback(store, final=True)
         store._metrics_closed = True
-        dims = {"Cohort": cohort(store.cohort)}
-        for speech_end, played in getattr(store, "_metrics_turns", {}).items():
-            if played is None:
-                emit("FirstPlayedMissing", **dims)
-            else:
-                emit("SpeechEndToFirstPlayed", (played - speech_end) * 1000, **dims)
         store._metrics_turns = {}
+        store._metrics_finalized = set()
+        _stores.discard(store)
         _cohorts.pop(store.id, None)
-        emit("EncounterDurationS", duration_s, **dims)
+        emit("EncounterDurationS", duration_s, Cohort=_store_cohort(store))
 
 
 @_safe
@@ -165,11 +233,12 @@ def upstream_attempt(event: dict) -> None:
         group = _cohorts.get(event.get("session_id"), "internal")
     dims = {"Purpose": event["purpose"], "Upstream": event["upstream"],
             "Outcome": event["outcome"], "Cohort": group}
-    emit("UpstreamRequests", **dims)
-    emit("UpstreamErrors", int(event["outcome"] != "ok"), **dims)
-    emit("UpstreamLatency", event["duration_ms"], **dims)
+    values = {"UpstreamRequests": 1, "UpstreamErrors": int(event["outcome"] in UPSTREAM_ERRORS),
+              "UpstreamCancelled": int(event["outcome"] == "cancelled"),
+              "UpstreamLatency": event["duration_ms"]}
     if event["upstream"] == "elevenlabs" and event.get("queue_wait_ms") is not None:
-        emit("TtsQueueWait", event["queue_wait_ms"], **dims)
+        values["TtsQueueWait"] = event["queue_wait_ms"]
+    emit_many(values, **dims)
 
 
 @_safe
@@ -193,8 +262,8 @@ def archive_finished(session_dir: Path, result: dict) -> None:
         return
     group = "internal"
     try:
-        group = cohort(json.loads((Path(session_dir) / "manifest.json").read_text(
-            encoding="utf-8")).get("cohort"))
+        manifest = json.loads((Path(session_dir) / "manifest.json").read_text(encoding="utf-8"))
+        group = cohort(manifest.get("cohort"), has_run=bool(manifest.get("run_id")))
     except Exception:
         pass
     emit("ArchiveFailed", Cohort=group)
@@ -213,21 +282,34 @@ async def _gauge_loop(registry) -> None:
         await asyncio.sleep(60)
 
 
+async def _sweep_loop() -> None:
+    while True:
+        sweep_playback()
+        await asyncio.sleep(SWEEP_INTERVAL_S)
+
+
 async def start(registry) -> None:
-    global _gauge_task
+    global _gauge_task, _sweep_task
     try:
         install_upstream_listener()
         if _gauge_task is None or _gauge_task.done():
             _gauge_task = asyncio.create_task(_gauge_loop(registry))
+        if _sweep_task is None or _sweep_task.done():
+            _sweep_task = asyncio.create_task(_sweep_loop())
     except Exception:
         pass
 
 
 async def stop() -> None:
-    global _gauge_task
-    task, _gauge_task = _gauge_task, None
-    if task is not None:
-        task.cancel()
+    global _gauge_task, _sweep_task
+    tasks = (_gauge_task, _sweep_task)
+    _gauge_task = _sweep_task = None
+    for task in tasks:
+        if task is not None:
+            task.cancel()
+    for task in tasks:
+        if task is None:
+            continue
         try:
             await task
         except (asyncio.CancelledError, Exception):
