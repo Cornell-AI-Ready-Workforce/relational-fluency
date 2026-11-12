@@ -63,6 +63,8 @@ class LoopLagProbe:
                 last_report = now
                 try:
                     s = summarize(self.drain())
+                    from . import metrics
+                    metrics.loop_lag_report(s)
                     print(f"  {self.label}: n={s['n']} p99={s['p99_ms']}ms "
                           f"max={s['max_ms']}ms", flush=True)
                 except Exception:  # noqa: BLE001 - instrumentation only
