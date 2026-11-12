@@ -56,6 +56,8 @@ SESSION_KEY = os.getenv("SESSION_KEY", "").strip()
 ROOT_DIR = Path(__file__).parent.parent
 STATIC_DIR = ROOT_DIR / "static"
 CONFIG_DIR = ROOT_DIR / "config"
+# Keep HTTP connections open beyond infra/terraform/alb.tf's idle_timeout (120 s).
+HTTP_KEEP_ALIVE_TIMEOUT_S = 130
 # Mirror storage.py, DATA_DIR may be a mounted volume in production.
 from .storage import SESSIONS_DIR as SESSIONS_DIR  # re-export
 
@@ -4293,4 +4295,5 @@ if __name__ == "__main__":
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8765"))
     print(f"Relational Fluency Platform -> http://{host}:{port}")
-    uvicorn.run("server.app:app", host=host, port=port, reload=False, log_level="info")
+    uvicorn.run("server.app:app", host=host, port=port, reload=False, log_level="info",
+                timeout_keep_alive=HTTP_KEEP_ALIVE_TIMEOUT_S)
