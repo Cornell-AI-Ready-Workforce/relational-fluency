@@ -47,6 +47,45 @@ def test_listener_failures_and_mutations_do_not_affect_other_listeners(records):
     assert records[0]["outcome"] == "http_error"
 
 
+@pytest.mark.parametrize("status", ["429", object(), None])
+def test_attempt_coerces_non_integer_status_and_preserves_upstream_error(records, status):
+    error = RuntimeError("upstream failed")
+    attempt = telemetry._Attempt(upstream="gateway", route="messages",
+                                 purpose="steering", status=status)
+    with pytest.raises(RuntimeError) as caught:
+        with attempt:
+            raise error
+    assert caught.value is error
+    assert len(records) == 1
+    assert records[0]["status"] is None
+    assert records[0]["outcome"] == "exception"
+    attempt.finish()
+    assert len(records) == 1
+
+
+@pytest.mark.parametrize("site", ["fields", "clock", "record"])
+@pytest.mark.parametrize("fault", [RuntimeError("telemetry failed"), asyncio.CancelledError()])
+def test_attempt_finish_never_replaces_upstream_error(monkeypatch, site, fault):
+    attempt = telemetry._Attempt(upstream="gateway", route="messages", purpose="steering")
+
+    def fail(*args, **kwargs):
+        raise fault
+
+    if site == "fields":
+        attempt.fields = SimpleNamespace(keys=fail)
+    elif site == "clock":
+        monkeypatch.setattr(telemetry.time, "perf_counter", fail)
+    else:
+        monkeypatch.setattr(telemetry, "record", fail)
+    error = ValueError("upstream failed")
+    with pytest.raises(ValueError) as caught:
+        with attempt:
+            raise error
+    assert caught.value is error
+    assert attempt.finished
+    attempt.finish()
+
+
 def test_record_writes_through_session_store_to_events_jsonl(records, monkeypatch, tmp_path):
     from server.session import Session, registry
     from server.storage import SessionStore

@@ -319,18 +319,21 @@ _message_context: ContextVar[tuple[str, str | None] | None] = ContextVar(
 
 
 class _TelemetryAnthropic(AsyncAnthropic):
-    async def _attempt_request(self, options, *, stream=False, retries_taken=0):
+    @property
+    def user_agent(self) -> str:
+        return f"AsyncAnthropic/Python {self._version}"
+
+    async def _attempt_request(self, *args, **kwargs):
         # anthropic==1.0.0 calls this once per HTTP attempt, before its retry
         # policy/backoff. with_options() preserves this subclass and pool.
         context = _message_context.get()
         if context is None:
-            return await super()._attempt_request(
-                options, stream=stream, retries_taken=retries_taken)
+            return await super()._attempt_request(*args, **kwargs)
         purpose, session_id = context
+        retries_taken = kwargs.get("retries_taken", 0)
         with _Attempt(upstream="gateway", route="messages", purpose=purpose,
                       session_id=session_id, attempt=retries_taken + 1) as attempt:
-            response, prepared = await super()._attempt_request(
-                options, stream=stream, retries_taken=retries_taken)
+            response, prepared = await super()._attempt_request(*args, **kwargs)
             attempt.fields["status"] = response.status_code
             return response, prepared
 

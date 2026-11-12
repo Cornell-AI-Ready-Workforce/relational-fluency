@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import httpx
 import httpx2
 import pytest
+from anthropic import AsyncAnthropic
 from websockets.exceptions import InvalidStatus, ConnectionClosedError
 from websockets.http11 import Response
 
@@ -132,6 +133,68 @@ def tool_response(name, data):
     return dict(id="msg_test", type="message", role="assistant", model="test",
                 content=[dict(type="tool_use", id="tool_test", name=name, input=data)],
                 stop_reason="tool_use", usage=dict(input_tokens=1, output_tokens=1))
+
+
+def test_text_client_matches_all_stock_request_headers(records):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx2.Response(200, json=tool_response("adjust_persona", {"adjustments": []}))
+
+    async def run():
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http:
+            stock = AsyncAnthropic(base_url=llm.gateway_base_url(),
+                                   api_key=llm.gateway_api_key(), http_client=http)
+            client = llm.text_client().with_options(http_client=http)
+            kwargs = dict(model="test", max_tokens=10,
+                          messages=[{"role": "user", "content": "Hi"}])
+            await stock.messages.create(**kwargs)
+            await llm.message_create(client, purpose="steering", **kwargs)
+
+    asyncio.run(run())
+    assert len(requests) == 2
+    assert requests[0].headers["user-agent"].startswith("AsyncAnthropic/Python ")
+    assert [(key, value) for key, value in requests[0].headers.multi_items()
+            if key != "idempotency-key"] == [
+                (key, value) for key, value in requests[1].headers.multi_items()
+                if key != "idempotency-key"]
+    assert requests[0].content == requests[1].content
+    assert len(records) == 1 and records[0]["outcome"] == "ok"
+
+
+@pytest.mark.parametrize("context", [None, ("director", "encounter")])
+@pytest.mark.parametrize("retries", [None, 3])
+def test_sdk_attempt_hook_forwards_all_arguments(records, monkeypatch, context, retries):
+    args = (object(), object())
+    kwargs = {"stream": object(), "future_option": object()}
+    if retries is not None:
+        kwargs["retries_taken"] = retries
+    result = (SimpleNamespace(status_code=200), object())
+
+    async def stock_attempt(self, *received_args, **received_kwargs):
+        assert len(received_args) == len(args)
+        assert all(left is right for left, right in zip(received_args, args))
+        assert received_kwargs.keys() == kwargs.keys()
+        assert all(received_kwargs[key] is value for key, value in kwargs.items())
+        return result
+
+    monkeypatch.setattr(AsyncAnthropic, "_attempt_request", stock_attempt)
+
+    async def run():
+        async with llm.text_client() as client:
+            token = llm._message_context.set(context)
+            try:
+                assert await client._attempt_request(*args, **kwargs) == result
+            finally:
+                llm._message_context.reset(token)
+
+    asyncio.run(run())
+    if context is None:
+        assert records == []
+    else:
+        assert len(records) == 1
+        assert records[0]["attempt"] == (retries or 0) + 1
 
 
 @pytest.mark.parametrize("status", [200, 302, 401, 429, 502])
@@ -320,6 +383,7 @@ def test_tts_queue_wait_is_separate_from_request_and_cancelled_wait_is_recorded(
     asyncio.run(run())
     assert [(r["outcome"], r["duration_ms"], r["queue_wait_ms"]) for r in records] == [
         ("ok", pytest.approx(25.0), 2000.0), ("cancelled", 0.0, 1000.0)]
+    assert [r["detail"] for r in records] == [None, "slot_wait"]
 
 
 def test_actor_duration_excludes_tts_wait_and_sends(records, monkeypatch):
@@ -330,18 +394,20 @@ def test_actor_duration_excludes_tts_wait_and_sends(records, monkeypatch):
             now[0] += 3.0
             await super().send(raw)
 
-    async def handler(request):
-        now[0] += 0.05
-        return sse()
-
     async def run():
+        requested = asyncio.Event()
+
+        async def handler(request):
+            now[0] += 0.05
+            requested.set()
+            return sse()
+
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
             sock = cascade.CascadeSocket(http=http)
             tts = asyncio.get_running_loop().create_future()
             async def release():
-                # The request must finish even though TTS is still blocked.
-                while not records:
-                    await asyncio.sleep(0)
+                await requested.wait()
+                assert not records
                 now[0] += 2.0
                 tts.set_result((SlowTTS(), None, None))
             waiter = asyncio.create_task(release())
@@ -352,36 +418,115 @@ def test_actor_duration_excludes_tts_wait_and_sends(records, monkeypatch):
     assert records[0]["duration_ms"] == pytest.approx(50.0)
 
 
-def test_actor_duration_includes_generation_overlapping_tts_wait(records, monkeypatch):
+def test_actor_duration_stops_at_done_before_final_tts_and_drain(records, monkeypatch):
     now = [0.0]
     monkeypatch.setattr(telemetry.time, "perf_counter", lambda: now[0])
 
     async def run():
-        finished = asyncio.Event()
-        telemetry.add_listener(lambda event: finished.set())
-
         class PacedStream(httpx.AsyncByteStream):
             async def __aiter__(self):
-                yield b'data: {"choices":[{"delta":{"content":"Hello there. "}}]}\n\n'
-                await asyncio.sleep(0)
                 now[0] += 0.3
-                yield b'data: {"choices":[{"delta":{"content":"Tell me more."}}]}\n\n'
+                yield b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'
                 now[0] += 0.2
                 yield b'data: [DONE]\n\n'
+                now[0] += 5.0
+
+        class SlowTTS(FakeTTS):
+            async def send(self, raw):
+                now[0] += 3.0
+                await super().send(raw)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(
                 lambda req: httpx.Response(200, stream=PacedStream()))) as http:
             sock = cascade.CascadeSocket(http=http)
             tts = asyncio.get_running_loop().create_future()
             task = asyncio.create_task(sock._stream_llm(tts, "v", [], "r", "i", time.time()))
-            await asyncio.wait_for(finished.wait(), 1)
+            await asyncio.sleep(0)
             assert not tts.done() and not task.done()
             assert records[0]["duration_ms"] == pytest.approx(500.0)
             now[0] += 2.0
-            tts.set_result((FakeTTS(), None, None))
+            tts.set_result((SlowTTS(), None, None))
             await task
     asyncio.run(run())
     assert len(records) == 1 and records[0]["outcome"] == "ok"
+    assert records[0]["duration_ms"] == pytest.approx(500.0)
+
+
+def test_slow_tts_preserves_origin_main_frame_order_and_body_reads(records, monkeypatch):
+    async def run():
+        first_read = asyncio.Event()
+        ready = asyncio.Event()
+        reads = []
+
+        class PacedStream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                for text in ("Hello there. ", "How are you today? "):
+                    await asyncio.sleep(0)
+                    reads.append(text)
+                    first_read.set()
+                    yield ("data: " + json.dumps({"choices": [{"delta": {"content": text}}]})
+                           + "\n\n").encode()
+                yield b"data: [DONE]\n\n"
+
+        async def open_tts():
+            await ready.wait()
+            return FakeTTS()
+
+        monkeypatch.setattr(cascade, "open_tts", open_tts)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+                lambda req: httpx.Response(200, stream=PacedStream()))) as http:
+            sock = cascade.CascadeSocket(http=http)
+            spawned = []
+            spawn = sock._spawn
+
+            def track_spawn(coro):
+                spawned.append(coro.cr_code.co_name)
+                return spawn(coro)
+
+            monkeypatch.setattr(sock, "_spawn", track_spawn)
+            task = asyncio.create_task(sock._respond("r"))
+            await first_read.wait()
+            for _ in range(4):
+                await asyncio.sleep(0)
+            assert reads == ["Hello there. "]
+            assert not records
+            ready.set()
+            await asyncio.wait_for(task, 1)
+            frames = []
+            while not sock._out.empty():
+                frame = json.loads(sock._out.get_nowait())
+                if frame["type"].endswith(".delta"):
+                    frames.append(frame["type"])
+            # origin/main e949063 emits each sentence before its audio, then
+            # reads the next gateway chunk. A pump reorders the middle pair.
+            assert frames == ["response.output_audio_transcript.delta",
+                              "response.output_audio.delta",
+                              "response.output_audio_transcript.delta",
+                              "response.output_audio.delta"]
+            assert spawned == ["_open_reply_tts", "keep_alive", "_relay_audio"]
+
+    asyncio.run(run())
+
+
+def test_tts_reader_cancelled_before_start_records_cancelled(records):
+    async def run():
+        sock = cascade.CascadeSocket()
+        attempt = telemetry._Attempt(upstream="elevenlabs", route="tts_ws", purpose="tts")
+        ws = cascade._TtsSocket(FakeTTS(), attempt)
+        reader = asyncio.create_task(sock._relay_audio(ws, "r", "i", time.time()))
+        reader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await reader
+        assert reader.done() and reader.cancelled() and not attempt.finished
+        slot = asyncio.Semaphore(1)
+        await slot.acquire()
+        tts = asyncio.get_running_loop().create_future()
+        tts.set_result((ws, reader, slot))
+        await sock._close_reply_tts(tts)
+        assert not slot.locked()
+
+    asyncio.run(run())
+    assert len(records) == 1 and records[0]["outcome"] == "cancelled"
 
 
 @pytest.mark.parametrize("purpose", ["director", "steering"])
@@ -452,7 +597,7 @@ def test_tts_registration_failure_releases_slot_and_records_once(records, monkey
 
 
 @pytest.mark.parametrize("flag", [None, "1", "false", "0"])
-def test_storage_preflight_default_and_explicit_skip(monkeypatch, flag):
+def test_storage_preflight_default_and_explicit_skip(monkeypatch, capsys, flag):
     calls = []
     client = SimpleNamespace(
         head_bucket=lambda **kw: calls.append(("HEAD", kw)),
@@ -464,13 +609,31 @@ def test_storage_preflight_default_and_explicit_skip(monkeypatch, flag):
         return client
     monkeypatch.setattr(video.boto3, "client", make_client)
     result = storage_preflight()
-    assert result["ok"] is True
     if flag == "0":
+        assert result["ok"] is None
         assert result["skipped"] is True and calls == []
+        assert capsys.readouterr().out.splitlines() == [
+            "  Storage preflight skipped (STORAGE_PREFLIGHT=0)."]
         assert storage_preflight(client=client) == result
         assert calls == []
     else:
+        assert result["ok"] is True
+        assert capsys.readouterr().out == ""
         assert "skipped" not in result
         assert calls == [("client", ("s3",)), ("HEAD", {"Bucket": video.BUCKET}),
                          ("PUT", {"Bucket": video.BUCKET, "Key": video.PREFLIGHT_KEY,
                                   "Body": b"relational-fluency storage preflight\n"})]
+
+
+def test_storage_preflight_skip_uses_file_setting_before_environment(monkeypatch, capsys):
+    monkeypatch.setattr(llm, "_FILE", {"STORAGE_PREFLIGHT": " 0 "})
+    monkeypatch.setenv("STORAGE_PREFLIGHT", "1")
+
+    def forbidden_client(*args, **kwargs):
+        pytest.fail("skipped preflight must not construct an S3 client")
+
+    monkeypatch.setattr(video.boto3, "client", forbidden_client)
+    result = storage_preflight()
+    assert result["ok"] is None and result["skipped"] is True
+    assert capsys.readouterr().out.splitlines() == [
+        "  Storage preflight skipped (STORAGE_PREFLIGHT=0)."]

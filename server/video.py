@@ -314,8 +314,9 @@ def storage_preflight(client=None) -> dict:
     """
     result = {"ok": False, "bucket": BUCKET, "region": REGION,
               "credentials": False, "readable": False, "writable": False}
-    if os.getenv("STORAGE_PREFLIGHT") == "0":
-        return {**result, "ok": True, "skipped": True,
+    if setting("STORAGE_PREFLIGHT") == "0":
+        print("  Storage preflight skipped (STORAGE_PREFLIGHT=0).")
+        return {**result, "ok": None, "skipped": True,
                 "detail": "STORAGE_PREFLIGHT=0"}
     try:
         if client is None:

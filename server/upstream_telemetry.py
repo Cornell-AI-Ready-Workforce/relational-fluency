@@ -65,28 +65,34 @@ class _Attempt:
         if self.finished:
             return
         self.finished = True
-        fields = dict(self.fields)
-        if outcome is not None:
-            fields["outcome"] = outcome
-        if "outcome" not in fields:
-            fields["outcome"] = "ok"
-            if isinstance(exc, asyncio.CancelledError):
-                fields["outcome"] = "cancelled"
-            elif exc is not None:
-                # Both httpx and the SDK's vendored httpx2 use these names.
-                names = {cls.__name__ for cls in type(exc).__mro__}
-                if names & {"TimeoutError", "TimeoutException", "APITimeoutError"}:
-                    fields["outcome"] = "timeout"
-                elif names & {"ConnectionClosed", "StopAsyncIteration"}:
-                    fields["outcome"] = "closed"
-                else:
-                    fields["outcome"] = "exception"
-        status = fields.get("status")
-        if status is not None and status >= 300:
-            fields["outcome"] = "http_error"
-        if exc is not None:
-            # Exception bodies can repeat credentials or participant text.
-            fields["detail"] = type(exc).__name__
-        fields["duration_ms"] = max(
-            0.0, (time.perf_counter() - self.started) * 1000)
-        record(**fields)
+        try:
+            fields = dict(self.fields)
+            if outcome is not None:
+                fields["outcome"] = outcome
+            if "outcome" not in fields:
+                fields["outcome"] = "ok"
+                if isinstance(exc, asyncio.CancelledError):
+                    fields["outcome"] = "cancelled"
+                elif exc is not None:
+                    # Both httpx and the SDK's vendored httpx2 use these names.
+                    names = {cls.__name__ for cls in type(exc).__mro__}
+                    if names & {"TimeoutError", "TimeoutException", "APITimeoutError"}:
+                        fields["outcome"] = "timeout"
+                    elif names & {"ConnectionClosed", "StopAsyncIteration"}:
+                        fields["outcome"] = "closed"
+                    else:
+                        fields["outcome"] = "exception"
+            status = fields.get("status")
+            if not isinstance(status, int):
+                status = None
+            fields["status"] = status
+            if status is not None and status >= 300:
+                fields["outcome"] = "http_error"
+            if exc is not None:
+                # Exception bodies can repeat credentials or participant text.
+                fields["detail"] = type(exc).__name__
+            fields["duration_ms"] = max(
+                0.0, (time.perf_counter() - self.started) * 1000)
+            record(**fields)
+        except BaseException:
+            pass

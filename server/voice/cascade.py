@@ -295,12 +295,10 @@ def _rt_tools(tools: list) -> list:
 
 
 class _GatewayStream:
-    """Read ahead only when TTS blocks, and time the gateway through DONE."""
+    """Observe gateway completion without changing when the body is read."""
 
-    def __init__(self, lines, attempt, spawn):
-        self.lines, self.attempt, self.spawn = lines, attempt, spawn
-        self.queue = None
-        self.task = None
+    def __init__(self, lines, attempt):
+        self.lines, self.attempt = lines, attempt
         self.ended = False
 
     def __aiter__(self):
@@ -312,49 +310,18 @@ class _GatewayStream:
             self.attempt.finish()
 
     async def __anext__(self):
-        if self.queue is None:
-            try:
-                line = await self.lines.__anext__()
-            except StopAsyncIteration:
-                self.attempt.finish(outcome="closed")
-                raise
-            except BaseException as exc:
-                self.attempt.finish(exc=exc)
-                raise
-            self._observe(line)
-            return line
-        line = await self.queue.get()
-        if isinstance(line, BaseException):
-            raise line
-        if line is None:
-            raise StopAsyncIteration
-        return line
-
-    def buffer(self):
-        if self.task is None and not self.ended:
-            self.queue = asyncio.Queue()
-            self.task = self.spawn(self._pump())
-
-    async def _pump(self):
         try:
-            async for line in self.lines:
-                self._observe(line)
-                self.queue.put_nowait(line)
-                if self.ended:
-                    break
-            else:
-                self.attempt.finish(outcome="closed")
+            line = await self.lines.__anext__()
+        except StopAsyncIteration:
+            self.attempt.finish(outcome="closed")
+            raise
         except BaseException as exc:
             self.attempt.finish(exc=exc)
-            self.queue.put_nowait(exc)
-        finally:
-            self.queue.put_nowait(None)
+            raise
+        self._observe(line)
+        return line
 
     async def close(self):
-        if self.task is not None:
-            if not self.task.done():
-                self.task.cancel()
-            await asyncio.gather(self.task, return_exceptions=True)
         # TTS or the caller stopped the request before the gateway finished.
         self.attempt.finish(outcome="cancelled")
 
@@ -714,7 +681,7 @@ class CascadeSocket:
             record(upstream="elevenlabs", route="tts_ws", purpose="tts",
                    outcome="cancelled", duration_ms=0.0,
                    queue_wait_ms=(time.perf_counter() - queued_at) * 1000,
-                   session_id=self.session_id, detail="cancelled waiting for TTS slot")
+                   session_id=self.session_id, detail="slot_wait")
             raise
         queue_wait_ms = (time.perf_counter() - queued_at) * 1000
         ws = None
@@ -746,7 +713,7 @@ class CascadeSocket:
             return
         ws, reader, slot = tts.result()
         try:
-            if not reader.done():
+            if reader.cancelled() or not reader.done():
                 ws.attempt.finish(outcome="cancelled")
                 reader.cancel()
             await ws.close()
@@ -794,15 +761,19 @@ class CascadeSocket:
             payload["tools"] = self.tools
 
         async def say(sentence: str) -> None:
-            # Keep reading while the consumer waits for TTS. The gateway's
-            # duration must include generation that overlaps that wait.
-            lines.buffer()
-            ws = (await tts)[0]
-            spoken.append(sentence)
-            self._emit({"type": "response.output_audio_transcript.delta",
-                        "response_id": rid, "item_id": iid, "delta": sentence + " "})
-            await ws.send(json.dumps({"inputs": [{"text": tts_text(sentence) + " ", "voice_id": voice_id}],
-                                      "flush": True}))
+            waiting_at = time.perf_counter()
+            try:
+                ws = (await tts)[0]
+                spoken.append(sentence)
+                self._emit({"type": "response.output_audio_transcript.delta",
+                            "response_id": rid, "item_id": iid, "delta": sentence + " "})
+                await ws.send(json.dumps({"inputs": [{"text": tts_text(sentence) + " ", "voice_id": voice_id}],
+                                          "flush": True}))
+            finally:
+                # Duration is request start through DONE minus time in say().
+                # This undercounts generation that overlaps a TTS wait. Keep
+                # body reads and the 60 s read timeout at their original sites.
+                attempt.started += time.perf_counter() - waiting_at
 
         # The stream closes itself after 20 s without a message; Argon can
         # think for longer than that on a slow turn.
@@ -822,7 +793,7 @@ class CascadeSocket:
                     if r.status_code >= 400:
                         body = (await r.aread()).decode("utf-8", "replace")[:300]
                         raise RuntimeError(f"llm {r.status_code}: {body}")
-                    lines = _GatewayStream(r.aiter_lines(), attempt, self._spawn)
+                    lines = _GatewayStream(r.aiter_lines(), attempt)
                     try:
                         call = await self._read_llm_stream(lines, tts, started, say, alive)
                         if lines.ended:
