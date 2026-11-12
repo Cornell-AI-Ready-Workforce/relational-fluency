@@ -69,7 +69,7 @@ from typing import Dict, List, Optional
 
 from anthropic import AsyncAnthropic
 
-from .llm import setting, text_client
+from .llm import message_create, setting, text_client
 
 from .persona import INCIVILITY_KNOBS, TONE_KNOBS, Persona
 from .scenarios import Scenario
@@ -254,10 +254,12 @@ class SteeringController:
         *,
         client: Optional[AsyncAnthropic] = None,
         model: Optional[str] = None,
+        session_id: Optional[str] = None,
     ):
         self.scenario = scenario
         self.client = _bounded(client or text_client())
         self.model = model or STEERING_MODEL
+        self.session_id = session_id
         self._valid_ids = {a.id for a in scenario.cast}
 
     async def review(
@@ -329,7 +331,7 @@ Review the participant's most recent turn(s). Should any agent's gears shift in 
         ceiling = STEERING_TIMEOUT_S + 1.0
         try:
             response = await asyncio.wait_for(
-                self.client.messages.create(
+                message_create(self.client, purpose="steering", session_id=self.session_id,
                     model=self.model,
                     max_tokens=500,
                     system=system,

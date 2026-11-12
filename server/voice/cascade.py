@@ -44,10 +44,10 @@ import httpx
 import websockets
 
 from ..llm import gateway_api_key, gateway_base_url, setting
+from ..upstream_telemetry import _Attempt, record
 
 # What the cascade calls, read at use so a test or an operator can change them.
 DEFAULT_TTS_MODEL = "eleven_v4"
-ELEVEN_BASE = "https://api.elevenlabs.io"
 # One websocket per reply. The text-to-dialogue stream is the one that takes
 # eleven_v3/v4 (the text-to-speech websocket refuses them, measured
 # 2026-10-15); sentences sent into one stream keep one delivery, where one
@@ -238,7 +238,8 @@ def open_tts():
     key = eleven_key()
     if not key:
         raise RuntimeError("ELEVENLABS_API_KEY is not set")
-    url = f"{TTS_WS}?model_id={tts_model()}&output_format=pcm_{OUTPUT_RATE}"
+    url = (f"{setting('ELEVENLABS_WS_URL', TTS_WS)}"
+           f"?model_id={tts_model()}&output_format=pcm_{OUTPUT_RATE}")
     return websockets.connect(url, additional_headers={"xi-api-key": key},
                               max_size=None)
 
@@ -293,14 +294,108 @@ def _rt_tools(tools: list) -> list:
     return out
 
 
+class _GatewayStream:
+    """Read ahead only when TTS blocks, and time the gateway through DONE."""
+
+    def __init__(self, lines, attempt, spawn):
+        self.lines, self.attempt, self.spawn = lines, attempt, spawn
+        self.queue = None
+        self.task = None
+        self.ended = False
+
+    def __aiter__(self):
+        return self
+
+    def _observe(self, line):
+        if line.startswith("data:") and line[5:].strip() == "[DONE]":
+            self.ended = True
+            self.attempt.finish()
+
+    async def __anext__(self):
+        if self.queue is None:
+            try:
+                line = await self.lines.__anext__()
+            except StopAsyncIteration:
+                self.attempt.finish(outcome="closed")
+                raise
+            except BaseException as exc:
+                self.attempt.finish(exc=exc)
+                raise
+            self._observe(line)
+            return line
+        line = await self.queue.get()
+        if isinstance(line, BaseException):
+            raise line
+        if line is None:
+            raise StopAsyncIteration
+        return line
+
+    def buffer(self):
+        if self.task is None and not self.ended:
+            self.queue = asyncio.Queue()
+            self.task = self.spawn(self._pump())
+
+    async def _pump(self):
+        try:
+            async for line in self.lines:
+                self._observe(line)
+                self.queue.put_nowait(line)
+                if self.ended:
+                    break
+            else:
+                self.attempt.finish(outcome="closed")
+        except BaseException as exc:
+            self.attempt.finish(exc=exc)
+            self.queue.put_nowait(exc)
+        finally:
+            self.queue.put_nowait(None)
+
+    async def close(self):
+        if self.task is not None:
+            if not self.task.done():
+                self.task.cancel()
+            await asyncio.gather(self.task, return_exceptions=True)
+        # TTS or the caller stopped the request before the gateway finished.
+        self.attempt.finish(outcome="cancelled")
+
+
+class _TtsSocket:
+    """Keep one attempt open from the handshake through the final audio."""
+
+    def __init__(self, ws, attempt):
+        self.ws = ws
+        self.attempt = attempt
+
+    def __aiter__(self):
+        return self.ws.__aiter__()
+
+    async def send(self, raw):
+        try:
+            await self.ws.send(raw)
+        except BaseException as exc:
+            self.attempt.finish(exc=exc)
+            raise
+
+    async def close(self):
+        try:
+            await self.ws.close()
+        except BaseException as exc:
+            self.attempt.finish(exc=exc)
+            raise
+        finally:
+            self.attempt.finish(outcome="closed")
+
+
 class CascadeSocket:
     """The slice of a websockets client the bridge uses (send, recv, close),
     answering as a realtime server would. One socket is one conversation."""
 
     def __init__(self, *, voice: str = "", api_key: str = "",
-                 http: Optional[httpx.AsyncClient] = None) -> None:
+                 http: Optional[httpx.AsyncClient] = None,
+                 session_id: Optional[str] = None) -> None:
         self.api_key = api_key or gateway_api_key()
         self.voice = voice
+        self.session_id = session_id
         self.instructions = ""
         self.tools: list = []
         # The process's shared gateway client (_shared_http) unless one is
@@ -512,12 +607,15 @@ class CascadeSocket:
                     "data": base64.b64encode(wav_bytes(pcm, self._rate)).decode("ascii"),
                     "format": "wav"}}]}],
         }
-        r = await self._http.post(
-            f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {self.api_key}"}, json=payload)
-        r.raise_for_status()
-        content = (r.json().get("choices") or [{}])[0].get("message", {}).get("content")
-        return (content or "").strip()
+        with _Attempt(upstream="gateway", route="chat_completions", purpose="stt",
+                      session_id=self.session_id) as attempt:
+            r = await self._http.post(
+                f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"}, json=payload)
+            attempt.fields["status"] = r.status_code
+            r.raise_for_status()
+            content = (r.json().get("choices") or [{}])[0].get("message", {}).get("content")
+            return (content or "").strip()
 
     def _messages(self) -> list:
         msgs = [{"role": "system", "content": self.instructions or "You are a helpful voice assistant."}]
@@ -609,12 +707,21 @@ class CascadeSocket:
         slot is held until _close_reply_tts releases it."""
         slot = _tts_slot()
         asked = time.time()
-        await slot.acquire()
+        queued_at = time.perf_counter()
+        try:
+            await slot.acquire()
+        except asyncio.CancelledError:
+            record(upstream="elevenlabs", route="tts_ws", purpose="tts",
+                   outcome="cancelled", duration_ms=0.0,
+                   queue_wait_ms=(time.perf_counter() - queued_at) * 1000,
+                   session_id=self.session_id, detail="cancelled waiting for TTS slot")
+            raise
+        queue_wait_ms = (time.perf_counter() - queued_at) * 1000
         ws = None
         try:
             self.timings["tts_slot_wait_ms"] = int((time.time() - asked) * 1000)
             connect_at = time.time()
-            ws = await self._connect_tts()
+            ws = await self._connect_tts(queue_wait_ms=queue_wait_ms)
             self.timings["tts_connect_ms"] = int((time.time() - connect_at) * 1000)
             await ws.send(json.dumps({"voices": [voice_id]}))
             reader = self._spawn(self._relay_audio(ws, rid, iid, started))
@@ -640,25 +747,38 @@ class CascadeSocket:
         ws, reader, slot = tts.result()
         try:
             if not reader.done():
+                ws.attempt.finish(outcome="cancelled")
                 reader.cancel()
             await ws.close()
         finally:
             slot.release()
 
-    async def _connect_tts(self):
+    async def _connect_tts(self, *, queue_wait_ms=None):
         """Open the reply's stream; a 429 (the plan's concurrency) or 409 (the
         first use of a library voice being added to the account) is waited out
         three times with a growing pause."""
         for attempt in range(4):
+            measurement = _Attempt(
+                upstream="elevenlabs", route="tts_ws", purpose="tts",
+                session_id=self.session_id, attempt=attempt + 1,
+                queue_wait_ms=queue_wait_ms if attempt == 0 else None)
             try:
-                return await open_tts()
+                ws = await open_tts()
             except websockets.exceptions.InvalidStatus as exc:
+                measurement.fields["status"] = exc.response.status_code
+                measurement.finish(exc=exc)
                 if exc.response.status_code in (429, 409) and attempt < 3:
                     await asyncio.sleep(0.4 * (2 ** attempt))
                     continue
                 raise RuntimeError(
                     f"elevenlabs {exc.response.status_code}: "
                     f"{exc.response.body.decode('utf-8', 'replace')[:300]}")
+            except BaseException as exc:
+                measurement.finish(exc=exc)
+                raise
+            else:
+                measurement.fields["status"] = 101
+                return _TtsSocket(ws, measurement)
 
     async def _stream_llm(self, tts: asyncio.Task, voice_id: str, spoken: list,
                           rid: str, iid: str, started: float) -> Optional[dict]:
@@ -674,6 +794,9 @@ class CascadeSocket:
             payload["tools"] = self.tools
 
         async def say(sentence: str) -> None:
+            # Keep reading while the consumer waits for TTS. The gateway's
+            # duration must include generation that overlaps that wait.
+            lines.buffer()
             ws = (await tts)[0]
             spoken.append(sentence)
             self._emit({"type": "response.output_audio_transcript.delta",
@@ -689,65 +812,75 @@ class CascadeSocket:
                 await asyncio.sleep(10)
                 await ws.send(json.dumps({"keep_alive": True}))
         alive = self._spawn(keep_alive())
-        buffer, first, call = "", True, None
         try:
-            async with self._http.stream(
-                    "POST", f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {self.api_key}"}, json=payload) as r:
-                if r.status_code >= 400:
-                    body = (await r.aread()).decode("utf-8", "replace")[:300]
-                    raise RuntimeError(f"llm {r.status_code}: {body}")
-                lines = r.aiter_lines()
-                ended = False
-                async for line in lines:
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        ended = True
-                        break
+            with _Attempt(upstream="gateway", route="chat_completions_stream",
+                          purpose="actor", session_id=self.session_id) as attempt:
+                async with self._http.stream(
+                        "POST", f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {self.api_key}"}, json=payload) as r:
+                    attempt.fields["status"] = r.status_code
+                    if r.status_code >= 400:
+                        body = (await r.aread()).decode("utf-8", "replace")[:300]
+                        raise RuntimeError(f"llm {r.status_code}: {body}")
+                    lines = _GatewayStream(r.aiter_lines(), attempt, self._spawn)
                     try:
-                        delta = ((json.loads(data).get("choices") or [{}])[0]
-                                 .get("delta") or {})
-                    except ValueError:
-                        continue
-                    for tc in delta.get("tool_calls") or []:
-                        fn = tc.get("function") or {}
-                        call = call or {"call_id": tc.get("id") or self._id("call"),
-                                        "name": "", "arguments": ""}
-                        call["name"] += fn.get("name") or ""
-                        call["arguments"] += fn.get("arguments") or ""
-                    piece = delta.get("content") or ""
-                    if not piece:
-                        continue
-                    if first:
-                        self.timings["llm_first_token_ms"] = int((time.time() - started) * 1000)
-                    buffer += piece
-                    sentences, buffer = split_sentences(buffer, first=first)
-                    for sentence in sentences:
-                        first = False
-                        await say(sentence)
-                sentences, buffer = split_sentences(buffer, first=first, final=True)
-                for sentence in sentences:
-                    await say(sentence)
-                # Every word is in: ElevenLabs may finish the reply now,
-                # before the drain below.
-                alive.cancel()
-                ws = (await tts)[0]
-                await ws.send(json.dumps({"close_socket": True}))
-                if ended:
-                    # Read the body's end after [DONE], briefly, so the
-                    # connection goes back to the pool instead of being
-                    # dropped (a new TLS handshake on the next request).
-                    # The reply's audio is not waiting on it.
-                    await _drain(lines, DRAIN_AFTER_DONE_S)
+                        call = await self._read_llm_stream(lines, tts, started, say, alive)
+                        if lines.ended:
+                            # Preserve the pooled-connection drain after TTS
+                            # close_socket. Telemetry stops at protocol DONE.
+                            await _drain(lines.lines, DRAIN_AFTER_DONE_S)
+                        self.timings["llm_total_ms"] = int((time.time() - started) * 1000)
+                        return call
+                    finally:
+                        await lines.close()
         finally:
             alive.cancel()
-        self.timings["llm_total_ms"] = int((time.time() - started) * 1000)
+
+    async def _read_llm_stream(self, lines, tts, started, say, alive):
+        buffer, first, call = "", True, None
+        async for line in lines:
+            if line:
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    delta = ((json.loads(data).get("choices") or [{}])[0]
+                             .get("delta") or {})
+                except ValueError:
+                    continue
+                for tc in delta.get("tool_calls") or []:
+                    fn = tc.get("function") or {}
+                    call = call or {"call_id": tc.get("id") or self._id("call"),
+                                    "name": "", "arguments": ""}
+                    call["name"] += fn.get("name") or ""
+                    call["arguments"] += fn.get("arguments") or ""
+                piece = delta.get("content") or ""
+                if not piece:
+                    continue
+                if first:
+                    self.timings["llm_first_token_ms"] = int((time.time() - started) * 1000)
+                buffer += piece
+                sentences, buffer = split_sentences(buffer, first=first)
+                for sentence in sentences:
+                    first = False
+                    await say(sentence)
+        sentences, buffer = split_sentences(buffer, first=first, final=True)
+        for sentence in sentences:
+            await say(sentence)
+        # Every word is in: ElevenLabs may finish the reply now.
+        alive.cancel()
+        ws = (await tts)[0]
+        await ws.send(json.dumps({"close_socket": True}))
         return call
 
     async def _relay_audio(self, ws, rid: str, iid: str, started: float) -> None:
         """Hand the stream's audio on as it arrives, until its final message."""
+        with ws.attempt:
+            await self._read_tts_audio(ws, rid, iid, started)
+
+    async def _read_tts_audio(self, ws, rid: str, iid: str, started: float) -> None:
         carry = b""
         async for raw in ws:
             m = json.loads(raw)
@@ -765,6 +898,7 @@ class CascadeSocket:
                             "delta": base64.b64encode(chunk).decode("ascii")})
             if m.get("is_final"):
                 return
+        ws.attempt.fields["outcome"] = "closed"
 
     async def _finish_call(self, rid: str, call: dict) -> None:
         cid = call["call_id"]
