@@ -66,6 +66,7 @@ replaces selected fields. Equal low/high bounds give a constant. For example:
 
 | Setting | Default | Source and limit |
 | --- | --- | --- |
+| http_keepalive_s | 160 s | measured 2026-11-12: the Cornell gateway kept an idle keep-alive connection open > 150 s; the server's pool expires at 55 s. |
 | models_ms | 10–30 ms | Assumption for a small local response. |
 | stt_ms | 1,000–1,500 ms | Flash-lite observation, 2026-10-15, recorded in `server/voice/cascade.py:stt_model`; uniform shape is an assumption. |
 | actor_first_ms | 1,400–2,600 ms | Argon first-token observation, 2026-10-15, in `server/voice/cascade.py:reasoning_effort`; uniform shape is an assumption. |

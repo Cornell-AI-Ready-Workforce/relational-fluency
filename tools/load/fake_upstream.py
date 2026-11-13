@@ -39,6 +39,9 @@ class Distribution:
 @dataclass
 class FakeConfig:
     seed: int = 20261112
+    # measured 2026-11-12: the Cornell gateway kept an idle keep-alive
+    # connection open > 150 s; the server's pool expires at 55 s.
+    http_keepalive_s: float = 160.0
     models_ms: Distribution = field(default_factory=lambda: Distribution(10, 30))
     stt_ms: Distribution = field(default_factory=lambda: Distribution(1000, 1500))
     actor_first_ms: Distribution = field(default_factory=lambda: Distribution(1400, 2600))
@@ -57,6 +60,8 @@ class FakeConfig:
     failures: dict[str, list[int]] = field(default_factory=dict)
 
     def __post_init__(self):
+        if not math.isfinite(self.http_keepalive_s) or self.http_keepalive_s <= 0:
+            raise ValueError("positive finite HTTP keep-alive timeout required")
         if (not math.isfinite(self.tts_words_per_minute) or self.tts_words_per_minute <= 0
                 or not isinstance(self.audio_chunk_ms, int) or not 1 <= self.audio_chunk_ms <= 1000):
             raise ValueError("positive speech rate and 1..1000 ms chunks required")
@@ -374,7 +379,8 @@ def main(argv=None):
     import uvicorn
     uvicorn.run(create_app(config, log_path=args.log), host="0.0.0.0", port=args.port,
                 ssl_certfile=str(args.ssl_cert) if args.ssl_cert else None,
-                ssl_keyfile=str(args.ssl_key) if args.ssl_key else None, access_log=False)
+                ssl_keyfile=str(args.ssl_key) if args.ssl_key else None, access_log=False,
+                timeout_keep_alive=config.http_keepalive_s)
 
 
 if __name__ == "__main__":

@@ -164,3 +164,30 @@ def test_fake_distribution_validation_and_steering_ids():
     with pytest.raises(ValueError):
         FakeConfig.from_dict({"unknown": 1})
     assert speaker_ids("- alex (Alex): warmth=mid, formality=low") == ["alex"]
+
+
+def test_default_http_keepalive_exceeds_server_pool_expiry():
+    from server.voice.cascade import GATEWAY_KEEPALIVE_S
+    assert FakeConfig().http_keepalive_s > GATEWAY_KEEPALIVE_S
+
+
+@pytest.mark.parametrize("override", [None, 180.5])
+def test_http_keepalive_configuration_reaches_uvicorn(monkeypatch, tmp_path, override):
+    import uvicorn
+    from tools.load import fake_upstream
+    calls = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: calls.append(kwargs))
+    args = []
+    if override is not None:
+        config = tmp_path / "fake.json"
+        config.write_text(json.dumps({"http_keepalive_s": override}), encoding="utf-8")
+        args = ["--config", str(config)]
+    fake_upstream.main(args)
+    assert len(calls) == 1
+    assert calls[0]["timeout_keep_alive"] == (FakeConfig().http_keepalive_s if override is None else override)
+
+
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_http_keepalive_rejects_invalid_timeouts(value):
+    with pytest.raises(ValueError, match="HTTP keep-alive"):
+        FakeConfig.from_dict({"http_keepalive_s": value})
