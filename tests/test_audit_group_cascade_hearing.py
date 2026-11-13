@@ -75,7 +75,7 @@ async def _scene(monkeypatch):
             return httpx.Response(200, content=body.encode(),
                                   headers={"content-type": "text/event-stream"})
         # The STT step (the scribe's transcript of the participant).
-        return httpx.Response(200, json={"choices": [{"message": {
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {
             "content": PARTICIPANT_WORDS}}]})
 
     transport = httpx.MockTransport(handle)

@@ -68,7 +68,7 @@ def _handler(seen):
             seen["chat"] = body
             return _sse("Sure, I hear you. ", "Tell me more about ", "what happened.")
         seen["stt"] = body
-        return httpx.Response(200, json={"choices": [{"message": {
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {
             "content": "I missed the deadline."}}]})
     return handle
 
@@ -128,7 +128,7 @@ def test_the_transcript_keeps_the_comma_elevenlabs_does_not_get(monkeypatch):
         body = json.loads(req.content)
         if body.get("stream"):
             return _sse("I hear you, and ", "I want to fix it.")
-        return httpx.Response(200, json={"choices": [{"message": {"content": "Hi."}}]})
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": "Hi."}}]})
     monkeypatch.setattr(sys.modules[__name__], "_handler", lambda seen: handle)
     seen, events = asyncio.run(_drive(monkeypatch))
     said = [e for e in events if e["type"] == "agent_transcript"][-1]["text"]
@@ -147,7 +147,7 @@ def test_a_turn_is_heard_answered_and_spoken(monkeypatch):
     assert said == "Sure, I hear you. Tell me more about what happened."
     # Argon both heard (audio in) and replied, under the brief, with the
     # participant's words in its history.
-    assert seen["stt"]["model"] == "nto.gemini-3.5-flash-lite"
+    assert seen["stt"]["model"] == "nto.gemini-3.5-transcribe"
     assert seen["stt"]["messages"][0]["content"][1]["type"] == "input_audio"
     assert seen["chat"]["model"] == "nto.gemini-4-argon"
     assert seen["chat"]["messages"][0] == {"role": "system", "content": "You are Riley."}

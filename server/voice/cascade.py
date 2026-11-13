@@ -127,12 +127,15 @@ def tts_model() -> str:
 
 
 def stt_model() -> str:
-    """The model that writes the participant's transcript. Not Argon by
-    default: measured 2026-10-15 on the gateway, Argon took 2.1-5.3 s per
-    clip and nto.gemini-3.5-flash-lite 1.0-1.5 s whatever the length, with
-    the same words. The reply does not wait on this (the model hears the
-    audio itself); a room does, before it grants the floor."""
-    return setting("CASCADE_STT_MODEL", "nto.gemini-3.5-flash-lite")
+    """The model that writes the participant's transcript. Measured on the
+    gateway 2026-11-12: transcribe's speech requests were about 300 ms faster
+    at p50 than flash-lite's, with fewer word errors and better names. This
+    excludes encoding, slot waits and backoff; room-turn latency and capacity
+    were not measured. Silence/room tone returned content:null with stop;
+    transcribe ignores the text prompt (including language and name hints).
+    _hear validates that response before mapping it to [no speech]. The reply
+    model still hears the audio itself; a room waits for this transcript."""
+    return setting("CASCADE_STT_MODEL", "nto.gemini-3.5-transcribe")
 
 
 def reasoning_effort() -> str:
@@ -516,8 +519,26 @@ class CascadeSocket:
             f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
             headers={"Authorization": f"Bearer {self.api_key}"}, json=payload)
         r.raise_for_status()
-        content = (r.json().get("choices") or [{}])[0].get("message", {}).get("content")
-        return (content or "").strip()
+        body = r.json()
+        choices = body.get("choices") if isinstance(body, dict) else None
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("STT response has no choices")
+        choice = choices[0]
+        if not isinstance(choice, dict) or choice.get("finish_reason") != "stop":
+            raise ValueError("STT response did not finish with stop")
+        message = choice.get("message")
+        if not isinstance(message, dict) or "content" not in message:
+            raise ValueError("STT response has no message content")
+        if any("refusal" in part for part in (body, choice, message)):
+            raise ValueError("STT response contains a refusal")
+        content = message["content"]
+        if content is not None and not isinstance(content, str):
+            raise ValueError("STT response content is not text or null")
+        # Transcribe returns content:null for silence (gateway, 2026-11-12).
+        # Only a valid completed hearing means no speech; malformed responses
+        # must take _transcribe's stt_failed path. Keep this out of the shared
+        # speech check, where an empty hearing is a different outcome.
+        return (content or "").strip() or "[no speech]"
 
     def _messages(self) -> list:
         msgs = [{"role": "system", "content": self.instructions or "You are a helpful voice assistant."}]
