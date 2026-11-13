@@ -706,10 +706,12 @@ def text_client() -> AsyncAnthropic:
 #                list alone. The word list loads at import, off the live
 #                path. Suppressed lines keep their text in the record.
 #   2026-11-12a  cascade transcriber defaults to nto.gemini-3.5-transcribe.
-#                Only a 2xx, well-formed stop response with text/null content
+#                A 2xx, well-formed stop response with text/null content
 #                is a hearing; null/empty/whitespace becomes [no speech], as
-#                flash-lite wrote for silence. Invalid responses still fail
-#                as stt_failed. The existing annotation gate suppresses the
+#                flash-lite wrote for silence. A length-capped hearing with
+#                non-empty text keeps that text; otherwise it is stt_failed.
+#                Other invalid responses also fail as stt_failed. The
+#                existing annotation gate suppresses the
 #                marker and rooms skip turns made only of rejected input.
 #                The effective cascade transcriber, including overrides and
 #                rollback, is input_transcription_model in the session event

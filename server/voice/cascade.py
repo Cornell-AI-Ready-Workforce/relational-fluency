@@ -32,6 +32,7 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import os
 import re
 import time
@@ -44,6 +45,8 @@ import httpx
 import websockets
 
 from ..llm import gateway_api_key, gateway_base_url, setting
+
+log = logging.getLogger(__name__)
 
 # What the cascade calls, read at use so a test or an operator can change them.
 DEFAULT_TTS_MODEL = "eleven_v4"
@@ -524,21 +527,38 @@ class CascadeSocket:
         if not isinstance(choices, list) or not choices:
             raise ValueError("STT response has no choices")
         choice = choices[0]
-        if not isinstance(choice, dict) or choice.get("finish_reason") != "stop":
-            raise ValueError("STT response did not finish with stop")
+        if not isinstance(choice, dict):
+            raise ValueError("STT response choice is not an object")
+        finish_reason = choice.get("finish_reason")
+        if finish_reason not in ("stop", "length"):
+            raise ValueError("STT response did not finish with stop or length")
         message = choice.get("message")
         if not isinstance(message, dict) or "content" not in message:
             raise ValueError("STT response has no message content")
-        if any("refusal" in part for part in (body, choice, message)):
-            raise ValueError("STT response contains a refusal")
+        for part in (body, choice, message):
+            fields = part.get("provider_specific_fields")
+            if part.get("refusal") not in (None, "") or (
+                    isinstance(fields, dict) and fields.get("refusal") not in (None, "")):
+                raise ValueError("STT response contains a refusal")
         content = message["content"]
         if content is not None and not isinstance(content, str):
             raise ValueError("STT response content is not text or null")
+        text = (content or "").strip()
+        if finish_reason == "length":
+            if not text:
+                raise ValueError("STT response reached length without text")
+            # Keep the partial long turn, as flash-lite did before validation.
+            # One diagnostic, with no participant text, names the token cap.
+            log.warning("Cascade STT finish_reason=length max_tokens=%s; keeping truncated transcript",
+                        payload["max_tokens"])
+            return text
         # Transcribe returns content:null for silence (gateway, 2026-11-12).
-        # Only a valid completed hearing means no speech; malformed responses
-        # must take _transcribe's stt_failed path. Keep this out of the shared
-        # speech check, where an empty hearing is a different outcome.
-        return (content or "").strip() or "[no speech]"
+        # Null can also mean real speech the model could not transcribe. This
+        # layer cannot distinguish it from silence; it is recorded as no speech.
+        # Only a valid stop response can mean no speech; malformed responses
+        # take _transcribe's stt_failed path. Keep this out of the shared speech
+        # check, where an empty hearing is a different outcome.
+        return text or "[no speech]"
 
     def _messages(self) -> list:
         msgs = [{"role": "system", "content": self.instructions or "You are a helpful voice assistant."}]

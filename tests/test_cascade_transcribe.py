@@ -182,12 +182,8 @@ INVALID = [
     {"choices": [{"finish_reason": "stop", "message": {}}]},
     {"choices": [{"message": {"content": None}}]},
     *[{"choices": [{"finish_reason": reason, "message": {"content": ""}}]}
-      for reason in ("length", "content_filter", "tool_calls", None)],
+      for reason in ("content_filter", "tool_calls", None)],
     *[completed(content) for content in (3, False, [], {})],
-    *[{"choices": [{"finish_reason": "stop", "message": {
-        "content": None, "refusal": refusal}}]} for refusal in ("refused", None)],
-    {**completed(None), "refusal": "refused"},
-    {"choices": [{**completed(None)["choices"][0], "refusal": "refused"}]},
 ]
 
 
@@ -201,6 +197,111 @@ async def test_malformed_200_is_stt_failed_never_silence(monkeypatch, body):
         assert failed["error"]["code"] == "stt_failed"
         assert not any(f["type"].endswith("transcription.completed") for f in sock.frames)
         assert not any(i["text"] == "[no speech]" for i in sock.items)
+
+
+REFUSAL_LOCATIONS = [
+    "body", "choice", "message", "body.provider_specific_fields",
+    "choice.provider_specific_fields", "message.provider_specific_fields",
+]
+
+
+def refusal_response(content, location, refusal, *, finish_reason="stop"):
+    body = completed(content)
+    choice = body["choices"][0]
+    choice["finish_reason"] = finish_reason
+    root, _, nested = location.partition(".")
+    part = {"body": body, "choice": choice, "message": choice["message"]}[root]
+    if nested:
+        part[nested] = {}
+        part = part[nested]
+    part["refusal"] = refusal
+    return body
+
+
+@pytest.mark.parametrize("location", REFUSAL_LOCATIONS)
+@pytest.mark.parametrize("refusal", [None, "", "I cannot transcribe this audio."])
+@pytest.mark.parametrize("content", [None, "Hi, I'm Sam."])
+@in_a_loop
+async def test_refusal_values_at_each_gateway_location(monkeypatch, location, refusal, content):
+    body = refusal_response(content, location, refusal)
+    async with bridge(monkeypatch, [Hearing(body)]) as (rt, sock, _, _):
+        ev = await transcript(rt)
+        if refusal in (None, ""):
+            assert ev["type"] == "user_transcript"
+            assert ev["text"] == (content or "[no speech]")
+            assert not any(f["type"].endswith("transcription.failed") for f in sock.frames)
+        else:
+            assert ev["type"] == "transcript_missing" and ev["why"] == "transcript_failed"
+            (failed,) = [f for f in sock.frames if f["type"].endswith("transcription.failed")]
+            assert failed["error"]["code"] == "stt_failed"
+            assert not any(f["type"].endswith("transcription.completed") for f in sock.frames)
+
+
+@in_a_loop
+async def test_measured_gateway_extras_do_not_change_speech_or_silence(monkeypatch):
+    for content in (None, "Hi, I'm Sam."):
+        body = completed(content)
+        choice = body["choices"][0]
+        choice["provider_specific_fields"] = {}
+        choice["message"].update(role="assistant", images=[], thinking_blocks=[])
+        body.update(usage={"prompt_tokens": 75}, vertex_ai_grounding_metadata=[],
+                    vertex_ai_url_context_metadata=[])
+        async with bridge(monkeypatch, [Hearing(body)]) as (rt, _, _, _):
+            ev = await transcript(rt)
+            assert ev["type"] == "user_transcript"
+            assert ev["text"] == (content or "[no speech]")
+
+
+@pytest.mark.parametrize("content", [" Partial transcript.\n", "A long participant turn. " * 120])
+@in_a_loop
+async def test_length_with_text_keeps_the_transcript_and_logs_once(monkeypatch, caplog, content):
+    body = completed(content)
+    body["choices"][0]["finish_reason"] = "length"
+    async with bridge(monkeypatch, [Hearing(body)]) as (rt, sock, _, requests):
+        ev = await transcript(rt)
+        assert ev["type"] == "user_transcript" and ev["text"] == content.strip()
+        assert sock.items[0]["text"] == content.strip() and "audio" not in sock.items[0]
+        assert requests[0]["max_tokens"] == 400
+        records = [r for r in caplog.records if r.name == cascade.__name__]
+        assert len(records) == 1 and records[0].levelname == "WARNING"
+        assert "finish_reason=length" in records[0].getMessage()
+        assert "max_tokens=400" in records[0].getMessage()
+        assert content.strip() not in records[0].getMessage()
+        assert len(records[0].getMessage().splitlines()) == 1
+
+
+@pytest.mark.parametrize("content", [None, "", " \n\t "])
+@in_a_loop
+async def test_length_without_text_is_stt_failed_never_silence(monkeypatch, caplog, content):
+    body = completed(content)
+    body["choices"][0]["finish_reason"] = "length"
+    async with bridge(monkeypatch, [Hearing(body)]) as (rt, sock, _, _):
+        ev = await transcript(rt)
+        assert ev["type"] == "transcript_missing" and ev["why"] == "transcript_failed"
+        assert any(f.get("error", {}).get("code") == "stt_failed" for f in sock.frames)
+        assert not any(f["type"].endswith("transcription.completed") for f in sock.frames)
+        assert not any(r.name == cascade.__name__ for r in caplog.records)
+
+
+@pytest.mark.parametrize("reason", [None, "", "content_filter", "tool_calls", "function_call", "unknown"])
+@in_a_loop
+async def test_other_finish_reasons_fail_even_with_text(monkeypatch, reason):
+    body = completed("Some text that must not be accepted.")
+    body["choices"][0]["finish_reason"] = reason
+    async with bridge(monkeypatch, [Hearing(body)]) as (rt, sock, _, _):
+        assert (await transcript(rt))["why"] == "transcript_failed"
+        assert any(f.get("error", {}).get("code") == "stt_failed" for f in sock.frames)
+
+
+@pytest.mark.parametrize("location", REFUSAL_LOCATIONS)
+@in_a_loop
+async def test_length_with_a_real_refusal_still_fails(monkeypatch, caplog, location):
+    body = refusal_response("Partial text.", location, "I cannot transcribe this audio.",
+                            finish_reason="length")
+    async with bridge(monkeypatch, [Hearing(body)]) as (rt, sock, _, _):
+        assert (await transcript(rt))["why"] == "transcript_failed"
+        assert any(f.get("error", {}).get("code") == "stt_failed" for f in sock.frames)
+        assert not any(r.name == cascade.__name__ for r in caplog.records)
 
 
 @pytest.mark.parametrize("status", [199, 302, 400, 429, 500, 503])
