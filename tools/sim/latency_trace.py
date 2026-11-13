@@ -3,10 +3,13 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 import math
+from statistics import median
 
 from tools.sim.analyze import percentile
 
-GROUP_FIELDS = ('scenario', 'mode', 'encounter_reply', 'participant_reply', 'family', 'model')
+GROUP_FIELDS = ('scenario', 'mode', 'encounter_reply', 'participant_reply', 'family', 'model', 'origin')
+LEGACY_ROUNDING_S = .001
+CLOCK_OFFSET_LIMIT_S = .005
 # An edge is causal. Sibling branches have no ordering constraint.
 REPLY_EDGES = {
     'create_entered': ('commit_dispatched',),
@@ -24,6 +27,7 @@ REPLY_EDGES = {
     'first_output_hold_released': ('first_output_hold_started', 'release_transcript_decided'),
 }
 EDGE_NAMES = {
+    'vad_detected': 'estimated_trailing_silence',
     'briefing_entered': 'before_briefing', 'briefing_completed': 'briefing',
     'commit_dispatched': 'commit_dispatch', 'create_entered': 'commit_to_create',
     'create_released': 'create_join', 'request_started': 'request_dispatch',
@@ -53,13 +57,17 @@ NOTES = [
     'The provider critical path ends at tts_first_audio. The client path can select STT at a hold-release join. Neither path sums sibling branches.',
     'At a join, the latest observed prerequisite selects the path; exact ties share the label via critical_parents. This is observed timing, not a predicted optimization gain.',
     'Work durations and pairwise overlaps are not additive. Readiness gaps are separate from critical-path allocation.',
-    'Stage n counts observed spans. commit_work n counts referenced commit spans per reply and can exceed the reply count; missing stamps do not become zero-duration samples.',
+    'Path-stage statistics use only complete paths with no issues. n and quantiles are conditional on criticality; path_n is the complete-path denominator. critical_share and mean_contribution_s include zero contributions from other complete paths.',
+    'Work n counts observed spans. commit_work n counts referenced commit spans per reply and can exceed the reply count; missing stamps do not become zero-duration samples.',
     'Trace page_turn joins turn_timing.turn within a source session. Commit item IDs join only their own commit_trace; release_commit_item_id can name a different commit.',
     'Unmatched traces, timings, missing commits, duplicates and unsupported schemas remain explicit. Ambiguous identities are not joined by order or by nearest timestamp.',
     'Coverage includes untraced sessions in the same input set. Legacy sessions, rooms and other model families can legitimately lack this 1:1 cascade trace.',
-    'Groups inherit the matched legacy row. Unmatched replies retain unknown first/handoff/later metadata where it cannot be established by identity.',
-    'Legacy playback endpoints use wall elapsed; trace uses monotonic elapsed after attachment. Cross-clock client/ACK tails are conditional on aligned encounter clocks; reversed edges are rejected.',
-    'last_voiced_estimate is a sample-position estimate, not a microphone wall-clock boundary. Playback ACK does not establish hearing.',
+    'Groups inherit the matched legacy row and also split by origin, so participant_commit, silence_probe, replay and other creates do not mix work populations.',
+    'Clock alignment uses paired VAD marks and, for unheld output, the preferred gateway/output pair. Each source records the median preferred offset and the spread of all anchors. commit_sent is not an offset anchor because it follows an awaited commit/create operation.',
+    'Offsets and anchor disagreement above 0.005 s exclude client/ACK paths as cross_clock_unverified. Verified row offsets are subtracted explicitly. Legacy-boundary reversals up to the 0.001 s rounding unit clamp to zero and are recorded; pure trace edges stay strict.',
+    'Anchor checks detect observed offsets, not a clock step after the final paired mark. Raw stamps, offsets, correction values and clamps remain inspectable.',
+    'felt_* paths start at last_voiced_estimate and expose estimated_trailing_silence serially. They are sample-position estimates alongside the VAD-rooted paths, not measured hearing.',
+    'tied_joins counts distinct response/join identities on complete paths, once across all targets; ties use deterministic branch allocation and are not evidence of one dominant branch.',
     'The legacy missing_boundaries list applies to the coarse section. Trace rows list their actual missing stamps. Room routing/floor and browser receipt remain outside schema 1.',
 ]
 
@@ -80,18 +88,20 @@ def interval(values, start, end):
     return None
 
 
-def critical_path(values, edges, target):
+def critical_path(values, edges, target, root_field='vad_detected'):
     """Walk backwards through max-prerequisite joins, never sorted timestamps."""
-    root, end = values.get('vad_detected'), values.get(target)
-    out = {'target': target, 'total_s': None, 'exposed_s': {}, 'steps': [],
+    root, end = values.get(root_field), values.get(target)
+    out = {'target': target, 'root_field': root_field, 'total_s': None, 'exposed_s': {}, 'steps': [],
            'unexplained_s': None, 'issues': []}
+    if root_field == 'last_voiced_estimate':
+        out['estimate'] = 'sample_position'
     if not (number(root) and number(end) and end >= root):
         out['issues'].append('missing_or_invalid_path_endpoints')
         return out
     out['total_s'] = round(end - root, 6)
     node = target
     visited = set()
-    while node != 'vad_detected':
+    while node != root_field:
         parents = edges.get(node, ())
         if node in visited or not parents or not all(number(values.get(p)) for p in parents):
             out['issues'].append('missing_dependency:' + node)
@@ -112,6 +122,57 @@ def critical_path(values, edges, target):
     out['steps'].reverse()
     out['unexplained_s'] = round(max(0, out['total_s'] - sum(out['exposed_s'].values())), 6)
     return out
+
+
+def align_clocks(values, timing):
+    """Use paired marks as offset estimates; never absorb a large clock step."""
+    anchors = []
+    pairs = [('vad', 'vad_speech_end', 'vad_detected')]
+    if 'first_output_hold_started' not in values:
+        pairs.append(('gateway_output', 'first_audio_from_gateway', 'first_output_emitted'))
+    for name, wall, mono in pairs:
+        if timing is not None and number(timing.get(wall)) and number(values.get(mono)):
+            anchors.append({'name': name, 'wall_field': 'turn_timing.' + wall, 'trace_field': mono,
+                            'offset_s': round(timing[wall] - values[mono], 6)})
+    info = {'status': 'not_applicable' if timing is None else 'cross_clock_unverified',
+            'anchors': anchors, 'clock_offset_s': None, 'preferred_anchor': None,
+            'offset_limit_s': CLOCK_OFFSET_LIMIT_S, 'quantization_tolerance_s': LEGACY_ROUNDING_S,
+            'corrected_fields': [], 'clamps': [], 'issues': []}
+    if not anchors:
+        if timing is not None:
+            info['issues'].append('no_paired_clock_anchor')
+        return info
+    preferred = next((a for a in anchors if a['name'] == 'gateway_output'), anchors[0])
+    offset = preferred['offset_s']
+    info.update(clock_offset_s=offset, preferred_anchor=preferred['name'])
+    if any(abs(a['offset_s']) > CLOCK_OFFSET_LIMIT_S for a in anchors):
+        info['issues'].append('clock_offset_above_limit')
+    if max(a['offset_s'] for a in anchors) - min(a['offset_s'] for a in anchors) > CLOCK_OFFSET_LIMIT_S:
+        info['issues'].append('anchor_disagreement')
+    if info['issues']:
+        return info
+    info['status'] = 'verified'
+    for name in ('first_audio_to_client', 'first_audio_played'):
+        if number(values.get(name)):
+            info['corrected_fields'].append({'field': name, 'raw_s': values[name],
+                                            'corrected_s': round(values[name] - offset, 6)})
+            values[name] = round(values[name] - offset, 6)
+    parent = 'first_output_hold_released' if 'first_output_hold_started' in values else 'first_output_emitted'
+    for name, before in (('first_audio_to_client', parent), ('first_audio_played', 'first_audio_to_client')):
+        if number(values.get(name)) and number(values.get(before)):
+            delta = values[before] - values[name]
+            if 0 < delta <= LEGACY_ROUNDING_S + 1e-9:
+                info['clamps'].append({'field': name, 'prerequisite_field': before,
+                    'raw_s': values[name], 'corrected_s': values[before], 'delta_s': round(delta, 6)})
+                values[name] = values[before]
+    return info
+
+
+def exclude_clock_paths(row):
+    for label, path in row['paths'].items():
+        if label.endswith(('client_audio', 'played_ack')):
+            path.update(total_s=None, exposed_s={}, steps=[], unexplained_s=None,
+                        issues=['cross_clock_unverified'])
 
 
 def split_reply(reply, commits, timing):
@@ -194,6 +255,8 @@ def split_reply(reply, commits, timing):
     held = 'first_output_hold_started' in values
     edges['first_audio_to_client'] = ('first_output_hold_released',) if held else ('first_output_emitted',)
     edges['first_audio_played'] = ('first_audio_to_client',)
+    raw_values = dict(values)
+    alignment = align_clocks(values, timing)
     for node, parents in edges.items():
         if number(values.get(node)):
             problems.extend('invalid_causal_edge:' + parent + '->' + node for parent in parents
@@ -201,9 +264,21 @@ def split_reply(reply, commits, timing):
     paths = {label: critical_path(values, edges, target) for label, target in (
         ('provider_audio', 'tts_first_audio'), ('adapter_output', 'first_output_emitted'),
         ('client_audio', 'first_audio_to_client'), ('played_ack', 'first_audio_played'))}
-    return {'stamps_s': values, 'stamp_fields': fields, 'work': work, 'commit_work': commit_work,
+    felt_edges = {**edges, 'vad_detected': ('last_voiced_estimate',)}
+    paths.update({'felt_' + label: critical_path(values, felt_edges, path['target'], 'last_voiced_estimate')
+                  for label, path in list(paths.items())})
+    for label, path in paths.items():
+        if label.endswith(('client_audio', 'played_ack')):
+            used_fields = {'first_audio_to_client'} | ({'first_audio_played'} if label.endswith('played_ack') else set())
+            path['cross_clock_clamped'] = any(c['field'] in used_fields for c in alignment['clamps'])
+    out = {'stamps_s': values, 'raw_stamps_s': raw_values, 'stamp_fields': fields,
+            'clock_alignment': alignment, 'clock_offset_s': alignment['clock_offset_s'],
+            'work': work, 'commit_work': commit_work,
             'overlaps': overlaps, 'readiness_gaps_s': gates, 'paths': paths,
             'missing_reply_stamps': [name for name in REPLY_EDGES if name not in values], 'issues': problems}
+    if alignment['status'] == 'cross_clock_unverified':
+        exclude_clock_paths(out)
+    return out
 
 
 def session(events, source, meta, legacy_rows):
@@ -219,6 +294,14 @@ def session(events, source, meta, legacy_rows):
         identity = 'response_id' if event['type'] == 'reply_trace' else 'commit_item_id'
         if reason is None and (not isinstance(event.get(identity), str) or not event[identity]
                                or not isinstance(event.get('stages'), dict)):
+            reason = 'invalid_trace_shape'
+        if reason is None and event['type'] == 'commit_trace' and (
+                not isinstance(event.get('participant', {}), dict)
+                or (event.get('decision') is not None and not isinstance(event['decision'], dict))):
+            reason = 'invalid_trace_shape'
+        if reason is None and event['type'] == 'reply_trace' and (
+                (event.get('page_turn') is not None and type(event['page_turn']) is not int)
+                or (event.get('origin') is not None and not isinstance(event['origin'], str))):
             reason = 'invalid_trace_shape'
         if reason:
             rejected.append({'source': source, 'type': event['type'], 'schema_version': event.get('schema_version'),
@@ -264,7 +347,7 @@ def session(events, source, meta, legacy_rows):
         row = {**meta, 'source': source, 'response_id': rid, 'page_turn': page,
                'participant_turn_id': reply.get('participant_turn_id'),
                'commit_item_ids': linked_ids, 'release_commit_item_id': reply.get('release_commit_item_id'),
-               'origin': reply.get('origin'), 'status': reply.get('status'),
+               'origin': reply.get('origin') or 'unknown', 'status': reply.get('status'),
                'sentence_trigger': reply.get('sentence_trigger'),
                'match': 'matched' if timing is not None else 'trace_without_turn_timing',
                'encounter_reply': old['encounter_reply'] if old else 'unknown',
@@ -272,6 +355,19 @@ def session(events, source, meta, legacy_rows):
                'commits': linked, **split_reply({**reply, 'commit_item_ids': linked_ids}, linked, timing)}
         row['issues'].extend(own_issues)
         rows.append(row)
+    # All paired marks in the source participate in a session-wide guard.
+    offsets = [a['offset_s'] for r in rows for a in r['clock_alignment']['anchors']]
+    preferred = [r['clock_offset_s'] for r in rows if r['clock_offset_s'] is not None]
+    session_offset = median(preferred) if preferred else None
+    spread = max(offsets) - min(offsets) if offsets else None
+    session_verified = bool(offsets) and max(map(abs, offsets)) <= CLOCK_OFFSET_LIMIT_S and spread <= CLOCK_OFFSET_LIMIT_S
+    for row in rows:
+        alignment = row['clock_alignment']
+        alignment.update(session_offset_s=session_offset, session_anchor_spread_s=spread)
+        if alignment['status'] == 'verified' and not session_verified:
+            alignment['status'] = 'cross_clock_unverified'
+            alignment['issues'].append('session_anchor_disagreement_or_offset')
+            exclude_clock_paths(row)
     unmatched = [{'source': source, 'turn': e.get('turn'), 'reply_index': e.get('reply_index'),
                   'vad_speech_end': e.get('vad_speech_end')} for e in timing_events
                  if type(e.get('turn')) is not int or e['turn'] not in matched_pages]
@@ -279,7 +375,9 @@ def session(events, source, meta, legacy_rows):
             'timings_without_trace': unmatched,
             'commits': [{'source': source, **c} for c in commits],
             'unreferenced_commits': [{'source': source, 'commit_item_id': c['commit_item_id']}
-                                     for c in commits if c['commit_item_id'] not in referenced], 'issues': issues}
+                                     for c in commits if c['commit_item_id'] not in referenced], 'issues': issues,
+            'clock_session': {'source': source, 'clock_offset_s': session_offset, 'anchor_spread_s': spread,
+                              'verified': session_verified, 'anchor_n': len(offsets), 'offset_limit_s': CLOCK_OFFSET_LIMIT_S}}
 
 
 def summary_stats(values):
@@ -295,19 +393,36 @@ def combine(sessions):
         'traces_without_turn_timing': sum(r['match'] != 'matched' for r in out['rows']),
         'turn_timings_without_trace': len(out['timings_without_trace']), 'unsupported': len(out['unsupported']),
         'commit_traces': len(out['commits']), 'unreferenced_commits': len(out['unreferenced_commits'])}
+    out['clock_sessions'] = [s['clock_session'] for s in sessions]
     groups = defaultdict(list)
     for row in out['rows']:
         groups[tuple(row[k] for k in GROUP_FIELDS)].append(row)
     out['groups'] = []
     for key, members in sorted(groups.items()):
         samples = defaultdict(list)
+        path_counts, path_stages, tied_joins = {}, [], set()
+        for target in members[0]['paths']:
+            paths = [r['paths'][target] for r in members]
+            complete = [p for p in paths if p['total_s'] is not None and not p['issues']]
+            path_counts[target] = {'complete': len(complete),
+                'incomplete': sum(p['total_s'] is not None and bool(p['issues']) for p in paths),
+                'unavailable': sum(p['total_s'] is None for p in paths)}
+            if not complete:
+                continue
+            for stage, field in (('total', 'total_s'), ('unexplained', 'unexplained_s')):
+                path_stages.append({'section': target, 'stage': stage, 'path_n': len(complete),
+                                    **summary_stats([p[field] for p in complete])})
+            for stage in sorted({name for p in paths for name in p['exposed_s']}):
+                critical = [p['exposed_s'][stage] for p in complete if stage in p['exposed_s']]
+                path_stages.append({'section': target, 'stage': stage, 'path_n': len(complete),
+                    **summary_stats(critical), 'critical_share': len(critical) / len(complete),
+                    'mean_contribution_s': sum(p['exposed_s'].get(stage, 0) for p in complete) / len(complete)})
+            for row in members:
+                path = row['paths'][target]
+                if path['total_s'] is not None and not path['issues']:
+                    tied_joins.update((row['source'], row['response_id'], step['end_field']) for step in path['steps']
+                                      if len(step['critical_parents']) > 1)
         for row in members:
-            for target, path in row['paths'].items():
-                if path['total_s'] is not None:
-                    samples[(target, 'total')].append(path['total_s'])
-                    samples[(target, 'unexplained')].append(path['unexplained_s'])
-                for stage, duration in path['exposed_s'].items():
-                    samples[(target, stage)].append(duration)
             for stage, span in row['work'].items():
                 samples[('work', stage)].append(span['duration_s'])
             for span in row['commit_work']:
@@ -318,9 +433,10 @@ def combine(sessions):
             for stage, duration in row['readiness_gaps_s'].items():
                 samples[('readiness_gap', stage)].append(duration)
         out['groups'].append({**dict(zip(GROUP_FIELDS, key)), 'reply_traces': len(members),
+            'path_counts': path_counts, 'tied_joins': len(tied_joins),
             'status_counts': dict(Counter(r['status'] for r in members)),
-            'stages': [{'section': section, 'stage': stage, **summary_stats(values)}
-                       for (section, stage), values in sorted(samples.items())]})
+            'stages': sorted(path_stages + [{'section': section, 'stage': stage, **summary_stats(values)}
+                       for (section, stage), values in sorted(samples.items())], key=lambda s: (s['section'], s['stage']))})
     out.update(schema_version=1, clock='encounter_s', units='seconds',
         causal_edges={k: list(v) for k, v in REPLY_EDGES.items()}, notes=NOTES)
     return out
@@ -329,18 +445,31 @@ def combine(sessions):
 def markdown(trace):
     def cell(value):
         return str(value).replace('|', '\\|').replace('\n', ' ')
+    def fmt(value):
+        return 'unavailable' if value is None else f'{value:.3f}'
     lines = ['', 'Reply-path trace', '', 'Counts: ' + '; '.join(f'{k}={v}' for k, v in trace['counts'].items()) + '.', '',
-             '| Scenario / mode / encounter reply / participant reply / family / model | Section | Stage | n | p50 (s) | p90 (s) |',
-             '|---|---|---|---:|---:|---:|']
+             '| Scenario / mode / encounter reply / participant reply / family / model / origin | Reply traces | Tied joins |',
+             '|---|---:|---:|']
+    for group in trace['groups']:
+        label = ' / '.join(str(group[k]) for k in GROUP_FIELDS)
+        lines.append(f'| {cell(label)} | {group["reply_traces"]} | {group["tied_joins"]} |')
+    lines += ['', '| Group (including origin) | Section | Stage | n | Complete path n | p50 (s) | p90 (s) | Critical share | Mean per reply (s) |',
+              '|---|---|---|---:|---:|---:|---:|---:|---:|']
     for group in trace['groups']:
         label = ' / '.join(str(group[k]) for k in GROUP_FIELDS)
         for stage in group['stages']:
-            lines.append('| ' + ' | '.join(map(cell, [label, stage['section'], stage['stage'], stage['n'],
-                f"{stage['p50_s']:.3f}", f"{stage['p90_s']:.3f}"])) + ' |')
-    lines += ['', '| Source | Response ID / page turn | Status | Join | Trigger |', '|---|---|---|---|---|']
+            section = stage['section'] + (' (sample-position estimate)' if stage['section'].startswith('felt_') else '')
+            share = stage.get('critical_share')
+            lines.append('| ' + ' | '.join(map(cell, [label, section, stage['stage'], stage['n'], stage.get('path_n', '—'),
+                fmt(stage['p50_s']), fmt(stage['p90_s']), f'{share:.1%}' if share is not None else '—',
+                fmt(stage.get('mean_contribution_s'))])) + ' |')
+    lines += ['', '| Source | Response ID / page turn | Status | Join | Trigger | Clock status | Offset (s) | Clamps |',
+              '|---|---|---|---|---|---|---:|---:|']
     for row in trace['rows']:
         lines.append('| ' + ' | '.join(map(cell, [row['source'], f"{row['response_id']} / {row['page_turn']}",
-            row['status'], row['match'], row['sentence_trigger']])) + ' |')
+            row['status'], row['match'], row['sentence_trigger'], row['clock_alignment']['status'],
+            f"{row['clock_offset_s']:.6f}" if row['clock_offset_s'] is not None else 'unavailable',
+            len(row['clock_alignment']['clamps'])])) + ' |')
     for row in trace['rows']:
         for issue in row['issues']:
             lines.append(f"\n{cell(row['response_id'])}: {cell(issue)}")

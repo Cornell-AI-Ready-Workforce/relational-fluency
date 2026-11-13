@@ -1,0 +1,1088 @@
+{
+ "cancelled": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": null,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_sentence_ready": 11.1,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "cancelled",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.75,
+   "first_audio_to_client": 11.701,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  }
+ ],
+ "dup_commit": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.75,
+   "first_audio_to_client": 11.701,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  }
+ ],
+ "dup_timing_turn": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.75,
+   "first_audio_to_client": 11.701,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  },
+  {
+   "first_audio_to_client": 51.0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 50.0
+  }
+ ],
+ "final_flush_first": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "final_flush",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 12.6001,
+    "first_sentence_ready": 12.0,
+    "first_text_sent": 12.0001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 12.6,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 12.65,
+   "first_audio_to_client": 12.601,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  }
+ ],
+ "missing_tts_connected": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.75,
+   "first_audio_to_client": 11.701,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  }
+ ],
+ "ms_rounding_reversal": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.75,
+   "first_audio_to_client": 11.7,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  }
+ ],
+ "normal": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.75,
+   "first_audio_to_client": 11.701,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  }
+ ],
+ "page_turn_mismatch_vs_vad": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 31.1,
+   "first_audio_to_client": 31.0,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 30.0
+  }
+ ],
+ "release_decision_failed": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "release_commit_item_id": "c1",
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_output_hold_released": 12.502,
+    "first_output_hold_started": 11.701,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "failed",
+    "reason": "transcript_failed"
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 12.5,
+    "stt_started": 10.0031,
+    "transcript_decided": 12.501
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.75,
+   "first_audio_to_client": 11.701,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  }
+ ],
+ "release_other_commit": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "release_commit_item_id": "c2",
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_output_hold_released": 12.46,
+    "first_output_hold_started": 11.701,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.75,
+   "first_audio_to_client": 12.461,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c2",
+   "decision": {
+    "outcome": "accepted"
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "vad_detected": 4.9
+   },
+   "participant_turn_id": 0,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 5.0,
+    "stt_done": 12.4,
+    "stt_started": 5.0,
+    "transcript_decided": 12.45
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  }
+ ],
+ "rounding_residual": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.0040004,
+    "create_released": 10.0050004,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.75,
+   "first_audio_to_client": 11.701,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  }
+ ],
+ "slow_stt_held": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "release_commit_item_id": "c1",
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_output_hold_released": 12.502,
+    "first_output_hold_started": 11.701,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 12.5,
+    "stt_started": 10.0031,
+    "transcript_decided": 12.501
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 12.6,
+   "first_audio_to_client": 12.503,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  }
+ ],
+ "tie": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 11.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.75,
+   "first_audio_to_client": 11.701,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  }
+ ],
+ "to_client_before_hold_release": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "release_commit_item_id": "c1",
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_output_hold_released": 12.502,
+    "first_output_hold_started": 11.701,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 12.5,
+    "stt_started": 10.0031,
+    "transcript_decided": 12.501
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.75,
+   "first_audio_to_client": 11.702,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.0
+  }
+ ],
+ "wall_drift_minus_50ms": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 11.7,
+   "first_audio_to_client": 11.651,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 9.95
+  }
+ ],
+ "wall_drift_plus_300ms": [
+  {
+   "clock": "encounter_s",
+   "commit_item_ids": [
+    "c1"
+   ],
+   "origin": "participant_commit",
+   "page_turn": 1,
+   "participant_turn_id": 1,
+   "response_id": "r1",
+   "schema_version": 1,
+   "sentence_trigger": "punctuation",
+   "stages": {
+    "create_entered": 10.004,
+    "create_released": 10.005,
+    "first_content": 11.0,
+    "first_output_emitted": 11.7001,
+    "first_sentence_ready": 11.1,
+    "first_text_sent": 11.1001,
+    "request_started": 10.006,
+    "tts_connected": 10.1,
+    "tts_first_audio": 11.7,
+    "tts_slot_acquired": 10.0071,
+    "tts_slot_wait_start": 10.007
+   },
+   "status": "done",
+   "type": "reply_trace",
+   "units": "seconds"
+  },
+  {
+   "clock": "encounter_s",
+   "commit_item_id": "c1",
+   "decision": {
+    "outcome": "accepted",
+    "reason": null
+   },
+   "origin": "participant_commit",
+   "participant": {
+    "briefing_completed": 10.002,
+    "briefing_entered": 10.001,
+    "last_voiced_estimate": 9.1,
+    "vad_detected": 10.0
+   },
+   "participant_turn_id": 1,
+   "schema_version": 1,
+   "stages": {
+    "commit_dispatched": 10.003,
+    "stt_done": 10.8,
+    "stt_started": 10.0031,
+    "transcript_decided": 10.801
+   },
+   "stt_outcome": "completed",
+   "type": "commit_trace",
+   "units": "seconds"
+  },
+  {
+   "first_audio_played": 12.05,
+   "first_audio_to_client": 12.001,
+   "reply_index": 0,
+   "turn": 1,
+   "type": "turn_timing",
+   "vad_speech_end": 10.3
+  }
+ ]
+}

@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import math
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
 from server.voice.realtime import family_of
+from server.storage import valid_session_id
 from tools.encounter_health import read_events
 from tools.sim.analyze import percentile
 from tools.sim.check import load_baseline as read_json, write_json
@@ -239,6 +241,34 @@ def summary_groups(report, source, issues):
     return groups
 
 
+def content_hash(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def deduplicate_sessions(loaded):
+    """Prefer the richest copy; keep independent known session IDs distinct."""
+    buckets = defaultdict(list)
+    for item in loaded:
+        identity = item['session_id']
+        key = ('session_id', identity) if identity else ('content_hash', item['hash'] or item['source'])
+        buckets[key].append(item)
+    kept, dropped = [], []
+    for (kind, identity), copies in buckets.items():
+        winner = max(copies, key=lambda item: (
+            sum(e.get('type') in ('turn_timing', 'reply_trace', 'commit_trace') for e in item['events']),
+            len(item['events']), bool(item['record'])))
+        kept.append(winner)
+        for item in copies:
+            if item is not winner:
+                dropped.append({'path': item['source'], 'kept': winner['source'],
+                    'session_id': item['session_id'], 'reason': 'duplicate_' + kind,
+                    'same_content': item['hash'] == winner['hash']})
+    return sorted(kept, key=lambda item: item['source']), dropped
+
+
 def analyze_paths(paths):
     sessions, reports, timelines = {}, {}, {}
     rows, sources, issues, unavailable = [], [], [], []
@@ -279,6 +309,7 @@ def analyze_paths(paths):
                     reports[candidate] = doc
     session_ids = set()
     trace_sessions = []
+    loaded = []
     for selected, directory in sorted(sessions.items()):
         event_path = selected
         record_path = directory / "record.json"
@@ -292,6 +323,15 @@ def analyze_paths(paths):
         valid_events = [e for e in events if isinstance(e, dict)]
         if len(valid_events) != len(events):
             issues.append(f"{source}: non-object events ignored")
+        started = next((e for e in valid_events if e.get('type') == 'session_start'), {})
+        sid = started.get('session_id') or started.get('encounter_id') or record.get('encounter_id') or record.get('session_id')
+        if not isinstance(sid, str) or not sid:
+            sid = directory.name if valid_session_id(directory.name) else None
+        loaded.append({'source': source, 'directory': directory, 'record': record,
+                       'events': valid_events, 'session_id': sid, 'hash': content_hash(event_path)})
+    loaded, dropped_sources = deduplicate_sessions(loaded)
+    for item in loaded:
+        source, directory, record, valid_events = (item[k] for k in ('source', 'directory', 'record', 'events'))
         current = session_rows(record, valid_events, source, timelines.get(directory.name))
         trace_sessions.append(latency_trace.session(valid_events, source,
             context(record, valid_events, timelines.get(directory.name)), current))
@@ -307,9 +347,27 @@ def analyze_paths(paths):
                 "stages": {name: stats([], name) for name in ("total", *INTERVALS, "unexplained")},
                 "diagnostics": {}})
     groups = summarize_rows(rows) + unavailable
+    report_hashes, summary_sources = {}, {}
     for path, report in sorted(reports.items()):
+        digest = content_hash(path)
+        if digest is not None and digest in report_hashes:
+            dropped_sources.append({'path': str(path), 'kept': report_hashes[digest],
+                                    'reason': 'duplicate_report_content_hash'})
+            continue
+        if digest is not None:
+            report_hashes[digest] = str(path)
         # A run directory can contain both the summary and its underlying events.
-        groups.extend(g for g in summary_groups(report, str(path), issues) if g.get("session_id") not in session_ids)
+        for group in summary_groups(report, str(path), issues):
+            sid = group.get('session_id')
+            if sid in session_ids:
+                continue
+            if sid and sid in summary_sources:
+                dropped_sources.append({'path': str(path), 'kept': summary_sources[sid],
+                                        'session_id': sid, 'reason': 'duplicate_summary_session_id'})
+                continue
+            groups.append(group)
+            if sid:
+                summary_sources[sid] = str(path)
     report = {"schema_version": 2, "units": "seconds (cascade diagnostics remain milliseconds)",
             "group_fields": list(GROUP_FIELDS),
             "definitions": {"total": {"start_field": TOTAL[0], "end_field": TOTAL[1]},
@@ -330,6 +388,8 @@ def analyze_paths(paths):
     trace = latency_trace.combine(trace_sessions)
     if trace is not None:
         report["trace"] = trace
+    if dropped_sources:
+        report['duplicate_sources'] = dropped_sources
     return report
 
 
@@ -373,6 +433,8 @@ def markdown(report):
     if report["issues"]:
         lines.extend([""] + [f"- {item}" for item in report["issues"]])
     lines.extend(["", "Boundaries not recorded: " + "; ".join(report["missing_boundaries"]) + "."])
+    for dropped in report.get('duplicate_sources', []):
+        lines.extend(['', f"Dropped duplicate source: {cell(dropped['path'])}; kept {cell(dropped['kept'])} ({dropped['reason']})."])
     return "\n".join(lines) + "\n" + (latency_trace.markdown(report["trace"]) if "trace" in report else "")
 
 
