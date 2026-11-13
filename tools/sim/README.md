@@ -219,8 +219,10 @@ trace, rejected schemas and unreferenced commits. Duplicate identities remain
 unjoined. Cancelled and failed replies retain their observed partial stages.
 Copied sessions are removed before the coarse and trace calculations. A known
 session ID identifies copies; anonymous exports use the event-file content
-hash. Different known session IDs stay separate, even with identical bytes.
-The copy with the most timing/trace events wins. Dropped source paths, the
+hash. A second pass removes byte-identical event files across all ID groups,
+including files in renamed export folders. The copy with the most timing/trace
+events wins within a session ID. Retained sources keep the original Path order.
+Dropped source paths, the
 retained path and the reason appear in JSON and Markdown. Copied saved reports
 and repeated summary session IDs are also excluded.
 
@@ -267,15 +269,23 @@ gain. The legacy coarse split stays available for comparison and for untraced
 rows. Its missing-boundary list does not describe the stamps present in a trace.
 
 Trace stamps use monotonic elapsed time after attachment. Legacy client and
-playback stamps use wall elapsed time. Paired VAD marks estimate wall-minus-trace
-offset. The gateway/output pair is preferred for unheld replies because it is
-near the client send. Each session reports the median preferred offset and
-anchor spread. `commit_sent` is not an anchor: it can include an awaited wait.
-An offset or anchor disagreement above 5 ms marks the client and ACK paths
-`cross_clock_unverified` and excludes them from statistics. Smaller verified
-offsets are subtracted and recorded. A legacy-boundary reversal of at most
-1 ms is clamped to zero; the changed field and delta are recorded. Larger
-reversals stay invalid. Pure trace edges have no rounding tolerance.
+playback stamps use wall elapsed time. Only paired VAD marks estimate and guard
+wall-minus-trace offset. Each session reports their median and spread. Neither
+the gateway pair nor `commit_sent` is an anchor: both include real work.
+A VAD offset or spread above 5 ms marks client and ACK paths
+`cross_clock_unverified` and excludes them from statistics. Offsets within 1 ms
+are left uncorrected because the VAD mark has its own rounding and runner hop.
+Larger verified offsets are subtracted and recorded. The clamp bound is 1 ms
+plus the applied offset's magnitude, at most 6 ms. Changed fields and deltas
+remain recorded. Larger reversals stay invalid. Pure trace edges stay strict.
+
+For unheld replies, `output_to_gateway` exposes the emit-to-bridge hop as an
+estimate under the applied VAD correction. The raw gateway-minus-VAD estimate
+is also recorded. A separate `gateway_to_client` step uses the exact wall-to-wall
+interval. A gateway rounding clamp moves its client/ACK endpoints together to
+preserve those wall intervals. Queue latency never enters the clock guard or
+gets removed as a clock offset. VAD correction remains limited by observation
+delay and timestamp resolution.
 
 JSON keeps raw stamps, corrected stamps, offsets and clamps. Markdown shows
 clock status, offset and clamp count. A clock step after the last paired mark
