@@ -158,3 +158,37 @@ Room tone is generated in code (`stim.room_tone`), not recorded.
 `--allow-remote`: the check exists to test a build before it is deployed, and
 pointed at production it records internal sessions there and spends its
 gateway budget on the build already running.
+
+## Offline latency breakdown
+
+```bash
+python -m tools.sim.latency /path/to/sim-run --json-out /tmp/latency.json --markdown-out /tmp/latency.md
+python -m tools.sim.latency data/sessions/*/record.json --json-out /tmp/latency.json
+python -m tools.sim.latency tools/sim/reports/1469925.json --json-out /tmp/sim-latency.json
+```
+
+Inputs can be run directories, `record.json` files, or event JSONL files. The
+tool reads sibling `events.jsonl` files for records. It reuses the event reader,
+sim JSON reader, writer, and percentile function. It makes no network calls.
+
+Each reply with a participant speech end has a row. The tool groups rows by
+scenario, room or 1:1, first encounter reply or later, first reply to that
+participant turn or follow-up, and family/model. It keeps small groups and
+missing ACK counts. Each stage has n, p50, p90, and the mean of its share of
+the same reply's total. `share_n` counts positive totals for that stage.
+
+The breakdown uses speech end to commit, room commit to grant, gateway audio
+to client send, and client send to playback ACK. The unexplained residual
+covers every remaining span. JSON records each interval's exact endpoint
+fields. Transcript arrival and director decision are separate diagnostics.
+Cascade durations can overlap. `llm_first_token_ms` records first sentence
+release, `llm_total_ms` includes TTS waits, and `stt_ms` can be stale. Room
+member timings do not measure scribe STT. These fields do not reduce the
+residual.
+
+`record.json` alone has no stage timings. Saved sim reports retain total
+quantiles and n only. The tool keeps those values and marks other results
+unavailable. It does not infer stages or reply groups from quantiles. Playback
+ACK timing includes return network time. It does not measure hearing. The sim
+does not model the browser audio path. Both outputs list these limits and the
+missing A6 boundaries.
