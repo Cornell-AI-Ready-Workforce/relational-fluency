@@ -504,3 +504,257 @@ async def test_new_socket_opener_does_not_reference_previous_socket_commit(monke
             assert rec["commit_item_ids"] == [] and rec["participant_turn_id"] is None
         finally:
             await next_rt.close()
+
+
+def trace_vad(trace):
+    trace.vad({"detected_mono": time.monotonic(), "trailing_silence_samples": 14400,
+               "last_voiced_sample": 12800, "detected_sample": 27200,
+               "sample_rate_hz": 16000, "estimate": "sample_position"})
+
+
+@pytest.mark.parametrize("origin", ["request_response", "prompt_response", "retry"])
+@in_a_loop
+async def test_no_commit_create_does_not_inherit_participant_identity(monkeypatch, origin):
+    # Review probe t1: a finished participant reply followed by a create only.
+    async with pipeline(monkeypatch, hearings=[Hearing(completed("Hello there."))]) as data:
+        runner, rt, sock, _, _, _, _, _ = data
+        trace = runner._reply_trace
+        trace_vad(trace)
+        await ask(rt)
+        human_commit = trace.latest_commit
+        await until(lambda: sock._reply.done() and not rt.responding)
+        assert trace.replies[sock._reply_id]["commit_item_ids"] == [human_commit]
+        if origin == "request_response":
+            await rt.request_response()
+        elif origin == "prompt_response":
+            await rt.prompt_response("Please continue.")
+        else:
+            assert await rt.retry_response()
+        rec = trace.replies[sock._reply_id]
+        assert rec["commit_item_ids"] == []
+        assert rec["participant_turn_id"] is None
+        assert rec["origin"] == origin
+
+
+@in_a_loop
+async def test_probe_commit_cannot_reuse_consumed_or_pending_vad(monkeypatch):
+    hearings = [Hearing(completed("Hello there.")), Hearing(completed("Thank you very much."))]
+    async with pipeline(monkeypatch, hearings=hearings) as data:
+        runner, rt, sock, _, _, _, _, _ = data
+        trace = runner._reply_trace
+        trace_vad(trace)
+        await ask(rt)
+        human_commit = trace.latest_commit
+        await until(lambda: sock._reply.done() and not rt.responding)
+        assert trace.commits[human_commit]["participant_turn_id"] == 1
+        assert trace.participant == {}  # each VAD snapshot is consumed once
+        trace_vad(trace)  # a probe cannot claim an unused VAD end either
+        await rt.commit_probe(b'\0' * 3200)
+        probe = trace.commits[trace.latest_commit]
+        rec = trace.replies[sock._reply_id]
+        assert probe["participant_turn_id"] is None and probe["participant"] == {}
+        assert rec["participant_turn_id"] is None
+        assert rec["origin"] == probe["origin"] == "silence_probe"
+        assert trace.participant == {}  # the probe cannot leave stale VAD for a later commit
+
+
+@in_a_loop
+async def test_create_does_not_claim_an_unrelated_unanswered_commit(monkeypatch):
+    async with pipeline(monkeypatch, hearings=[Hearing(completed("Hello there."))]) as data:
+        runner, rt, sock, _, _, _, _, _ = data
+        trace_vad(runner._reply_trace)
+        await send_ms(rt, LOUD, 800)
+        await rt.commit_input()  # deliberately no commit_turn / associated create
+        await until(lambda: runner.session.store.of("user_turn"))
+        await rt.request_response()
+        rec = runner._reply_trace.replies[sock._reply_id]
+        assert rec["commit_item_ids"] == [] and rec["participant_turn_id"] is None
+        assert rec["origin"] == "request_response"
+
+
+@in_a_loop
+async def test_release_stamps_withheld_frames_from_the_older_commit(monkeypatch):
+    # Review probe t2: acceptance of B releases B and discards the older A.
+    wall = [1800000000.0]
+    monkeypatch.setattr(time, "time", lambda: wall[0])
+    a = Hearing(completed("First spoken line here."), blocked=True)
+    b = Hearing(completed("Second spoken line here."), blocked=True)
+    async with pipeline(monkeypatch, hearings=[a, b]) as data:
+        runner, rt, sock, store, _, _, _, audio = data
+        runner._awaiting_participant = True
+        trace = runner._reply_trace
+        await ask(rt)
+        old = sock._reply_id
+        await until(lambda: sock._reply.done() and "first_output_hold_started" in trace.replies[old]["stages"])
+        wall[0] += 1
+        await ask(rt)
+        new = sock._reply_id
+        await until(lambda: sock._reply.done() and "first_output_hold_started" in trace.replies[new]["stages"])
+        b.ready.set()
+        await until(lambda: bool(audio))
+        assert store.of("first_reply_released")[0]["dropped_frames"] > 0
+        assert "first_output_withheld" in trace.replies[old]["stages"]
+        assert "first_output_hold_released" not in trace.replies[old]["stages"]
+        assert "first_output_hold_released" in trace.replies[new]["stages"]
+
+
+@in_a_loop
+async def test_late_stt_finalizer_cannot_replace_socket_closed(monkeypatch):
+    # Review probe t3: mid-encounter close, task cleanup, then eventual flush.
+    hearing = Hearing(completed("Hello there."), blocked=True)
+    async with pipeline(monkeypatch, hearings=[hearing]) as data:
+        runner, rt, sock, store, _, _, _, _ = data
+        await send_ms(rt, LOUD, 800)
+        await rt.commit_input()
+        await hearing.started.wait()
+        tasks = list(sock._tasks)
+        await rt.close()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        observe(runner, "flush")
+        (rec,) = store.of("commit_trace")
+        assert rec["stt_outcome"] == "socket_closed"
+        assert "socket_closed" in rec["stages"] and "stt_done" not in rec["stages"]
+
+
+@in_a_loop
+async def test_hold_start_waits_for_audio_even_when_text_is_already_held(monkeypatch):
+    hearing = Hearing(completed("Hello there."), blocked=True)
+    monkeypatch.setattr(Speech, "audio", lambda self: None)
+    async with pipeline(monkeypatch, hearings=[hearing], finish=False) as data:
+        runner, rt, sock, _, _, streams, _, audio = data
+        runner._awaiting_participant = True
+        await ask(rt)
+        await until(lambda: bool(rt._agent_buffer))  # bridge read the text delta
+        rec = record(runner)
+        assert "first_output_hold_started" not in rec["stages"]
+        TTS.audio(streams[0])
+        await until(lambda: "first_output_hold_started" in rec["stages"])
+        assert rec["stages"]["first_output_emitted"] <= rec["stages"]["first_output_hold_started"]
+        assert not audio
+        hearing.ready.set()
+        await until(lambda: bool(audio))
+        streams[0].finish()
+        await until(lambda: sock._reply.done())
+
+
+@pytest.mark.parametrize("close_at", ["room", "socket"])
+@in_a_loop
+async def test_second_cancel_during_run_teardown_still_flushes(monkeypatch, close_at):
+    from test_cascade_transcribe import bridge
+
+    async with bridge(monkeypatch, []) as (rt, sock, _, _):
+        runner, session, _ = runner_for("S2A")
+        bind(runner, rt)
+        await rt.request_response()
+        ready, closing, forever = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        children = set()
+
+        async def idle():
+            children.add(asyncio.current_task())
+            ready.set()
+            await forever.wait()
+
+        async def connected():
+            pass
+
+        original_close = rt.close
+
+        async def blocked_close():
+            if close_at == "socket":
+                await original_close()
+            closing.set()
+            await forever.wait()
+
+        monkeypatch.setattr(runner, "_new_session", lambda **kw: rt)
+        monkeypatch.setattr(rt, "connect", connected)
+        for name in ("_client_to_model", "_model_to_client", "_silence_watchdog"):
+            monkeypatch.setattr(runner, name, idle)
+        if close_at == "room":
+            monkeypatch.setattr(runner, "_close_room", blocked_close)
+        else:
+            monkeypatch.setattr(rt, "close", blocked_close)
+        task = asyncio.create_task(runner.run())
+        try:
+            await asyncio.wait_for(ready.wait(), 2)
+            task.cancel()  # enter the real run() finally
+            await asyncio.wait_for(closing.wait(), 2)
+            assert not session.store.of("reply_trace")
+            task.cancel()  # interrupt the close await, as in the review
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            (rec,) = session.store.of("reply_trace")
+            assert rec["response_id"] == sock._reply_id
+            assert rec["finalized_at"] == "encounter_teardown"
+            if close_at == "socket":
+                assert rec["status"] == "socket_closed"
+        finally:
+            task.cancel()
+            for child in children:
+                child.cancel()
+            await asyncio.gather(task, *children, return_exceptions=True)
+            monkeypatch.setattr(rt, "close", original_close)
+
+
+@in_a_loop
+async def test_held_call_reply_has_origin_and_no_old_commit(monkeypatch):
+    async with pipeline(monkeypatch, hearings=[Hearing(completed("Hello there."))]) as data:
+        runner, rt, sock, _, _, _, _, _ = data
+        trace_vad(runner._reply_trace)
+        await ask(rt)
+        await until(lambda: sock._reply.done() and not rt.responding and not runner._speaking)
+        assert await rt.answer_tool_call("call_trace_probe", "Continue the conversation.")
+        await runner._reply_after_held_call(rt, time.time())
+        rec = runner._reply_trace.replies[sock._reply_id]
+        assert rec["commit_item_ids"] == [] and rec["participant_turn_id"] is None
+        assert rec["origin"] == "held_call"
+
+
+@pytest.mark.parametrize("child_commits", [False, True])
+@in_a_loop
+async def test_task_context_cannot_be_inherited_or_claim_another_calls_commit(monkeypatch, child_commits):
+    from server.reply_trace import context
+
+    async with pipeline(monkeypatch, hearings=[Hearing(completed("Hello there.")), Hearing(completed("A second spoken line."))]) as data:
+        runner, rt, sock, _, _, _, _, _ = data
+        trace_vad(runner._reply_trace)
+        with context(rt, "participant_commit"):
+            await send_ms(rt, LOUD, 800)
+            await rt.commit_input()
+            parent_commit = runner._reply_trace.latest_commit
+
+            async def child_request():
+                if child_commits:
+                    await ask(rt)
+                else:
+                    await rt.request_response()
+
+            # The copied ContextVar cannot claim the parent's commit, nor can
+            # the child's later commit replace the parent call's explicit id.
+            await asyncio.create_task(child_request())
+            child = runner._reply_trace.replies[sock._reply_id]
+            if child_commits:
+                assert child["commit_item_ids"] == [runner._reply_trace.latest_commit]
+                assert child["commit_item_ids"] != [parent_commit]
+            else:
+                assert child["origin"] == "request_response" and child["commit_item_ids"] == []
+            await until(lambda: sock._reply.done() and not rt.responding)
+            await rt.request_response()
+            own = runner._reply_trace.replies[sock._reply_id]
+            assert own["commit_item_ids"] == [parent_commit]
+
+
+@in_a_loop
+async def test_replay_links_its_own_commit_without_inheriting_vad(monkeypatch):
+    async with pipeline(monkeypatch, hearings=[Hearing(completed("Hello there.")),
+                                               Hearing(completed("Hello there."))]) as data:
+        runner, rt, sock, _, _, _, _, _ = data
+        trace_vad(runner._reply_trace)
+        await ask(rt)
+        first = runner._reply_trace.latest_commit
+        await until(lambda: sock._reply.done() and not rt.responding)
+        assert await rt.replay_input(LOUD * 40)
+        second = runner._reply_trace.latest_commit
+        rec = runner._reply_trace.replies[sock._reply_id]
+        assert second != first and rec["commit_item_ids"] == [second]
+        assert rec["origin"] == "replay" and rec["participant_turn_id"] is None
+        assert runner._reply_trace.commits[second]["participant"] == {}

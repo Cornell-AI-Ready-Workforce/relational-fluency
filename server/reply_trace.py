@@ -2,17 +2,52 @@
 
 Schema v1: one ``reply_trace`` per response id and one ``commit_trace`` per
 commit item id. Events are written once at encounter teardown, after socket
-closure, so an early play_end or a late transcription cannot discard stamps.
+close attempts, so an early play_end or a late transcription cannot discard stamps.
 ``stages`` values are seconds on ``encounter_s``: wall elapsed at attachment
 plus monotonic elapsed thereafter. Wall clock adjustments after attachment do
 not move this clock. Commit/participant/page identities are explicit, nullable
 for openers or replies that never reached the page. No text or PCM is retained.
+Event t/wall date teardown, not observations. Task-local call context carries
+actual commit identities; no create inherits the latest socket commit.
 Legacy turn_timing and cascade millisecond diagnostics remain independent.
 """
 from __future__ import annotations
 
+import asyncio
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
+
+
+_call_context = ContextVar("reply_trace_call_context", default=None)
+
+
+@contextmanager
+def context(owner, origin):
+    """Trace-only call provenance; never add it to a gateway frame.
+
+    Nested calls keep their caller's origin. Task identity prevents a spawned
+    task from inheriting a completed call's intent through ContextVar copying.
+    """
+    token = None
+    try:
+        trace = getattr(owner, "_reply_trace", None)
+        if trace is not None:
+            key = (trace, id(owner.ws), asyncio.current_task())
+            previous = _call_context.get()
+            if previous is None or previous[:3] != key:
+                token = _call_context.set((*key, origin, {}))
+    except Exception:  # noqa: BLE001 - telemetry is optional
+        pass
+    try:
+        yield
+    finally:
+        if token is not None:
+            try:
+                _call_context.reset(token)
+            except Exception:  # noqa: BLE001 - telemetry is optional
+                pass
 
 
 def observe(owner, method, *args, **kwargs):
@@ -62,6 +97,7 @@ class ReplyTrace:
         self.commits = {}
         self.participant_turn = 0
         self.participant = {}
+        self._participant_id = None
         self.latest_commit = None
         self.flushed = False
         self.sockets = {}
@@ -83,27 +119,47 @@ class ReplyTrace:
             "last_voiced_estimate": self.now(end["detected_mono"]) - end["trailing_silence_samples"] / end["sample_rate_hz"],
             "vad_sample_position": {k: v for k, v in end.items() if k != "detected_mono"},
         }
+        self._participant_id = self.participant_turn
 
     def briefing(self, phase):
         if phase == "entered":
             self.participant.pop("briefing_completed", None)
         self.participant["briefing_" + phase] = self.now()
 
+    def _call(self, socket_key):
+        call = _call_context.get()
+        if (call is not None and call[:2] == (self, socket_key)
+                and call[2] is asyncio.current_task()):
+            return call
+        return None
+
+    def commit_entered(self, socket_key):
+        call = self._call(socket_key)
+        if call is not None:
+            call[4].pop("commit_item_id", None)
+
     def commit(self, iid, socket_key=None):
-        self.sockets.setdefault(socket_key, {"replies": set(), "commits": set()})["commits"].add(iid)
+        socket = self.sockets.setdefault(socket_key, {"replies": set(), "commits": set()})
+        socket["commits"].add(iid)
         self.latest_commit = iid
-        self.sockets[socket_key]["latest_commit"] = iid
-        self.commits[iid] = {"commit_item_id": iid,
-                             "participant_turn_id": self.participant_turn or None,
+        call = self._call(socket_key)
+        origin = call[3] if call is not None else "uncommitted"
+        if call is not None:
+            call[4]["commit_item_id"] = iid
+        participant = origin == "participant_commit"
+        self.commits[iid] = {"commit_item_id": iid, "origin": origin,
+                             "participant_turn_id": self._participant_id if participant else None,
                              "stages": {"commit_dispatched": self.now()},
-                             "participant": dict(self.participant), "stt_outcome": None,
-                             "decision": None}
+                             "participant": dict(self.participant) if participant else {},
+                             "stt_outcome": None, "decision": None}
+        self.participant = {}
+        self._participant_id = None
 
     def stt(self, iid, phase, outcome=None):
         rec = self.commits.get(iid)
-        if rec is not None:
+        if rec is not None and rec["stt_outcome"] != "socket_closed":
             rec["stages"].setdefault("stt_" + phase, self.now())
-            if outcome is not None:
+            if outcome is not None and rec["stt_outcome"] is None:
                 rec["stt_outcome"] = outcome
 
     def decision(self, iid, outcome, reason=None):
@@ -113,9 +169,15 @@ class ReplyTrace:
             rec["decision"] = {"outcome": outcome, "reason": reason}
 
     def create(self, rid, socket_key=None):
-        self.sockets.setdefault(socket_key, {"replies": set(), "commits": set()})["replies"].add(rid)
-        iid = self.sockets[socket_key].get("latest_commit")
-        self.replies[rid] = {"response_id": rid, "commit_item_ids": [iid] if iid else [],
+        socket = self.sockets.setdefault(socket_key, {"replies": set(), "commits": set()})
+        socket["replies"].add(rid)
+        call = self._call(socket_key)
+        origin = call[3] if call is not None else "uncommitted"
+        # The actual item id belongs to this call, never the latest socket commit.
+        iid = (call[4].pop("commit_item_id", None)
+               if call is not None and origin in ("participant_commit", "silence_probe", "replay") else None)
+        self.replies[rid] = {"response_id": rid, "origin": origin,
+                             "commit_item_ids": [iid] if iid else [],
                              "participant_turn_id": self.commits[iid]["participant_turn_id"] if iid else None,
                              "page_turn": None, "status": "creating",
                              "stages": {"create_entered": self.now()}}
@@ -132,7 +194,6 @@ class ReplyTrace:
 
     def socket_closed(self, socket_key=None):
         records = self.sockets.get(socket_key, {"replies": (), "commits": ()})
-        records["latest_commit"] = None
         for rid in records["replies"]:
             rec = self.replies.get(rid)
             if rec is not None and "reply_done" not in rec["stages"]:

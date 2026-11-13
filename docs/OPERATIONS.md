@@ -1928,9 +1928,13 @@ Never hand out `rf_admin`; it exists to run the two SQL files above.
 `reply_trace` and `commit_trace` are separate from `turn_timing`. Each carries
 `schema_version: 1`, `clock: "encounter_s"`, `units: "seconds"` and
 `finalized_at: "encounter_teardown"`. They are buffered observations, written
-once after socket closure in the encounter's teardown. They survive a page
+once after socket-close attempts in the encounter's teardown. They survive a page
 `play_end` that removes its legacy playback row before generation ends. A
-process crash before teardown can lose these buffered traces.
+process crash before teardown can lose these buffered traces. Event-level `t`
+and `wall` are storage/teardown times; use the stage stamps for observations.
+The trace flush runs in a finally even if another cancellation interrupts a
+close await. A close interrupted before adapter closure keeps partial state;
+it does not invent a `socket_closed` observation.
 
 The clock starts with wall elapsed time from `store.started_at` at attachment,
 then advances with `time.monotonic()`. Stamps have six decimal places; that is
@@ -1943,10 +1947,17 @@ behaviour. New strings and seconds never enter that numeric dictionary or
 fields are tolerated and ignored until the browser-clock work defines them.
 
 A `reply_trace` has `response_id`, `commit_item_ids`, `participant_turn_id`,
-`page_turn`, `status` and `stages`. The commit list identifies the latest commit on that socket
-preceding this create, not every historical user message in the model context.
-An opener has an empty list. Participant identity is the local VAD-end sequence;
-null means there was no observed VAD end. A page turn is assigned only when the
+`origin`, `page_turn`, `status` and `stages`. Only a commit-turn or replay call
+can link its own actual commit item id to its create, once. This trace-only
+identity travels in task-local context; it never changes a gateway frame.
+There is no latest-commit fallback. Openers, retries, held-call/tool replies,
+standalone requests, and raw creates have empty links even if an earlier
+commit was never answered. `origin` records the initiating API or intent:
+`participant_commit`, `silence_probe`, `replay`, `retry`, `prompt_response`,
+`request_response`, `held_call`, or `uncommitted` (a raw create). An opener
+requested through request_response has that origin and empty links.
+Participant identity is the local VAD-end sequence; null means no VAD end
+belongs to this commit/create. A page turn is assigned only when the
 runner opens/relays that reply; replies cancelled before relay can have null.
 Provider completion sets status `done`, `cancelled` or `failed` and `reply_done`;
 a refused active create has `refused_active_response`. Closing the socket marks
@@ -1967,17 +1978,19 @@ Reply `stages` (all seconds on `encounter_s`, absent means unobserved):
 | `first_text_sent` | First inputs send dispatch, after sentence release and connection; registration and keep-alives excluded. |
 | `tts_first_audio` | First provider audio message arrival, before decoding. |
 | `first_output_emitted` | First PCM delta enqueue in the adapter, before bridge/page handling. |
-| `first_output_hold_started` | First reply frame held by the runner pending the participant's opening transcript. |
+| `first_output_hold_started` | First audio frame held by the runner pending the participant's opening transcript; preceding text deltas do not stamp it. |
 | `first_output_hold_released` | Before yielding the first retained held frame; `release_commit_item_id` names the accepted transcript that unblocks it. |
-| `first_output_withheld` | Held frames dropped after a transcript decision. No release is invented for cancelled/abandoned holds. |
+| `first_output_withheld` | Held frames dropped after rejection or superseded by a later commit at acceptance/release. No release is invented for cancelled/abandoned holds. |
 | `reply_done` | Adapter completion or observed socket closure. |
 
-A `commit_trace` has `commit_item_id`, `participant_turn_id`, `stages`,
+A `commit_trace` has `commit_item_id`, `participant_turn_id`, `origin`, `stages`,
 `participant`, `stt_outcome` and `decision`. Stages are `commit_dispatched`
 (the adapter commit operation), `stt_started`, `stt_done`, and
 `transcript_decided`. STT outcomes are `completed`, `no_speech`, `failed`,
 `cancelled` or `socket_closed`; socket closure has its own stage and does not
-invent `stt_done` for an unfinished task. Unfinished decisions remain null. Decision is
+invent `stt_done` for an unfinished task. That terminal outcome survives late
+STT finalizers; they cannot add `stt_done` after `socket_closed`. Other STT
+outcomes are also first-wins. Unfinished decisions remain null. Decision is
 `{outcome, reason}`: `accepted`, `suppressed` with the gate reason, `duplicate`
 with `exact`, `overlap` or `replay_duplicate`, `echo` with `character_playback`,
 `missing` with `transcript_empty`/`empty_content`, or `failed` with
@@ -1987,6 +2000,11 @@ separate hold-release observation.
 
 `participant` snapshots `vad_detected`, `last_voiced_estimate`,
 `vad_sample_position`, `briefing_entered` and `briefing_completed` where known.
+Each commit consumes its pending VAD identity and snapshot once. Only a
+participant commit retains them. Probe pads and audio replays have null
+participant ids and empty snapshots,
+even if a VAD end is pending. A later commit without a new VAD end cannot reuse
+the preceding participant's data.
 VAD detection is captured inside `feed`, before forwarding awaits or resetting
 silence counters. `vad_sample_position` contains `estimate: "sample_position"`,
 `sample_rate_hz`, cumulative `last_voiced_sample`, `detected_sample` and
@@ -1995,6 +2013,14 @@ silence counters. `vad_sample_position` contains `estimate: "sample_position"`,
 estimate anchored to detection receipt, not a measured microphone wall time.
 Briefing stamps surround the 1:1 briefing that precedes commit. `commit_sent`
 remains the later legacy stamp after commit_turn returns.
+
+VAD instrumentation costs a helper call and try block, a sample-counter
+addition, another comparison with the existing RMS/bar, and a conditional
+last-voiced assignment per frame. It is more than one assignment. The round-1
+review probe on 07fca6c measured feed at 2.462 → 2.536 microseconds/frame
+(best of seven, about +0.07 microseconds or +3%); the helper alone measured
+0.050 microseconds. These are local microbenchmark observations, not a
+production latency guarantee. The repair leaves that VAD implementation intact.
 
 Only causal edges are additive: request → content → sentence; slot wait →
 acquired → connected; sentence and connected → text send → provider audio →

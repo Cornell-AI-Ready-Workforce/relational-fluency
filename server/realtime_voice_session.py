@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from .director import Director, DIRECTOR_MAX_SPEAKERS
 # Per-turn latency stages and the page's playback acks (issue #25). Record only.
 from .turn_timing import NullTimer, TurnTimer
-from .reply_trace import bind as bind_reply_trace, observe
+from .reply_trace import bind as bind_reply_trace, context as trace_context, observe
 
 
 #: A sentence boundary the transcript stream ran together: a full stop,
@@ -6113,10 +6113,12 @@ class RealtimeVoiceSessionRunner:
             # ask now (see _reply_after_held_call).
             for task in list(getattr(self, "_held_call_tasks", ()) or ()):
                 task.cancel()
-            await self._close_room()
-            if self.rt:
-                await self.rt.close()
-            observe(self, "flush")
+            try:
+                await self._close_room()
+                if self.rt:
+                    await self.rt.close()
+            finally:
+                observe(self, "flush")
             # And the console frames still in flight, for the same reason. They
             # leave as tasks so a researcher's socket can never sit on the
             # participant's audio path — but a task that was only SCHEDULED is
@@ -7547,7 +7549,8 @@ class RealtimeVoiceSessionRunner:
                         dropping = etype != "response_done"
                         continue
                     if self._awaiting_participant:
-                        observe(self, "stamp", ev.get("response_id"), "first_output_hold_started")
+                        if etype == "agent_audio":
+                            observe(self, "stamp", ev.get("response_id"), "first_output_hold_started")
                         held.append((time.time(), ev))
                         continue
                 yield ev
@@ -7565,6 +7568,9 @@ class RealtimeVoiceSessionRunner:
                         if isinstance(latest, (int, float)):
                             since = max(since, latest)
                         keep = [h for at, h in held if at >= since]
+                        for at, h in held:
+                            if at < since:
+                                observe(self, "stamp", h.get("response_id"), "first_output_withheld")
                         self._note_first_reply("first_reply_released", held, len(keep))
                         held = []
                         for h in keep:
@@ -7838,7 +7844,8 @@ class RealtimeVoiceSessionRunner:
                                      skipped=why, **fields)
             return
         self._held_call_reply_at = time.time()
-        await rt.request_response()
+        with trace_context(rt, "held_call"):
+            await rt.request_response()
         self.session.store.event("held_call_reply", requested=True, **fields)
 
     async def _announce_clock(self) -> None:

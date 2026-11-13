@@ -459,6 +459,7 @@ class CascadeSocket:
         self._emit({"type": "input_audio_buffer.cleared"})
 
     async def _on_input_audio_buffer_commit(self, ev: dict) -> None:
+        observe(self, "commit_entered", id(self))
         pcm = bytes(self._audio)
         self._audio.clear()
         if not pcm:
