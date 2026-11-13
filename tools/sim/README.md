@@ -217,6 +217,12 @@ It joins `commit_item_ids` and `release_commit_item_id` to their exact
 The coverage counts show traces without a timing row, timing rows without a
 trace, rejected schemas and unreferenced commits. Duplicate identities remain
 unjoined. Cancelled and failed replies retain their observed partial stages.
+Copied sessions are removed before the coarse and trace calculations. A known
+session ID identifies copies; anonymous exports use the event-file content
+hash. Different known session IDs stay separate, even with identical bytes.
+The copy with the most timing/trace events wins. Dropped source paths, the
+retained path and the reason appear in JSON and Markdown. Copied saved reports
+and repeated summary session IDs are also excluded.
 
 | Trace section | Meaning |
 |---|---|
@@ -224,6 +230,7 @@ unjoined. Cancelled and failed replies retain their observed partial stages.
 | `adapter_output` | That path through `first_output_emitted`. |
 | `client_audio` | Critical path through any transcript hold to `turn_timing.first_audio_to_client`. |
 | `played_ack` | Client path through `turn_timing.first_audio_played`. |
+| `felt_*` | The corresponding path rooted at `last_voiced_estimate`, with trailing VAD silence as an exposed step. These are sample-position estimates. |
 | `work` | Full generation, slot wait, connection and other observed spans. These spans can overlap. |
 | `commit_work` | STT and transcript decision spans, tied to their commit IDs. |
 | `overlap` | Intersections of generation, connection and STT spans. |
@@ -237,11 +244,22 @@ separate join at hold release. A different release commit does not inherit the
 reply's participant clock or STT history.
 
 Each group retains scenario, mode, family/model and the first, handoff and later
-labels from its matched timing row. A trace without that row keeps unavailable
-group labels as unknown. Each stage reports n, p50 and p90. Commit work counts
+labels from its matched timing row. Origin is a separate group field, so probe
+and replay work does not enter participant-commit work statistics. A trace
+without a timing row keeps unavailable group labels as unknown. Each stage
+reports n, p50 and p90. Commit work counts
 commit spans per reply; its n can exceed the reply count. Missing stamps stay
 missing. Each path reports an unexplained residual when a dependency is absent
 or has invalid order. Complete recorded paths have no unexplained time.
+
+Path-stage statistics exclude incomplete and clock-unverified paths. The n and
+quantiles describe replies where a stage is critical. `path_n` counts all
+complete paths. `critical_share` is critical n divided by path n.
+`mean_contribution_s` averages the stage's time across complete paths, with zero
+for replies where the stage is not critical. The Markdown table shows both
+values. Work and overlap statistics retain their own observed spans. A group
+also reports tied joins, counted once per response and join across all targets.
+Ties use a deterministic path choice; the count exposes this ambiguity.
 
 Do not add work, overlaps, readiness gaps and critical-path stages together.
 Readiness gaps describe observed waits. They do not predict an optimization's
@@ -249,8 +267,20 @@ gain. The legacy coarse split stays available for comparison and for untraced
 rows. Its missing-boundary list does not describe the stamps present in a trace.
 
 Trace stamps use monotonic elapsed time after attachment. Legacy client and
-playback stamps use wall elapsed time. Their combined tails require aligned
-encounter clocks. Reversed causal edges remain unexplained. Last voice is a
-sample-position estimate, and playback ACK remains an estimate of scheduling,
-not hearing. This trace covers the 1:1 cascade. Room routing, floor waits and
-browser receipt still need separate observations.
+playback stamps use wall elapsed time. Paired VAD marks estimate wall-minus-trace
+offset. The gateway/output pair is preferred for unheld replies because it is
+near the client send. Each session reports the median preferred offset and
+anchor spread. `commit_sent` is not an anchor: it can include an awaited wait.
+An offset or anchor disagreement above 5 ms marks the client and ACK paths
+`cross_clock_unverified` and excludes them from statistics. Smaller verified
+offsets are subtracted and recorded. A legacy-boundary reversal of at most
+1 ms is clamped to zero; the changed field and delta are recorded. Larger
+reversals stay invalid. Pure trace edges have no rounding tolerance.
+
+JSON keeps raw stamps, corrected stamps, offsets and clamps. Markdown shows
+clock status, offset and clamp count. A clock step after the last paired mark
+cannot be detected by these anchors alone. Last voice is a sample-position
+estimate. Its felt totals and exposed silence step appear beside the VAD-rooted
+totals in the Markdown summary. Playback ACK measures scheduling, not hearing.
+This trace covers the 1:1 cascade. Room routing, floor waits and browser receipt
+still need separate observations.

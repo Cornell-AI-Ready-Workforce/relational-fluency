@@ -660,3 +660,196 @@ def test_legacy_outputs_equal_complete_038fc3b_snapshots(tmp_path):
     check("saved_sim", root / "tools/sim/reports/1469925.json")
     (directory / "events.jsonl").unlink()
     check("record_only", directory / "record.json")
+
+
+@pytest.fixture
+def review_trace_cases():
+    """Exact hand-valued cases from the reviewer's offline probe."""
+    root = Path(__file__).resolve().parents[1]
+    return json.loads((root / "tests/fixtures/latency/review_trace_r1.json").read_text(encoding="utf-8"))
+
+
+def probe_trace(events, source="probe"):
+    from tools.sim import latency_trace
+    meta = {"scenario": "S1A", "mode": "1:1", "family": "cascade", "model": "cascade-x"}
+    legacy = [{"turn": 1, "encounter_reply": "first", "participant_reply": "first"}]
+    return latency_trace.session(events, source, meta, legacy)
+
+
+def test_f1_legacy_rounding_reversal_is_clamped_and_recorded(review_trace_cases):
+    row, = probe_trace(review_trace_cases["ms_rounding_reversal"])["rows"]
+    path = row["paths"]["client_audio"]
+    assert path["unexplained_s"] == 0 and not path["issues"]
+    assert path["cross_clock_clamped"] is True
+    assert row["clock_alignment"]["quantization_tolerance_s"] >= .001
+    clamp, = row["clock_alignment"]["clamps"]
+    assert clamp["delta_s"] == pytest.approx(.0001)
+    assert row["raw_stamps_s"]["first_audio_to_client"] == 11.7
+    assert sum(path["exposed_s"].values()) == pytest.approx(path["total_s"])
+
+
+@pytest.mark.parametrize("case,offset", [("wall_drift_plus_300ms", .3),
+    ("wall_drift_minus_50ms", -.05), ("page_turn_mismatch_vs_vad", 20)])
+def test_f2_large_clock_offsets_are_flagged_and_excluded(review_trace_cases, case, offset):
+    from tools.sim import latency_trace
+    section = probe_trace(review_trace_cases[case])
+    row, = section["rows"]
+    assert row["clock_offset_s"] == pytest.approx(offset)
+    assert row["clock_alignment"]["status"] == "cross_clock_unverified"
+    assert row["paths"]["client_audio"]["issues"] == ["cross_clock_unverified"]
+    assert not row["paths"]["provider_audio"]["issues"]
+    group, = latency_trace.combine([section])["groups"]
+    assert not any(s["section"] in ("client_audio", "played_ack") for s in group["stages"])
+
+
+def test_f2_small_offset_is_corrected_and_tail_anchor_is_preferred(review_trace_cases):
+    import copy
+    events = copy.deepcopy(review_trace_cases["normal"])
+    timing = next(e for e in events if e["type"] == "turn_timing")
+    for name in ("vad_speech_end", "first_audio_to_client", "first_audio_played"):
+        timing[name] += .002
+    timing["first_audio_from_gateway"] = 11.7021
+    row, = probe_trace(events)["rows"]
+    assert row["clock_offset_s"] == pytest.approx(.002)
+    assert row["clock_alignment"]["preferred_anchor"] == "gateway_output"
+    assert row["stamps_s"]["first_audio_to_client"] == pytest.approx(11.701)
+    assert row["paths"]["client_audio"]["total_s"] == pytest.approx(1.701)
+
+
+def test_f2_disagreeing_anchors_and_session_offsets_are_reported(review_trace_cases):
+    import copy
+    events = copy.deepcopy(review_trace_cases["normal"])
+    timing = next(e for e in events if e["type"] == "turn_timing")
+    timing["first_audio_from_gateway"] = 11.7201
+    row, = probe_trace(events)["rows"]
+    assert "anchor_disagreement" in row["clock_alignment"]["issues"]
+    assert row["clock_alignment"]["session_offset_s"] is not None
+    assert row["clock_alignment"]["status"] == "cross_clock_unverified"
+
+
+def test_f2_session_guard_excludes_locally_small_offset_when_other_rows_disagree(review_trace_cases):
+    import copy
+    events = copy.deepcopy(review_trace_cases["normal"])
+    later = copy.deepcopy(events)
+    for event in later:
+        if event["type"] == "reply_trace":
+            event.update(response_id="r2", page_turn=2, commit_item_ids=["c2"], participant_turn_id=2)
+        elif event["type"] == "commit_trace":
+            event.update(commit_item_id="c2", participant_turn_id=2)
+        else:
+            event["turn"] = 2
+            for key in ("vad_speech_end", "first_audio_to_client", "first_audio_played"):
+                event[key] += .3
+    section = probe_trace(events + later)
+    assert section["clock_session"]["clock_offset_s"] == pytest.approx(.15)
+    assert section["clock_session"]["verified"] is False
+    assert all(r["clock_alignment"]["status"] == "cross_clock_unverified" for r in section["rows"])
+
+
+def test_f1_reversal_above_rounding_unit_stays_invalid(review_trace_cases):
+    import copy
+    events = copy.deepcopy(review_trace_cases["normal"])
+    next(e for e in events if e["type"] == "turn_timing")["first_audio_to_client"] = 11.698
+    row, = probe_trace(events)["rows"]
+    assert not row["clock_alignment"]["clamps"]
+    assert "invalid_causal_edge:first_audio_to_client" in row["paths"]["client_audio"]["issues"]
+
+
+def test_f3_felt_total_includes_serial_silence_in_markdown(review_trace_cases):
+    from tools.sim import latency_trace
+    section = probe_trace(review_trace_cases["normal"])
+    row, = section["rows"]
+    vad, felt = (row["paths"][k] for k in ("provider_audio", "felt_provider_audio"))
+    assert vad["total_s"] == pytest.approx(1.7)
+    assert felt["total_s"] == pytest.approx(2.6)
+    assert felt["root_field"] == "last_voiced_estimate"
+    assert felt["estimate"] == "sample_position"
+    assert felt["exposed_s"]["estimated_trailing_silence"] == pytest.approx(.9)
+    text = latency_trace.markdown(latency_trace.combine([section]))
+    assert "felt_provider_audio (sample-position estimate) | total" in text
+    assert "2.600" in text and "estimated_trailing_silence" in text
+
+
+def test_f4_copied_session_is_deduplicated_before_both_sections(traced_session, tmp_path):
+    import shutil
+    directory = traced_session()
+    copy = tmp_path / "runtime/server-data/sessions" / directory.name
+    shutil.copytree(directory, copy)
+    one = latency.analyze_paths([directory])
+    both = latency.analyze_paths([tmp_path])
+    assert len(both["rows"]) == len(one["rows"]) == 1
+    assert both["trace"]["counts"] == one["trace"]["counts"]
+    assert len(both["duplicate_sources"]) == 1
+    assert both["duplicate_sources"][0]["session_id"] == directory.name
+    assert "Dropped duplicate source" in latency.markdown(both)
+
+
+def test_f4_anonymous_event_copies_use_content_hash(tmp_path):
+    events = [{"type": "session_start", "scenario": "S1A", "mode": "single"}, timing()]
+    text = "\n".join(json.dumps(e) for e in events)
+    for name in ("export-a", "export-b"):
+        directory = tmp_path / name
+        directory.mkdir()
+        (directory / "events.jsonl").write_text(text, encoding="utf-8", newline="")
+    report = latency.analyze_paths([tmp_path])
+    assert len(report["rows"]) == 1
+    assert report["duplicate_sources"][0]["reason"] == "duplicate_content_hash"
+
+
+def test_f5_only_complete_paths_contribute_with_zero_filled_means(review_trace_cases):
+    import copy
+    from tools.sim import latency_trace
+    normal = review_trace_cases["normal"]
+    slow = copy.deepcopy(normal)
+    reply = next(e for e in slow if e["type"] == "reply_trace")
+    reply["stages"].update(tts_connected=11.2, first_text_sent=11.2001, tts_first_audio=11.8, first_output_emitted=11.8001)
+    timing = next(e for e in slow if e["type"] == "turn_timing")
+    timing.update(first_audio_to_client=11.801, first_audio_played=11.85)
+    broken = copy.deepcopy(normal)
+    del next(e for e in broken if e["type"] == "reply_trace")["stages"]["first_content"]
+    group, = latency_trace.combine([probe_trace(e, str(i)) for i, e in enumerate((normal, slow, broken))])["groups"]
+    stages = {(s["section"], s["stage"]): s for s in group["stages"]}
+    connect = stages["provider_audio", "tts_connect"]
+    assert connect["n"] == 1 and connect["path_n"] == 2
+    assert connect["critical_share"] == .5
+    assert connect["mean_contribution_s"] == pytest.approx(1.1929 / 2)
+    assert stages["provider_audio", "text_to_provider_audio"]["n"] == 2
+    assert group["path_counts"]["provider_audio"]["incomplete"] == 1
+
+
+def test_f6_tied_joins_are_counted_once_and_shown(review_trace_cases):
+    from tools.sim import latency_trace
+    summary = latency_trace.combine([probe_trace(review_trace_cases["tie"])])
+    assert summary["groups"][0]["tied_joins"] == 1
+    assert "Tied joins" in latency_trace.markdown(summary)
+
+
+@pytest.mark.parametrize("field,value", [("participant", None), ("decision", "accepted")])
+def test_f7_bad_commit_shapes_do_not_stop_other_traces(review_trace_cases, field, value):
+    import copy
+    from tools.sim import latency_trace
+    broken = copy.deepcopy(review_trace_cases["normal"])
+    next(e for e in broken if e["type"] == "commit_trace")[field] = value
+    bad = probe_trace(broken, "bad")
+    good = probe_trace(review_trace_cases["normal"], "good")
+    combined = latency_trace.combine([bad, good])
+    assert combined["counts"]["unsupported"] == 1
+    assert combined["unsupported"][0]["reason"] == "invalid_trace_shape"
+    assert combined["counts"]["reply_traces"] == 2
+    assert len([r for r in combined["rows"] if r["paths"]["provider_audio"]["total_s"] is not None]) == 1
+
+
+def test_f8_non_participant_work_has_a_separate_origin_group(review_trace_cases):
+    import copy
+    from tools.sim import latency_trace
+    probe = copy.deepcopy(review_trace_cases["normal"])
+    for event in probe:
+        if event["type"] in ("reply_trace", "commit_trace"):
+            event["origin"] = "silence_probe"
+            event["participant_turn_id"] = None
+        if event["type"] == "commit_trace":
+            event["participant"] = {}
+    groups = latency_trace.combine([probe_trace(review_trace_cases["normal"], "participant"),
+                                    probe_trace(probe, "probe")])["groups"]
+    assert {g["origin"] for g in groups} == {"participant_commit", "silence_probe"}
+    assert all(g["reply_traces"] == 1 for g in groups)
