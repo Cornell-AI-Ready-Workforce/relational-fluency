@@ -215,6 +215,24 @@ Runtime errors still produce a report. A report directory must be fresh.
 Real Docker pytest checks run only with `RF_LOAD_DOCKER_TESTS=1`. Ordinary
 pytest skips them before any daemon access or image build.
 
+Ceiling-end smoke (also works with `--backend local`):
+
+```sh
+python -m tools.load.run --backend docker --gateway fake --ramp 1,2 \
+  --scenarios S2A --steps 'tone:1,cycle:a1|a2:15,tone:3' --encounter-seconds 15 \
+  --warmup 1 --webcam --report-dir /private/tmp/rf-load-ceiling-smoke
+```
+
+`--encounter-seconds` sets server ENCOUNTER_MIN_SECONDS=0, WRAP=80% of the
+requested ceiling, and MAX to the ceiling through the harness environment.
+It does not use the client `--duration` path. This diagnostic is INVALID for
+capacity and normally exits 2. Each timeline must have `completed=true`,
+`completion_reason="ceiling"`, no `duration_limit_reached`, and no server or
+generator errors. Close errors observed after completion remain in
+`post_complete_close`, including task, code/reason and sent/received close
+frames. Step metrics and the Markdown report retain these diagnostics; they
+do not fail the step. The same close before completion remains a server error.
+
 ```sh
 python -m tools.load.run --backend docker --gateway fake --isolation-only \
   --report-dir /private/tmp/rf-load-r1-isolation

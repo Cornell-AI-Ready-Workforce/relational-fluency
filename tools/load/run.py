@@ -53,6 +53,8 @@ def parse_args(argv=None):
     parser.add_argument("--scenarios", default=",".join(SCENARIOS))
     parser.add_argument("--arrival", type=arrival, default="burst", metavar="burst|stagger:<s>")
     parser.add_argument("--duration", type=positive, help="diagnostic time cap per encounter; shorter runs are INVALID for capacity")
+    parser.add_argument("--encounter-seconds", type=positive,
+                        help="diagnostic server ceiling; min=0, wrap=80%%; INVALID for capacity")
     parser.add_argument("--steps", help="custom sim sequence; requires one scenario")
     parser.add_argument("--warmup", type=float, default=30)
     parser.add_argument("--webcam", action="store_true")
@@ -136,6 +138,10 @@ def _write_report(directory, report):
                      f"{m['speech_end_to_first_played_s']['p90']} | {m['achieved_concurrency']:.2f} | "
                      f"{m['generator_loop_lag_ms']['p99']} | {rss / 1e6 if rss is not None else None} | "
                      + "; ".join(step["reasons"]) + " |")
+    for step in report.get("steps", []):
+        if step["metrics"].get("post_complete_close"):
+            lines.extend(["", f"Post-completion close diagnostics at N={step['concurrency']}: "
+                          f"{len(step['metrics']['post_complete_close'])}."])
     lines.extend(["", f"Capacity for the tested configuration on this host: {report.get('capacity_range', report.get('capacity'))}", ""])
     for ramp in report.get("ramps", []):
         if ramp.get("non_monotonic_warning"):
@@ -163,7 +169,7 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
     await asyncio.to_thread(log_tail.read)
     fake_before = await runtime.fake_stats()
     default_mix = set(args.scenarios) == set(SCENARIOS)
-    full_length = args.duration is None or args.duration >= ceiling
+    full_length = (args.duration is None or args.duration >= ceiling) and args.encounter_seconds is None
     settle_poller = SettlePoller(runtime)
 
     async def worker(index):
@@ -360,6 +366,8 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
         measurement_start=start + (n - 1) * args.arrival + args.warmup,
         measurement_end=measurement_end, close_burst_s=close_burst, artifact_bytes=sizes)
     metrics.update(encounter_count=max(len(participants), n), server_error_count=len(server_errors),
+                   post_complete_close=[{"session_id": p.tl.get("session_id"), **event}
+                                        for p in participants for event in p.tl.get("post_complete_close", [])],
                    server_errors_per_100_encounters=100 * len(server_errors) / max(len(participants), n),
                    unmatched_fragment=fake.get("unmatched_fragment", 0) - fake_before.get("unmatched_fragment", 0))
     result = {"concurrency": n, "repeat": repeat, "started": start, "ended": end,
@@ -386,7 +394,7 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                 stim.load(name)
         stim.room_tone(0)
     await asyncio.to_thread(preload)
-    ceiling = float(env.get("ENCOUNTER_MAX_SECONDS", "600"))
+    ceiling = args.encounter_seconds or float(env.get("ENCOUNTER_MAX_SECONDS", "600"))
     live_key = await asyncio.to_thread(load_key) if args.gateway == "live" else None
     factors = args.tts_factors or [config.tts_realtime_factor]
     report = {"rule": measure.RULE, "generated_at": stamp, "steps": [], "ramps": [], "capacity": None,
@@ -398,12 +406,14 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                                 "cpu_scale": args.cpu_scale, "tts_factors": factors,
                                 "continue_after_fail": args.continue_after_fail,
                                 "default_encounter_ceiling_s": ceiling, "backend": args.backend,
+                                "encounter_seconds": args.encounter_seconds,
                                 "scenario_order": "server Williams run" if set(args.scenarios) == set(SCENARIOS) else "rotating selected scenarios"}}
     for factor in factors:
         runtime = runtime_factory(directory / f"tts-{factor:g}", backend=args.backend, gateway=args.gateway, image=args.image,
                                   fake_config=replace(config, tts_realtime_factor=factor), live_key=live_key,
                                   live_url=args.live_url or env.get("LLM_BASE_URL"), cpu_scale=args.cpu_scale,
-                                  fargate_reference=args.fargate_reference, profile_image=args.profile_image)
+                                  fargate_reference=args.fargate_reference, profile_image=args.profile_image,
+                                  encounter_seconds=args.encounter_seconds)
         ramp = {"tts_realtime_factor": factor, "steps": [], "capacity": None}
         report["ramps"].append(ramp)
         try:

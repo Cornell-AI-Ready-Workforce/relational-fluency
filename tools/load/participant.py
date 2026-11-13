@@ -67,7 +67,8 @@ class Participant:
         self.tl = {"scenario": scenario, "steps": steps, "session_id": None,
                    "participant_id": None, "started": None, "ended": None,
                    "conversation_started": None, "hangup_requested": None,
-                   "completed": False, "lines": [], "error_frames": [],
+                   "completed": False, "completed_at": None, "completion_reason": None,
+                   "post_complete_close": [], "lines": [], "error_frames": [],
                    "server_errors": [], "generator_errors": [], "video_ticks": [],
                    "websocket_disconnects": 0, "unexpected_disconnect": False,
                    "video_chunks": 0, "replies_started": 0}
@@ -82,13 +83,42 @@ class Participant:
         self.last_activity = time.monotonic()
         self.session_ready = asyncio.Event()
         self.completed = asyncio.Event()
+        self._close_errors_seen = set()
+
+    def record_close(self, exc, task):
+        if exc in self._close_errors_seen:
+            return
+        self._close_errors_seen.add(exc)
+        if self.tl["completed"]:
+            def frame(value):
+                return None if value is None else {"code": value.code, "reason": value.reason}
+            self.tl["post_complete_close"].append({
+                "t": time.time(), "task": task, "exception": type(exc).__name__, "message": str(exc),
+                "code": getattr(self.ws, "close_code", None), "reason": getattr(self.ws, "close_reason", None),
+                "received": frame(exc.rcvd), "sent": frame(exc.sent),
+                "completed_at": self.tl["completed_at"],
+            })
+        else:
+            self.tl["server_errors"].append(type(exc).__name__ + ": " + str(exc))
+            self.tl["unexpected_disconnect"] = True
+
+    async def observe_close(self, coro, task):
+        try:
+            return await coro
+        except websockets.ConnectionClosed as exc:
+            # Capture the phase at the exception, before a done-callback can race
+            # a later encounter_complete frame.
+            self.record_close(exc, task)
+            raise
 
     def spawn(self, coro):
-        task = asyncio.create_task(coro)
+        task = asyncio.create_task(self.observe_close(coro, coro.__qualname__))
         self.pending.add(task)
         def finished(done):
             self.pending.discard(done)
-            if not done.cancelled() and done.exception():
+            if done.cancelled():
+                coro.close()
+            elif done.exception() and not isinstance(done.exception(), websockets.ConnectionClosed):
                 self.tl[error_side(done.exception())].append(type(done.exception()).__name__)
         task.add_done_callback(finished)
         return task
@@ -147,6 +177,8 @@ class Participant:
                 self.turn = None
             elif kind == "encounter_complete":
                 self.tl["completed"] = True
+                self.tl["completed_at"] = time.time()
+                self.tl["completion_reason"] = message.get("reason")
                 self.completed.set()
             elif kind == "error":
                 self.tl["error_frames"].append(str(message.get("message", ""))[:200])
@@ -294,17 +326,35 @@ class Participant:
                     raise ServerError("session frame timeout") from exc
                 if self.webcam:
                     self.spawn(self.video(http))
+                execution = asyncio.create_task(self.observe_close(self.execute(), "Participant.execute"))
+                completion = asyncio.create_task(self.completed.wait())
                 try:
-                    await asyncio.wait_for(self.execute(), self.duration_s)
-                except asyncio.TimeoutError:
-                    self.tl["duration_limit_reached"] = True
+                    finished, _ = await asyncio.wait({execution, completion}, timeout=self.duration_s,
+                                                     return_when=asyncio.FIRST_COMPLETED)
+                    if not finished:
+                        self.tl["duration_limit_reached"] = True
+                    if execution in finished:
+                        await execution
+                finally:
+                    for task in (execution, completion):
+                        task.cancel()
+                    await asyncio.gather(execution, completion, return_exceptions=True)
                 self.tl["hangup_requested"] = time.time()
                 self.active = False
+                # Stop producers first; keep the reader alive for the socket's
+                # close handshake when the connection context exits.
+                producers = [task for task in self.pending if task is not reader]
+                for task in producers:
+                    task.cancel()
+                await asyncio.gather(*producers, return_exceptions=True)
+            await asyncio.gather(reader, return_exceptions=True)
         except asyncio.CancelledError:
             self.tl["cancelled"] = True
             raise
         except Exception as exc:
-            if not self.tl["completed"]:
+            if isinstance(exc, websockets.ConnectionClosed):
+                self.record_close(exc, "Participant.run")
+            elif not self.tl["completed"]:
                 self.tl[error_side(exc)].append(type(exc).__name__ + ": " + str(exc)[:100])
                 self.tl["unexpected_disconnect"] = error_side(exc) == "server_errors"
         finally:

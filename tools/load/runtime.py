@@ -47,7 +47,7 @@ async def command(*args, timeout=120, check=True, **kwargs):
 
 
 def environment(*, gateway, fake_url, data_dir, key, live_key=None, live_url=None,
-                certificate=None, isolated=False, production=None):
+                certificate=None, isolated=False, production=None, encounter_seconds=None):
     """Apply harness overrides AFTER the checked-in task environment."""
     env = dict(production if production is not None else production_environment())
     if not env.get("REALTIME_MODEL", "").startswith("cascade"):
@@ -73,6 +73,9 @@ def environment(*, gateway, fake_url, data_dir, key, live_key=None, live_url=Non
     )
     if certificate:
         env["SSL_CERT_FILE"] = str(certificate)
+    if encounter_seconds is not None:
+        env.update(ENCOUNTER_MIN_SECONDS="0", ENCOUNTER_WRAP_SECONDS=str(encounter_seconds * 0.8),
+                   ENCOUNTER_MAX_SECONDS=str(encounter_seconds))
     return env
 
 
@@ -134,12 +137,14 @@ def folded_top20(text):
 
 class Runtime:
     def __init__(self, directory, *, backend="docker", gateway="fake", image=None,
-                 fake_config=None, live_key=None, live_url=None, cpu_scale=1.0, fargate_reference=None, profile_image=None):
+                 fake_config=None, live_key=None, live_url=None, cpu_scale=1.0, fargate_reference=None, profile_image=None,
+                 encounter_seconds=None):
         self.directory = Path(directory).resolve()
         self.data = self.directory / "server-data"
         self.backend, self.gateway, self.image = backend, gateway, image
         self.fake_config = fake_config or FakeConfig()
         self.live_key, self.live_url = live_key, live_url
+        self.encounter_seconds = encounter_seconds
         self.cpu_scale, self.fargate_reference, self.profile_image = cpu_scale, fargate_reference, profile_image
         self.metadata = {"storage_mount_type": "host directory" if backend == "local" else "Docker named volume",
                          "capacity_scope": "this host; no Fargate reference", "cpu_scale": cpu_scale}
@@ -341,7 +346,8 @@ class Runtime:
                 await asyncio.sleep(0.2)
         env = environment(gateway=self.gateway, fake_url="https://upstream:8443", data_dir="/data",
                           key=self.key, live_key=self.live_key, live_url=self.live_url,
-                          certificate="/load/ca-bundle.pem", isolated=self.gateway == "fake")
+                          certificate="/load/ca-bundle.pem", isolated=self.gateway == "fake",
+                          encounter_seconds=self.encounter_seconds)
         env_path = self.directory / "server.env"
         def write_env():
             if any("\n" in str(value) or "\r" in str(value) for value in env.values()):
@@ -399,7 +405,8 @@ class Runtime:
                            "--ssl-key", self.tls_key], "fake", env=inherited)
         await self._wait(self.fake_base + "/__load/stats", verify=self.fake_ssl)
         env = environment(gateway=self.gateway, fake_url=self.fake_base, data_dir=self.data,
-                          key=self.key, live_key=self.live_key, live_url=self.live_url, certificate=self.bundle)
+                          key=self.key, live_key=self.live_key, live_url=self.live_url, certificate=self.bundle,
+                          encounter_seconds=self.encounter_seconds)
         env.update(PORT=str(server_port), HOST="127.0.0.1")
         process = await self._spawn([sys.executable, "-m", "tools.load.server"], "server", env={**inherited, **env})
         self.server_pid = process.pid
