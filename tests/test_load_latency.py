@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import shutil
 
 import httpx
 import pytest
@@ -103,7 +104,7 @@ def test_cancelling_tts_connection_wait_never_accepts_socket(monkeypatch):
     class Wire:
         query_params = {"output_format": "pcm_24000", "model_id": "fake"}
         async def accept(self): raise AssertionError("cancelled handshake accepted")
-    app = fake.create_app(fast_config())
+    app = fake.create_app(fast_config(tts_connect_ms=fake.Distribution(1, 1)))
     endpoint = next(r.endpoint for r in app.routes if r.path == "/v1/text-to-dialogue/stream-input")
     async def exercise():
         nonlocal entered
@@ -151,10 +152,16 @@ def test_late_stt_request_can_be_cancelled(isolated_llm):
 
 def checkout(tmp_path):
     root = tmp_path / "sut"
-    (root / "server").mkdir(parents=True)
-    for name, body in {"__init__.py": "", "app.py": "", "reply_trace.py": "", "llm.py": "_FILE = {}\n",
-                       "upstream_telemetry.py": "def add_listener(callback): pass\n"}.items():
-        (root / "server" / name).write_text(body, encoding="utf-8")
+    # Exercise the real checked-in upstream seam, not a no-op telemetry stub.
+    # The small functional trace contract below is test data, not a merge of A6.
+    shutil.copytree(ROOT / "server", root / "server", ignore=shutil.ignore_patterns("__pycache__"))
+    (root / "server/reply_trace.py").write_text(
+        'class ReplyTrace:\n'
+        '    def __init__(self, store): self.store = store\n'
+        '    def flush(self):\n'
+        '        for kind in ("reply_trace", "commit_trace"):\n'
+        '            self.store.event(kind, schema_version=1, clock="encounter_s", units="seconds", finalized_at="encounter_teardown")\n',
+        encoding="utf-8")
     tf = root / "infra/terraform"
     tf.mkdir(parents=True)
     (tf / "ecs.tf").write_text('environment = [\n { name = "REALTIME_MODEL", value = "cascade-argon-elevenlabs" },\n'
@@ -200,7 +207,10 @@ def test_latency_mode_archives_raw_traces_counts_gateway_and_keeps_tts_fake(monk
             observed.append((self, kw))
         async def start(self):
             await super().start()
+            self.fake_connections = 0
             (self.data / "upstream-attempts.jsonl").write_text('{"upstream":"gateway","purpose":"preflight"}\n', encoding="utf-8")
+        async def fake_stats(self):
+            return {"errors": [], "counts": {"tts_ws": self.fake_connections}}
     async def step(rt, args, n, repeat, ceiling, **kw):
         assert not args.fail_fast and args.duration < args.encounter_seconds
         timelines = []
@@ -217,6 +227,9 @@ def test_latency_mode_archives_raw_traces_counts_gateway_and_keeps_tts_fake(monk
             for _ in range(6): fh.write('{"upstream":"gateway","purpose":"actor"}\n')
             fh.write('{"upstream":"gateway","purpose":"actor","detail":"slot_wait"}\n')
             fh.write('{"upstream":"elevenlabs","purpose":"tts"}\n')
+        rt.fake_connections += 1
+        with (rt.data / "tts-destinations.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write('{"allowed":true,"destination":["wss","fake",443,"/tts"]}\n')
         return {"timelines": timelines, "metrics": {"settled_artifacts": True},
                 "errors": [], "server_errors": [], "fake_errors": [], "live_stop": None}
     monkeypatch.setattr(run, "run_step", step)

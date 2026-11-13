@@ -25,18 +25,21 @@ def main():
         # Select server code before importing any server module. The harness
         # tools package remains the already loaded package from this checkout.
         root = Path(checkout).resolve()
-        if not (root / "server/app.py").is_file():
-            raise ValueError("selected server checkout has no server/app.py")
+        from tools.load.checkout import validate_checkout
+        validate_checkout(root)
         sys.path.insert(0, str(root))
         os.chdir(root)
     import dotenv
     # Production env was resolved first by the parent. Neither .env reader may
     # undo the fake endpoint overrides or import the operator's credentials.
     dotenv.load_dotenv = lambda *args, **kwargs: False
-    from server import llm, upstream_telemetry
-    llm._FILE.clear()
     data = Path(os.environ["DATA_DIR"])
     data.mkdir(parents=True, exist_ok=True)
+    if os.environ.get("RF_LOAD_FAKE_TTS_ONLY") == "1":
+        from tools.load.tts_proof import install_guard
+        install_guard(os.environ["ELEVENLABS_WS_URL"], data / "tts-destinations.jsonl")
+    from server import llm, upstream_telemetry
+    llm._FILE.clear()
     if os.environ.get("LOAD_REQUIRE_ISOLATION") == "1":
         from tools.load.isolation import egress_probe
         proof = egress_probe()

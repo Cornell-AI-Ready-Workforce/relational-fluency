@@ -11,12 +11,15 @@ import os
 from pathlib import Path
 import random
 import shutil
+import signal
 
 from tools.load import measure
 from tools.load.fake_upstream import load_config
 from tools.load.participant import Participant
 from tools.load import run
 from tools.load.runtime import ROOT, Runtime, command
+from tools.load.checkout import validate_checkout
+from tools.load.tts_proof import verify as verify_tts
 from tools.sim import sequences
 from tools.sim.serve import production_environment
 
@@ -48,11 +51,12 @@ def parse_args(argv=None):
         parser.error("positive participants/turns/slots required; participants must not exceed --max-concurrency")
     if args.gateway == "live" and not args.allow_live:
         parser.error("live gateway requires --allow-live")
-    if any(not (args.server_checkout / path).is_file() for path in
-           ("server/app.py", "server/reply_trace.py", "infra/terraform/ecs.tf")):
-        parser.error("server checkout must contain app.py, reply_trace.py and infra/terraform/ecs.tf")
-    if (args.report_dir / "report.json").exists():
-        parser.error("report directory already contains a run")
+    try:
+        validate_checkout(args.server_checkout, require_traces=True)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.report_dir.exists() and (not args.report_dir.is_dir() or any(args.report_dir.iterdir())):
+        parser.error("report directory must be fresh and empty (including abandoned runtime data)")
     return args
 
 
@@ -82,16 +86,21 @@ def archive_events(runtime, directory, timelines):
         rows = measure.JsonlTail(target).read()
         counts = Counter(row.get("type") for row in rows)
         valid = all(row.get("schema_version") == 1 and row.get("clock") == "encounter_s"
+                    and row.get("units") == "seconds"
                     and row.get("finalized_at") == "encounter_teardown"
                     for row in rows if row.get("type") in {"reply_trace", "commit_trace"})
         sessions.append({"session_id": sid, "scenario": timeline["scenario"],
                          "events": str(target.relative_to(directory)), "event_counts": dict(counts),
+                         "replies_started": timeline.get("replies_started", 0),
                          "trace_contract_valid": valid, "lines_sent": len(timeline.get("lines", []))})
     return sessions
 
 
 async def run_latency(args, *, runtime_factory=Runtime, participant_factory=Participant, key_loader=run.load_key):
+    validate_checkout(args.server_checkout, require_traces=True)
     directory = args.report_dir.resolve()
+    if directory.exists() and any(directory.iterdir()):
+        raise ValueError("report directory must be fresh and empty")
     directory.mkdir(parents=True, exist_ok=True)
     config = load_config(args.fake_config, profile=args.fake_tts_profile, seed=args.seed)
     production = production_environment(args.server_checkout / "infra/terraform")
@@ -115,10 +124,27 @@ async def run_latency(args, *, runtime_factory=Runtime, participant_factory=Part
                   "tts_slots_override": args.tts_slots,
                   "policy": "one encounter per participant per selected scenario; fresh participant state; shared local server; scripted hang-up after turns"},
               "steps": [], "sessions": [], "errors": [], "verdict": "INVALID"}
+
+    def live_guard(rows, phase):
+        if args.gateway != "live":
+            return None
+        guard = measure.LiveGuard()
+        for row in rows:
+            guard.observe(row, args.participants)
+        if guard.stopped:
+            report["live_stop"] = {**guard.stopped, "phase": phase}
+            return guard.stopped["reason"]
+        return None
+
     try:
         await runtime.start()
         report["host"] = runtime.metadata
         for index, scenario in enumerate(args.scenarios):
+            prior = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read()
+            if reason := live_guard(prior, "before scenario"):
+                await runtime.kill_server()
+                report["errors"].append("live safety stop: " + reason)
+                break
             step_args = run.parse_args(["--gateway", args.gateway, "--ramp", "1", "--scenarios", scenario,
                 "--encounters-per-participant", "1", "--warmup", "0", "--no-fail-fast", "--skip-smoke",
                 "--max-concurrency", str(args.max_concurrency)] + (["--allow-live"] if args.gateway == "live" else []))
@@ -147,11 +173,35 @@ async def run_latency(args, *, runtime_factory=Runtime, participant_factory=Part
             if not session["trace_contract_valid"] or any(not session["event_counts"].get(kind)
                     for kind in ("reply_trace", "commit_trace", "turn_timing")):
                 reasons.append(session["session_id"] + ": required teardown traces/turn timing missing or invalid")
+            if session["event_counts"].get("reply_trace", 0) < session["replies_started"]:
+                reasons.append(session["session_id"] + ": reply_trace records missing for observed replies")
         report["verdict"] = "FAIL" if reasons else "PASS"
+    except asyncio.CancelledError:
+        report["errors"].append("latency run interrupted; child cleanup requested")
     except (OSError, RuntimeError, ValueError) as exc:
         report["errors"].append(type(exc).__name__ + ": " + str(exc))
     finally:
-        await runtime.stop()
+        try:
+            # Stop new upstream work, retain the fake long enough to obtain an
+            # independent final count, then read the server's durable journal.
+            await runtime.kill_server()
+            attempts = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read()
+            if reason := live_guard(attempts, "run end"):
+                report["errors"].append("live safety stop: " + reason)
+                report["verdict"] = "FAIL"
+            fake = await runtime.fake_stats()
+            destinations = measure.JsonlTail(runtime.data / "tts-destinations.jsonl").read()
+            proof = report["tts_proof"] = verify_tts(fake.get("counts", {}).get("tts_ws", 0), attempts, destinations)
+            report["errors"].extend(proof["reasons"])
+            if not proof["passed"] and report["verdict"] == "PASS":
+                report["verdict"] = "FAIL"
+        except (OSError, RuntimeError, ValueError, AttributeError, asyncio.CancelledError) as exc:
+            report["errors"].append("TTS proof unavailable: " + type(exc).__name__)
+            report["tts_proof"] = {"passed": False}
+            if report["verdict"] == "PASS":
+                report["verdict"] = "FAIL"
+        finally:
+            await runtime.stop()
         attempts = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read()
         gateway = [row for row in attempts if row.get("upstream") == "gateway" and row.get("detail") != "slot_wait"]
         report["gateway_request_count"] = len(gateway)
@@ -160,14 +210,27 @@ async def run_latency(args, *, runtime_factory=Runtime, participant_factory=Part
         (directory / "report.md").write_text("# Gateway latency diagnostic\n\n" +
             f"Verdict: {report['verdict']}. Capacity eligible: false. Gateway requests: {len(gateway)}.\n\n" +
             "Configuration: " + json.dumps(report["configuration"]) + "\n\nServer: " + json.dumps(server) +
-            "\n\nSession events: " + json.dumps(report["sessions"]) + "\n\nErrors: " + json.dumps(report["errors"]) + "\n",
+            "\n\nSession events: " + json.dumps(report["sessions"]) + "\n\nTTS proof: " + json.dumps(report.get("tts_proof")) +
+            "\n\nErrors: " + json.dumps(report["errors"]) + "\n",
             encoding="utf-8")
+        print("Verdict: " + report["verdict"], flush=True)
         print(f"Gateway requests: {len(gateway)} (includes startup/preflight; excludes TTS and slot-only waits)", flush=True)
     return report, directory
 
 
+async def cli(args):
+    loop, task = asyncio.get_running_loop(), asyncio.current_task()
+    previous = signal.getsignal(signal.SIGTERM)
+    loop.add_signal_handler(signal.SIGTERM, lambda: task.cancel() if not task.cancelling() else None)
+    try:
+        return await run_latency(args)
+    finally:
+        loop.remove_signal_handler(signal.SIGTERM)
+        signal.signal(signal.SIGTERM, previous)
+
+
 def main(argv=None):
-    report, directory = asyncio.run(run_latency(parse_args(argv)))
+    report, directory = asyncio.run(cli(parse_args(argv)))
     print(directory / "report.json", flush=True)
     return 0 if report["verdict"] == "PASS" else 1
 

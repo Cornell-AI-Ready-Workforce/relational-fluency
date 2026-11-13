@@ -18,6 +18,7 @@ import time
 import httpx
 
 from tools.load.fake_upstream import FakeConfig
+from tools.load.checkout import validate_checkout
 from tools.load.calibrate import calibrate, compare
 from tools.load.inspect import settled as encounters_settled
 from tools.load.isolation import validate_topology
@@ -64,6 +65,7 @@ def environment(*, gateway, fake_url, data_dir, key, live_key=None, live_url=Non
         LITELLM_API_KEY=live_key if gateway == "live" else "load-only-gateway-key",
         ELEVENLABS_API_KEY="load-only-fake-tts-key", SESSION_KEY=key,
         STORAGE_PREFLIGHT="0", ARCHIVE_SESSIONS_TO_S3="0", LOOP_LAG_REPORT_S="5",
+        RF_LOAD_FAKE_TTS_ONLY="1",
         DATA_DIR=str(data_dir), HOST="0.0.0.0", PORT="8080",
         AWS_ACCESS_KEY_ID="load-only-synthetic-access", AWS_SECRET_ACCESS_KEY="load-only-synthetic-secret",
         AWS_SHARED_CREDENTIALS_FILE="/dev/null", AWS_CONFIG_FILE="/dev/null",
@@ -147,6 +149,8 @@ class Runtime:
         self.server_environment = dict(server_environment or {})
         if server_checkout and (backend != "local" or not (self.server_checkout / "server/app.py").is_file()):
             raise ValueError("server checkout requires the local backend and server/app.py")
+        if server_checkout:
+            validate_checkout(self.server_checkout)
         self.live_key, self.live_url = live_key, live_url
         self.encounter_seconds = encounter_seconds
         self.cpu_scale, self.fargate_reference, self.profile_image = cpu_scale, fargate_reference, profile_image
@@ -520,7 +524,11 @@ class Runtime:
             for process in self.processes:
                 if process.pid == self.server_pid and process.returncode is None:
                     process.terminate()
-                    await process.wait()
+                    try:
+                        await asyncio.wait_for(process.wait(), 5)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.wait()
 
     async def profile_available(self):
         if self.backend == "docker":

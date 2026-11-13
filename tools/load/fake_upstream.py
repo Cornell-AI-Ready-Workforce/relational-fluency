@@ -120,6 +120,9 @@ class FakeConfig:
     @classmethod
     def from_dict(cls, values):
         values = dict(values)
+        if "tts_profile" not in values and any(name in values for name in
+                ("tts_first_ms", "tts_words_per_minute", "tts_realtime_factor")):
+            values["tts_profile"] = "legacy"
         unknown = set(values) - set(cls.__dataclass_fields__)
         if unknown:
             raise ValueError("unknown fake configuration keys: " + ", ".join(sorted(unknown)))
@@ -370,7 +373,8 @@ def create_app(config=None, *, log_path=None):
     @app.websocket("/v1/text-to-dialogue/stream-input")
     async def tts(ws: WebSocket):
         failure = state.attempt("tts_ws")
-        await state.delay(config.tts_connect_ms)
+        if config.tts_connect_ms.high:
+            await state.delay(config.tts_connect_ms)
         if failure:
             await ws.send_denial_response(JSONResponse({"error": "injected"}, status_code=failure))
             return
@@ -388,7 +392,8 @@ def create_app(config=None, *, log_path=None):
             while True:
                 text = await pending.get()
                 if text is None:
-                    await state.delay(config.tts_close_ms)
+                    if config.tts_close_ms.high:
+                        await state.delay(config.tts_close_ms)
                     await ws.send_json({"is_final": True})
                     return
                 if first:

@@ -44,6 +44,11 @@ selects the earlier connect=0 ms, first audio=150–350 ms, 160 WPM, factor=2.0
 settings. JSON `tts_profile` also selects the base profile. Explicit JSON fields
 override profile defaults; an explicit CLI profile overrides the JSON profile
 name. Reports retain the resolved profile and all effective values.
+An archived JSON without `tts_profile` that sets first-audio delay, WPM or
+generation factor resolves to `legacy`, including its zero connect delay.
+Zero connect/close delays consume no extra random draws, preserving the old
+default legacy draw sequence for sequential reproductions. Scheduling still
+affects concurrent runs.
 
 STT accepts a single waveform anchor from the committed sim clips. Valid
 speech fragments without an anchor get a canned transcript whose word count
@@ -373,7 +378,7 @@ choice. Real Docker probe checks require `RF_LOAD_DOCKER_TESTS=1`.
 ## Reply-trace latency diagnostics
 
 ```sh
-python -m tools.load.latency --server-checkout /Users/haocheng/code/rf-a6 \
+python -m tools.load.latency --server-checkout "$RF_LATENCY_SERVER_CHECKOUT" \
   --gateway live --allow-live --participants 1 --scenarios S1A,S2A --turns 24 \
   --seed 20261112 --fake-tts-profile calibrated \
   --report-dir "$HOME/code/rf-load-runs/latency-a6"
@@ -387,6 +392,28 @@ The local backend imports server code and production configuration from
 selected checkout's `.env` readers before importing the server. The TTS URL
 always points to the local fake and the ElevenLabs key is synthetic. No real
 ElevenLabs request is required. This backend has no CPU cap or egress isolation.
+
+`RF_LATENCY_SERVER_CHECKOUT` must name the integration checkout that includes
+D3/D4/reply traces and the upstream seam (`f1fb333`, `317556f`). Pure rf-a6
+does not have the seam and is refused before a key is read or a child starts.
+The source preflight names missing telemetry API definitions, an
+`ELEVENLABS_WS_URL` configuration read, a `STORAGE_PREFLIGHT` configuration
+read, or the latency trace schema/header contract. The same seam check applies
+to any selected checkout passed directly to `Runtime`. It reads Python ASTs;
+it does not import or execute the selected server and does not build/merge the
+integration checkout.
+
+The server bootstrap guards modern/public/legacy WebSocket connect entry
+points before importing the selected server. Only the configured fake origin
+and path are allowed; queries are not logged. Wrong destinations are recorded
+and blocked before transport dispatch. At run end the server is stopped while
+the fake remains available. A positive fake-side TTS connection count must
+exactly match both the server's ElevenLabs attempt rows (excluding slot-only
+waits) and allowed destination records. Any blocked destination, zero count,
+unavailable proof or mismatch fails the diagnostic. Proof counters and reasons
+are saved in JSON/Markdown. This is a conservative proof: interrupted attempts
+that never reach the fake can make the diagnostic fail. It does not alter the
+frozen server telemetry interface or provide OS-level egress isolation.
 
 Each participant completes one scripted encounter per selected 1:1 scenario.
 `--turns` selects the number of committed synthetic lines, shuffled by the
@@ -410,6 +437,14 @@ excluding TTS and slot-only waits. The count comes from upstream-attempt
 telemetry; it is not a token or billing estimate. Server teardown must finish
 to preserve the buffered A6 traces. Playback is a byte-duration simulation;
 browser receipt, scheduling and clock telemetry remain outside this harness.
+The command also prints its verdict. Startup, between-scenario and final
+gateway attempts pass through the live safety guard. Reply traces must use
+`units: "seconds"`, and their count must cover observed assistant starts;
+session counts remain adjacent to sent-line and reply-start counts in reports.
+SIGTERM cancels the run, stops/reaps both children and writes the failed report.
+A nonempty report directory, including one left without report.json after an
+interrupted run, is refused. SIGKILL cannot run cleanup; inspect and stop any
+surviving processes before choosing a new directory.
 
 Fake-only parity settings can be supplied with `--fake-config` and
 `--gateway fake`. Live mode sends actor/STT work to the gateway, so these fake
