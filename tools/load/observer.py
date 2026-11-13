@@ -30,18 +30,18 @@ def main():
     tail = JsonlTail("/data/upstream-attempts.jsonl")
     due, previous = time.monotonic(), None
     while True:
-        for row in tail.read():
-            print(json.dumps({"kind": "attempt", "event": row}), flush=True)
-        if time.monotonic() >= due:
-            try:
+        try:
+            for row in tail.read():
+                print(json.dumps({"kind": "attempt", "event": row}), flush=True)
+            if time.monotonic() >= due:
                 sample = resource_sample()
                 sample["cpu_percent"] = (100 * (sample["usage_usec"] - previous["usage_usec"]) / 1e6
                                          / (sample["t"] - previous["t"])) if previous else None
                 previous = sample
                 print(json.dumps({"kind": "resource", "sample": sample}), flush=True)
-            except (OSError, ValueError, RuntimeError, KeyError) as exc:
-                print(json.dumps({"kind": "error", "detail": str(exc)}), flush=True)
-            due += 1.0
+                due += 1.0
+        except (OSError, ValueError, RuntimeError, KeyError) as exc:
+            print(json.dumps({"kind": "error", "detail": str(exc)}), flush=True)
         time.sleep(0.1)
 
 

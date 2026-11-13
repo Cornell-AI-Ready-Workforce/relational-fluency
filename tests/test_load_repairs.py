@@ -527,8 +527,8 @@ def test_f15_live_guard_keeps_watching_during_close_settle(monkeypatch, tmp_path
     monkeypatch.setattr(run.httpx, 'AsyncClient', lambda **kw: real_client(transport=httpx.MockTransport(
         lambda request: httpx.Response(307, headers={'location':'/v2?participant_id=p&run=r'})), **kw))
     rt = FakeRuntime(tmp_path)
-    async def never_settled(timelines): return False
-    rt.settled = never_settled
+    async def never_settled(session_ids): return set()
+    rt.settled_sessions = never_settled
     class Finished:
         def __init__(self, *args, **kwargs):
             self.active = False

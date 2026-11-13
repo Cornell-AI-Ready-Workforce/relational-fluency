@@ -27,6 +27,8 @@ class FakeRuntime:
     async def stop(self): self.stopped = True
     async def kill_server(self): self.killed = True
     async def settled(self, timelines): return True
+    async def settled_sessions(self, session_ids): return set(session_ids)
+    def observer_telemetry(self): return {"failure": None, "monitored": False, "malformed_lines": 0}
     async def export(self, timelines): pass
     async def profile_available(self): return False
     async def resources(self): return {"t": time.time(), "cpu_percent": 5, "rss_bytes": 1000}
@@ -178,8 +180,6 @@ def test_default_workers_follow_server_williams_order_reuse_identity_and_advance
     monkeypatch.setattr(run.httpx, "AsyncClient", lambda **kwargs: real_client(
         transport=httpx.MockTransport(http), **kwargs))
     monkeypatch.setattr(run, "read_encounters", lambda *args: ({}, {}, True))
-    async def closed(*args): return True
-    monkeypatch.setattr(run, "_closed", closed)
     instance = FakeRuntime(tmp_path)
     class FinishedParticipant:
         def __init__(self, base, scenario, steps, **kwargs):

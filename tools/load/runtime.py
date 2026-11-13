@@ -144,6 +144,9 @@ class Runtime:
         self.metadata = {"storage_mount_type": "host directory" if backend == "local" else "Docker named volume",
                          "capacity_scope": "this host; no Fargate reference", "cpu_scale": cpu_scale}
         self.resource_rows, self.observer_errors = [], []
+        self.observer_log_task = None
+        self.observer_last_output = None
+        self.observer_malformed_lines = 0
         self.volume_created = False
         self.key = secrets.token_hex(20)
         self.prefix = "rf-load-" + secrets.token_hex(5)
@@ -182,16 +185,27 @@ class Runtime:
         while line := await stream.readline():
             row = {"t": time.time(), "line": line.decode("utf-8", "replace").rstrip()}
             if source == "observer":
-                event = json.loads(row["line"])
-                if event["kind"] == "resource":
-                    self.resource_rows.append(event["sample"])
-                elif event["kind"] == "error":
-                    self.observer_errors.append(event["detail"])
-                elif event["kind"] == "attempt":
-                    def write_attempt():
-                        with (self.data / "upstream-attempts.jsonl").open("a", encoding="utf-8") as fh:
-                            fh.write(json.dumps(event["event"]) + "\n")
-                    await asyncio.to_thread(write_attempt)
+                self.observer_last_output = time.monotonic()
+                try:
+                    event = json.loads(row["line"])
+                    kind = event["kind"]
+                    field = {"resource": "sample", "error": "detail", "attempt": "event"}[kind]
+                    value = event[field]
+                    if not isinstance(value, str if kind == "error" else dict):
+                        raise ValueError("invalid observer payload")
+                except (ValueError, KeyError, TypeError):
+                    self.observer_malformed_lines += 1
+                    self.observer_errors.append("malformed observer line")
+                else:
+                    if kind == "resource":
+                        self.resource_rows.append(value)
+                    elif kind == "error":
+                        self.observer_errors.append(value)
+                    else:
+                        def write_attempt():
+                            with (self.data / "upstream-attempts.jsonl").open("a", encoding="utf-8") as fh:
+                                fh.write(json.dumps(value) + "\n")
+                        await asyncio.to_thread(write_attempt)
             def append():
                 with path.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(row) + "\n")
@@ -201,8 +215,29 @@ class Runtime:
         process = await asyncio.create_subprocess_exec(*map(str, args), cwd=ROOT, env=env,
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         self.processes.append(process)
-        self.tasks.append(asyncio.create_task(self._log(process.stdout, source)))
+        task = asyncio.create_task(self._log(process.stdout, source))
+        self.tasks.append(task)
+        if source == "observer":
+            self.observer_log_task = task
+            self.observer_last_output = time.monotonic()
         return process
+
+    def observer_telemetry(self):
+        """Health of the stdout-to-attempt-file path, independent of request traffic."""
+        monitored = self.backend == "docker"
+        age = time.monotonic() - self.observer_last_output if self.observer_last_output is not None else None
+        ended = self.observer_log_task is None or self.observer_log_task.done()
+        failure = None
+        if monitored:
+            if self.observer_errors:
+                failure = "observer error: " + self.observer_errors[-1]
+            elif ended:
+                failure = "observer log task ended"
+            elif age is None or age > 2:
+                failure = "observer output stale for more than 2 s"
+        return {"failure": failure, "monitored": monitored, "output_age_s": age,
+                "log_task_ended": ended, "malformed_lines": self.observer_malformed_lines,
+                "errors": list(self.observer_errors)}
 
     async def _wait(self, url, *, verify=True, deadline_s=60):
         deadline = time.monotonic() + deadline_s
@@ -417,6 +452,15 @@ class Runtime:
             _, output, _ = await command("docker", "exec", self.observer_name, "python", "-m", "tools.load.inspect", "settled", *ids)
             return json.loads(output)["settled"]
         return await asyncio.to_thread(encounters_settled, self.data, ids)
+
+    async def settled_sessions(self, session_ids):
+        """One container exec returns independent close results for the whole batch."""
+        if self.backend == "docker":
+            _, output, _ = await command("docker", "exec", self.observer_name, "python", "-m",
+                                         "tools.load.inspect", "settled-sessions", *session_ids)
+            return set(json.loads(output)["settled_sessions"])
+        return await asyncio.to_thread(lambda: {sid for sid in session_ids
+                                               if encounters_settled(self.data, [sid])})
 
     async def export(self, timelines):
         if self.backend == "docker" and timelines:

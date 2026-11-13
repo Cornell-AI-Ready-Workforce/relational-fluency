@@ -164,7 +164,9 @@ destinations for `api.elevenlabs.io`, the production gateway host and
 fail. Resource and profile sidecars use `--network none`.
 
 SUT storage uses a Docker named volume. Close polling reads only manifests
-and mix existence through the observer. `docker cp` exports encounter results
+and mix existence through the observer. One shared poller batches all pending
+session IDs in one exec, with at least 0.5 s between polls. Workers await their
+own session's result. `docker cp` exports encounter results
 after each step, before deleting the volume. This does not model EFS latency.
 The fake mounts only its cert, key, fake config and a read-only source-code
 snapshot with the sim stimuli. The snapshot excludes reports and run data.
@@ -197,6 +199,10 @@ Docker network for gateway egress and has no fake-mode isolation claim.
 The 100 ms telemetry watcher kills the server before cancelling participants
 or waiting for close. It stops on the first gateway 429 or gateway-only attempt
 error rate > 5%. Fake TTS and slot-wait-only rows never dilute that denominator.
+It also stops if observer output is stale for more than two seconds, the
+observer log task ends, or the observer reports an error. Malformed observer
+lines are counted and retained in the log; the live stop records the cause
+and observer status. Each step reports `observer_telemetry` diagnostics.
 Route, purpose, concurrency and counts are saved. Late attempts and startup
 attempts also pass through the guard. Tests use mocks only.
 

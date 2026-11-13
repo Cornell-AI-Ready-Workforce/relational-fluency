@@ -18,6 +18,7 @@ from tools.load import measure
 from tools.load.fake_upstream import FakeConfig
 from tools.load.participant import Participant, ServerError, error_side, full_sequence, open_identity
 from tools.load.runtime import ROOT, Runtime, RuntimeUnavailable, read_encounters
+from tools.load.settle import SettlePollError, SettlePoller
 from tools.sim import sequences, stim
 from tools.sim.serve import production_environment
 
@@ -149,15 +150,6 @@ def _write_report(directory, report):
     (directory / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-async def _closed(runtime, sid, timeout):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if await runtime.settled([{"session_id": sid}]):
-            return True
-        await asyncio.sleep(0.25)
-    return False
-
-
 async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Participant, profile_only=False):
     start = time.time()
     directory = runtime.directory / (f"N{n}-profile-only" if profile_only else f"N{n}-repeat{repeat}")
@@ -172,6 +164,7 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
     fake_before = await runtime.fake_stats()
     default_mix = set(args.scenarios) == set(SCENARIOS)
     full_length = args.duration is None or args.duration >= ceiling
+    settle_poller = SettlePoller(runtime)
 
     async def worker(index):
         await asyncio.sleep(index * args.arrival)
@@ -202,7 +195,7 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
                         server_errors.append("encounter did not reach encounter_complete")
                     break
                 if default_mix:
-                    if not await _closed(runtime, timeline["session_id"], args.close_timeout):
+                    if not await settle_poller.wait(timeline["session_id"], args.close_timeout):
                         raise ServerError("session/mix close timeout before run advancement")
                     response = await http.post(runtime.base + f"/api/run/{run_id}/advance",
                                                params={"session_id": timeline["session_id"], "key": runtime.key})
@@ -215,8 +208,24 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
         await runtime.kill_server()
         stopped.set()
 
+    async def check_observer():
+        if args.gateway != "live":
+            return False
+        status = runtime.observer_telemetry()
+        if not status["failure"]:
+            return False
+        if guard.stopped is None:
+            guard.stopped = {"reason": "attempt telemetry unavailable", "detail": status["failure"],
+                             "observer": status, "concurrency": sum(p.active for p in participants),
+                             "t": time.time()}
+        if not stopped.is_set():
+            await kill_and_stop()
+        return True
+
     async def watch_attempts():
         while not attempts_done.is_set():
+            if await check_observer():
+                return
             try:
                 rows = await asyncio.to_thread(attempt_tail.read)
             except (OSError, ValueError) as exc:
@@ -264,7 +273,9 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
     workers = [asyncio.create_task(worker(index)) for index in range(n)]
     async def workers_done():
         for result in await asyncio.gather(*workers, return_exceptions=True):
-            if isinstance(result, Exception):
+            if isinstance(result, SettlePollError):
+                measurement_errors.append("settle polling: " + str(result))
+            elif isinstance(result, Exception):
                 (server_errors if error_side(result) == "server_errors" else errors).append(
                     "participant worker: " + type(result).__name__ + ": " + str(result)[:100])
     all_workers = asyncio.create_task(workers_done())
@@ -288,18 +299,30 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
     measurement_end = min(finished, default=time.time())
     last_hangup = max((t.get("hangup_requested") or measurement_end for t in timelines), default=measurement_end)
     settled, close_burst = False, None
+    close_waiter = close_stop = None
     try:
+        await check_observer()
         if timelines and not stopped.is_set():
-            deadline = time.monotonic() + args.close_timeout
-            while time.monotonic() < deadline and not stopped.is_set():
-                if await runtime.settled(timelines):
-                    settled = True
+            close_waiter = asyncio.gather(*(settle_poller.wait(sid, args.close_timeout)
+                for sid in dict.fromkeys(t["session_id"] for t in timelines)), return_exceptions=True)
+            close_stop = asyncio.create_task(stopped.wait())
+            await asyncio.wait({close_waiter, close_stop}, return_when=asyncio.FIRST_COMPLETED)
+            if close_waiter.done():
+                results = close_waiter.result()
+                poll_errors = [str(result) for result in results if isinstance(result, Exception)]
+                measurement_errors.extend("settle polling: " + error for error in poll_errors)
+                settled = all(result is True for result in results)
+                if settled:
                     close_burst = max(0, time.time() - last_hangup)
-                    break
-                await asyncio.sleep(0.25)
-            if not settled and not stopped.is_set():
-                server_errors.append("session/mix close timeout")
+                elif not poll_errors and not stopped.is_set():
+                    server_errors.append("session/mix close timeout")
+            await check_observer()
     finally:
+        for task in (close_waiter, close_stop):
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(*(task for task in (close_waiter, close_stop) if task is not None), return_exceptions=True)
+        await settle_poller.close()
         attempts_done.set()
         watchers[0].cancel()
         await asyncio.gather(watchers[0], return_exceptions=True)
@@ -344,6 +367,7 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
               "measurement_errors": measurement_errors,
               "fake_errors": fake["errors"][len(fake_before["errors"]):], "full_length": full_length,
               "live_stop": guard.stopped, "profile": profile_result, "profile_only": profile_only}
+    result["observer_telemetry"] = runtime.observer_telemetry()
     await asyncio.to_thread((directory / "timelines.json").write_text, json.dumps(timelines, indent=2), encoding="utf-8")
     return result
 
