@@ -19,7 +19,6 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from tools.sim import stim
-from tools.sim.serve import production_environment
 
 
 @dataclass
@@ -46,10 +45,14 @@ class FakeConfig:
     token_ms: Distribution = field(default_factory=lambda: Distribution(25, 55))
     messages_ms: Distribution = field(default_factory=lambda: Distribution(300, 900))
     tts_first_ms: Distribution = field(default_factory=lambda: Distribution(150, 350))
-    reply_words: Distribution = field(default_factory=lambda: Distribution(25, 55))
+    reply_words: Distribution = field(default_factory=lambda: Distribution(15, 35))
     tts_words_per_minute: float = 160.0
+    tts_realtime_factor: float = 2.0
+    second_speaker_probability: float = 0.25
+    tool_call_probability: float = 0.01
     audio_chunk_ms: int = 100
     tool_call_every: int = 0
+    model_ids: list[str] = field(default_factory=list)
     # Route -> statuses consumed in order, e.g. {"tts_ws": [409, 429]}.
     failures: dict[str, list[int]] = field(default_factory=dict)
 
@@ -60,6 +63,11 @@ class FakeConfig:
         if (self.reply_words.low < 1 or not isinstance(self.tool_call_every, int)
                 or self.tool_call_every < 0):
             raise ValueError("positive reply size and nonnegative tool frequency required")
+        if not math.isfinite(self.tts_realtime_factor) or self.tts_realtime_factor <= 0:
+            raise ValueError("positive finite TTS realtime factor required")
+        if any(not math.isfinite(p) or not 0 <= p <= 1 for p in
+               (self.second_speaker_probability, self.tool_call_probability)):
+            raise ValueError("speaker/tool probabilities must be in 0..1")
         allowed = {"models", "stt", "actor", "messages", "tts_ws"}
         if set(self.failures) - allowed or any(
                 not isinstance(status, int) or not 400 <= status <= 599
@@ -86,6 +94,7 @@ class StimulusMatcher:
     Ordered occurrences also handle resume/burst steps and repeated lines.
     """
     def __init__(self):
+        self.unmatched_fragments = 0
         self.templates = []
         for name, (_, text) in stim.lines().items():
             pcm = stim.load(name)
@@ -115,10 +124,15 @@ class StimulusMatcher:
                     origins[origin] = origins.get(origin, 0) + 1
                     at = pcm.find(anchor, at + 2)
             for origin, count in origins.items():
-                if count >= min(2, len(anchors)):
+                if count >= 1:
                     hits.append((origin, name, text))
         if not hits:
-            raise ValueError("speech does not match a committed stimulus waveform")
+            self.unmatched_fragments += 1
+            # VAD can cut any valid clip between anchors. Preserve approximate
+            # workload size; an ASR miss is not malformed wire protocol.
+            count = max(1, round(len(pcm) / 32000 * 160 / 60))
+            words = "I would like us to agree on a practical next step".split()
+            return " ".join((words * (count // len(words) + 1))[:count])
         return " ".join(text for _, _, text in sorted(hits))
 
 
@@ -181,6 +195,7 @@ def create_app(config=None, *, log_path=None):
     @app.get("/__load/stats")
     async def stats():
         return {"counts": state.counts, "errors": state.errors, "protocol": state.protocol,
+                "unmatched_fragment": state.matcher.unmatched_fragments if state.matcher else 0,
                 "config": asdict(config)}
 
     @app.get("/v1/models")
@@ -189,8 +204,7 @@ def create_app(config=None, *, log_path=None):
         if failure:
             return JSONResponse({"error": "injected"}, status_code=failure)
         await state.delay(config.models_ms)
-        env = production_environment()
-        ids = {value for key, value in env.items() if "MODEL" in key}
+        ids = set(config.model_ids)
         ids.update({"nto.gemini-4-argon", "nto.gemini-3.5-flash-lite",
                     "nto.gemini-live-2.5-flash-native-audio"})
         return {"object": "list", "data": [{"id": name, "object": "model"} for name in sorted(ids)]}
@@ -224,7 +238,9 @@ def create_app(config=None, *, log_path=None):
             for word in text.split():
                 yield "data: " + json.dumps({"choices": [{"delta": {"content": word + " "}}]}) + "\n\n"
                 await state.delay(config.token_ms)
-            if config.tool_call_every and request_number % config.tool_call_every == 0 and body.get("tools"):
+            tool_due = (request_number % config.tool_call_every == 0 if config.tool_call_every
+                        else state.rng.random() < config.tool_call_probability)
+            if tool_due and body.get("tools"):
                 tool = body["tools"][0]
                 name = (tool.get("function") or tool)["name"]
                 for delta in (
@@ -247,7 +263,11 @@ def create_app(config=None, *, log_path=None):
             if not ids or tool not in {"set_speakers", "adjust_persona"}:
                 raise ValueError("messages requires actual cast IDs and a known tool")
             chosen = ids[(state.counts["messages"] - 1) % len(ids)]
-            data = ({"speakers": [{"agent_id": chosen, "intent": "Ask for the next concrete step."}],
+            speakers = [{"agent_id": chosen, "intent": "Ask for the next concrete step."}]
+            if tool == "set_speakers" and len(ids) > 1 and state.rng.random() < config.second_speaker_probability:
+                second = ids[(ids.index(chosen) + 1) % len(ids)]
+                speakers.append({"agent_id": second, "intent": "Follow up on the next step."})
+            data = ({"speakers": speakers,
                      "rationale": "Continue the discussion."} if tool == "set_speakers" else
                     {"adjustments": ([{"agent_id": chosen, "knob": "warmth", "level": "mid",
                                       "reason": "The participant asked for a clear next step."}]
@@ -293,7 +313,7 @@ def create_app(config=None, *, log_path=None):
                         round(1200 * math.sin(2 * math.pi * 220 * (offset + i) / 24000)) for i in range(n)))
                     await ws.send_json({"audio": base64.b64encode(pcm).decode("ascii")})
                     state.protocol["audio_chunks"] += 1
-                    await asyncio.sleep(n / 24000)
+                    await asyncio.sleep(n / 24000 / config.tts_realtime_factor)
 
         worker = asyncio.create_task(audio())
         try:

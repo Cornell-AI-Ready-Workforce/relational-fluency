@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from pathlib import Path
 import shutil
 import ssl
@@ -50,19 +51,19 @@ def test_environment_overrides_production_last_and_never_uses_real_tts_or_aws():
     assert live["ELEVENLABS_API_KEY"] == env["ELEVENLABS_API_KEY"]
 
 
-def test_egress_proof_requires_every_connect_to_fail_and_exactly_two_members():
+def test_egress_proof_requires_every_connect_to_fail_and_exactly_three_members():
     def blocked(*args, **kwargs):
         raise OSError("network unreachable")
-    assert isolation.egress_probe(blocked)["passed"]
+    assert isolation.egress_probe(blocked, lambda *a, **kw: [], "gateway.example")["passed"]
     class Reachable:
         def __enter__(self): return self
         def __exit__(self, *args): pass
-    assert not isolation.egress_probe(lambda *a, **kw: Reachable())["passed"]
-    network = {"Internal": True, "Id": "n", "Containers": {"server": {}, "fake": {}}}
+    assert not isolation.egress_probe(lambda *a, **kw: Reachable(), lambda *a, **kw: [], "gateway.example")["passed"]
+    network = {"Internal": True, "Id": "n", "Containers": {"server": {}, "fake": {}, "relay": {}}}
     server = {"NetworkSettings": {"Networks": {"n": {"NetworkID": "n"}}}}
-    assert isolation.validate_topology(network, server, {"server", "fake"})
+    assert isolation.validate_topology(network, server, {"server", "fake", "relay"})
     network["Containers"]["extra"] = {}
-    assert not isolation.validate_topology(network, server, {"server", "fake"})
+    assert not isolation.validate_topology(network, server, {"server", "fake", "relay"})
 
 
 def test_docker_plan_uses_repo_image_internal_network_caps_and_synthetic_env(monkeypatch, tmp_path):
@@ -74,12 +75,19 @@ def test_docker_plan_uses_repo_image_internal_network_caps_and_synthetic_env(mon
 
     async def command(*args, **kwargs):
         calls.append(tuple(map(str, args)))
+        if args[:2] == ("docker", "info"):
+            return 0, json.dumps({"Architecture": "aarch64", "NCPU": 4}), ""
+        if "tools.load.calibrate" in args:
+            return 0, json.dumps({"version": "test", "frames_per_second": 100}), ""
+        if "tools.load.inspect" in args:
+            return 0, '{"errors": []}', ""
         if args[:2] == ("docker", "run"):
             if "--env-file" in args:
                 path = Path(args[args.index("--env-file") + 1])
                 captured_env.update(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines())
             return 0, "server-id" if instance.server_name in args else "fake-id", ""
         if args[:2] == ("docker", "port"):
+            assert args[2:] == (instance.relay_name, "8080/tcp")
             return 0, "127.0.0.1:12345", ""
         if args[:3] == ("git", "rev-parse", "--short"):
             return 0, "f1fb333", ""
@@ -99,6 +107,14 @@ def test_docker_plan_uses_repo_image_internal_network_caps_and_synthetic_env(mon
     server = servers[0]
     assert server[server.index("--cpus") + 1] == "0.5" and server[server.index("--memory") + 1] == "1g"
     assert server.count("--network") == 1
+    assert "-p" not in server and "SYS_PTRACE" not in server and "seccomp=unconfined" not in server
+    fake = next(c for c in calls if c[:2] == ("docker", "run") and instance.fake_name in c)
+    assert "-p" not in fake
+    relay = next(c for c in calls if c[:2] == ("docker", "run") and instance.relay_name in c)
+    assert relay[relay.index("--network") + 1] == "bridge"
+    assert relay[relay.index("-p") + 1] == "127.0.0.1::8080"
+    assert any(c[:3] == ("docker", "network", "connect") and instance.relay_name in c for c in calls)
+    assert all(c[2] == instance.relay_name for c in calls if c[:2] == ("docker", "port"))
     assert captured_env["LLM_BASE_URL"] == "https://upstream:8443"
     assert captured_env["LOAD_REQUIRE_ISOLATION"] == "1"
     assert not (tmp_path / "server.env").exists()
@@ -123,6 +139,8 @@ def test_fake_tls_bundle_keeps_public_roots(tmp_path):
 
 def test_docker_isolation_blocks_public_egress(tmp_path):
     """Real Docker test; no skipped proof is reported as a successful run."""
+    if os.getenv("RF_LOAD_DOCKER_TESTS") != "1":
+        pytest.skip("real Docker test requires RF_LOAD_DOCKER_TESTS=1")
     if not shutil.which("docker"):
         pytest.skip("Docker CLI is absent; run the Track B isolation smoke command")
     info = subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], capture_output=True,

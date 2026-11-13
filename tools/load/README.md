@@ -1,172 +1,229 @@
 # Load harness
 
 ```sh
-python -m tools.load.run --gateway fake --ramp 1,5,10,20,30 --repeat 3
+python -m tools.load.run --gateway fake --ramp 1,5,10,20,30 --repeat 1 --tts-factors 1.0,3.0
 ```
 
-The default uses one server from the repository Dockerfile, capped at 0.5 CPU
-and 1 GiB. Each logical participant follows the server-assigned S1A–S4A
-Williams order, using the same internal participant identity and HTTP cookie
-jar across four full encounters. Run advancement uses the page's API. The
-N=1 baseline therefore includes every scenario. Each encounter uses the
-committed sim sequence and extends shorter sequences with their own stimulus
-lines until the encounter completes. The default ceiling is production's
-600 seconds per encounter. A default step can take about forty minutes.
+One server uses the repository Dockerfile, a 0.5 host CPU quota and 1 GiB of
+memory. This is a host measurement, not a Fargate capacity estimate. Each
+logical participant follows the server-assigned S1A–S4A Williams order. It
+keeps the same identity and HTTP cookies across four full encounters and uses
+the page's run-advance API. Sim sequences extend with their own stimulus
+lines until the encounter completes. Production's default encounter ceiling
+is 600 seconds. Four encounters take about 40 minutes per step.
 
-`--scenarios S2A` restricts the workload to one scenario. Selected subsets use
-a rotating order and do not advance the full four-scenario study run.
-`--arrival burst` starts participants together; `--arrival stagger:2` spaces
-them two seconds apart. `--webcam` sends 150,000 opaque synthetic WebM bytes
-every two seconds to `/api/sessions/{id}/video-chunk`, with owner and sequence.
-This exercises upload/storage cost, not browser video encoding or decoding.
+`--scenarios S2A` selects one scenario. A subset rotates the selected IDs
+without advancing the full study run. `--arrival burst` starts participants
+together. `--arrival stagger:2` spaces arrivals by two seconds. `--repeat K`
+runs each N K times. Each TTS factor gets a fresh runtime and its own pooled
+N=1 baseline. `--continue-after-fail` continues to higher N after a FAIL.
+The default stops at the first failed repeat and starts no further repeats or Ns.
+
+`--webcam` queues 150,000 synthetic WebM bytes on absolute two-second ticks.
+Uploads use `/api/sessions/{id}/video-chunk`, participant ownership and ordered
+sequence numbers. A slow upload does not delay chunk creation. A failed
+upload remains at the queue head and retries on a later tick. Upload errors
+count as server errors. This measures upload/storage work, not video encoding.
 
 `--steps 'tone:1,cycle:a1|a2:45' --scenarios S2A --duration 45 --warmup 5`
-is a short diagnostic. It exercises the protocols but receives INVALID for
-capacity. Full runs wait for `encounter_complete`. A failed generator or a
-missing required measurement cannot receive PASS.
+is a diagnostic. Short encounters are INVALID for capacity. Full runs require
+`encounter_complete` and wait for closed manifests and rendered mixes.
 
 ## Fake upstream
 
-The fake implements `/v1/models`, ordinary and SSE `/v1/chat/completions`,
-Anthropic `/v1/messages`, and the ElevenLabs dialogue websocket. The Docker
-mode uses HTTPS/WSS with an ephemeral certificate. The platform trusts that
-certificate plus the public roots, so the explicit live-gateway mode can also
-use HTTPS. The fake TTS key is synthetic in both modes.
+Routes: GET `/v1/models`; POST `/v1/chat/completions` as STT JSON or actor SSE;
+POST `/v1/messages` as director/steering tool responses; ElevenLabs WSS
+`/v1/text-to-dialogue/stream-input`. HTTPS/WSS uses an ephemeral certificate.
+The server trusts it plus public roots for explicitly enabled live mode.
+TTS always uses a synthetic key and the fake.
 
-STT matches exact waveform anchors from `tools/sim/stim/*.ulaw` and returns
-their committed transcripts. It handles leading/trailing quiet and joined
-utterances. Unknown speech fails the fake protocol check instead of returning
-a convenient canned transcript. Director choices come from the actual cast
-IDs in the request. Steering returns a valid adjustment on every fourth review
-and no change otherwise. Actor SSE includes text, optional split tool-call
-deltas, and `[DONE]`. TTS accepts registration, incremental inputs/flush,
-keepalive, and close; it sends PCM16 at 24 kHz in paced chunks and then final.
+STT accepts a single waveform anchor from the committed sim clips. Valid
+speech fragments without an anchor get a canned transcript whose word count
+scales with audio duration. `unmatched_fragment` counts these responses in
+fake stats and step reports. Quiet yields an empty transcript. Malformed
+requests and unknown routes log protocol errors and fail the run.
 
-All distributions are uniform. A JSON file passed to `--fake-config` can
-replace any field; unspecified fields keep the defaults. Equal bounds give a
-constant. Example:
+Director responses use valid cast IDs, with distinct speakers when two are
+selected. Steering returns a valid adjustment on every fourth review and no
+change otherwise. Actor SSE includes text, split tool-call deltas when a
+scenario offers a tool, and `[DONE]`. The current offered `end_conversation`
+tool accepts `{}`. TTS handles registration, incremental input, flush,
+keepalive and close, emits PCM16 at 24 kHz, then sends the final message.
+
+Uniform distributions use the defaults below. `--fake-config file.json`
+replaces selected fields. Equal low/high bounds give a constant. For example:
 
 ```json
 {
   "seed": 20261112,
-  "actor_first_ms": {"low": 1400, "high": 2600},
-  "reply_words": {"low": 25, "high": 55},
-  "failures": {"tts_ws": [409, 429]},
-  "tool_call_every": 0
+  "reply_words": {"low": 15, "high": 35},
+  "tts_realtime_factor": 2.0,
+  "second_speaker_probability": 0.25,
+  "tool_call_probability": 0.01,
+  "failures": {"tts_ws": [409, 429]}
 }
 ```
 
 | Setting | Default | Source and limit |
 | --- | --- | --- |
-| models_ms | 10–30 ms | Harness assumption for a small local authenticated response; no stage measurement. |
-| stt_ms | 1,000–1,500 ms | Local observation documented in `server/voice/cascade.py:stt_model`, measured 2026-10-15 for flash-lite. The uniform shape is an assumption. |
-| actor_first_ms | 1,400–2,600 ms | Argon first-token observation in `server/voice/cascade.py:reasoning_effort`, measured 2026-10-15. The uniform shape is an assumption. |
-| token_ms | 25–55 ms per word-sized SSE piece | Harness assumption, not a measured gateway distribution. |
-| messages_ms | 300–900 ms | Harness assumption for director/steering; no isolated stage measurements available. |
-| tts_first_ms | 150–350 ms | Harness assumption. No ElevenLabs key or current live calibration exists. |
-| reply_words | 25–55 words | Workload assumption anchored to `server/engine.py:SPEECH_RULES` (about 25 words) and its documented 11/24/25-word observations; the upper tail exercises longer replies and queue holding. |
-| tts_words_per_minute | 160 | Harness assumption for audio duration; synthetic tone, not speech. |
-| audio_chunk_ms | 100 | Harness packet/cadence assumption; each full chunk is 4,800 bytes at 24 kHz PCM16. |
-| seed | 20261112 | Fixed pseudo-random seed; concurrent request scheduling can change draw order. |
+| models_ms | 10–30 ms | Assumption for a small local response. |
+| stt_ms | 1,000–1,500 ms | Flash-lite observation, 2026-10-15, recorded in `server/voice/cascade.py:stt_model`; uniform shape is an assumption. |
+| actor_first_ms | 1,400–2,600 ms | Argon first-token observation, 2026-10-15, in `server/voice/cascade.py:reasoning_effort`; uniform shape is an assumption. |
+| token_ms | 25–55 ms per word-sized SSE piece | Uncalibrated assumption. |
+| messages_ms | 300–900 ms | Uncalibrated director/steering assumption. |
+| tts_first_ms | 150–350 ms | Uncalibrated assumption; no ElevenLabs key. |
+| reply_words | 15–35 words | Uncalibrated distribution centred on `server/engine.py:SPEECH_RULES`, about 25 words. |
+| tts_realtime_factor | 2.0 | Uncalibrated assumption: generation speed divided by playback speed. Each chunk sleeps audio-duration / factor. |
+| tts_words_per_minute | 160 | Assumption for synthetic audio duration. |
+| second_speaker_probability | 0.25 | Uncalibrated P(second speaker) in casts with at least two members. |
+| tool_call_probability | 0.01 | Uncalibrated probability per actor response, only when the request offers a tool. `tool_call_every` overrides it for deterministic tests. |
+| audio_chunk_ms | 100 | Packet-size assumption; a full PCM24k chunk has 4,800 bytes. |
+| seed | 20261112 | Fixed seed; concurrent scheduling can change draw order. |
 
-The old `tools/sim/reports/1469925.json` contains end-to-end measurements.
-Those values do not calibrate individual upstream stages. These defaults are
-a reproducible synthetic configuration, not a production capacity claim.
+`--tts-factors 1.0,3.0` runs a ramp at each factor and reports capacities by
+factor and a range. A missing capacity at either factor leaves the range
+incomplete. The old sim report `tools/sim/reports/1469925.json` gives end-to-end
+latency, not isolated stage calibration. These timings, speaker counts and
+tool rates remain assumptions.
 
-## Measurements and decisions
+Calibration from future production records: pair each `turn_timing` interval
+from `first_audio_from_gateway` to `assistant_done` with that reply's generated
+audio duration. Divide audio duration by generation time to obtain the TTS
+factor. Count words in `assistant_turn.text` for reply length. Use
+`stage_direction` speaker counts for P(second speaker), and actor tool-call
+counts divided by offered-tool responses for the tool rate. Save record IDs,
+model/configuration, sample counts and distributions with any revised defaults.
 
-Every second the generator samples participants that have received their first
-final transcript and have not hung up. This sampler is independent of Docker
-resource collection. Achieved concurrency is the arithmetic mean after the
-last scheduled arrival plus `--warmup` (default 30 seconds), through the first
-logical participant's final hang-up. Startup, inter-encounter gaps, and all raw
-samples remain in the report. Less than 90% of requested N is INVALID.
+## Measurements and verdict
 
-Generator loop-lag p99 above 50 ms is INVALID. Server loop-lag reports use
-`LOOP_LAG_REPORT_S=5`; the step uses the maximum window p99 and maximum lag,
-without taking percentiles of p99 values. CPU is from Docker stats. RSS is
-the actual server PID 1 `VmRSS`, sampled separately from Docker's working-set
-memory display. Both resource collection and concurrency are scheduled at
-one second; actual sample timestamps are retained.
+Active concurrency starts at the `session` frame and ends at hang-up.
+Conversing concurrency starts at the first final user transcript and is
+secondary. Both are sampled every second independently of resource reads.
+The measurement window starts after the last scheduled arrival plus
+`--warmup` (30 seconds), and ends when the first logical participant finishes.
+Inter-encounter gaps remain visible. Less than 90% of N is INVALID unless a
+recorded server failure explains the deficit, in which case it is FAIL.
 
-Latency is computed once per session and participant speech end, taking the
-earliest played reply across members. Missing ACKs are counted separately.
-The sim analyzer supplies lines said/heard/answered and its benign voice-error
-exclusions. Upstream attempts, recovered failures, duration, and TTS queue wait
-come from Track 0 telemetry. Cancelled attempts are reported separately and
-are not errors; HTTP errors, timeouts, unexpected closure, and exceptions are.
-Bytes written means the sum of durable encounter file sizes, including the
-rendered conversation mix; it does not measure file-write amplification.
-Close-burst time starts at the last client hang-up request and ends when all
-session manifests are closed and every conversation mix exists.
+Primary latency, turn counts, reply_missing, missing ACKs, voice errors and
+upstream attempts use this window. A timing row belongs to the window of its
+participant speech end, even if its playback ACK is written later. Earliest
+played reply per (session, speech end) prevents group-member double counting.
+Whole-step event totals are separate under `metrics.whole_step`.
+Generator-lag samples have timestamps and use only the measurement window.
+The probe stops before close polling; events are parsed once after settling.
 
-N=1 repeats pool raw latency samples. Each step prints and saves this rule:
+The resource sidecar samples server PID 1 RSS and cgroup-v2 `cpu.stat` every
+second outside the server cgroup. CPU% is 100 times the CPU-usage delta divided
+by elapsed wall time, on the same one-core scale as Docker stats. It does not
+run `docker exec` in the server during measurement. Reports retain raw samples,
+`nr_throttled` deltas and throttled seconds per step. Server loop lag uses the
+maximum reported five-second-window p99 and max; it does not take a percentile
+of percentiles. Resource and lag timestamps delimit the primary window.
 
-```text
-INVALID if achieved concurrency < 90% of N or generator loop-lag p99 > 50 ms,
-or required measurements/full encounters are missing. Otherwise FAIL if
-played p90 > max(1.5 * N=1 p90, N=1 p90 + 2 s), reply_missing per 100
-participant turns > N=1 + 1, server loop-lag p99 > 250 ms, RSS > 900 MB,
-or a non-benign voice_error kind was absent at N=1.
-```
+Track 0 attempts retain recovered failures and queue waits. Rows with
+`detail="slot_wait"` contribute to queue statistics and a separate count, not
+sent-attempt/error/cancellation counts. Durable bytes include the rendered mix
+and exclude write amplification. Close-burst time runs from last hang-up to
+all closed manifests and rendered mixes.
 
-Unknown fake routes/protocol errors fail the overall run. An invalid generator
-still gives its step INVALID. Capacity is the highest N with every repeat PASS,
-called **capacity for the tested configuration**. No valid N=1 baseline means
-no capacity result. Exit codes are 0 for PASS, 1 for FAIL, and 2 for INVALID.
+The printed rule gives INVALID for generator errors, lag p99 > 50 ms, short
+runs or missing required measurements. Server failures give FAIL and a count
+per 100 attempted encounters: HTTP >= 500, server-initiated close, incomplete
+full-length encounter, close timeout and non-2xx video upload. A server failure
+does not become INVALID because it prevented latency or concurrency samples.
+A recorded generator error or excessive measured generator lag takes priority.
 
-If py-spy is available for the target, each step samples ten seconds after
-warmup, without `--native`. The first failing step's sampled top 20 functions
-are included. The default production image does not install py-spy; an image
-with it can be selected with `--image`. The container permits ptrace for this
-optional profile. Absence or attach failure is reported explicitly.
+Other FAIL thresholds:
 
-## Isolation and live limits
+- played p90 > max(1.5 × N=1 p90, N=1 p90 + 2 s);
+- reply_missing per 100 turns > N=1 + 1;
+- first_played_missing per 100 turns > N=1 + 1;
+- server loop-lag p99 > 250 ms, RSS > 900 MB, or a new non-benign voice-error kind;
+- unknown fake routes or malformed fake protocol.
 
-Fake mode creates one `--internal` Docker network with exactly two members:
-the server and fake upstream. The generator connects through localhost-bound
-published ports. No host/extra network is attached. Startup and an explicit
-proof both require TCP connections from the server to public IPs to fail.
-Topology inspection also checks the internal flag and exact membership.
+N=1 repeats pool raw latency samples and count denominators. Capacity is the
+largest tested N whose repeats and every lower tested N all PASS. A later PASS
+after a lower FAIL/INVALID adds a non-monotonic warning and cannot raise that
+capacity. Reports call it **capacity for the tested configuration on this
+host**. Exit status: PASS 0, FAIL 1, INVALID 2.
 
-Environment values from `infra/terraform/ecs.tf` are resolved first. Fake
-endpoint, synthetic credentials, and harness overrides are applied last.
-Storage preflight and archiving are disabled. Webcam salvage is deferred for
-one day so short-lived synthetic runs do not attempt backup promotion. The
-`.env` readers cannot replace these overrides. No real AWS credentials enter
-the containers. Run directories contain only synthetic encounter data.
+## Docker isolation, storage and profiling
 
-`--backend local` is for debugging and is labelled **not isolated, not
-CPU-capped**. It cannot run the isolation proof.
+Fake mode has an internal network with exactly `{server, fake, relay}`.
+Server and fake have only this network and publish no ports. The fixed asyncio
+TCP relay runs from the same image, starts on the normal bridge, then joins
+the internal network. Only its port 8080 is published on 127.0.0.1. It always
+forwards to `server:8080`; it accepts no destination from clients or arguments.
+Fake stats use `docker exec`; logs use `docker logs`. Topology inspection
+checks exact membership, server/fake network exclusivity, relay command,
+dual networks and localhost-only publication.
 
-Live mode requires `--gateway live --allow-live`; its default maximum
-concurrency is 20. A larger ramp is rejected unless the explicit cap changes.
-Only the gateway key is loaded for this mode. TTS stays fake. A 100 ms
-telemetry watcher stops on the first observed gateway 429, even if the SDK
-later recovers, or when upstream attempt errors exceed 5%. It cancels active
-participants and records route, purpose, and actual concurrency. Late terminal
-attempts are checked before the next step. Missing startup telemetry and a
-lost, truncated, or unreadable telemetry file stop the run.
-No live gateway call is made by the test suite.
+Startup and the explicit proof check public-IP TCP plus DNS and resolved TCP
+destinations for `api.elevenlabs.io`, the production gateway host and
+`s3.amazonaws.com` from the server. DNS may resolve; every TCP attempt must
+fail. Resource and profile sidecars use `--network none`.
 
-Reports are JSON and Markdown under `tools/load/reports/<run>/` by default.
-An explicit report directory must not already contain a run.
-Generated reports and synthetic data are ignored by Git. Explicitly selected
-reports can be kept later. Runtime startup failures also produce a report.
+SUT storage uses a Docker named volume. Close polling reads only manifests
+and mix existence through the observer. `docker cp` exports encounter results
+after each step, before deleting the volume. This does not model EFS latency.
+The fake mounts only its cert, key, fake config and a read-only source-code
+snapshot with the sim stimuli. The snapshot excludes reports and run data.
+It cannot read server.env or server data. Production logging is retained
+at info level with access logging; query `key=` values are redacted.
 
-## Docker smoke commands
+Reports record host CPU model, Docker architecture, VM CPU count, quota and
+storage mount type. Each run first executes a fixed ten-second calibration
+in a container with the same CPU/memory caps: JSON parse, base64 decode and
+`audioop.ratecv` resampling of 100 ms PCM frames from 48 to 16 kHz. The score
+is frames/second with a version and checksum. `--cpu-scale 0.8` makes the host
+quota 0.4 CPU. `--fargate-reference file.json` accepts a stored score of the
+same version and reports the host/reference ratio. No Fargate reference is
+included and no AWS operation runs. No automatic capacity extrapolation is
+made. Local debugging remains **not isolated, not CPU-capped**.
+
+Profiling never runs in measured repeats. At the first FAIL only, if py-spy
+is available, one extra repeat at that N is profile-only and excluded from
+verdicts and capacity. Docker requires `--profile-image <local-image-with-py-spy>`.
+The profiler shares the server PID namespace, gets SYS_PTRACE on the sidecar
+only, and uses `--nonblocking` without `--native`. The server retains its
+normal capabilities and seccomp policy. Missing py-spy or attach failure is
+recorded. Default production images have no py-spy.
+
+## Live gateway
+
+`--gateway live --allow-live` loads only the gateway key. The default live cap
+is 20 and requires a compatible ramp. TTS remains fake. Live mode uses a normal
+Docker network for gateway egress and has no fake-mode isolation claim.
+The 100 ms telemetry watcher kills the server before cancelling participants
+or waiting for close. It stops on the first gateway 429 or gateway-only attempt
+error rate > 5%. Fake TTS and slot-wait-only rows never dilute that denominator.
+Route, purpose, concurrency and counts are saved. Late attempts and startup
+attempts also pass through the guard. Tests use mocks only.
+
+Reports default to `tools/load/reports/<run>/report.{json,md}`. Each factor has
+its own artifact subdirectory. Generated reports/data are ignored by Git.
+Runtime errors still produce a report. A report directory must be fresh.
+
+## Docker checks
+
+Real Docker pytest checks run only with `RF_LOAD_DOCKER_TESTS=1`. Ordinary
+pytest skips them before any daemon access or image build.
 
 ```sh
-python -m tools.load.run --backend docker --gateway fake --ramp 1,2 --repeat 1 \
-  --scenarios S2A --steps 'tone:1,cycle:a1|a2:45' --duration 45 --warmup 5 \
-  --webcam --report-dir /private/tmp/rf-load-smoke
 python -m tools.load.run --backend docker --gateway fake --isolation-only \
-  --report-dir /private/tmp/rf-load-isolation
+  --report-dir /private/tmp/rf-load-r1-isolation
+python -m tools.load.run --backend docker --gateway fake --ramp 1,2 \
+  --scenarios S2A --steps 'tone:1,cycle:a1|a2:45' --duration 45 --warmup 5 \
+  --webcam --report-dir /private/tmp/rf-load-r1-smoke
+python -m tools.load.run --backend docker --gateway fake --ramp 1,5,10,20,30 \
+  --repeat 1 --tts-factors 1.0,3.0 --continue-after-fail \
+  --report-dir /private/tmp/rf-load-r1-full
 ```
 
-The first command runs an N=1 baseline diagnostic followed by N=2. A clean
-short smoke is INVALID for capacity and exits 2. A fake protocol error exits
-1 and must be investigated. The isolation command must exit 0 and save
-`isolation.passed=true` in `report.json`. Omit `--duration` and `--steps` for
-a full encounter test. Existing local images can be selected with `--image`;
-otherwise the image is built from the repository Dockerfile when absent.
+Isolation must exit 0 with topology and egress passed. A clean short smoke
+exits 2 with both Ns, nonzero measurements and no server/fake/generator errors.
+The full command visits all Ns even after FAIL, retaining prefix capacity.
+Its default four-scenario workload takes about 6 h 40 min, plus setup and
+close settling. An available profiler can add one 40-minute repeat. Existing
+local images can be selected with `--image`; otherwise the repo image builds
+when absent. Each command uses a fresh report directory.

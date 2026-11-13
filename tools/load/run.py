@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import datetime as dt
 import json
 import math
@@ -14,10 +14,9 @@ import time
 
 import httpx
 
-from server.loop_lag import LoopLagProbe
 from tools.load import measure
 from tools.load.fake_upstream import FakeConfig
-from tools.load.participant import Participant, full_sequence, open_identity
+from tools.load.participant import Participant, ServerError, error_side, full_sequence, open_identity
 from tools.load.runtime import ROOT, Runtime, RuntimeUnavailable, read_encounters
 from tools.sim import sequences, stim
 from tools.sim.serve import production_environment
@@ -61,6 +60,11 @@ def parse_args(argv=None):
     parser.add_argument("--max-concurrency", type=int, default=20)
     parser.add_argument("--backend", choices=("docker", "local"), default="docker")
     parser.add_argument("--image")
+    parser.add_argument("--profile-image", help="local image containing py-spy; sidecar only")
+    parser.add_argument("--continue-after-fail", action="store_true")
+    parser.add_argument("--cpu-scale", type=positive, default=1.0, help="multiply the 0.5 host CPU quota")
+    parser.add_argument("--fargate-reference", type=Path, help="stored calibration JSON; never contacts AWS")
+    parser.add_argument("--tts-factors", help="separate ramps, for example 1.0,3.0; default: fake config factor")
     parser.add_argument("--fake-config", type=Path)
     parser.add_argument("--report-dir", type=Path)
     parser.add_argument("--close-timeout", type=positive, default=120)
@@ -77,6 +81,13 @@ def parse_args(argv=None):
     if (not args.ramp or args.ramp[0] != 1 or args.ramp != sorted(set(args.ramp))
             or min(args.ramp) < 1):
         parser.error("--ramp must increase without duplicates and start at N=1")
+    if args.tts_factors is not None:
+        try:
+            args.tts_factors = [positive(value) for value in args.tts_factors.split(",")]
+            if len(set(args.tts_factors)) != len(args.tts_factors):
+                raise ValueError("duplicate factors")
+        except (ValueError, argparse.ArgumentTypeError):
+            parser.error("--tts-factors requires unique finite positive numbers")
     args.scenarios = args.scenarios.split(",")
     if not args.scenarios or len(set(args.scenarios)) != len(args.scenarios) or set(args.scenarios) - set(SCENARIOS):
         parser.error("--scenarios requires unique S1A,S2A,S3A,S4A IDs")
@@ -115,16 +126,19 @@ def _write_report(directory, report):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     lines = ["# Load run", "", report["rule"], "", f"Configuration: {report.get('isolation', {}).get('label', 'not started')}", "",
-             "| N | Repeat | Verdict | Played p90 (s) | Achieved N | Generator p99 (ms) | RSS max (MB) | Reasons |",
+             "| TTS factor / N | Repeat | Verdict | Played p90 (s) | Achieved N | Generator p99 (ms) | RSS max (MB) | Reasons |",
              "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     for step in report.get("steps", []):
         m = step["metrics"]
         rss = m["server_rss_bytes"]["max"]
-        lines.append(f"| {step['concurrency']} | {step['repeat']} | {step['verdict']} | "
+        lines.append(f"| {step.get('tts_realtime_factor')} / {step['concurrency']} | {step['repeat']} | {step['verdict']} | "
                      f"{m['speech_end_to_first_played_s']['p90']} | {m['achieved_concurrency']:.2f} | "
                      f"{m['generator_loop_lag_ms']['p99']} | {rss / 1e6 if rss is not None else None} | "
                      + "; ".join(step["reasons"]) + " |")
-    lines.extend(["", f"Capacity for the tested configuration: {report.get('capacity')}", ""])
+    lines.extend(["", f"Capacity for the tested configuration on this host: {report.get('capacity_range', report.get('capacity'))}", ""])
+    for ramp in report.get("ramps", []):
+        if ramp.get("non_monotonic_warning"):
+            lines.extend([ramp["non_monotonic_warning"], ""])
     if report.get("fatal_error"):
         lines.extend(["Execution error: " + report["fatal_error"], ""])
     if report.get("live_stop"):
@@ -135,99 +149,97 @@ def _write_report(directory, report):
     (directory / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-async def _closed(data, sid, timeout):
+async def _closed(runtime, sid, timeout):
     deadline = time.monotonic() + timeout
-    path = data / "sessions" / sid / "manifest.json"
     while time.monotonic() < deadline:
-        def check():
-            try:
-                return json.loads(path.read_text(encoding="utf-8")).get("status") == "closed"
-            except (FileNotFoundError, ValueError):
-                return False
-        if await asyncio.to_thread(check):
+        if await runtime.settled([{"session_id": sid}]):
             return True
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.25)
     return False
 
 
-async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Participant):
+async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Participant, profile_only=False):
     start = time.time()
-    directory = runtime.directory / f"N{n}-repeat{repeat}"
+    directory = runtime.directory / (f"N{n}-profile-only" if profile_only else f"N{n}-repeat{repeat}")
     await asyncio.to_thread(directory.mkdir, exist_ok=True)
-    participants, timelines, finished, errors = [], [], [], []
-    resources, concurrency, attempts, log_rows = [], [], [], []
-    guard = measure.LiveGuard()
-    stopped = asyncio.Event()
-    done = asyncio.Event()
+    participants, timelines, finished, errors, server_errors, measurement_errors = [], [], [], [], [], []
+    resources, concurrency, attempts, log_rows, generator_lag = [], [], [], [], []
+    guard, stopped, done, attempts_done = measure.LiveGuard(), asyncio.Event(), asyncio.Event(), asyncio.Event()
     attempt_tail = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl")
     log_tail = measure.JsonlTail(runtime.directory / "server-log.jsonl")
-    # Consume startup/earlier-step records; they are kept separately in the run report.
     await asyncio.to_thread(attempt_tail.read)
     await asyncio.to_thread(log_tail.read)
+    fake_before = await runtime.fake_stats()
     default_mix = set(args.scenarios) == set(SCENARIOS)
+    full_length = args.duration is None or args.duration >= ceiling
 
     async def worker(index):
         await asyncio.sleep(index * args.arrival)
         client = await asyncio.to_thread(httpx.AsyncClient, timeout=30, follow_redirects=False, trust_env=False)
         async with client as http:
             identity = await open_identity(http, runtime.base, runtime.key, f"N{n}_{repeat}_{index}")
-            run_id = identity["run"]
-            view = None
+            run_id, view = identity["run"], None
             if default_mix:
                 response = await http.get(runtime.base + f"/api/run/{run_id}", params={"key": runtime.key})
                 response.raise_for_status()
                 view = response.json()
             for slot in range(len(args.scenarios)):
-                # The server owns the Williams assignment and its advancement.
                 scenario = view["current"]["id"] if default_mix else args.scenarios[(slot + index + repeat - 1) % len(args.scenarios)]
                 if scenario not in args.scenarios:
                     raise RuntimeError("server Williams run selected an unexpected scenario")
-                steps = args.steps or full_sequence(scenario, ceiling)
                 participant = participant_factory(
-                    runtime.base, scenario, steps, index=f"{n}_{repeat}_{index}_{slot}", key=runtime.key,
+                    runtime.base, scenario, args.steps or full_sequence(scenario, ceiling),
+                    index=f"{n}_{repeat}_{index}_{slot}", key=runtime.key,
                     duration_s=args.duration or ceiling + 30, webcam=args.webcam, http=http, identity=identity)
                 participants.append(participant)
                 try:
                     timeline = await participant.run()
                 finally:
                     if participant.tl.get("session_id"):
-                        # Also preserve partial timelines when the live guard cancels work.
                         timelines.append(participant.tl)
                 if not timeline.get("completed"):
-                    errors.append("encounter did not reach encounter_complete")
+                    if full_length:
+                        server_errors.append("encounter did not reach encounter_complete")
                     break
                 if default_mix:
-                    if not await _closed(runtime.data, timeline["session_id"], args.close_timeout):
-                        raise RuntimeError("session did not close before run advancement")
+                    if not await _closed(runtime, timeline["session_id"], args.close_timeout):
+                        raise ServerError("session/mix close timeout before run advancement")
                     response = await http.post(runtime.base + f"/api/run/{run_id}/advance",
                                                params={"session_id": timeline["session_id"], "key": runtime.key})
                     response.raise_for_status()
                     view = response.json()
-            finished.append(time.time())
+        finished.append(time.time())
+
+    async def kill_and_stop():
+        # Stop billed work before cancellation or storage settling can wait.
+        await runtime.kill_server()
+        stopped.set()
 
     async def watch_attempts():
-        while not done.is_set():
+        while not attempts_done.is_set():
             try:
                 rows = await asyncio.to_thread(attempt_tail.read)
             except (OSError, ValueError) as exc:
                 errors.append("attempt telemetry unavailable: " + type(exc).__name__)
                 if args.gateway == "live":
-                    guard.stopped = {"reason": "attempt telemetry unavailable", "route": None, "purpose": None,
-                                     "concurrency": sum(p.active for p in participants), "t": time.time()}
-                stopped.set()
+                    guard.stopped = {"reason": "attempt telemetry unavailable", "concurrency": n}
+                    await kill_and_stop()
+                else:
+                    stopped.set()
                 return
             attempts.extend(rows)
             if args.gateway == "live":
                 for row in rows:
                     if guard.observe(row, sum(p.active for p in participants)):
-                        stopped.set()
+                        await kill_and_stop()
                         return
             await asyncio.sleep(0.1)
 
     async def sample_concurrency():
         due = time.monotonic()
         while not done.is_set():
-            concurrency.append({"t": time.time(), "active": sum(p.active for p in participants)})
+            concurrency.append({"t": time.time(), "active": sum(p.active for p in participants),
+                                "conversing": sum(p.active and p.tl.get("conversation_started") is not None for p in participants)})
             due += 1.0
             await asyncio.sleep(max(0, due - time.monotonic()))
 
@@ -236,73 +248,102 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
         while not done.is_set():
             try:
                 resources.append(await runtime.resources())
+                log_rows.extend(await asyncio.to_thread(log_tail.read))
             except (RuntimeError, OSError, ValueError) as exc:
-                errors.append("resource sampling: " + type(exc).__name__)
-            log_rows.extend(await asyncio.to_thread(log_tail.read))
+                if not stopped.is_set():
+                    measurement_errors.append("resource sampling: " + type(exc).__name__)
             due += 1.0
             await asyncio.sleep(max(0, due - time.monotonic()))
 
+    async def sample_lag():
+        while True:
+            before = time.perf_counter()
+            await asyncio.sleep(0.05)
+            generator_lag.append({"t": time.time(), "lag_ms": max(0, (time.perf_counter() - before - 0.05) * 1000)})
+
     workers = [asyncio.create_task(worker(index)) for index in range(n)]
     async def workers_done():
-        results = await asyncio.gather(*workers, return_exceptions=True)
-        for result in results:
-            if isinstance(result, BaseException):
-                errors.append("participant worker: " + type(result).__name__)
+        for result in await asyncio.gather(*workers, return_exceptions=True):
+            if isinstance(result, Exception):
+                (server_errors if error_side(result) == "server_errors" else errors).append(
+                    "participant worker: " + type(result).__name__ + ": " + str(result)[:100])
     all_workers = asyncio.create_task(workers_done())
     stop_waiter = asyncio.create_task(stopped.wait())
     watchers = [asyncio.create_task(watch_attempts()), asyncio.create_task(sample_concurrency()),
-                asyncio.create_task(sample_resources())]
-    profile = asyncio.create_task(runtime.profile(directory, delay=args.warmup, seconds=args.profile_seconds))
-    async with LoopLagProbe() as generator_probe:
-        try:
-            await asyncio.wait({all_workers, stop_waiter}, return_when=asyncio.FIRST_COMPLETED)
-            if stopped.is_set():
-                for task in workers:
-                    task.cancel()
-            await all_workers
-            last_hangup = max((t["hangup_requested"] for t in timelines), default=time.time())
-            close_deadline = time.monotonic() + args.close_timeout
-            events, sizes, settled = {}, {}, False
-            while timelines and time.monotonic() < close_deadline:
-                events, sizes, settled = await asyncio.to_thread(read_encounters, runtime.data, timelines)
-                if timelines and settled:
+                asyncio.create_task(sample_resources()), asyncio.create_task(sample_lag())]
+    profile = (asyncio.create_task(runtime.profile(directory, delay=args.warmup, seconds=args.profile_seconds))
+               if profile_only else None)
+    try:
+        await asyncio.wait({all_workers, stop_waiter}, return_when=asyncio.FIRST_COMPLETED)
+        if stopped.is_set():
+            for task in workers:
+                task.cancel()
+        await all_workers
+    finally:
+        done.set()
+        stop_waiter.cancel()
+        for task in watchers[1:]:
+            task.cancel()
+        await asyncio.gather(*watchers[1:], stop_waiter, return_exceptions=True)
+    measurement_end = min(finished, default=time.time())
+    last_hangup = max((t.get("hangup_requested") or measurement_end for t in timelines), default=measurement_end)
+    settled, close_burst = False, None
+    try:
+        if timelines and not stopped.is_set():
+            deadline = time.monotonic() + args.close_timeout
+            while time.monotonic() < deadline and not stopped.is_set():
+                if await runtime.settled(timelines):
+                    settled = True
+                    close_burst = max(0, time.time() - last_hangup)
                     break
                 await asyncio.sleep(0.25)
-            close_burst = max(0.0, time.time() - last_hangup) if settled and timelines else None
-        finally:
-            done.set()
-            stop_waiter.cancel()
-            for task in watchers:
-                task.cancel()
-            await asyncio.gather(*watchers, stop_waiter, return_exceptions=True)
+            if not settled and not stopped.is_set():
+                server_errors.append("session/mix close timeout")
+    finally:
+        attempts_done.set()
+        watchers[0].cancel()
+        await asyncio.gather(watchers[0], return_exceptions=True)
     final_attempts = await asyncio.to_thread(attempt_tail.read)
     attempts.extend(final_attempts)
     if args.gateway == "live":
         for row in final_attempts:
-            guard.observe(row, sum(p.active for p in participants))
+            if guard.observe(row, 0) and not stopped.is_set():
+                await kill_and_stop()
     log_rows.extend(await asyncio.to_thread(log_tail.read))
-    if not profile.done():
-        profile.cancel()
-    try:
-        profile_result = await profile
-    except asyncio.CancelledError:
-        profile_result = {"status": "unavailable", "reason": "step ended before scheduled profile completed"}
+    if profile:
+        if not profile.done():
+            profile.cancel()
+        try:
+            profile_result = await profile
+        except asyncio.CancelledError:
+            profile_result = {"status": "unavailable", "reason": "profile-only repeat too short"}
+    else:
+        profile_result = None
+    await runtime.export(timelines)
+    # Parse all events once, after close polling and with the lag probe stopped.
+    events, sizes, _ = await asyncio.to_thread(read_encounters, runtime.data, timelines)
     fake = await runtime.fake_stats()
-    for timeline in timelines:
-        if timeline.get("unexpected_disconnect") or timeline.get("video_error") or timeline.get("driver_error"):
-            errors.append("participant transport/video error")
+    for participant in participants:
+        errors.extend(participant.tl.get("generator_errors", []))
+        server_errors.extend(participant.tl.get("server_errors", []))
     if guard.stopped:
-        errors.append("live safety stop: " + guard.stopped["reason"])
+        server_errors.append("live safety stop: " + guard.stopped["reason"])
+    if not server_errors:
+        errors.extend(measurement_errors)
     end = time.time()
     metrics = measure.summarize(
         events, timelines, attempts=attempts, resources=resources, concurrency=concurrency,
-        generator_lag_ms=generator_probe.samples, server_lag=measure.server_lag_windows(log_rows, start, end),
+        generator_lag_ms=generator_lag, server_lag=measure.server_lag_windows(log_rows, start, end),
         measurement_start=start + (n - 1) * args.arrival + args.warmup,
-        measurement_end=min(finished, default=end), close_burst_s=close_burst, artifact_bytes=sizes)
+        measurement_end=measurement_end, close_burst_s=close_burst, artifact_bytes=sizes)
+    metrics.update(encounter_count=max(len(participants), n), server_error_count=len(server_errors),
+                   server_errors_per_100_encounters=100 * len(server_errors) / max(len(participants), n),
+                   unmatched_fragment=fake.get("unmatched_fragment", 0) - fake_before.get("unmatched_fragment", 0))
     result = {"concurrency": n, "repeat": repeat, "started": start, "ended": end,
-              "metrics": metrics, "errors": errors, "fake_errors": fake["errors"],
-              "full_length": args.duration is None or args.duration >= ceiling,
-              "live_stop": guard.stopped, "profile": profile_result}
+              "metrics": metrics, "errors": errors, "server_errors": server_errors,
+              "measurement_errors": measurement_errors,
+              "fake_errors": fake["errors"][len(fake_before["errors"]):], "full_length": full_length,
+              "live_stop": guard.stopped, "profile": profile_result, "profile_only": profile_only}
     await asyncio.to_thread((directory / "timelines.json").write_text, json.dumps(timelines, indent=2), encoding="utf-8")
     return result
 
@@ -323,87 +364,116 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
     await asyncio.to_thread(preload)
     ceiling = float(env.get("ENCOUNTER_MAX_SECONDS", "600"))
     live_key = await asyncio.to_thread(load_key) if args.gateway == "live" else None
-    runtime = runtime_factory(directory, backend=args.backend, gateway=args.gateway, image=args.image,
-                              fake_config=config, live_key=live_key, live_url=args.live_url or env.get("LLM_BASE_URL"))
-    report = {"rule": measure.RULE, "generated_at": stamp, "steps": [], "capacity": None,
+    factors = args.tts_factors or [config.tts_realtime_factor]
+    report = {"rule": measure.RULE, "generated_at": stamp, "steps": [], "ramps": [], "capacity": None,
               "gateway": args.gateway, "tts": "fake", "fake_configuration": asdict(config),
+              "capacity_scope": "this host; fake timing and speaker/tool probabilities are uncalibrated assumptions",
               "configuration": {"ramp": args.ramp, "repeat": args.repeat, "scenarios": args.scenarios,
                                 "arrival_spacing_s": args.arrival, "duration_s": args.duration,
                                 "warmup_s": args.warmup, "webcam": args.webcam, "custom_steps": args.steps,
+                                "cpu_scale": args.cpu_scale, "tts_factors": factors,
+                                "continue_after_fail": args.continue_after_fail,
                                 "default_encounter_ceiling_s": ceiling, "backend": args.backend,
                                 "scenario_order": "server Williams run" if set(args.scenarios) == set(SCENARIOS) else "rotating selected scenarios"}}
-    try:
-        await runtime.start()
-        report.update(isolation=runtime.isolation, health=runtime.health, image=runtime.image)
-        startup = await asyncio.to_thread(measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read)
-        report["startup_upstream_attempts"] = startup
-        if args.gateway == "live":
-            guard = measure.LiveGuard()
-            for row in startup:
-                guard.observe(row, 0)
-            if guard.stopped:
-                report["live_stop"] = guard.stopped
-                raise RuntimeError("live safety guard stopped during startup")
-        if args.isolation_only:
-            report["isolation_only"] = True
-            report["verdict"] = "PASS" if runtime.isolation["passed"] else "FAIL"
-        else:
-            reference = None
-            baseline_valid = True
+    for factor in factors:
+        runtime = runtime_factory(directory / f"tts-{factor:g}", backend=args.backend, gateway=args.gateway, image=args.image,
+                                  fake_config=replace(config, tts_realtime_factor=factor), live_key=live_key,
+                                  live_url=args.live_url or env.get("LLM_BASE_URL"), cpu_scale=args.cpu_scale,
+                                  fargate_reference=args.fargate_reference, profile_image=args.profile_image)
+        ramp = {"tts_realtime_factor": factor, "steps": [], "capacity": None}
+        report["ramps"].append(ramp)
+        try:
+            await runtime.start()
+            ramp.update(isolation=runtime.isolation, health=runtime.health, image=runtime.image, host=runtime.metadata)
+            report.update(isolation=runtime.isolation, host=runtime.metadata)
+            startup = await asyncio.to_thread(measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read)
+            ramp["startup_upstream_attempts"] = startup
+            if args.gateway == "live":
+                guard = measure.LiveGuard()
+                for row in startup:
+                    guard.observe(row, 0)
+                if guard.stopped:
+                    report["live_stop"] = guard.stopped
+                    await runtime.kill_server()
+                    raise RuntimeError("live safety guard stopped during startup")
+            if args.isolation_only:
+                report["isolation_only"] = True
+                report["verdict"] = "PASS" if runtime.isolation["passed"] else "FAIL"
+                break
+            reference, baseline_valid = None, True
             for n in args.ramp:
                 repeats = []
                 for repeat in range(1, args.repeat + 1):
                     step = await run_step(runtime, args, n, repeat, ceiling, participant_factory=participant_factory)
+                    step["tts_realtime_factor"] = factor
                     repeats.append(step)
                     if step["live_stop"]:
                         report["live_stop"] = step["live_stop"]
                         break
+                    preliminary = measure.verdict(n, step["metrics"], measure.baseline(repeats) if n == 1 else reference,
+                        full_length=step["full_length"], errors=step["errors"], server_errors=step.get("server_errors", []),
+                        fake_errors=step["fake_errors"], baseline_valid=baseline_valid)
+                    if step["fake_errors"] or (preliminary["verdict"] == "FAIL" and not args.continue_after_fail):
+                        break
                 if n == 1:
                     reference = measure.baseline(repeats)
-                    report["baseline"] = reference
+                    ramp["baseline"] = reference
                 for step in repeats:
                     step.update(measure.verdict(n, step["metrics"], reference,
-                        full_length=step["full_length"], errors=step["errors"], fake_errors=step["fake_errors"],
-                        baseline_valid=baseline_valid))
-                    if step["live_stop"]:
-                        if step["verdict"] != "INVALID":
-                            step.update(verdict="FAIL", reasons=["live safety stop: " + step["live_stop"]["reason"]])
+                        full_length=step["full_length"], errors=step["errors"], server_errors=step.get("server_errors", []),
+                        fake_errors=step["fake_errors"], baseline_valid=baseline_valid))
+                    if step["live_stop"] and not step["errors"]:
+                        step.update(verdict="FAIL", reasons=["live safety stop: " + step["live_stop"]["reason"]])
                     report["steps"].append(step)
-                    if step["verdict"] == "FAIL" and "first_failure_profile" not in report:
-                        report["first_failure_profile"] = {"concurrency": n, "repeat": step["repeat"], **step["profile"]}
-                    print(f"N={n} repeat={step['repeat']}: {step['verdict']} " + "; ".join(step["reasons"]), flush=True)
+                    ramp["steps"].append(step)
+                    print(f"TTS={factor:g} N={n} repeat={step['repeat']}: {step['verdict']} " + "; ".join(step["reasons"]), flush=True)
                 if n == 1:
                     baseline_valid = all(step["verdict"] == "PASS" for step in repeats)
+                if any(step["verdict"] == "FAIL" for step in repeats) and "first_failure_profile" not in report:
+                    profile = {"concurrency": n, "tts_realtime_factor": factor, "excluded_from_verdict": True}
+                    report["first_failure_profile"] = profile
+                    if report.get("live_stop"):
+                        profile.update(status="unavailable", reason="live guard killed the server")
+                    elif await runtime.profile_available():
+                        extra = await run_step(runtime, args, n, 0, ceiling,
+                                               participant_factory=participant_factory, profile_only=True)
+                        profile.update(extra["profile"] or {}, repeat=extra)
+                        if extra["live_stop"]:
+                            report["live_stop"] = extra["live_stop"]
+                    else:
+                        profile.update(status="unavailable", reason="no py-spy image (--profile-image) or local binary")
                 await asyncio.to_thread(_write_report, directory, report)
-                if report.get("live_stop") or any(step["fake_errors"] for step in repeats):
+                if (report.get("live_stop") or any(step["fake_errors"] for step in repeats)
+                        or (not args.continue_after_fail and any(step["verdict"] == "FAIL" for step in repeats))):
                     break
-            report["capacity"] = measure.capacity(report["steps"], args.repeat) if baseline_valid else None
-            states = {step["verdict"] for step in report["steps"]}
-            report["verdict"] = ("FAIL" if "FAIL" in states or report.get("live_stop")
-                                 or any(step["fake_errors"] for step in report["steps"])
-                                 else "INVALID" if "INVALID" in states else "PASS")
-    except (RuntimeError, OSError, ValueError) as exc:
-        report.update(verdict="INVALID", fatal_error=type(exc).__name__ + ": " + str(exc))
-        if args.gateway == "live":
-            guard = measure.LiveGuard()
-            for row in await asyncio.to_thread(measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read):
-                guard.observe(row, 0)
-            report["live_stop"] = report.get("live_stop") or guard.stopped
-        fake_logs = await asyncio.to_thread(measure.JsonlTail(runtime.directory / "fake-log.jsonl").read)
-        protocol_errors = []
-        for row in fake_logs:
-            try:
-                event = json.loads(row["line"])
-                if event.get("kind") == "protocol_error":
-                    protocol_errors.append(event)
-            except (ValueError, KeyError):
-                pass
-        if protocol_errors or report.get("live_stop"):
-            report["verdict"] = "FAIL"
-            report["fake_protocol_errors"] = protocol_errors
-    finally:
-        await runtime.stop()
-        await asyncio.to_thread(_write_report, directory, report)
+            ramp["capacity"] = measure.capacity(ramp["steps"], args.repeat)
+            ramp["non_monotonic_warning"] = measure.non_monotonic(ramp["steps"])
+        except (RuntimeError, OSError, ValueError) as exc:
+            report.update(verdict="INVALID", fatal_error=type(exc).__name__ + ": " + str(exc))
+            if args.gateway == "live":
+                guard = measure.LiveGuard()
+                for row in await asyncio.to_thread(measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read):
+                    guard.observe(row, 0)
+                report["live_stop"] = report.get("live_stop") or guard.stopped
+                if report.get("live_stop"):
+                    await runtime.kill_server()
+                    report["verdict"] = "FAIL"
+            break
+        finally:
+            await runtime.stop()
+            await asyncio.to_thread(_write_report, directory, report)
+        if report.get("live_stop"):
+            break
+    if not report.get("fatal_error") and not args.isolation_only:
+        values = [r["capacity"] for r in report["ramps"]]
+        report["capacity"] = values[0] if len(values) == 1 else None
+        report["capacity_by_tts_factor"] = {str(r["tts_realtime_factor"]): r["capacity"] for r in report["ramps"]}
+        report["capacity_range"] = [min(values), max(values)] if values and all(v is not None for v in values) else None
+        report["capacity_range_complete"] = len(values) == len(factors) and all(v is not None for v in values)
+        states = {step["verdict"] for step in report["steps"]}
+        report["verdict"] = ("FAIL" if "FAIL" in states or report.get("live_stop")
+                             else "INVALID" if "INVALID" in states else "PASS")
+    await asyncio.to_thread(_write_report, directory, report)
     return report, directory
 
 

@@ -13,6 +13,21 @@ from tools.sim import driver, sequences, stim
 
 
 VIDEO_BYTES = b"\x1a\x45\xdf\xa3" + b"\0" * (150_000 - 4)
+VIDEO_PERIOD_S = 2.0
+
+
+class ServerError(RuntimeError):
+    pass
+
+
+def error_side(exc):
+    if isinstance(exc, (ServerError, websockets.ConnectionClosed, httpx.ReadTimeout)):
+        return "server_errors"
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500:
+        return "server_errors"
+    if isinstance(exc, websockets.exceptions.InvalidStatus) and exc.response.status_code >= 500:
+        return "server_errors"
+    return "generator_errors"
 
 
 def full_sequence(scenario, ceiling_s):
@@ -33,6 +48,8 @@ async def open_identity(http, base, key, index):
     if key:
         query["key"] = key
     door = await http.get(base + "/test", params=query)
+    if door.status_code >= 500:
+        door.raise_for_status()
     params = parse_qs(urlparse(door.headers.get("location", "")).query)
     if door.status_code != 307 or "participant_id" not in params:
         raise RuntimeError(f"test door status {door.status_code}; no participant redirect")
@@ -51,6 +68,7 @@ class Participant:
                    "participant_id": None, "started": None, "ended": None,
                    "conversation_started": None, "hangup_requested": None,
                    "completed": False, "lines": [], "error_frames": [],
+                   "server_errors": [], "generator_errors": [], "video_ticks": [],
                    "websocket_disconnects": 0, "unexpected_disconnect": False,
                    "video_chunks": 0, "replies_started": 0}
         self.pending = set()
@@ -68,7 +86,11 @@ class Participant:
     def spawn(self, coro):
         task = asyncio.create_task(coro)
         self.pending.add(task)
-        task.add_done_callback(self.pending.discard)
+        def finished(done):
+            self.pending.discard(done)
+            if not done.cancelled() and done.exception():
+                self.tl[error_side(done.exception())].append(type(done.exception()).__name__)
+        task.add_done_callback(finished)
         return task
 
     async def ack(self, when, phase, turn, interrupted=False):
@@ -97,12 +119,12 @@ class Participant:
             if kind == "session":
                 self.tl["session_id"] = message["session_id"]
                 self.tl["started"] = time.time()
+                self.active = True
                 self.session_ready.set()
             elif kind == "user_transcript" and message.get("final"):
                 self.last_activity = time.monotonic()
                 if self.tl["conversation_started"] is None:
                     self.tl["conversation_started"] = time.time()
-                    self.active = True
             elif kind == "assistant_started":
                 self.last_activity = time.monotonic()
                 self.turn = message.get("turn")
@@ -128,8 +150,10 @@ class Participant:
                 self.completed.set()
             elif kind == "error":
                 self.tl["error_frames"].append(str(message.get("message", ""))[:200])
+                self.tl["server_errors"].append("server error frame")
         if not self.completed.is_set() and not self.tl["hangup_requested"]:
             self.tl["unexpected_disconnect"] = True
+            self.tl["server_errors"].append("server-initiated websocket close")
 
     async def send(self, pcm):
         due = time.monotonic()
@@ -204,18 +228,41 @@ class Participant:
                         await self.quiet(14, tone=True)
 
     async def video(self, http):
-        seq = 0
-        while not self.completed.is_set():
-            await asyncio.sleep(2)
-            if self.completed.is_set():
-                return
-            try:
-                await upload_webcam(http, self.base, self.tl["session_id"], self.tl["participant_id"], seq)
-                self.tl["video_chunks"] += 1
+        from collections import deque
+        queue, tick = deque(), asyncio.Event()
+
+        async def produce():
+            due, seq = time.monotonic() + VIDEO_PERIOD_S, 0
+            while not self.completed.is_set():
+                await asyncio.sleep(max(0, due - time.monotonic()))
+                if self.completed.is_set():
+                    return
+                queue.append(seq)
+                self.tl["video_ticks"].append({"seq": seq, "t": time.time()})
+                self.tl["video_queue_max"] = max(self.tl.get("video_queue_max", 0), len(queue))
+                tick.set()
                 seq += 1
-            except (httpx.HTTPError, ValueError) as exc:
-                self.tl["video_error"] = type(exc).__name__
-                return
+                due += VIDEO_PERIOD_S
+
+        producer = asyncio.create_task(produce())
+        try:
+            while not self.completed.is_set():
+                await tick.wait()
+                tick.clear()
+                while queue and not self.completed.is_set():
+                    try:
+                        await upload_webcam(http, self.base, self.tl["session_id"], self.tl["participant_id"], queue[0])
+                        queue.popleft()
+                        self.tl["video_chunks"] += 1
+                    except httpx.HTTPError as exc:
+                        self.tl["video_error"] = type(exc).__name__
+                        # The page retains the head and retries on the next chunk.
+                        self.tl["server_errors"].append("video upload: " + type(exc).__name__)
+                        tick.clear()
+                        break
+        finally:
+            producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
 
     async def run(self):
         def preload():
@@ -241,7 +288,10 @@ class Participant:
                     "sampleRate": 48000, "channelCount": 1, "echoCancellation": True,
                     "noiseSuppression": True, "autoGainControl": True, "contextSampleRate": 48000}}))
                 reader = self.spawn(self.read())
-                await asyncio.wait_for(self.session_ready.wait(), 60)
+                try:
+                    await asyncio.wait_for(self.session_ready.wait(), 60)
+                except asyncio.TimeoutError as exc:
+                    raise ServerError("session frame timeout") from exc
                 if self.webcam:
                     self.spawn(self.video(http))
                 try:
@@ -249,13 +299,14 @@ class Participant:
                 except asyncio.TimeoutError:
                     self.tl["duration_limit_reached"] = True
                 self.tl["hangup_requested"] = time.time()
+                self.active = False
         except asyncio.CancelledError:
             self.tl["cancelled"] = True
             raise
-        except (websockets.ConnectionClosed, httpx.HTTPError, RuntimeError, TimeoutError) as exc:
+        except Exception as exc:
             if not self.tl["completed"]:
-                self.tl["unexpected_disconnect"] = True
-                self.tl["driver_error"] = type(exc).__name__
+                self.tl[error_side(exc)].append(type(exc).__name__ + ": " + str(exc)[:100])
+                self.tl["unexpected_disconnect"] = error_side(exc) == "server_errors"
         finally:
             self.tl["hangup_requested"] = self.tl["hangup_requested"] or time.time()
             self.active = False
@@ -265,9 +316,6 @@ class Participant:
             for task in list(self.pending):
                 task.cancel()
             await asyncio.gather(*self.pending, return_exceptions=True)
-            if reader and reader.done() and not reader.cancelled() and reader.exception():
-                self.tl["driver_error"] = type(reader.exception()).__name__
-                self.tl["unexpected_disconnect"] = True
             if self.given_http is None:
                 await http.aclose()
         return self.tl

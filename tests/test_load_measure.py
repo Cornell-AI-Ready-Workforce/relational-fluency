@@ -9,12 +9,12 @@ from tools.load import measure
 def valid_metrics():
     return {"achieved_concurrency": 5.0, "generator_loop_lag_ms": {"p99": 2},
             "speech_end_to_first_played_s": {"p90": 1}, "latency_samples_s": [1],
-            "participant_turns": 100, "reply_missing": 0, "reply_missing_per_100_turns": 0,
+            "first_played_missing": 0, "first_played_missing_per_100_turns": 0, "participant_turns": 100, "reply_missing": 0, "reply_missing_per_100_turns": 0,
             "server_loop_lag_ms": {"p99": 2}, "server_rss_bytes": {"max": 100_000_000},
             "voice_error_kinds": {}, "close_burst_s": 1}
 
 
-REFERENCE = {"p90_s": 1, "reply_missing_per_100_turns": 0, "voice_error_kinds": []}
+REFERENCE = {"first_played_missing_per_100_turns": 0, "p90_s": 1, "reply_missing_per_100_turns": 0, "voice_error_kinds": []}
 
 
 def test_first_played_deduplicates_members_but_not_sessions_and_counts_missing_acks():
@@ -69,7 +69,7 @@ def test_reply_missing_threshold_voice_kinds_and_required_measurements():
     assert measure.verdict(5, valid_metrics(), reference, full_length=False)["verdict"] == "INVALID"
     assert measure.verdict(5, valid_metrics(), None)["verdict"] == "INVALID"
     assert measure.verdict(5, valid_metrics(), reference, fake_errors=[{}])["verdict"] == "FAIL"
-    assert measure.verdict(5, metrics, reference, fake_errors=[{}])["verdict"] == "INVALID"
+    assert measure.verdict(5, metrics, reference, fake_errors=[{}])["verdict"] == "FAIL"
 
 
 def test_baseline_pools_raw_samples_and_capacity_requires_all_repeats():
@@ -137,19 +137,19 @@ def test_server_lag_uses_maximum_window_p99_with_bounds():
 def test_summary_uses_actual_turns_attempts_resources_and_conversation_samples():
     rows = [{"type": "user_turn", "text": "hello Morgan", "wall": 100},
             {"type": "play_start", "wall": 102},
-            {"type": "turn_timing", "vad_speech_end": 1, "first_audio_played": 3},
-            {"type": "reply_missing"},
+            {"type": "turn_timing", "vad_speech_end": 1, "first_audio_played": 3, "wall": 102, "t": 3},
+            {"type": "reply_missing", "wall": 102},
             {"type": "voice_error", "message": "response_cancel_not_active"}]
     timelines = [{"session_id": sid, "completed": True, "websocket_disconnects": 1,
                   "lines": [{"name": "a1", "text": "hello Morgan", "start": 99, "end": 101}]}
                  for sid in ("s1", "s2")]
     summary = measure.summarize(
         {"s1": rows, "s2": rows}, timelines,
-        attempts=[{"purpose": "tts", "route": "tts_ws", "outcome": "ok", "duration_ms": 10, "queue_wait_ms": 25}],
-        resources=[{"cpu_percent": 12, "rss_bytes": 1024}],
-        concurrency=[{"t": 0, "active": 0}, {"t": 31, "active": 2}, {"t": 32, "active": 1}],
-        generator_lag_ms=[1, 3], server_lag=[{"p99_ms": 10, "max_ms": 20}],
-        measurement_start=30, measurement_end=33, close_burst_s=0.5, artifact_bytes={"s1": 100, "s2": 200})
+        attempts=[{"purpose": "tts", "route": "tts_ws", "outcome": "ok", "duration_ms": 10, "queue_wait_ms": 25, "t": 101}],
+        resources=[{"t": 101, "cpu_percent": 12, "rss_bytes": 1024}],
+        concurrency=[{"t": 0, "active": 0}, {"t": 101, "active": 2}, {"t": 102, "active": 1}],
+        generator_lag_ms=[{"t": 101, "lag_ms": 1}, {"t": 102, "lag_ms": 3}], server_lag=[{"t": 101, "p99_ms": 10, "max_ms": 20}],
+        measurement_start=99, measurement_end=103, close_burst_s=0.5, artifact_bytes={"s1": 100, "s2": 200})
     assert (summary["lines_said"], summary["lines_answered"], summary["participant_turns"]) == (2, 2, 2)
     assert summary["speech_end_to_first_played_s"] == {"p50": 2, "p90": 2, "p99": 2, "n": 2}
     assert summary["reply_missing"] == 2 and summary["reply_missing_per_100_turns"] == 100

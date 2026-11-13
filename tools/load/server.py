@@ -2,8 +2,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
+import re
+
+
+class RedactKey(logging.Filter):
+    def filter(self, record):
+        def redact(value):
+            return re.sub(r"([?&]key=)[^&\s\"]*", r"\1[REDACTED]", value) if isinstance(value, str) else value
+        record.msg = redact(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact(value) for value in record.args)
+        return True
 
 
 def main():
@@ -24,8 +36,14 @@ def main():
     attempts = (data / "upstream-attempts.jsonl").open("a", encoding="utf-8", buffering=1)
     upstream_telemetry.add_listener(lambda event: attempts.write(json.dumps(event) + "\n"))
     import uvicorn
+    from copy import deepcopy
+    from uvicorn.config import LOGGING_CONFIG
+    config = deepcopy(LOGGING_CONFIG)
+    config["filters"] = {"redact_key": {"()": RedactKey}}
+    for handler in config["handlers"].values():
+        handler["filters"] = ["redact_key"]
     uvicorn.run("server.app:app", host=os.getenv("HOST", "0.0.0.0"),
-                port=int(os.getenv("PORT", "8080")), access_log=False, log_level="warning")
+                port=int(os.getenv("PORT", "8080")), access_log=True, log_level="info", log_config=config)
 
 
 if __name__ == "__main__":

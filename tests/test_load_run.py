@@ -19,10 +19,16 @@ class FakeRuntime:
         self.health = {"gateway": {"ok": True}}
         self.image = None
         self.stopped = False
+        self.killed = False
+        self.metadata = {}
     async def start(self):
         self.data.mkdir(parents=True)
         return self
     async def stop(self): self.stopped = True
+    async def kill_server(self): self.killed = True
+    async def settled(self, timelines): return True
+    async def export(self, timelines): pass
+    async def profile_available(self): return False
     async def resources(self): return {"t": time.time(), "cpu_percent": 5, "rss_bytes": 1000}
     async def fake_stats(self): return {"errors": []}
     async def profile(self, *args, **kwargs): return {"status": "unavailable", "reason": "test"}
@@ -43,10 +49,10 @@ def test_report_repeats_baseline_capacity_and_first_failure_profile(monkeypatch,
     monkeypatch.setattr(run, "run_step", step)
     args = run.parse_args(["--ramp", "1,5", "--repeat", "2", "--scenarios", "S2A", "--report-dir", str(tmp_path)])
     report, directory = asyncio.run(run.run_experiment(args, runtime_factory=FakeRuntime))
-    assert calls == [(1, 1), (1, 2), (5, 1), (5, 2)]
+    assert calls == [(1, 1), (1, 2), (5, 1)]
     assert report["capacity"] == 1 and report["verdict"] == "FAIL"
     assert report["first_failure_profile"]["concurrency"] == 5
-    assert report["first_failure_profile"]["native"] is False
+    assert report["first_failure_profile"]["status"] == "unavailable"
     assert json.loads((directory / "report.json").read_text(encoding="utf-8"))["capacity"] == 1
     assert "capacity for the tested configuration" in (directory / "report.md").read_text(encoding="utf-8").lower()
 
@@ -105,6 +111,7 @@ def test_live_429_watcher_cancels_inflight_participant(monkeypatch, tmp_path):
     assert result["live_stop"]["reason"] == "first gateway 429"
     assert result["live_stop"]["route"] == "chat_completions_stream"
     assert result["live_stop"]["concurrency"] == 1
+    assert instance.killed
 
 
 def test_close_burst_requires_all_sessions_closed_and_all_mixes_rendered(tmp_path):
