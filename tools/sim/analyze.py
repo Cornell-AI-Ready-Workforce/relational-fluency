@@ -213,6 +213,11 @@ DEFAULT_TOLERANCES = {
     "triggers_fired_drop": 1,
     "latency_p50_ratio": 1.5, "latency_p50_slack_s": 0.5,
     "latency_p90_ratio": 1.5, "latency_p90_slack_s": 1.0,
+    # Read by tools/sim/judge.py failures(), not by compare(): how far the
+    # beats the judge found made may fall below the baseline's count. Two: one
+    # for a trigger that did not fire (triggers_fired_drop allows it) and one
+    # for a beat a character did not make.
+    "judge_made_drop": 2,
 }
 
 

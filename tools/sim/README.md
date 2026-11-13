@@ -58,6 +58,84 @@ Per scenario, from the session's `events.jsonl` and the driver's own timeline
 does better than the baseline passes. Spoke first is the exception: since
 pipeline 2026-09-28b any at all fails, whatever the baseline.
 
+## What the characters said
+
+The numbers above count what the pipeline did. None of them reads a reply: a
+trigger that fired and a character who then said something else is a delivered
+beat to all of them. So the check also runs `tools/sim/judge.py` on each
+scenario's record. One model call holds every character line to the direction
+it was handed, to the scenario file and to the fiction; two more, a few hundred
+tokens each, are made only when the first flags something.
+
+| Result | Meaning | Fails the scenario |
+|---|---|---|
+| beats N/M | turns handed a direction whose line made the move, in whole (`y`) or in part (`part`), of those judged; `lost` counts the beats nobody could judge (talked over, never heard, never spoken) | when N is more than `judge_made_drop` below the baseline's |
+| esci>=3 N/M | ESCI items that got at least three beats that were made | no |
+| FACT | a line states as true something the scenario says otherwise | always |
+| ROLE | a line breaks the fiction (speaks as an AI, reads a direction aloud, narrates, speaks someone else's lines) | always |
+| SAFE | a line crosses the bounds every brief ends with | always |
+| rule | a line does what its own character's brief forbids outright | no |
+| loop, stock | a character repeats its own line; a banned acknowledgement ("I hear you") | no |
+| disputed | flags only some of the readings confirmed | no |
+
+A flag is a finding only when the words it quotes are really in the scenario
+(or in the line) and both second readings of that one line, made without the
+first answer, agree. One that only some readings confirm is listed as
+`disputed` and fails nothing. A beat is not made only when every reading says
+so, and never on a line the participant talked over. A judge that cannot
+answer fails the scenario: no verdict is not a pass. So does a scenario whose
+baseline has no `judge` entry, or one recorded by another judge model or
+rubric: re-record it. `--no-judge` skips all of this, and the report says so at
+its top level; a baseline cannot be recorded with it.
+
+The same judge runs on any recorded encounter:
+
+```bash
+python -m tools.sim.judge data/sessions/<id>          # one line, and what failed it
+python -m tools.sim.judge --all data/sessions --only S3A,S4A --json out.json
+```
+
+There it holds an encounter to the scenario file of the build that recorded it,
+read out of git by the commit in the record's provenance. A record that names
+no build (a local server), or a build this checkout does not have, is judged on
+its beats and the fiction only, and the line says `FACT, rule not judged`;
+`--working-tree` holds a session to this checkout instead, for one it has just
+recorded. It sends the encounter's transcript to the gateway model named by
+`JUDGE_MODEL` (default: the director's), the gateway the encounter was
+recorded through.
+
+How well the model reads is measured, not assumed. `tools/sim/judge_cases.json`
+holds six written encounters (S1A, S2A, S4A; 61 character lines) in which every
+line is labelled clean or planted with one known defect, written by authors who
+had not seen the judge's wording and checked by a second reader. On
+2026-11-13, in each of three runs:
+
+```
+judge selftest: 6 encounters, 61 labelled lines, rubric 97e0ab8d, nto.gemini-4-argon  [12 calls, 43.4k in 1.7k out]
+  FACT 6/6 found, 0 false   ROLE 3/3 found, 0 false   SAFE 3/3 found, 0 false   RULE 3/3 found, 0 false
+  beats not made 9/9 found, 0 false of 31 made
+```
+
+That is 24 planted defects and 37 clean lines: enough to say the judge is not
+missing the plain cases or inventing them, not enough to put a rate on either.
+On real encounters the plain findings repeat run for run and a borderline one
+does not: a character naming two leavers where the scenario of that build named
+a third was a finding in some runs and unconfirmed in others, and a beat whose
+cue is to wait was made in some and not in others. Read a finding that
+appears once as a line to look at, and `disputed` as the same. Run
+`python -m tools.sim.judge_selftest` after changing the judge's prompts, its
+constants or `JUDGE_MODEL`, and put the new numbers here.
+
+## The dashboard
+
+`python -m tools.sim.dashboard_data OUT_DIR` flattens every report in
+`tools/sim/reports` into `sim_runs.csv` (one row per scenario per run) and
+`findings.csv` (what the judge found in each), the tables the QA dashboard
+charts. `--encounters` and `--selftest` add the judge's results on recorded
+encounters and its selftest score. Run it after a sim check and upload the
+files to the dashboard again. Of a recorded encounter it writes counts and
+places only, never a line.
+
 ## When it fails
 
 Read the `failures` list in the report, then the session: it is under the
@@ -93,9 +171,25 @@ the 720 s ceiling where 24c ended it about 451 s in, and the count limits
 shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
-check fails for it, saying so, until it is recorded. All four are pending as
-committed: the latency audit of 2026-11-04 bumped PIPELINE_VERSION and
-ROOM_PACING_VERSION without a live run (see `pending`). Before that, all four
+check fails for it, saying so, until it is recorded. None is pending as
+committed. All four were recorded on 2026-11-13 from build ac07319, pipeline
+2026-11-06a / room pacing 2026-11-04a (s_1794603648_182505,
+s_1794603870_d09625, s_1794604520_f5de09, s_1794604724_9551d2): the first run
+of 11-06a, and the first to carry the judge's counts (beats made 8 of 8, 9 of
+9, 7 of 7 and 9 of 10, rubric 97e0ab8d). Read by hand against the run before
+it (11-04a, `reports/1469925.json`): lines answered 8 of 8 heard, 26 of 27, 8
+of 9 and 30 of 34, against 8 of 8, 24 of 25, 8 of 9 and 28 of 34; the same
+triggers fired (7, 9, 7, 10); no phantom turn, voice_error or reply_missing in
+either; p50 / p90 1.9 / 2.7, 1.9 / 2.7, 2.8 / 3.3 and 2.5 / 3.1 s, against
+2.2 / 2.6, 2.1 / 3.0, 2.8 / 3.3 and 2.6 / 3.6 s. Its report
+(`reports/ac07319.json`) fails, as a first recording must (there was nothing
+to compare with), and on one thing a baseline does not excuse: the judge's
+FACT on S4A, where Priya said Support's ticket volume peaks on the 23rd (her
+brief: in the first two weeks of the month, which is why Support wants the
+23rd) and Chris then ruled that week out in place of his own beat. Before
+11-06a, the latency audit of 2026-11-04 bumped PIPELINE_VERSION and
+ROOM_PACING_VERSION with a live run but no re-recorded baseline
+(`reports/1469925.json`). Before that, all four
 were recorded on the cascade (`cascade-argon-elevenlabs`:
 Argon hears and replies, flash-lite transcribes, ElevenLabs eleven_v4 speaks),
 pipeline 2026-10-14a / room pacing 29b, on 2026-10-15: S1A, S2A and S4A from

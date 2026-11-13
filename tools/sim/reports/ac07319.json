@@ -1,0 +1,720 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "1469925",
+   "date": "2026-11-06",
+   "pipeline_version": "2026-11-04a",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "ac07319",
+ "build_from": "HEAD's image contents are identical to the pinned tag ac07319",
+ "failures": [
+  "S1A: no baseline yet: not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
+  "S2A: no baseline yet: not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
+  "S3A: no baseline yet: not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
+  "S4A: judge: FACT t20 priya: \"If Support goes on the twenty-third, that's when their ticket volume peaks, so I don't kn…\" against \"You also have two teams' dates in your notes, from last year and from asking again this month: Support wants to go live on Monday the 23rd, because their ticket volume peaks in the first two weeks of the month, and Finance on Monday the 16th, once their month-end close is done.\"",
+  "S4A: no baseline yet: not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline"
+ ],
+ "generated_at": "2026-11-13T21:29:03Z",
+ "health": {
+  "build": "ac07319",
+  "pipeline_version": "2026-11-06a",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S1A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 0,
+     "p": 0,
+     "x": 0,
+     "y": 8
+    },
+    "chances": {
+     "met": 5,
+     "of": 5,
+     "per_item": {
+      "bring_into_open": 4,
+      "de_escalate": 3,
+      "fester_r": 4,
+      "resolve_not_fester": 4,
+      "talk_openly": 4
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 0,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 0,
+     "ungrounded": 0
+    },
+    "flags": [],
+    "lines": 10,
+    "missed": [],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S1A",
+    "session_id": "s_1794603648_182505",
+    "spec_changed": null,
+    "usage": {
+     "calls": 1,
+     "in": 5490,
+     "out": 105
+    },
+    "verdicts": [
+     {
+      "agent": "riley",
+      "at": 1,
+      "i": 1,
+      "trigger": "t1_retaliation_fork",
+      "v": "y"
+     },
+     {
+      "agent": "riley",
+      "at": 8,
+      "i": 7,
+      "trigger": null,
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 10,
+      "i": 9,
+      "trigger": "t2_the_opening",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 12,
+      "i": 11,
+      "trigger": "t3_defensiveness",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 14,
+      "i": 13,
+      "trigger": "t5_brush_it_off",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 16,
+      "i": 15,
+      "trigger": "t6_how_it_works",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 17,
+      "i": 16,
+      "trigger": "t4_half_concession",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 19,
+      "i": 18,
+      "trigger": "t7_time_runs_out",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 11,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 8,
+    "lines_said": 8,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "ac07319",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-06a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794603648_182505",
+    "speech_end_to_first_played_s": {
+     "n": 8,
+     "p50": 1.901,
+     "p90": 2.65
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_retaliation_fork",
+     "t2_the_opening",
+     "t3_defensiveness",
+     "t5_brush_it_off",
+     "t6_how_it_works",
+     "t4_half_concession",
+     "t7_time_runs_out"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {
+     "probe_pad": 2
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794603648_182505"
+  },
+  "S2A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 0,
+     "p": 2,
+     "x": 0,
+     "y": 7
+    },
+    "chances": {
+     "met": 5,
+     "of": 5,
+     "per_item": {
+      "anticipates": 8,
+      "behind_scenes": 3,
+      "multiple_approaches": 6,
+      "self_interest": 5,
+      "through_discussion": 4
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 1,
+     "ROLE": 0,
+     "RULE": 1,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 1,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "morgan",
+      "at": 15,
+      "c": "RULE",
+      "i": 15,
+      "line": "This doesn't go anywhere on my word alone, because the director has to sign off and whoev…",
+      "q": "Two sentences a turn at the outside, and short ones.",
+      "source": "Two sentences a turn at the outside, and short ones."
+     },
+     {
+      "agent": "morgan",
+      "at": 37,
+      "c": "LOOP",
+      "i": 37,
+      "line": "What do I say to everyone else who is stretched and comes asking the moment this lands?",
+      "q": "turn 19",
+      "source": null
+     }
+    ],
+    "lines": 27,
+    "missed": [],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S2A",
+    "session_id": "s_1794603870_d09625",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 7360,
+     "out": 573
+    },
+    "verdicts": [
+     {
+      "agent": "morgan",
+      "at": 1,
+      "i": 1,
+      "trigger": "t1_the_opening",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 8,
+      "i": 8,
+      "trigger": "t2_the_money_is_not_there",
+      "v": "p"
+     },
+     {
+      "agent": "morgan",
+      "at": 10,
+      "i": 10,
+      "trigger": "t3_the_argument_lands_flat",
+      "v": "p"
+     },
+     {
+      "agent": "morgan",
+      "at": 12,
+      "i": 12,
+      "trigger": "t4_everyone_is_stretched",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 13,
+      "i": 13,
+      "trigger": "t5_the_door",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 15,
+      "i": 15,
+      "trigger": "t6_who_else_has_to_back_it",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 17,
+      "i": 17,
+      "trigger": "t7_what_goes_in_writing",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 19,
+      "i": 19,
+      "trigger": "t8_what_do_i_tell_the_others",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 21,
+      "i": 21,
+      "trigger": "t9_settling",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 27,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 26,
+    "lines_heard": 27,
+    "lines_said": 27,
+    "participant_turns": 27,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "ac07319",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-06a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794603870_d09625",
+    "speech_end_to_first_played_s": {
+     "n": 26,
+     "p50": 1.898,
+     "p90": 2.716
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_the_opening",
+     "t2_the_money_is_not_there",
+     "t3_the_argument_lands_flat",
+     "t4_everyone_is_stretched",
+     "t5_the_door",
+     "t6_who_else_has_to_back_it",
+     "t7_what_goes_in_writing",
+     "t8_what_do_i_tell_the_others",
+     "t9_settling"
+    ],
+    "triggers_fired": 9,
+    "turns_suppressed": {
+     "probe_pad": 1
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794603870_d09625"
+  },
+  "S3A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 0,
+     "p": 0,
+     "x": 0,
+     "y": 7
+    },
+    "chances": {
+     "met": 3,
+     "of": 5,
+     "per_item": {
+      "brings_out_best": 4,
+      "builds_pride": 4,
+      "compelling_vision": 2,
+      "inspires": 3,
+      "not_inspire_r": 2
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 0,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 0,
+     "ungrounded": 0
+    },
+    "flags": [],
+    "lines": 10,
+    "missed": [],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S3A",
+    "session_id": "s_1794604520_f5de09",
+    "spec_changed": null,
+    "usage": {
+     "calls": 1,
+     "in": 6201,
+     "out": 94
+    },
+    "verdicts": [
+     {
+      "agent": "alex",
+      "at": 1,
+      "i": 1,
+      "trigger": "t0_hello",
+      "v": "y"
+     },
+     {
+      "agent": "alex",
+      "at": 3,
+      "i": 3,
+      "trigger": "t1_public_challenge",
+      "v": "y"
+     },
+     {
+      "agent": "jordan",
+      "at": 9,
+      "i": 9,
+      "trigger": "t2_jordans_flat_fine",
+      "v": "y"
+     },
+     {
+      "agent": "casey",
+      "at": 10,
+      "i": 10,
+      "trigger": "t3_caseys_overload",
+      "v": "y"
+     },
+     {
+      "agent": "alex",
+      "at": 15,
+      "i": 15,
+      "trigger": "t4_what_the_team_is_for",
+      "v": "y"
+     },
+     {
+      "agent": "jordan",
+      "at": 16,
+      "i": 16,
+      "trigger": "t5_a_fact_left_on_the_table",
+      "v": "y"
+     },
+     {
+      "agent": "casey",
+      "at": 18,
+      "i": 18,
+      "trigger": "t6_one_clarifying_question",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 10,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 9,
+    "lines_said": 9,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "ac07319",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-06a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794604520_f5de09",
+    "speech_end_to_first_played_s": {
+     "n": 9,
+     "p50": 2.752,
+     "p90": 3.346
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t0_hello",
+     "t1_public_challenge",
+     "t2_jordans_flat_fine",
+     "t3_caseys_overload",
+     "t4_what_the_team_is_for",
+     "t5_a_fact_left_on_the_table",
+     "t6_one_clarifying_question"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794604520_f5de09"
+  },
+  "S4A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-06a / room pacing 2026-11-04a (transcript gates, #150, merged 2026-11-06 after this run): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 1,
+     "p": 3,
+     "x": 0,
+     "y": 6
+    },
+    "chances": {
+     "met": 6,
+     "of": 6,
+     "per_item": {
+      "encourages_cooperation": 5,
+      "encourages_participation": 5,
+      "not_cooperate_r": 3,
+      "respectful": 4,
+      "solicits_input": 5,
+      "supportive": 4
+     }
+    },
+    "counts": {
+     "FACT": 1,
+     "LOOP": 0,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 0,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "priya",
+      "at": 20,
+      "c": "FACT",
+      "i": 20,
+      "line": "If Support goes on the twenty-third, that's when their ticket volume peaks, so I don't kn…",
+      "q": "Support wants to go live on Monday the 23rd, because their ticket volume peaks in",
+      "source": "You also have two teams' dates in your notes, from last year and from asking again this month: Support wants to go live on Monday the 23rd, because their ticket volume peaks in the first two weeks of the month, and Finance on Monday the 16th, once their month-end close is done."
+     }
+    ],
+    "lines": 36,
+    "missed": [
+     {
+      "agent": "chris",
+      "at": 23,
+      "i": 23,
+      "line": "Support has their peak then, so that week is out.",
+      "trigger": "t9_chris_has_two_teams_dates"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": false,
+    "rubric": "97e0ab8d",
+    "scenario": "S4A",
+    "session_id": "s_1794604724_9551d2",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 9095,
+     "out": 261
+    },
+    "verdicts": [
+     {
+      "agent": "dan",
+      "at": 3,
+      "i": 3,
+      "trigger": "t1_priya_interrupted",
+      "v": "y"
+     },
+     {
+      "agent": "dan",
+      "at": 13,
+      "i": 13,
+      "trigger": "t2_idea_relabelled",
+      "v": "y"
+     },
+     {
+      "agent": "priya",
+      "at": 14,
+      "i": 14,
+      "trigger": "t5_a_smaller_second_try",
+      "v": "p"
+     },
+     {
+      "agent": "dan",
+      "at": 18,
+      "i": 18,
+      "trigger": "t8_splitting_it_up_is_slower",
+      "v": "y"
+     },
+     {
+      "agent": "chris",
+      "at": 23,
+      "i": 23,
+      "trigger": "t9_chris_has_two_teams_dates",
+      "v": "n"
+     },
+     {
+      "agent": "priya",
+      "at": 30,
+      "i": 30,
+      "trigger": "t10_priya_has_two_teams_dates",
+      "v": "y"
+     },
+     {
+      "agent": "chris",
+      "at": 32,
+      "i": 32,
+      "trigger": "t6_chris_backs_the_room",
+      "v": "p"
+     },
+     {
+      "agent": "dan",
+      "at": 37,
+      "i": 37,
+      "trigger": "t3_decisions_close_with_priya_silent",
+      "v": "y"
+     },
+     {
+      "agent": "dan",
+      "at": 43,
+      "i": 43,
+      "trigger": "t4_dan_claims_the_writeup",
+      "v": "p"
+     },
+     {
+      "agent": "priya",
+      "at": 45,
+      "i": 45,
+      "trigger": "t7_priya_waits_to_be_handed_work",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 36,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 30,
+    "lines_heard": 34,
+    "lines_said": 34,
+    "participant_turns": 34,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "ac07319",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-06a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794604724_9551d2",
+    "speech_end_to_first_played_s": {
+     "n": 34,
+     "p50": 2.532,
+     "p90": 3.115
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_priya_interrupted",
+     "t2_idea_relabelled",
+     "t5_a_smaller_second_try",
+     "t8_splitting_it_up_is_slower",
+     "t9_chris_has_two_teams_dates",
+     "t10_priya_has_two_teams_dates",
+     "t6_chris_backs_the_room",
+     "t3_decisions_close_with_priya_silent",
+     "t4_dan_claims_the_writeup",
+     "t7_priya_waits_to_be_handed_work"
+    ],
+    "triggers_fired": 10,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 3,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794604724_9551d2"
+  }
+ },
+ "server": "http://127.0.0.1:60600"
+}
