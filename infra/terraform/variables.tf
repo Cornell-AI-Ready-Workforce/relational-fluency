@@ -163,3 +163,14 @@ variable "monitoring_thresholds" {
     error_message = "All monitoring thresholds must be positive."
   }
 }
+
+
+variable "voice_route_error_threshold" {
+  description = "Study runner/setup route errors in five minutes that trigger the route alarm; initial setting, tune from collection data."
+  type        = number
+  default     = 3
+  validation {
+    condition     = var.voice_route_error_threshold > 0 && floor(var.voice_route_error_threshold) == var.voice_route_error_threshold
+    error_message = "The route error threshold must be a positive integer."
+  }
+}

@@ -363,6 +363,7 @@ class CascadeSocket:
         self.api_key = api_key or gateway_api_key()
         self.voice = voice
         self.session_id = session_id
+        self._metrics_hearing_kind = "unknown"
         self.instructions = ""
         self.tools: list = []
         # The process's shared gateway client (_shared_http) unless one is
@@ -477,6 +478,8 @@ class CascadeSocket:
         self._emit({"type": "input_audio_buffer.cleared"})
 
     async def _on_input_audio_buffer_commit(self, ev: dict) -> None:
+        kind = getattr(self, "_metrics_hearing_kind", "unknown")
+        self._metrics_hearing_kind = "unknown"
         pcm = bytes(self._audio)
         self._audio.clear()
         if not pcm:
@@ -491,7 +494,7 @@ class CascadeSocket:
         item["audio"] = pcm
         self._emit({"type": "input_audio_buffer.committed", "item_id": iid,
                     "previous_item_id": prev})
-        task = self._spawn(self._transcribe(iid, pcm))
+        task = self._spawn(self._transcribe(iid, pcm, kind=kind))
         self._pending_stt.append(task)
 
     async def _on_conversation_item_create(self, ev: dict) -> None:
@@ -542,12 +545,15 @@ class CascadeSocket:
         self._reply.cancel()
 
     # -- steps -----------------------------------------------------------------
-    async def _transcribe(self, iid: str, pcm: bytes) -> None:
+    async def _transcribe(self, iid: str, pcm: bytes, *, kind: str = "unknown") -> None:
         started = time.time()
         text = ""
+        outcome = "failed"
         try:
             text = await self._hear(pcm)
+            outcome = "no_speech" if not text.strip() or text.strip().lower() == "[no speech]" else "speech"
         except asyncio.CancelledError:
+            outcome = "cancelled"
             raise
         except Exception as exc:  # noqa: BLE001 - a failed hearing is an event
             self._emit({"type": "conversation.item.input_audio_transcription.failed",
@@ -557,6 +563,8 @@ class CascadeSocket:
             return
         finally:
             self.timings["stt_ms"] = int((time.time() - started) * 1000)
+            from .. import metrics
+            metrics.stt_result(self.session_id, outcome, kind)
         for it in self.items:
             if it["id"] == iid:
                 it["text"] = text

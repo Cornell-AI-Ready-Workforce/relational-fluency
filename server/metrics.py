@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import json
 import math
 import os
@@ -20,19 +21,28 @@ from pathlib import Path
 
 NAMESPACE = "RelationalFluency"
 DIMENSIONS = {
-    "Purpose": frozenset(("preflight", "actor", "stt", "director", "steering", "tts")),
-    "Upstream": frozenset(("gateway", "elevenlabs")),
+    "Purpose": frozenset(("preflight", "actor", "stt", "director", "steering", "tts", "other")),
+    "Upstream": frozenset(("gateway", "elevenlabs", "other")),
     "Outcome": frozenset(("ok", "http_error", "timeout", "closed", "exception",
-                          "cancelled", "connection", "audio", "other")),
+                          "cancelled", "connection", "audio", "speech", "no_speech", "failed",
+                          "audio_already_sent", "later_commit", "cancel_unsupported", "withdrawn", "other")),
     "Cohort": frozenset(("study", "internal")),
+    "ExitCause": frozenset(("auth_rejected", "setup_failed", "completed", "runner_returned",
+                            "runner_error", "withdrawn", "client_disconnected", "cancelled", "other")),
+    "CloseOutcome": frozenset(("sent_1000", "sent_1011", "sent_other", "none", "close_failed", "client_first", "other")),
+    "Kind": frozenset(("participant", "probe", "replay", "unknown", "other")),
+    "Reason": frozenset(("no_speech", "implausible_rate", "probe_pad", "not_english",
+                         "low_transcriber_confidence", "replay_duplicate", "echo", "duplicate", "other")),
 }
+ROLLUPS = {"VoiceRouteEnded": (("Cohort", "ExitCause"), ("Cohort", "CloseOutcome"))}
 UNITS = {
     **dict.fromkeys(("SpeechEndToFirstPlayed", "UpstreamLatency", "TtsQueueWait",
                      "LoopLagP99", "LoopLagMax"), "Milliseconds"),
     **dict.fromkeys(("FirstPlayedMissing", "ReplyMissing", "VoiceError",
                      "UpstreamRequests", "UpstreamErrors", "UpstreamCancelled", "RoomMemberDropped",
                      "RoomMemberLost", "ActiveSessions", "EncounterStarted",
-                     "EncounterCompleted", "EncounterWithdrawn", "ArchiveFailed"), "Count"),
+                     "EncounterCompleted", "EncounterWithdrawn", "ArchiveFailed", "VoiceRouteEnded",
+                     "SttResult", "UserTurnSuppressed", "SuppressedTurnReply", "Bargein"), "Count"),
     "EncounterDurationS": "Seconds",
 }
 # Keep these exclusions equal to tools/sim/analyze.py. Do not import sim code
@@ -56,7 +66,7 @@ def _safe(fn):
     def guarded(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except Exception:  # instrumentation must never change encounter behaviour
+        except BaseException:  # instrumentation must never change encounter behaviour
             return None
     return guarded
 
@@ -78,8 +88,8 @@ def _number(value) -> bool:
 def emit_many(values: dict, *, timestamp_ms: float | None = None, **dimensions) -> None:
     """Emit raw samples in one document, plus global/cohort rollups.
 
-    Unknown dimension names are discarded before serialization. Known names
-    with unknown values reject the sample. Metric names and units are fixed.
+    Unknown dimension names are discarded. Unknown values map to other;
+    invalid cohorts use internal. Metric names and units are fixed.
     """
     if os.getenv("METRICS_EMF", "1").strip() == "0":
         return
@@ -87,19 +97,26 @@ def emit_many(values: dict, *, timestamp_ms: float | None = None, **dimensions) 
               if name in UNITS and _number(value)}
     if not values or (timestamp_ms is not None and not _number(timestamp_ms)):
         return
-    dims = {key: value for key, value in dimensions.items() if key in DIMENSIONS}
-    if any(value not in DIMENSIONS[key] for key, value in dims.items()):
-        return
+    dims = {key: value if isinstance(value, str) and value in DIMENSIONS[key]
+            else ("internal" if key == "Cohort" else "other")
+            for key, value in dimensions.items() if key in DIMENSIONS}
     sets = [[]]
     for keys in (("Cohort",), ("Upstream",), tuple(sorted(dims))):
         keys = list(keys)
         if keys and all(key in dims for key in keys) and keys not in sets:
             sets.append(keys)
+    for name in values:
+        for keys in ROLLUPS.get(name, ()):
+            if all(key in dims for key in keys) and list(keys) not in sets:
+                sets.append(list(keys))
+    from .build_info import build_sha
+    from .llm import PIPELINE_VERSION
     record = {
         "_aws": {"Timestamp": int(time.time() * 1000 if timestamp_ms is None else timestamp_ms), "CloudWatchMetrics": [{
             "Namespace": NAMESPACE, "Dimensions": sets,
             "Metrics": [{"Name": name, "Unit": UNITS[name]} for name in values],
         }]},
+        "Build": build_sha(), "PipelineVersion": PIPELINE_VERSION,
         **dims, **values,
     }
     with _lock:
@@ -149,6 +166,22 @@ def session_event(store, type_: str, fields: dict) -> None:
                 "room_member_lost": "RoomMemberLost"}
     if type_ in counters:
         emit(counters[type_], **dims)
+    elif type_ == "user_turn_suppressed":
+        emit("UserTurnSuppressed", Reason=fields.get("reason"), **dims)
+    elif type_ in ("echo_dropped", "user_transcript_duplicate_dropped"):
+        emit("UserTurnSuppressed", Reason="echo" if type_ == "echo_dropped" else "duplicate", **dims)
+    elif type_ == "suppressed_turn_reply_cancelled":
+        emit("SuppressedTurnReply", Outcome="withdrawn", **dims)
+    elif type_ == "reply_to_suppressed_turn":
+        outcome = "other"
+        if fields.get("kept") == "later_commit":
+            outcome = "later_commit"
+        elif fields.get("cancel") == "not_on_this_route":
+            outcome = "cancel_unsupported"
+        elif (not fields.get("kept") and not fields.get("cancel")
+              and _number(fields.get("audio_ms")) and fields["audio_ms"] > 0):
+            outcome = "audio_already_sent"
+        emit("SuppressedTurnReply", Outcome=outcome, **dims)
     elif type_ == "voice_error":
         kind = _voice_kind(fields)
         if kind is not None:
@@ -317,3 +350,170 @@ async def stop() -> None:
             await task
         except (asyncio.CancelledError, Exception):
             pass
+
+
+@_safe
+def stt_result(session_id, outcome: str, kind: str) -> None:
+    with _lock:
+        group = _cohorts.get(session_id, "internal")
+    emit("SttResult", Outcome=outcome, Kind=kind, Cohort=group)
+
+
+@_safe
+def tag_stt(socket, *, probe: bool, replay: bool) -> None:
+    # Adapter-only metadata: never add a field to the upstream wire protocol.
+    if hasattr(socket, "_metrics_hearing_kind"):
+        socket._metrics_hearing_kind = "replay" if replay else "probe" if probe else "participant"
+
+
+@_safe
+def bargein(store) -> None:
+    emit("Bargein", Cohort=_store_cohort(store))
+
+
+class _VoiceRoute:
+    def __init__(self):
+        self.cause = "other"
+        self.group = "internal"
+        self.runner = None
+        self.phase = "auth"
+        self.close_outcome = "none"
+        self.client_first = False
+
+    @_safe
+    def sent(self, code):
+        self.close_outcome = "sent_1000" if code == 1000 else "sent_1011" if code == 1011 else "sent_other"
+
+    @_safe
+    def received(self):
+        if self.close_outcome == "none":
+            self.client_first = True
+
+    @_safe
+    def finish(self):
+        cause = self.cause
+        if cause == "runner_returned":
+            if getattr(self.runner, "completed", False):
+                cause = "completed"
+            elif getattr(self.runner, "client_disconnected", False) or self.client_first:
+                cause = "client_disconnected"
+        # Base completion is completed + none. After D2's close finalizer,
+        # completed + sent_1000 and runner_returned + sent_1011 are expected.
+        emit("VoiceRouteEnded", ExitCause=cause,
+             CloseOutcome="client_first" if self.client_first else self.close_outcome,
+             Cohort=self.group)
+
+
+@_safe
+def voice_route_fact(ws, *, cause=None, runner=None, context=None, cleanup=False):
+    state = getattr(ws, "_metrics_voice_route", None)
+    if state is None:
+        return
+    if cause is not None:
+        state.cause = cause
+    if runner is not None:
+        state.runner, state.phase, state.cause = runner, "runner", "runner_returned"
+    if context is not None:
+        state.group = cohort(context.get("cohort"), has_run=bool(context.get("run_id")))
+        state.phase = "setup"
+    if cleanup:
+        state.phase = "cleanup"
+
+
+def observe_voice_route(fn):
+    @wraps(fn)
+    async def observed(*args, **kwargs):
+        ws = kwargs.get("ws") if "ws" in kwargs else args[0] if args else None
+        try:
+            state = _VoiceRoute()
+        except BaseException:
+            return await fn(*args, **kwargs)
+        originals = {}
+
+        @_safe
+        def install():
+            ws._metrics_voice_route = state
+            # Observe ASGI disconnects even when WebSocket.receive rejects an
+            # early disconnect before the initial websocket.connect frame.
+            if callable(getattr(ws, "_receive", None)):
+                original_raw_receive = ws._receive
+
+                async def raw_receive():
+                    message = await original_raw_receive()
+                    if message.get("type") == "websocket.disconnect":
+                        state.received()
+                    return message
+                originals["_receive"] = original_raw_receive
+                ws._receive = raw_receive
+            if callable(getattr(ws, "send", None)):
+                original_send = ws.send
+
+                async def send(message):
+                    closing = message.get("type") == "websocket.close"
+                    try:
+                        result = await original_send(message)
+                    except BaseException:
+                        if closing:
+                            state.close_outcome = "close_failed"
+                        raise
+                    if closing:
+                        state.sent(message.get("code", 1000))
+                    return result
+                originals["send"] = original_send
+                ws.send = send
+            if callable(getattr(ws, "close", None)):
+                original_close = ws.close
+
+                async def close(*a, **k):
+                    try:
+                        result = await original_close(*a, **k)
+                    except BaseException:
+                        state.close_outcome = "close_failed"
+                        raise
+                    state.sent(k.get("code", a[0] if a else 1000))
+                    return result
+                originals["close"] = original_close
+                ws.close = close
+            if callable(getattr(ws, "receive", None)):
+                original_receive = ws.receive
+
+                async def receive(*a, **k):
+                    try:
+                        message = await original_receive(*a, **k)
+                    except Exception as exc:
+                        if type(exc).__name__ == "WebSocketDisconnect":
+                            state.received()
+                        raise
+                    if message.get("type") == "websocket.disconnect":
+                        state.received()
+                    return message
+                originals["receive"] = original_receive
+                ws.receive = receive
+
+        @_safe
+        def restore():
+            for name, method in originals.items():
+                setattr(ws, name, method)
+            if getattr(ws, "_metrics_voice_route", None) is state:
+                del ws._metrics_voice_route
+
+        install()
+        try:
+            return await fn(*args, **kwargs)
+        except asyncio.CancelledError:
+            if state.cause != "withdrawn":
+                state.cause = "cancelled"
+            raise
+        except Exception:
+            if state.phase == "auth" and state.cause == "setup_failed" and state.client_first:
+                state.cause = "client_disconnected"
+            elif state.phase == "cleanup" and state.cause == "runner_returned":
+                state.cause = "other"
+            raise
+        finally:
+            state.finish()
+            restore()
+
+    # Resolve postponed annotations in the route's own module for FastAPI.
+    observed.__signature__ = inspect.signature(fn, eval_str=True)
+    return observed

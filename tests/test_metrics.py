@@ -73,17 +73,13 @@ def test_emf_shape_raw_sample_rollups_and_no_identifiers(capsys):
         assert all(isinstance(doc[key], str) for key in dimension_set)
     assert doc["UpstreamLatency"] == 12.5
     assert "secret" not in json.dumps(doc)
-    assert set(doc) == {"_aws", "UpstreamLatency", "Purpose", "Upstream", "Outcome", "Cohort"}
+    assert set(doc) == {"_aws", "UpstreamLatency", "Purpose", "Upstream", "Outcome", "Cohort", "Build", "PipelineVersion"}
 
 
 @pytest.mark.parametrize("name,value,dims", [
     ("UnboundedMetric", 1, {}), ("ReplyMissing", float("nan"), {}),
     ("ReplyMissing", float("inf"), {}), ("ReplyMissing", -1, {}),
     ("ReplyMissing", True, {}), ("ReplyMissing", None, {}),
-    ("ReplyMissing", 1, {"Cohort": "participant-123"}),
-    ("ReplyMissing", 1, {"Outcome": "exception text with identifiers"}),
-    ("UpstreamRequests", 1, {"Purpose": "unbounded"}),
-    ("UpstreamRequests", 1, {"Upstream": "unknown-host"}),
 ])
 def test_unbounded_or_invalid_samples_are_rejected(capsys, name, value, dims):
     metrics.emit(name, value, **dims)

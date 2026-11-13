@@ -2290,6 +2290,7 @@ async def _close_capture_socket(session, sid: str) -> None:
     """
     import asyncio
 
+    _metrics.voice_route_fact(getattr(session, "participant_ws", None), cause="withdrawn")
     closer = getattr(session, "close_participant_socket", None)
     if closer is None:
         return
@@ -4101,6 +4102,7 @@ async def _report_encounter_failure(session, kind: str, detail: str, *,
 # --- Participant: voice path ---
 
 @app.websocket("/ws/participant/voice")
+@_metrics.observe_voice_route
 async def ws_participant_voice(
     ws: WebSocket,
     scenario: str = Query(...),
@@ -4111,14 +4113,17 @@ async def ws_participant_voice(
     run: Optional[str] = Query(None),
 ):
     if PARTICIPANT_KEY_REQUIRED and SESSION_KEY and key != SESSION_KEY:
+        _metrics.voice_route_fact(ws, cause="auth_rejected")
         await ws.close(code=4401)
         return
     # Voice capture needs a participant record that exists and is not
     # withdrawn (_participant_may_capture). Consent is taken in Qualtrics
     # before the participant reaches this app, so it is not asked of here.
     if not _participant_may_capture(participant_id):
+        _metrics.voice_route_fact(ws, cause="auth_rejected")
         await ws.close(code=4403)
         return
+    _metrics.voice_route_fact(ws, cause="setup_failed")
     await ws.accept()
 
     # The model is a study variable: honour only a researcher-authenticated
@@ -4127,9 +4132,11 @@ async def ws_participant_voice(
     effective_model = launch_cfg.get("model") if launch_cfg else None
 
     try:
+        run_context = _run_context(participant_id, run)
+        _metrics.voice_route_fact(ws, context=run_context or {})
         session = registry.create(
             scenario, model=effective_model, participant_id=participant_id,
-            capture_audio=True, run_context=_run_context(participant_id, run),
+            capture_audio=True, run_context=run_context,
         )
         _arm_encounter_event_log(session)
     except FileNotFoundError as e:
@@ -4140,6 +4147,7 @@ async def ws_participant_voice(
     # From here a Session exists in the registry, so everything runs inside the
     # try whose finally drops it, an early disconnect during setup would
     # otherwise leak the session forever.
+    runner = None
     try:
         # Researcher-configured launch: apply gear presets before the first turn.
         if launch_cfg:
@@ -4165,10 +4173,13 @@ async def ws_participant_voice(
         # Every scenario runs as consecutive 1:1 conversations on Gemini Live,
         # the cast is played one character at a time, in order.
         runner = RealtimeVoiceSessionRunner(session, ws)
+        _metrics.voice_route_fact(ws, runner=runner)
         await runner.run()
     except WebSocketDisconnect:
+        _metrics.voice_route_fact(ws, cause="client_disconnected")
         pass
     except Exception as e:
+        _metrics.voice_route_fact(ws, cause="runner_error" if runner is not None else "setup_failed")
         # The credential-disclosure site. RealtimeVoiceSessionRunner.run() has no
         # except of its own, so a failure in the first connect() to the realtime
         # gateway lands here whole — and that is precisely the exception that
@@ -4188,6 +4199,7 @@ async def ws_participant_voice(
         except Exception:
             pass
     finally:
+        _metrics.voice_route_fact(ws, cleanup=True)
         registry.drop(session.id)
 
 

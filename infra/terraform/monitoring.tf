@@ -185,7 +185,8 @@ resource "aws_cloudwatch_dashboard" "collection" {
             [for alarm in aws_cloudwatch_metric_alarm.application : alarm.arn],
             [for alarm in aws_cloudwatch_metric_alarm.upstream_error_rate : alarm.arn],
             [for alarm in aws_cloudwatch_metric_alarm.ecs_utilization : alarm.arn],
-            [for alarm in aws_cloudwatch_metric_alarm.alb : alarm.arn]
+            [for alarm in aws_cloudwatch_metric_alarm.alb : alarm.arn],
+            [aws_cloudwatch_metric_alarm.voice_route_errors.arn]
           )
         }
       },
@@ -225,9 +226,9 @@ resource "aws_cloudwatch_dashboard" "collection" {
       {
         type = "metric", x = 0, y = 15, width = 12, height = 6
         properties = {
-          title   = "Gateway latency, TTS stream lifetime and slot wait (ms)"
+          title   = "Gateway duration, TTS stream lifetime and slot wait (ms)"
           region  = var.region, view = "timeSeries", period = 60, stat = "p90"
-          metrics = [["RelationalFluency", "TtsQueueWait"], ["RelationalFluency", "UpstreamLatency", "Upstream", "gateway", { label = "Gateway request latency (ms)" }], ["RelationalFluency", "UpstreamLatency", "Upstream", "elevenlabs", { label = "TTS stream lifetime (ms)" }]]
+          metrics = [["RelationalFluency", "TtsQueueWait"], ["RelationalFluency", "UpstreamLatency", "Upstream", "gateway", { label = "Gateway request duration (ms)" }], ["RelationalFluency", "UpstreamLatency", "Upstream", "elevenlabs", { label = "TTS stream lifetime (ms)" }]]
         }
       },
       {
@@ -294,6 +295,102 @@ resource "aws_cloudwatch_dashboard" "collection" {
           metrics = [["AWS/ApplicationELB", "UnHealthyHostCount", "LoadBalancer", aws_lb.main.arn_suffix, "TargetGroup", aws_lb_target_group.agent.arn_suffix], ["AWS/ApplicationELB", "HealthyHostCount", "LoadBalancer", aws_lb.main.arn_suffix, "TargetGroup", aws_lb_target_group.agent.arn_suffix, { stat = "Minimum" }]]
         }
       }
+      ], [
+      {
+        type = "metric", x = 0, y = 45, width = 12, height = 6
+        properties = {
+          title   = "Study voice route exit causes (server behavior)"
+          region  = var.region, view = "timeSeries", period = 300, stat = "Sum", stacked = true
+          metrics = [for cause in local.voice_exit_causes : ["RelationalFluency", "VoiceRouteEnded", "Cohort", "study", "ExitCause", cause]]
+        }
+      },
+      {
+        type = "metric", x = 12, y = 45, width = 12, height = 6
+        properties = {
+          title   = "Study voice route close outcomes (server behavior)"
+          region  = var.region, view = "timeSeries", period = 300, stat = "Sum", stacked = true
+          metrics = [for outcome in local.voice_close_outcomes : ["RelationalFluency", "VoiceRouteEnded", "Cohort", "study", "CloseOutcome", outcome]]
+        }
+      },
+      {
+        type = "metric", x = 0, y = 51, width = 12, height = 6
+        properties = {
+          title   = "Study participant STT hearing outcomes"
+          region  = var.region, view = "timeSeries", period = 300, stat = "Sum", stacked = true
+          metrics = [for outcome in local.stt_outcomes : ["RelationalFluency", "SttResult", "Cohort", "study", "Kind", "participant", "Outcome", outcome]]
+        }
+      },
+      {
+        type = "metric", x = 12, y = 51, width = 12, height = 6
+        properties = {
+          title   = "Study probe, replay and unknown STT hearings"
+          region  = var.region, view = "timeSeries", period = 300, stat = "Sum", stacked = true
+          metrics = [for pair in setproduct(["probe", "replay", "unknown", "other"], local.stt_outcomes) : ["RelationalFluency", "SttResult", "Cohort", "study", "Kind", pair[0], "Outcome", pair[1], { label = "${pair[0]} ${pair[1]}" }]]
+        }
+      },
+      {
+        type = "metric", x = 0, y = 57, width = 12, height = 6
+        properties = {
+          title   = "Study turn gate decisions"
+          region  = var.region, view = "timeSeries", period = 300, stat = "Sum", stacked = true
+          metrics = [for reason in local.turn_gate_reasons : ["RelationalFluency", "UserTurnSuppressed", "Cohort", "study", "Reason", reason]]
+        }
+      },
+      {
+        type = "metric", x = 12, y = 57, width = 12, height = 6
+        properties = {
+          title   = "Study replies to suppressed turns (server decisions)"
+          region  = var.region, view = "timeSeries", period = 300, stat = "Sum", stacked = true
+          metrics = [for outcome in ["audio_already_sent", "later_commit", "cancel_unsupported", "withdrawn", "other"] : ["RelationalFluency", "SuppressedTurnReply", "Cohort", "study", "Outcome", outcome]]
+        }
+      },
+      {
+        type = "metric", x = 0, y = 63, width = 12, height = 6
+        properties = {
+          title   = "Study live barge-ins"
+          region  = var.region, view = "timeSeries", period = 300, stat = "Sum"
+          metrics = [["RelationalFluency", "Bargein", "Cohort", "study"]]
+        }
+      }
     ])
   })
+}
+
+
+locals {
+  voice_exit_causes    = ["auth_rejected", "setup_failed", "completed", "runner_returned", "runner_error", "withdrawn", "client_disconnected", "cancelled", "other"]
+  voice_close_outcomes = ["sent_1000", "sent_1011", "sent_other", "none", "close_failed", "client_first", "other"]
+  stt_outcomes         = ["speech", "no_speech", "failed", "cancelled"]
+  turn_gate_reasons    = ["no_speech", "implausible_rate", "probe_pad", "not_english", "low_transcriber_confidence", "replay_duplicate", "echo", "duplicate", "other"]
+}
+
+resource "aws_cloudwatch_metric_alarm" "voice_route_errors" {
+  alarm_name          = "${var.project}-VoiceRouteErrors"
+  alarm_description   = "Study voice routes ending with runner_error or setup_failed; inspect route events and pipeline version."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.voice_route_error_threshold
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.monitoring.arn]
+  ok_actions          = [aws_sns_topic.monitoring.arn]
+  metric_query {
+    id          = "errors"
+    expression  = "FILL(runner, 0) + FILL(setup, 0)"
+    return_data = true
+  }
+  dynamic "metric_query" {
+    for_each = { runner = "runner_error", setup = "setup_failed" }
+    content {
+      id          = metric_query.key
+      return_data = false
+      metric {
+        namespace   = "RelationalFluency"
+        metric_name = "VoiceRouteEnded"
+        dimensions  = { Cohort = "study", ExitCause = metric_query.value }
+        period      = 300
+        stat        = "Sum"
+      }
+    }
+  }
 }

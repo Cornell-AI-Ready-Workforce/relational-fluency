@@ -3978,6 +3978,8 @@ class RealtimeVoiceSession:
 
     def _tag_commit(self, *, probe: bool = False, replay: bool = False) -> None:
         """Note a commit about to be sent, and start the next one's count."""
+        from .. import metrics
+        metrics.tag_stt(self.ws, probe=probe, replay=replay)
         self.commits += 1
         voiced, span = self._voiced_ms, self._voiced_span_ms()
         # Read before the reset below: how much of the buffer follows its

@@ -145,3 +145,31 @@ def test_tts_stream_lifetime_is_labelled_and_has_no_latency_alarm():
     for name in names:
         assert "UpstreamLatency" not in block(rf'resource "aws_cloudwatch_metric_alarm" "{re.escape(name)}"')
     assert re.search(r'"UpstreamLatency",\s*"Upstream",\s*"elevenlabs",\s*\{\s*label\s*=\s*"TTS stream lifetime \(ms\)"', MONITORING)
+
+
+def test_pr2_route_error_alarm_uses_emitted_study_exit_cause_rollup():
+    from server import metrics
+    alarm = block(r'resource "aws_cloudwatch_metric_alarm" "voice_route_errors"')
+    assert ("Cohort", "ExitCause") in metrics.ROLLUPS["VoiceRouteEnded"]
+    assert re.search(r'metric_name\s*=\s*"VoiceRouteEnded"', alarm)
+    assert re.search(r'dimensions\s*=\s*\{\s*Cohort\s*=\s*"study",\s*ExitCause\s*=\s*metric_query.value', alarm)
+    assert re.search(r'for_each\s*=\s*\{ runner = "runner_error", setup = "setup_failed" \}', alarm)
+    assert literal(alarm, "expression") == "FILL(runner, 0) + FILL(setup, 0)"
+    assert literal(alarm, "comparison_operator") == "GreaterThanOrEqualToThreshold"
+    assert literal(alarm, "period") == 300
+    assert "CloseOutcome" not in alarm
+    assert "SttResult" not in alarm and "UserTurnSuppressed" not in alarm
+    assert re.search(r'threshold\s*=\s*var.voice_route_error_threshold', alarm)
+    threshold = VARIABLES.split('variable "voice_route_error_threshold"', 1)[1]
+    assert literal(threshold, "default") == 3
+
+
+def test_pr2_widgets_have_study_dimensions_and_duration_labels():
+    dashboard = block(r'resource "aws_cloudwatch_dashboard" "collection"')
+    for name in ("VoiceRouteEnded", "SttResult", "UserTurnSuppressed", "SuppressedTurnReply", "Bargein"):
+        assert f'"{name}", "Cohort", "study"' in dashboard
+    assert '"Kind", "participant", "Outcome"' in dashboard
+    assert 'setproduct(["probe", "replay", "unknown", "other"], local.stt_outcomes)' in dashboard
+    assert '"Gateway request duration (ms)"' in dashboard
+    assert '"Gateway request latency (ms)"' not in dashboard
+    assert 'aws_cloudwatch_metric_alarm.voice_route_errors.arn' in dashboard
