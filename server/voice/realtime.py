@@ -208,6 +208,7 @@ COMMIT_AUDIO_TAGS = 4
 GATEWAY_OUTPUT_RATE = int(setting("REALTIME_OUTPUT_RATE", "24000"))
 
 
+from ..reply_trace import attach as attach_reply_trace, observe
 from .cascade import (VOICE_ROSTER as _CASCADE_VOICES, CascadeSocket,
                       stt_model as cascade_stt_model)
 
@@ -2118,6 +2119,32 @@ class SilenceDetector:
     _floor: list = field(default_factory=list)
     _floor_len: int = 0
 
+    # Observation only: positions refer to samples passed to feed, not wall time.
+    _trace_samples: int = 0
+    _trace_last_voiced: int = 0
+    _trace_end: dict = field(default_factory=dict)
+
+    def _trace_frame(self, samples: int, voiced: bool) -> None:
+        try:
+            self._trace_samples += samples
+            if voiced:
+                self._trace_last_voiced = self._trace_samples
+        except Exception:  # noqa: BLE001 - observation cannot affect VAD
+            pass
+
+    def _trace_detection(self) -> None:
+        try:
+            self._trace_end = {
+                "detected_mono": time.monotonic(),
+                "trailing_silence_samples": self._trace_samples - self._trace_last_voiced,
+                "last_voiced_sample": self._trace_last_voiced,
+                "detected_sample": self._trace_samples,
+                "sample_rate_hz": self.rate,
+                "estimate": "sample_position",
+            }
+        except Exception:  # noqa: BLE001 - observation cannot affect VAD
+            pass
+
     def _note_level(self, rms: int, chunk_ms: float) -> None:
         """Keep the last `floor_window_ms` of levels, for the room's floor."""
         if self.noise_margin <= 0 or chunk_ms <= 0:
@@ -2176,6 +2203,7 @@ class SilenceDetector:
         chunk_ms = len(pcm) / 2 / self.rate * 1000.0
         rms = _rms(pcm)
         bar = self.effective_threshold()
+        self._trace_frame(len(pcm) // 2, rms >= bar)
         if rms >= self.hint_threshold():
             self._hint_ms_run += chunk_ms
             if self._hint_ms_run >= self.hint_ms:
@@ -2207,6 +2235,7 @@ class SilenceDetector:
         if self.speaking:
             self._silence_ms_run += chunk_ms
             if self._silence_ms_run >= self.silence_ms:
+                self._trace_detection()
                 self.speaking = False
                 self._speech_ms = 0.0
                 self._silence_ms_run = 0.0
@@ -2647,6 +2676,7 @@ class RealtimeVoiceSession:
         if self.capabilities.family == "cascade":
             # No socket to dial: the stand-in answers as a realtime server.
             self.ws = CascadeSocket(voice=self.voice, api_key=self.api_key)
+            attach_reply_trace(self)
             await self._send({
                 "type": "session.update", "session": self._session_payload(),
             })
@@ -5575,6 +5605,7 @@ class RealtimeVoiceSession:
                         # (pipeline 2026-09-28b; the runner's
                         # _hold_first_reply). No other pump reads it, and a
                         # room member's skips it (_pump_member).
+                        observe(self, "decision", item_id, "missing", "transcript_empty")
                         yield {"type": "transcript_missing",
                                "why": "transcript_empty", **meta}
 
@@ -5583,6 +5614,7 @@ class RealtimeVoiceSession:
                     # be left to be paired with the next one's. Said as
                     # transcript_missing, as an empty one is.
                     tag = self._tag_for(ev.get("item_id")) or {}
+                    observe(self, "decision", ev.get("item_id"), "failed", "transcript_failed")
                     yield {"type": "transcript_missing", "why": "transcript_failed",
                            "item_id": ev.get("item_id"),
                            "probe": bool(tag.get("probe")),

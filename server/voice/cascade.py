@@ -47,6 +47,7 @@ import httpx
 import websockets
 
 from ..llm import gateway_api_key, gateway_base_url, setting
+from ..reply_trace import observe
 
 log = logging.getLogger(__name__)
 
@@ -362,6 +363,7 @@ class CascadeSocket:
         self._finished: set = set()
         # Latencies of the latest turn, for the record and the benchmark.
         self.timings: dict = {}
+        self._reply_trace = None
 
     @property
     def _http(self) -> httpx.AsyncClient:
@@ -389,6 +391,7 @@ class CascadeSocket:
         if self._closed:
             return
         self._closed = True
+        observe(self, "socket_closed", id(self))
         for t in list(self._tasks):
             t.cancel()
         self._out.put_nowait(None)
@@ -465,6 +468,7 @@ class CascadeSocket:
         prev = self.items[-1]["id"] if self.items else None
         item = self._add_item("user", "")
         iid = item["id"]
+        observe(self, "commit", iid, id(self))
         # Until its transcript lands the model is handed the AUDIO itself, so
         # the reply does not wait for the transcription round trip.
         item["audio"] = pcm
@@ -501,6 +505,8 @@ class CascadeSocket:
                     "event_id": ev.get("event_id", "")})
 
     async def _on_response_create(self, ev: dict) -> None:
+        rid = self._id("resp")
+        observe(self, "create", rid, id(self))
         # A turn-end cancel can be followed immediately by a commit/create.
         # Creates and cancels share this lock. A cancel arriving during the
         # join must target the replacement reply, not cancel the old one twice.
@@ -508,6 +514,7 @@ class CascadeSocket:
             previous, previous_id = self._reply, self._reply_id
             if previous is not None and not previous.done():
                 if not previous.cancelling():
+                    observe(self, "done", rid, "refused_active_response")
                     self._error("conversation_already_has_active_response",
                                 "a reply is already in progress",
                                 event_id=ev.get("event_id", ""))
@@ -529,7 +536,7 @@ class CascadeSocket:
                 self._ensure_done(previous_id)
             if self._closed:
                 return
-            rid = self._id("resp")
+            observe(self, "stamp", rid, "create_released")
             task = self._spawn(self._respond(rid))
             self._reply, self._reply_id = task, rid
             task.add_done_callback(lambda _t, rid=rid: self._ensure_done(rid))
@@ -545,12 +552,16 @@ class CascadeSocket:
     # -- steps -----------------------------------------------------------------
     async def _transcribe(self, iid: str, pcm: bytes) -> None:
         started = time.time()
+        observe(self, "stt", iid, "started")
+        outcome = "cancelled"
         text = ""
         try:
             text = await self._hear(pcm)
+            outcome = "no_speech" if text == "[no speech]" else "completed"
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - a failed hearing is an event
+            outcome = "failed"
             self._emit({"type": "conversation.item.input_audio_transcription.failed",
                         "item_id": iid, "error": {
                             "type": "server_error", "code": "stt_failed",
@@ -558,6 +569,7 @@ class CascadeSocket:
             return
         finally:
             self.timings["stt_ms"] = int((time.time() - started) * 1000)
+            observe(self, "stt", iid, "done", outcome)
         for it in self.items:
             if it["id"] == iid:
                 it["text"] = text
@@ -641,6 +653,7 @@ class CascadeSocket:
     def _ensure_done(self, rid: str) -> None:
         if rid not in self._finished and not self._closed:
             self._finished.add(rid)
+            observe(self, "done", rid, "cancelled")
             self._emit({"type": "response.created", "response": {"id": rid}})
             self._emit({"type": "response.done", "response": {
                 "id": rid, "status": "cancelled", "output": []}})
@@ -654,6 +667,7 @@ class CascadeSocket:
         iid = item["id"]
         tts = None
         cancelled = False
+        failed = False
         try:
             # The turn is not awaited: the model hears the audio itself (see
             # _messages) while the transcript is written in parallel.
@@ -677,6 +691,7 @@ class CascadeSocket:
         except asyncio.CancelledError:
             cancelled = True
         except Exception as exc:  # noqa: BLE001 - one reply, not the session
+            failed = True
             self._error("cascade_failed", f"{type(exc).__name__}: {exc}"[:300])
         finally:
             try:
@@ -700,6 +715,7 @@ class CascadeSocket:
                 if not text:
                     self.items = [i for i in self.items if i["id"] != iid]
                 self._finished.add(rid)
+                observe(self, "done", rid, "cancelled" if cancelled else "failed" if failed else "done")
                 if not self._closed:
                     if text:
                         self._emit({"type": "response.output_audio_transcript.done",
@@ -719,12 +735,15 @@ class CascadeSocket:
         slot is held until _close_reply_tts releases it."""
         slot = _tts_slot()
         asked = time.time()
+        observe(self, "stamp", rid, "tts_slot_wait_start")
         await slot.acquire()
+        observe(self, "stamp", rid, "tts_slot_acquired")
         ws = None
         try:
             self.timings["tts_slot_wait_ms"] = int((time.time() - asked) * 1000)
             connect_at = time.time()
             ws = await self._connect_tts()
+            observe(self, "stamp", rid, "tts_connected")
             self.timings["tts_connect_ms"] = int((time.time() - connect_at) * 1000)
             await ws.send(json.dumps({"voices": [voice_id]}))
             reader = self._spawn(self._relay_audio(ws, rid, iid, started))
@@ -790,6 +809,7 @@ class CascadeSocket:
             spoken.append(sentence)
             self._emit({"type": "response.output_audio_transcript.delta",
                         "response_id": rid, "item_id": iid, "delta": sentence + " "})
+            observe(self, "stamp", rid, "first_text_sent")
             await ws.send(json.dumps({"inputs": [{"text": tts_text(sentence) + " ", "voice_id": voice_id}],
                                       "flush": True}))
 
@@ -803,6 +823,7 @@ class CascadeSocket:
         alive = self._spawn(keep_alive())
         buffer, first, call = "", True, None
         try:
+            observe(self, "stamp", rid, "request_started")
             async with self._http.stream(
                     "POST", f"{gateway_base_url().rstrip('/')}/v1/chat/completions",
                     headers={"Authorization": f"Bearer {self.api_key}"}, json=payload) as r:
@@ -832,14 +853,19 @@ class CascadeSocket:
                     piece = delta.get("content") or ""
                     if not piece:
                         continue
+                    observe(self, "stamp", rid, "first_content")
                     if first:
                         self.timings["llm_first_token_ms"] = int((time.time() - started) * 1000)
                     buffer += piece
                     sentences, buffer = split_sentences(buffer, first=first)
+                    if sentences:
+                        observe(self, "stamp", rid, "first_sentence_ready", sentence_trigger="punctuation")
                     for sentence in sentences:
                         first = False
                         await say(sentence)
                 sentences, buffer = split_sentences(buffer, first=first, final=True)
+                if sentences:
+                    observe(self, "stamp", rid, "first_sentence_ready", sentence_trigger="final_flush")
                 for sentence in sentences:
                     await say(sentence)
                 # Every word is in: ElevenLabs may finish the reply now,
@@ -866,12 +892,14 @@ class CascadeSocket:
             if m.get("error"):
                 raise RuntimeError(f"elevenlabs: {m.get('message') or m['error']}")
             if m.get("audio"):
+                observe(self, "stamp", rid, "tts_first_audio")
                 chunk = carry + base64.b64decode(m["audio"])
                 # PCM16 frames are two bytes; never split a sample.
                 carry = chunk[-1:] if len(chunk) % 2 else b""
                 chunk = chunk[:len(chunk) - len(carry)]
                 if "first_audio_ms" not in self.timings:
                     self.timings["first_audio_ms"] = int((time.time() - started) * 1000)
+                observe(self, "stamp", rid, "first_output_emitted")
                 self._emit({"type": "response.output_audio.delta",
                             "response_id": rid, "item_id": iid,
                             "delta": base64.b64encode(chunk).decode("ascii")})

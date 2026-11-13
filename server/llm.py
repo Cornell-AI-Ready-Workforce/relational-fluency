@@ -735,7 +735,10 @@ def text_client() -> AsyncAnthropic:
 #                A cancelled reply that emitted no audio leaves no assistant
 #                item. After audio starts, exact context trimming still needs
 #                TTS alignment and page playback acknowledgements.
-PIPELINE_VERSION = "2026-11-12b"
+#   2026-11-12c  instrumentation only: 1:1 cascade reply/commit traces on
+#                a monotonic encounter clock, finalized independently of page
+#                playback records. Requests, frames and turn rules unchanged.
+PIPELINE_VERSION = "2026-11-12c"
 ROOM_PACING_VERSION = "2026-11-04a"
 
 
