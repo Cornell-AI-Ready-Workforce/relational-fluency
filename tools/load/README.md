@@ -282,9 +282,13 @@ committed line, then sends tone through the 60-second server ceiling. Webcam,
 playback for each participant, closed manifests, rendered mixes and valid
 instrumentation are required. Post-completion closure is diagnostic; an earlier
 closure is a failure. The diagnostic count itself is not an assertion.
+The smoke concurrency window starts at the last session frame and ends at the
+first server completion. Setup and artifact settling do not lower achieved
+concurrency. Speech/playback evidence covers each complete encounter.
 
 `--encounters-per-participant all` is the unchanged workload default.
-Integers 1–4 limit the number of full encounters for each participant. The full
+Integers 1–3 limit the number of full encounters for each participant. K=4 is
+rejected; use `all` for the complete selected run. The full
 mix follows the first/current encounter assigned by the server's Williams run
 and advances after each completed encounter, including the last requested one.
 It never substitutes a different scenario before advancing. The report records
@@ -299,23 +303,36 @@ each completing one full encounter. Each gets its own warmup and measurement
 window. The server-assigned first encounters must cover the selected scenarios;
 missing coverage makes the baseline INVALID. Each unit validates independently.
 The repeat pools these units, and all N=1 repeats freeze the allowed voice-error
-kinds before a higher N runs. Numeric K=2–4 similarly uses separate N=1 units
+kinds before a higher N runs. A subset uses one unit per selected scenario,
+with successive rotation offsets so every selected scenario is represented.
+Numeric K=2–3 similarly uses separate N=1 units
 with that K. A step and baseline with different K are INVALID. Higher-N reference
 latency distributions and missing-reply/ACK rates are weighted by the step's
 measured participant-turn counts per scenario. The report includes those weights.
 Participant state resets between encounters; identity/cookies persist for the
-requested K, while the server runtime and gateway pool persist across ramp steps.
+requested K. The server runtime and gateway pool persist across ramp steps,
+except that every search point below a recorded FAIL gets a fresh runtime,
+including fresh fake/relay/observer state and CPU calibration. The N=1 reference
+stays frozen. Reports retain each runtime's generation, directory, startup
+checks and calibration. Fixed ramps keep their original runtime policy.
+Reports also record the fake source SHA-256. Quiet flash-lite now emits
+`[no speech]`; event mixes differ from the earlier fake's empty transcripts.
 
 `--fail-fast` is on for full-length steps; `--no-fail-fast` disables it. It stops
-on irreversible observations inside the measurement window: server errors,
-fake route/protocol errors, RSS >900 MB, a completed five-second server lag
-window with p99 >250 ms, or a voice-error kind outside the frozen N=1 set.
+on recorded server errors and fake route/protocol errors, including during
+warmup, because the final verdict already fails these errors. RSS >900 MB,
+a completed five-second server lag
+window with p99 >250 ms, or a voice-error kind outside the frozen N=1 set
+trigger a stop only inside the measurement window.
 Encounter events stream from the observer, fake errors come from logs, and
 worker exceptions are observed as they finish. Recovered errors remain recorded.
 Latency percentiles and missing-reply/ACK rates never cause an early stop.
 Generator errors and excessive generator lag still give INVALID. An intentional
 stop excuses measurements it prevented, and does not excuse recorded low achieved
-concurrency or other independent invalid evidence. Teardown and the one optional
+concurrency before the stop or other independent invalid evidence. The
+measurement window ends at the stop timestamp, before cancellation lowers
+concurrency. Live attempt/observer guards continue through artifact settling
+and kill the server immediately on a live safety stop. Teardown and the one optional
 extra profile-only repeat still run; profiling never affects capacity verdicts.
 
 `--ramp-search [target]` replaces a fixed ramp list. Its default target is 20.

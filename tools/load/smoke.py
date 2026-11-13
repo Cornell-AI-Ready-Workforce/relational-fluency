@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 from dataclasses import replace
 import datetime as dt
+from http.client import HTTPException
 import json
 from pathlib import Path
 import secrets
@@ -42,7 +43,7 @@ def diagnostic(step, probe, expected=('S1A', 'S2A', 'S3A', 'S4A')):
         reasons.append('server RSS missing or >900 MB')
     if set(m.get('scenario_mix', {})) != set(expected): reasons.append('smoke did not cover all four scenarios')
     timelines = step.get('timelines', [])
-    encounters = {e['session_id']: e for e in m.get('encounters', [])}
+    encounters = {e['session_id']: e for e in m.get('whole_step', m).get('encounters', [])}
     if len(timelines) != 5: reasons.append('smoke needs five single-encounter participants')
     for t in timelines:
         if not t.get('completed') or t.get('completion_reason') != 'ceiling' or t.get('duration_limit_reached'):
@@ -57,8 +58,13 @@ def diagnostic(step, probe, expected=('S1A', 'S2A', 'S3A', 'S4A')):
             if not t.get('completed_at') or event['t'] < t['completed_at']:
                 reasons.append('close classification inconsistent with completion')
     for scenario in expected:
+        members = [encounters.get(t.get('session_id'), {}) for t in timelines if t.get('scenario') == scenario]
         member = m.get('by_scenario', {}).get(scenario, {})
-        if not member.get('latency_samples_s') or not member.get('lines_said') or not member.get('lines_answered'):
+        evidence = (any(e.get('lines_said') and e.get('lines_answered') and
+                        e.get('speech_end_to_first_played_s', {}).get('n') for e in members)
+                    if 'whole_step' in m else
+                    bool(member.get('latency_samples_s') and member.get('lines_said') and member.get('lines_answered')))
+        if not evidence:
             reasons.append(f'{scenario}: speech/playback evidence missing')
     return {'verdict': 'FAIL' if reasons else 'PASS', 'reasons': sorted(set(reasons)),
             'diagnostic': True, 'capacity_eligible': False, 'keepalive_probe': probe}
@@ -82,7 +88,7 @@ async def run_smoke(args, directory, *, runtime_factory=Runtime, participant_fac
             probe = await runtime.keepalive_probe()
             step = await run_step(runtime, preset(args), 5, 1, 60, participant_factory=participant_factory or Participant)
             outcome = {**diagnostic(step, probe), 'tts_factor': factor, 'step': step}
-        except (RuntimeError, OSError, ValueError) as exc:
+        except (RuntimeError, OSError, ValueError, HTTPException) as exc:
             outcome = {'verdict': 'FAIL', 'reasons': [type(exc).__name__ + ': ' + str(exc)],
                        'diagnostic': True, 'capacity_eligible': False}
         finally:

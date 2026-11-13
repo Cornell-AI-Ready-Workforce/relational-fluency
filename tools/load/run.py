@@ -6,6 +6,7 @@ from collections import Counter
 import asyncio
 from dataclasses import asdict, replace
 import datetime as dt
+import hashlib
 import json
 import math
 import os
@@ -112,10 +113,10 @@ def parse_args(argv=None):
     if args.encounters_per_participant != "all":
         try:
             args.encounters_per_participant = int(args.encounters_per_participant)
-            if not 1 <= args.encounters_per_participant <= 4:
+            if not 1 <= args.encounters_per_participant <= 3:
                 raise ValueError()
         except ValueError:
-            parser.error("--encounters-per-participant requires all or an integer in 1..4")
+            parser.error("--encounters-per-participant requires all or an integer in 1..3; use all for the complete run")
     if args.smoke and args.skip_smoke:
         parser.error("--smoke and --skip-smoke conflict")
     args.scenarios = args.scenarios.split(",")
@@ -180,7 +181,7 @@ def _write_report(directory, report):
         if step["metrics"].get("post_complete_close"):
             lines.extend(["", f"Post-completion close diagnostics at N={step['concurrency']}: "
                           f"{len(step['metrics']['post_complete_close'])}."])
-    lines.extend(["", f"Capacity for the tested configuration on this host: {report.get('capacity_range', report.get('capacity'))}", ""])
+    lines.extend(["", f"Capacity for the tested configuration on this host (K={configuration.get('encounters_per_participant', 'diagnostic')}): {report.get('capacity_range', report.get('capacity'))}", ""])
     for ramp in report.get("ramps", []):
         lines.extend(["", "Tested Ns: " + json.dumps(ramp.get("tested_ns", [])),
                       "Search path: " + json.dumps(ramp.get("search_path", [])),
@@ -197,7 +198,7 @@ def _write_report(directory, report):
     (directory / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Participant, profile_only=False, reference=None, label=None):
+async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Participant, profile_only=False, reference=None, label=None, scenario_offset=0):
     start = time.time()
     directory = runtime.directory / (label or (f"N{n}-profile-only" if profile_only else f"N{n}-repeat{repeat}")
                                       + (f"-attempt{args.search_attempt}" if getattr(args, "search_attempt", 1) > 1 else ""))
@@ -210,10 +211,8 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
     measurement_error_records = []
     window_start = start + (n - 1) * args.arrival + args.warmup
     observed_events, observed_fake, worker_error_events = [], [], []
-    event_tail = measure.JsonlTail(runtime.data / "encounter-events.jsonl")
     fake_tail = measure.JsonlTail(runtime.directory / "fake-log.jsonl")
     await asyncio.to_thread(fake_tail.read)
-    await asyncio.to_thread(event_tail.read)
     attempt_tail = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl")
     log_tail = measure.JsonlTail(runtime.directory / "server-log.jsonl")
     await asyncio.to_thread(attempt_tail.read)
@@ -246,7 +245,7 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
                 response.raise_for_status()
                 view = response.json()
             for slot in range(slots):
-                scenario = view["current"]["id"] if default_mix else args.scenarios[(slot + index + repeat - 1) % len(args.scenarios)]
+                scenario = view["current"]["id"] if default_mix else args.scenarios[(slot + index + repeat - 1 + scenario_offset) % len(args.scenarios)]
                 if scenario not in args.scenarios:
                     raise RuntimeError("server Williams run selected an unexpected scenario")
                 participant = participant_factory(
@@ -292,7 +291,7 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
             guard.stopped = {"reason": "attempt telemetry unavailable", "detail": status["failure"],
                              "observer": status, "concurrency": sum(p.active for p in participants),
                              "t": time.time()}
-        if not stopped.is_set():
+        if not live_shutdown.is_set():
             await kill_and_stop()
         return True
 
@@ -317,12 +316,12 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
                     if guard.observe(row, sum(p.active for p in participants)):
                         await kill_and_stop()
                         return
-            if args.fail_fast and full_length and not profile_only:
+            if args.fail_fast and full_length and not profile_only and early_stop is None:
                 now = time.time()
                 end = min(finished, default=now + 1)
-                if window_start <= now < end:
+                if now < end:
                     try:
-                        if hasattr(runtime, "event_rows"):
+                        if hasattr(runtime, "event_rows") and now >= window_start:
                             observed_events.extend(await asyncio.to_thread(runtime.event_rows))
                         for item in await asyncio.to_thread(fake_tail.read):
                             try:
@@ -332,11 +331,12 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
                                 pass
                     except (OSError, ValueError) as exc:
                         errors.append("incremental observation: " + type(exc).__name__)
-                    current_events = [e for e in observed_events if window_start <= e.get("wall", 0) < end]
-                    current_fake = [e for e in observed_fake if window_start <= e.get("t", 0) < end]
-                    current_server = [e["message"] for e in worker_error_events if window_start <= e["t"] < end]
+                    current_events = [e for e in observed_events if
+                        (start if e.get("type") == "error" else window_start) <= e.get("wall", 0) < end]
+                    current_fake = [e for e in observed_fake if start <= e.get("t", 0) < end]
+                    current_server = [e["message"] for e in worker_error_events if start <= e["t"] < end]
                     current_server += [e["message"] for p in participants for e in p.tl.get("server_error_events", [])
-                                       if window_start <= e["t"] < end]
+                                       if start <= e["t"] < end]
                     cause = fast.irreversible(server_errors=current_server, fake_errors=current_fake, events=current_events,
                         resources=[r for r in resources if window_start <= r["t"] < end],
                         lag=[r for r in measure.server_lag_windows(log_rows, window_start, end)
@@ -345,11 +345,10 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
                     if cause:
                         early_stop = {"reason": cause, "t": now, "measurement_start": window_start}
                         stopped.set()
-                        return
-                    if errors:
-                        early_stop = {"reason": "generator error invalidates step", "t": now, "measurement_start": window_start}
+                    elif errors:
+                        early_stop = {"reason": errors[0], "t": now, "measurement_start": window_start,
+                                      "category": "generator"}
                         stopped.set()
-                        return
             await asyncio.sleep(0.1)
 
     async def sample_concurrency():
@@ -419,6 +418,11 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
             task.cancel()
         await asyncio.gather(*watchers[1:], stop_waiter, return_exceptions=True)
     measurement_end = min(finished, default=time.time())
+    if early_stop:
+        measurement_end = min(measurement_end, early_stop["t"])
+    if getattr(args, "smoke_workload", False):
+        window_start = max((t["started"] for t in timelines if t.get("started")), default=window_start)
+        measurement_end = min((t["completed_at"] for t in timelines if t.get("completed_at")), default=measurement_end)
     last_hangup = max((t.get("hangup_requested") or measurement_end for t in timelines), default=measurement_end)
     settled, close_burst = False, None
     close_waiter = close_stop = None
@@ -452,7 +456,7 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
     attempts.extend(final_attempts)
     if args.gateway == "live":
         for row in final_attempts:
-            if guard.observe(row, 0) and not stopped.is_set():
+            if guard.observe(row, 0) and not live_shutdown.is_set():
                 await kill_and_stop()
     log_rows.extend(await asyncio.to_thread(log_tail.read))
     if profile:
@@ -523,6 +527,7 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
               "gateway": args.gateway, "tts": "fake", "fake_configuration": asdict(config),
               "capacity_scope": "this host; fake timing and speaker/tool probabilities are uncalibrated assumptions",
               "configuration": {"ramp": args.ramp, "repeat": args.repeat, "scenarios": args.scenarios,
+                                "fake_revision_sha256": hashlib.sha256((ROOT / "tools/load/fake_upstream.py").read_bytes()).hexdigest(),
                                 "arrival_spacing_s": args.arrival, "duration_s": args.duration,
                                 "warmup_s": args.warmup, "webcam": args.webcam, "custom_steps": args.steps,
                                 "cpu_scale": args.cpu_scale, "tts_factors": factors,
@@ -530,26 +535,36 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                                 "default_encounter_ceiling_s": ceiling, "backend": args.backend,
                                 "encounter_seconds": args.encounter_seconds,
                                 "encounters_per_participant": args.encounters_per_participant,
-                                "workload": "four-encounter sustained study run" if args.encounters_per_participant == "all" else "partial study run; different workload from K=all",
-                                "warmup_reset_policy": "warmup per baseline unit; fresh participant/playback state; runtime and gateway pool persist across ramp steps",
-                                "advance_policy": "server view.current, advance once per completed encounter",
+                                "workload": "complete selected study run" if args.encounters_per_participant == "all" else "partial study run; different workload from K=all",
+                                "warmup_reset_policy": ("warmup per step" if args.encounters_per_participant == "all" else "warmup per baseline unit and per higher-N step") + "; fresh participant/playback state; runtime and gateway pool persist except for a fresh runtime before every search point below a recorded FAIL",
+                                "advance_policy": ("server view.current, advance once per completed encounter" if set(args.scenarios) == set(SCENARIOS)
+                                                   else "selected scenario rotation; no study-run advance; baseline unit offsets cover the subset"),
                                 "search": {"target": args.ramp_search, "ceiling": args.search_ceiling, "step": args.search_step, "resolution": args.search_resolution},
                                 "smoke": getattr(args, "smoke_results", {"ran": False, "reason": "low-level experiment API or --skip-smoke"}),
                                 "scenario_order": "server Williams run" if set(args.scenarios) == set(SCENARIOS) else "rotating selected scenarios"}}
     for factor in factors:
-        runtime = runtime_factory(directory / f"tts-{factor:g}", backend=args.backend, gateway=args.gateway, image=args.image,
-                                  fake_config=replace(config, tts_realtime_factor=factor), live_key=live_key,
-                                  live_url=args.live_url or env.get("LLM_BASE_URL"), cpu_scale=args.cpu_scale,
-                                  fargate_reference=args.fargate_reference, profile_image=args.profile_image,
-                                  encounter_seconds=args.encounter_seconds)
-        ramp = {"tts_realtime_factor": factor, "steps": [], "capacity": None}
+        def new_runtime(generation, image):
+            name = f"tts-{factor:g}" + (f"-reset{generation}" if generation else "")
+            return runtime_factory(directory / name, backend=args.backend, gateway=args.gateway, image=image,
+                                   fake_config=replace(config, tts_realtime_factor=factor), live_key=live_key,
+                                   live_url=args.live_url or env.get("LLM_BASE_URL"), cpu_scale=args.cpu_scale,
+                                   fargate_reference=args.fargate_reference, profile_image=args.profile_image,
+                                   encounter_seconds=args.encounter_seconds)
+        generation = 0
+        runtime = new_runtime(generation, args.image)
+        ramp = {"tts_realtime_factor": factor, "steps": [], "capacity": None, "runtime_history": []}
         report["ramps"].append(ramp)
-        try:
+
+        async def start_runtime(reason):
             await runtime.start()
             ramp.update(isolation=runtime.isolation, health=runtime.health, image=runtime.image, host=runtime.metadata)
             report.update(isolation=runtime.isolation, host=runtime.metadata)
             startup = await asyncio.to_thread(measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read)
-            ramp["startup_upstream_attempts"] = startup
+            ramp.setdefault("startup_upstream_attempts", []).extend(startup)
+            ramp["runtime_history"].append({"generation": generation, "directory": str(runtime.directory),
+                                          "reason": reason, "host": dict(runtime.metadata),
+                                          "health": runtime.health, "isolation": runtime.isolation,
+                                          "startup_upstream_attempts": startup})
             if args.gateway == "live":
                 guard = measure.LiveGuard()
                 for row in startup:
@@ -558,6 +573,9 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                     report["live_stop"] = guard.stopped
                     await runtime.kill_server()
                     raise RuntimeError("live safety guard stopped during startup")
+
+        try:
+            await start_runtime("new TTS factor")
             if args.isolation_only:
                 report["isolation_only"] = True
                 report["verdict"] = "PASS" if runtime.isolation["passed"] else "FAIL"
@@ -567,7 +585,15 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                              args.max_concurrency if args.gateway == "live" else None) if args.ramp_search else None
             fixed = iter(args.ramp)
             n, attempt = 1 if planner else next(fixed), 1
+            failed_ns, reset_reason = set(), None
             while n is not None:
+                if reset_reason:
+                    image = runtime.image
+                    await runtime.stop()
+                    generation += 1
+                    runtime = new_runtime(generation, image)
+                    await start_runtime(reset_reason)
+                    reset_reason = None
                 if n > (min(args.search_ceiling, args.max_concurrency) if args.gateway == "live" and planner else
                         args.search_ceiling if planner else args.max_concurrency if args.gateway == "live" else max(args.ramp)):
                     raise ValueError("proposed N exceeds hard/live ceiling")
@@ -578,7 +604,7 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                         units = []
                         for unit in range(len(args.scenarios)):
                             units.append(await run_step(runtime, args, 1, repeat, ceiling, participant_factory=participant_factory,
-                                label=f"N1-repeat{repeat}-unit{unit + 1}-attempt{attempt}"))
+                                label=f"N1-repeat{repeat}-unit{unit + 1}-attempt{attempt}", scenario_offset=unit))
                             if units[-1]["live_stop"] or units[-1].get("early_stop"): break
                         step = fast.combine_units(units, args.scenarios, args.encounters_per_participant)
                     else:
@@ -586,6 +612,7 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                                               reference=reference)
                     step["metrics"].setdefault("encounters_per_participant", args.encounters_per_participant)
                     step["tts_realtime_factor"] = factor
+                    step.update(runtime_generation=generation, runtime_directory=str(runtime.directory))
                     repeats.append(step)
                     if step["live_stop"]:
                         report["live_stop"] = step["live_stop"]
@@ -620,6 +647,8 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                     else:
                         profile.update(status="unavailable", reason="no py-spy image (--profile-image) or local binary")
                 state = "INVALID" if any(s["verdict"] == "INVALID" for s in repeats) else "FAIL" if any(s["verdict"] == "FAIL" for s in repeats) else "PASS"
+                if any(s["verdict"] == "FAIL" for s in repeats):
+                    failed_ns.add(n)
                 if planner:
                     next_n = planner.observe(n, state)
                     print(f"Search N={n} {state}: {planner.path[-1]['reason']}; next={next_n}", flush=True)
@@ -635,6 +664,9 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                     if not args.continue_after_fail and state == "FAIL": next_n = None
                 if n == 1 and state != "PASS" and planner: next_n = None
                 if report.get("live_stop") or any(step["fake_errors"] for step in repeats): next_n = None
+                if planner and next_n is not None and any(next_n < failed for failed in failed_ns):
+                    reset_reason = f"fresh runtime before N={next_n}; below recorded FAIL at {sorted(failed_ns)}"
+                    planner.path[-1]["next_runtime_reset"] = reset_reason
                 await asyncio.to_thread(_write_report, directory, report)
                 n = next_n
             resolved = [s for s in ramp["steps"] if not s.get("superseded_invalid_attempt")]

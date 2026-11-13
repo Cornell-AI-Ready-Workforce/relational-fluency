@@ -20,16 +20,20 @@ class EncounterEvents:
             if path not in self.finished:
                 self.tails.setdefault(path, JsonlTail(path))
         for path, tail in list(self.tails.items()):
-            for row in tail.read():
-                if row.get("type") in {"voice_error", "error"}:
-                    result.append({"kind": "encounter", "session_id": path.parent.name, "event": row})
+            def drain():
+                for row in tail.read():
+                    if row.get("type") in {"voice_error", "error"}:
+                        result.append({"kind": "encounter", "session_id": path.parent.name, "event": row})
+            drain()
             try:
                 closed = json.loads((path.parent / "manifest.json").read_text(encoding="utf-8")).get("status") == "closed"
             except (OSError, ValueError):
                 closed = False
-            if closed and not tail.partial:
-                self.finished.add(path)
-                del self.tails[path]
+            if closed:
+                drain()  # Include final rows written before the closed manifest.
+                if not tail.partial:
+                    self.finished.add(path)
+                    del self.tails[path]
         return result
 
 
