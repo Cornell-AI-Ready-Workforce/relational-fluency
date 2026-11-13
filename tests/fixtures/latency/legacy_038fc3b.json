@@ -1,0 +1,1188 @@
+{
+ "events": {
+  "json": {
+   "caveats": [
+    "first_audio_played is the server receipt time of the page ACK minus lag_s; it includes return network time and does not establish when sound was heard.",
+    "The page queues audio, adds a 20 ms cushion, and uses a media element. output_latency_s is recorded but is not applied to these timestamps.",
+    "vad_speech_end follows the VAD silence run; the last voiced frame is absent.",
+    "cascade.llm_first_token_ms is overwritten until the first sentence is released; it is not time to first token. Final-flush replies may have no sentence-release stamp.",
+    "cascade.llm_total_ms includes TTS waits and is not pure LLM generation time.",
+    "cascade.stt_ms can be stale between replies; it is never charged to the total.",
+    "Room member cascade timings do not describe the scribe's STT.",
+    "STT, generation and TTS connection overlap. Cascade durations are diagnostics, not additive stages or exposed waits; no reply start timestamp anchors them.",
+    "transcript_arrived is not transcript accepted; director_decided is an endpoint, not a director duration. These diagnostic intervals can overlap the breakdown.",
+    "Saved sim summaries cannot recover stages, means, or first-versus-later splits. The sim does not model the browser audio path.",
+    "Mode uses session metadata. Mixed room and 1:1 interactions are not separated; the current v3 scenarios use one mode per session."
+   ],
+   "counts": {
+    "missing_or_invalid_total": 1,
+    "timed": 1
+   },
+   "definitions": {
+    "client_to_played": {
+     "end_field": "first_audio_played",
+     "start_field": "first_audio_to_client"
+    },
+    "commit_to_grant": {
+     "end_field": "grant_sent",
+     "start_field": "commit_sent"
+    },
+    "diagnostics": {
+     "commit_to_transcript_arrival": {
+      "additive": false,
+      "end_field": "transcript_arrived",
+      "start_field": "commit_sent"
+     },
+     "speech_end_to_director_decision": {
+      "additive": false,
+      "end_field": "director_decided",
+      "start_field": "vad_speech_end"
+     }
+    },
+    "gateway_to_client": {
+     "end_field": "first_audio_to_client",
+     "start_field": "first_audio_from_gateway"
+    },
+    "speech_end_to_commit": {
+     "end_field": "commit_sent",
+     "start_field": "vad_speech_end"
+    },
+    "total": {
+     "end_field": "first_audio_played",
+     "start_field": "vad_speech_end"
+    },
+    "unexplained": {
+     "endpoints": "rows[].unexplained_spans[].start_field/end_field",
+     "formula": "total - sum(available disjoint intervals)"
+    }
+   },
+   "group_fields": [
+    "scenario",
+    "mode",
+    "encounter_reply",
+    "participant_reply",
+    "family",
+    "model"
+   ],
+   "groups": [
+    {
+     "diagnostics": {
+      "commit_to_transcript_arrival": {
+       "mean_share": null,
+       "n": 1,
+       "p50_s": 2,
+       "p90_s": 2,
+       "share_n": 0
+      },
+      "speech_end_to_director_decision": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      }
+     },
+     "encounter_reply": "first",
+     "family": "cascade",
+     "missing_played_ack": 0,
+     "mode": "1:1",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_rows": 1,
+     "scenario": "S1A",
+     "source_kind": "turn_timing",
+     "stages": {
+      "client_to_played": {
+       "mean_share": 0.25,
+       "n": 1,
+       "p50_s": 2,
+       "p90_s": 2,
+       "share_n": 1
+      },
+      "commit_to_grant": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "gateway_to_client": {
+       "mean_share": 0.125,
+       "n": 1,
+       "p50_s": 1,
+       "p90_s": 1,
+       "share_n": 1
+      },
+      "speech_end_to_commit": {
+       "mean_share": 0.125,
+       "n": 1,
+       "p50_s": 1,
+       "p90_s": 1,
+       "share_n": 1
+      },
+      "total": {
+       "mean_share": 1.0,
+       "n": 1,
+       "p50_s": 8,
+       "p90_s": 8,
+       "share_n": 1
+      },
+      "unexplained": {
+       "mean_share": 0.5,
+       "n": 1,
+       "p50_s": 4,
+       "p90_s": 4,
+       "share_n": 1
+      }
+     }
+    },
+    {
+     "diagnostics": {
+      "commit_to_transcript_arrival": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "speech_end_to_director_decision": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      }
+     },
+     "encounter_reply": "later",
+     "family": "cascade",
+     "missing_played_ack": 1,
+     "mode": "1:1",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_rows": 1,
+     "scenario": "S1A",
+     "source_kind": "turn_timing",
+     "stages": {
+      "client_to_played": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "commit_to_grant": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "gateway_to_client": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "speech_end_to_commit": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "total": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "unexplained": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      }
+     }
+    }
+   ],
+   "issues": [],
+   "missing_boundaries": [
+    "reply request sent",
+    "first content token",
+    "first sentence ready",
+    "first TTS send",
+    "TTS first audio",
+    "transcript accepted",
+    "floor lock acquired",
+    "director start",
+    "director end",
+    "browser receipt"
+   ],
+   "rows": [
+    {
+     "boundaries_s": {
+      "commit_sent": 2,
+      "director_decided": null,
+      "first_audio_from_gateway": 6,
+      "first_audio_played": 9,
+      "first_audio_to_client": 7,
+      "grant_sent": null,
+      "transcript_arrived": 4,
+      "vad_speech_end": 1
+     },
+     "cascade_diagnostics_ms": {
+      "first_audio_ms": 2500,
+      "llm_first_token_ms": 1200,
+      "llm_total_ms": 9000,
+      "stt_ms": 800,
+      "tts_connect_ms": 500,
+      "tts_slot_wait_ms": 10
+     },
+     "diagnostics_s": {
+      "commit_to_transcript_arrival": 2,
+      "speech_end_to_director_decision": null
+     },
+     "encounter_reply": "first",
+     "family": "cascade",
+     "intervals_s": {
+      "client_to_played": 2,
+      "commit_to_grant": null,
+      "gateway_to_client": 1,
+      "speech_end_to_commit": 1,
+      "unexplained": 4
+     },
+     "issues": [],
+     "mode": "1:1",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_index_inferred": false,
+     "scenario": "S1A",
+     "source": "$TMP/sessions/s_1_abcdef/events.jsonl",
+     "total_s": 8,
+     "turn": 1,
+     "unexplained_spans": [
+      {
+       "duration_s": 4,
+       "end_field": "first_audio_from_gateway",
+       "start_field": "commit_sent"
+      }
+     ],
+     "vad_speech_end": 1
+    },
+    {
+     "boundaries_s": {
+      "commit_sent": 2,
+      "director_decided": null,
+      "first_audio_from_gateway": 6,
+      "first_audio_played": null,
+      "first_audio_to_client": 7,
+      "grant_sent": null,
+      "transcript_arrived": 4,
+      "vad_speech_end": 21
+     },
+     "cascade_diagnostics_ms": {
+      "first_audio_ms": 2500,
+      "llm_first_token_ms": 1200,
+      "llm_total_ms": 9000,
+      "stt_ms": 800,
+      "tts_connect_ms": 500,
+      "tts_slot_wait_ms": 10
+     },
+     "diagnostics_s": {
+      "commit_to_transcript_arrival": null,
+      "speech_end_to_director_decision": null
+     },
+     "encounter_reply": "later",
+     "family": "cascade",
+     "intervals_s": {
+      "client_to_played": null,
+      "commit_to_grant": null,
+      "gateway_to_client": null,
+      "speech_end_to_commit": null,
+      "unexplained": null
+     },
+     "issues": [
+      "missing_or_invalid_total"
+     ],
+     "mode": "1:1",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_index_inferred": false,
+     "scenario": "S1A",
+     "source": "$TMP/sessions/s_1_abcdef/events.jsonl",
+     "total_s": null,
+     "turn": 2,
+     "unexplained_spans": [],
+     "vad_speech_end": 21
+    }
+   ],
+   "sampling": {
+    "encounter_reply": "first = first 1:1 reply after the start boundary; first_after_handoff = first 1:1 reply after each handoff; later = other replies. Awaiting-participant boundaries take precedence over acceptance timestamps. Without boundaries, the lowest page turn is first and handoffs cannot be identified.",
+    "mean_share": "mean of each available interval / its own positive total; share_n is its denominator; missing is not zero",
+    "participant_reply": "first = reply_index 0; later = follow-up to the same speech end; legacy rows use page turn order",
+    "percentiles": "linear interpolation, tools.sim.analyze.percentile; seconds rounded to 0.001",
+    "sim_summary_difference": "sim summaries use the earliest first_audio_played per vad_speech_end regardless of reply_index. If reply 0 has no played ACK and reply 1 plays, the sim counts that wait as first response; raw rows keep reply 1 in participant_reply later.",
+    "small_n": "all groups and per-stage sample counts are retained",
+    "total_n": "reply rows with finite, nonnegative speech-end-to-ACK intervals; later participant replies are not first-response latency"
+   },
+   "schema_version": 2,
+   "sources": [
+    {
+     "path": "$TMP/sessions/s_1_abcdef/events.jsonl",
+     "reply_rows": 2
+    }
+   ],
+   "units": "seconds (cascade diagnostics remain milliseconds)"
+  },
+  "markdown": "| Scenario | Mode | Encounter reply | Participant reply | Family / model | Status | Reply rows | No played ACK | n | Total p50 / p90 (s) | Unexplained n; p50 / p90 (s); mean share |\n|---|---|---|---|---|---|---:|---:|---:|---|---|\n| S1A | 1:1 | first | first | cascade / cascade-argon-elevenlabs | turn_timing | 1 | 0 | 1 | 8.000 / 8.000 | 1; 4.000 / 4.000; 50.0% |\n| S1A | 1:1 | later | first | cascade / cascade-argon-elevenlabs | turn_timing | 1 | 1 | 0 | unavailable / unavailable | 0; unavailable / unavailable; unavailable |\n\n| Interval | Start field | End field |\n|---|---|---|\n| total | vad_speech_end | first_audio_played |\n| speech_end_to_commit | vad_speech_end | commit_sent |\n| commit_to_grant | commit_sent | grant_sent |\n| gateway_to_client | first_audio_from_gateway | first_audio_to_client |\n| client_to_played | first_audio_to_client | first_audio_played |\n| commit_to_transcript_arrival | commit_sent | transcript_arrived |\n| speech_end_to_director_decision | vad_speech_end | director_decided |\n\n| Scenario / mode / encounter reply / participant reply / model | Interval | n | p50 / p90 (s) | Mean share | share_n |\n|---|---|---:|---|---|---:|\n| S1A / 1:1 / first / first / cascade-argon-elevenlabs | speech_end_to_commit | 1 | 1.000 / 1.000 | 12.5% | 1 |\n| S1A / 1:1 / first / first / cascade-argon-elevenlabs | commit_to_grant | 0 | unavailable / unavailable | unavailable | 0 |\n| S1A / 1:1 / first / first / cascade-argon-elevenlabs | gateway_to_client | 1 | 1.000 / 1.000 | 12.5% | 1 |\n| S1A / 1:1 / first / first / cascade-argon-elevenlabs | client_to_played | 1 | 2.000 / 2.000 | 25.0% | 1 |\n| S1A / 1:1 / later / first / cascade-argon-elevenlabs | speech_end_to_commit | 0 | unavailable / unavailable | unavailable | 0 |\n| S1A / 1:1 / later / first / cascade-argon-elevenlabs | commit_to_grant | 0 | unavailable / unavailable | unavailable | 0 |\n| S1A / 1:1 / later / first / cascade-argon-elevenlabs | gateway_to_client | 0 | unavailable / unavailable | unavailable | 0 |\n| S1A / 1:1 / later / first / cascade-argon-elevenlabs | client_to_played | 0 | unavailable / unavailable | unavailable | 0 |\n\nUnexplained = total minus the available disjoint intervals. JSON rows retain each uncovered span's exact endpoint fields.\nParticipant reply uses reply_index; later replies include room follow-ups and probes. Sim summaries use the earliest played reply even when reply 0 has no ACK. Encounter reply separates the first reply at start, the first after each 1:1 handoff, and later replies.\nEach stage uses its own available replies. Mean shares with different share_n values need not sum to 100%. Missing intervals are unavailable. Small groups remain visible.\n\n- first_audio_played is the server receipt time of the page ACK minus lag_s; it includes return network time and does not establish when sound was heard.\n- The page queues audio, adds a 20 ms cushion, and uses a media element. output_latency_s is recorded but is not applied to these timestamps.\n- vad_speech_end follows the VAD silence run; the last voiced frame is absent.\n- cascade.llm_first_token_ms is overwritten until the first sentence is released; it is not time to first token. Final-flush replies may have no sentence-release stamp.\n- cascade.llm_total_ms includes TTS waits and is not pure LLM generation time.\n- cascade.stt_ms can be stale between replies; it is never charged to the total.\n- Room member cascade timings do not describe the scribe's STT.\n- STT, generation and TTS connection overlap. Cascade durations are diagnostics, not additive stages or exposed waits; no reply start timestamp anchors them.\n- transcript_arrived is not transcript accepted; director_decided is an endpoint, not a director duration. These diagnostic intervals can overlap the breakdown.\n- Saved sim summaries cannot recover stages, means, or first-versus-later splits. The sim does not model the browser audio path.\n- Mode uses session metadata. Mixed room and 1:1 interactions are not separated; the current v3 scenarios use one mode per session.\n\nBoundaries not recorded: reply request sent; first content token; first sentence ready; first TTS send; TTS first audio; transcript accepted; floor lock acquired; director start; director end; browser receipt.\n"
+ },
+ "record_only": {
+  "json": {
+   "caveats": [
+    "first_audio_played is the server receipt time of the page ACK minus lag_s; it includes return network time and does not establish when sound was heard.",
+    "The page queues audio, adds a 20 ms cushion, and uses a media element. output_latency_s is recorded but is not applied to these timestamps.",
+    "vad_speech_end follows the VAD silence run; the last voiced frame is absent.",
+    "cascade.llm_first_token_ms is overwritten until the first sentence is released; it is not time to first token. Final-flush replies may have no sentence-release stamp.",
+    "cascade.llm_total_ms includes TTS waits and is not pure LLM generation time.",
+    "cascade.stt_ms can be stale between replies; it is never charged to the total.",
+    "Room member cascade timings do not describe the scribe's STT.",
+    "STT, generation and TTS connection overlap. Cascade durations are diagnostics, not additive stages or exposed waits; no reply start timestamp anchors them.",
+    "transcript_arrived is not transcript accepted; director_decided is an endpoint, not a director duration. These diagnostic intervals can overlap the breakdown.",
+    "Saved sim summaries cannot recover stages, means, or first-versus-later splits. The sim does not model the browser audio path.",
+    "Mode uses session metadata. Mixed room and 1:1 interactions are not separated; the current v3 scenarios use one mode per session."
+   ],
+   "counts": {},
+   "definitions": {
+    "client_to_played": {
+     "end_field": "first_audio_played",
+     "start_field": "first_audio_to_client"
+    },
+    "commit_to_grant": {
+     "end_field": "grant_sent",
+     "start_field": "commit_sent"
+    },
+    "diagnostics": {
+     "commit_to_transcript_arrival": {
+      "additive": false,
+      "end_field": "transcript_arrived",
+      "start_field": "commit_sent"
+     },
+     "speech_end_to_director_decision": {
+      "additive": false,
+      "end_field": "director_decided",
+      "start_field": "vad_speech_end"
+     }
+    },
+    "gateway_to_client": {
+     "end_field": "first_audio_to_client",
+     "start_field": "first_audio_from_gateway"
+    },
+    "speech_end_to_commit": {
+     "end_field": "commit_sent",
+     "start_field": "vad_speech_end"
+    },
+    "total": {
+     "end_field": "first_audio_played",
+     "start_field": "vad_speech_end"
+    },
+    "unexplained": {
+     "endpoints": "rows[].unexplained_spans[].start_field/end_field",
+     "formula": "total - sum(available disjoint intervals)"
+    }
+   },
+   "group_fields": [
+    "scenario",
+    "mode",
+    "encounter_reply",
+    "participant_reply",
+    "family",
+    "model"
+   ],
+   "groups": [
+    {
+     "diagnostics": {},
+     "encounter_reply": "unknown",
+     "family": "cascade",
+     "missing_played_ack": null,
+     "mode": "unknown",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "unknown",
+     "reply_rows": 0,
+     "scenario": "S1A",
+     "source": "$TMP/sessions/s_1_abcdef/record.json",
+     "source_kind": "no_turn_timing",
+     "stages": {
+      "client_to_played": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "commit_to_grant": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "gateway_to_client": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "speech_end_to_commit": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "total": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "unexplained": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      }
+     }
+    }
+   ],
+   "issues": [
+    "$TMP/sessions/s_1_abcdef/record.json: no turn_timing rows; record.json does not retain stage timings"
+   ],
+   "missing_boundaries": [
+    "reply request sent",
+    "first content token",
+    "first sentence ready",
+    "first TTS send",
+    "TTS first audio",
+    "transcript accepted",
+    "floor lock acquired",
+    "director start",
+    "director end",
+    "browser receipt"
+   ],
+   "rows": [],
+   "sampling": {
+    "encounter_reply": "first = first 1:1 reply after the start boundary; first_after_handoff = first 1:1 reply after each handoff; later = other replies. Awaiting-participant boundaries take precedence over acceptance timestamps. Without boundaries, the lowest page turn is first and handoffs cannot be identified.",
+    "mean_share": "mean of each available interval / its own positive total; share_n is its denominator; missing is not zero",
+    "participant_reply": "first = reply_index 0; later = follow-up to the same speech end; legacy rows use page turn order",
+    "percentiles": "linear interpolation, tools.sim.analyze.percentile; seconds rounded to 0.001",
+    "sim_summary_difference": "sim summaries use the earliest first_audio_played per vad_speech_end regardless of reply_index. If reply 0 has no played ACK and reply 1 plays, the sim counts that wait as first response; raw rows keep reply 1 in participant_reply later.",
+    "small_n": "all groups and per-stage sample counts are retained",
+    "total_n": "reply rows with finite, nonnegative speech-end-to-ACK intervals; later participant replies are not first-response latency"
+   },
+   "schema_version": 2,
+   "sources": [
+    {
+     "path": "$TMP/sessions/s_1_abcdef/record.json",
+     "reply_rows": 0
+    }
+   ],
+   "units": "seconds (cascade diagnostics remain milliseconds)"
+  },
+  "markdown": "| Scenario | Mode | Encounter reply | Participant reply | Family / model | Status | Reply rows | No played ACK | n | Total p50 / p90 (s) | Unexplained n; p50 / p90 (s); mean share |\n|---|---|---|---|---|---|---:|---:|---:|---|---|\n| S1A | unknown | unknown | unknown | cascade / cascade-argon-elevenlabs | no_turn_timing | 0 | unavailable | 0 | unavailable / unavailable | 0; unavailable / unavailable; unavailable |\n\n| Interval | Start field | End field |\n|---|---|---|\n| total | vad_speech_end | first_audio_played |\n| speech_end_to_commit | vad_speech_end | commit_sent |\n| commit_to_grant | commit_sent | grant_sent |\n| gateway_to_client | first_audio_from_gateway | first_audio_to_client |\n| client_to_played | first_audio_to_client | first_audio_played |\n| commit_to_transcript_arrival | commit_sent | transcript_arrived |\n| speech_end_to_director_decision | vad_speech_end | director_decided |\n\nUnexplained = total minus the available disjoint intervals. JSON rows retain each uncovered span's exact endpoint fields.\nParticipant reply uses reply_index; later replies include room follow-ups and probes. Sim summaries use the earliest played reply even when reply 0 has no ACK. Encounter reply separates the first reply at start, the first after each 1:1 handoff, and later replies.\nEach stage uses its own available replies. Mean shares with different share_n values need not sum to 100%. Missing intervals are unavailable. Small groups remain visible.\n\n- first_audio_played is the server receipt time of the page ACK minus lag_s; it includes return network time and does not establish when sound was heard.\n- The page queues audio, adds a 20 ms cushion, and uses a media element. output_latency_s is recorded but is not applied to these timestamps.\n- vad_speech_end follows the VAD silence run; the last voiced frame is absent.\n- cascade.llm_first_token_ms is overwritten until the first sentence is released; it is not time to first token. Final-flush replies may have no sentence-release stamp.\n- cascade.llm_total_ms includes TTS waits and is not pure LLM generation time.\n- cascade.stt_ms can be stale between replies; it is never charged to the total.\n- Room member cascade timings do not describe the scribe's STT.\n- STT, generation and TTS connection overlap. Cascade durations are diagnostics, not additive stages or exposed waits; no reply start timestamp anchors them.\n- transcript_arrived is not transcript accepted; director_decided is an endpoint, not a director duration. These diagnostic intervals can overlap the breakdown.\n- Saved sim summaries cannot recover stages, means, or first-versus-later splits. The sim does not model the browser audio path.\n- Mode uses session metadata. Mixed room and 1:1 interactions are not separated; the current v3 scenarios use one mode per session.\n\n- $TMP/sessions/s_1_abcdef/record.json: no turn_timing rows; record.json does not retain stage timings\n\nBoundaries not recorded: reply request sent; first content token; first sentence ready; first TTS send; TTS first audio; transcript accepted; floor lock acquired; director start; director end; browser receipt.\n"
+ },
+ "record_with_events": {
+  "json": {
+   "caveats": [
+    "first_audio_played is the server receipt time of the page ACK minus lag_s; it includes return network time and does not establish when sound was heard.",
+    "The page queues audio, adds a 20 ms cushion, and uses a media element. output_latency_s is recorded but is not applied to these timestamps.",
+    "vad_speech_end follows the VAD silence run; the last voiced frame is absent.",
+    "cascade.llm_first_token_ms is overwritten until the first sentence is released; it is not time to first token. Final-flush replies may have no sentence-release stamp.",
+    "cascade.llm_total_ms includes TTS waits and is not pure LLM generation time.",
+    "cascade.stt_ms can be stale between replies; it is never charged to the total.",
+    "Room member cascade timings do not describe the scribe's STT.",
+    "STT, generation and TTS connection overlap. Cascade durations are diagnostics, not additive stages or exposed waits; no reply start timestamp anchors them.",
+    "transcript_arrived is not transcript accepted; director_decided is an endpoint, not a director duration. These diagnostic intervals can overlap the breakdown.",
+    "Saved sim summaries cannot recover stages, means, or first-versus-later splits. The sim does not model the browser audio path.",
+    "Mode uses session metadata. Mixed room and 1:1 interactions are not separated; the current v3 scenarios use one mode per session."
+   ],
+   "counts": {
+    "missing_or_invalid_total": 1,
+    "timed": 1
+   },
+   "definitions": {
+    "client_to_played": {
+     "end_field": "first_audio_played",
+     "start_field": "first_audio_to_client"
+    },
+    "commit_to_grant": {
+     "end_field": "grant_sent",
+     "start_field": "commit_sent"
+    },
+    "diagnostics": {
+     "commit_to_transcript_arrival": {
+      "additive": false,
+      "end_field": "transcript_arrived",
+      "start_field": "commit_sent"
+     },
+     "speech_end_to_director_decision": {
+      "additive": false,
+      "end_field": "director_decided",
+      "start_field": "vad_speech_end"
+     }
+    },
+    "gateway_to_client": {
+     "end_field": "first_audio_to_client",
+     "start_field": "first_audio_from_gateway"
+    },
+    "speech_end_to_commit": {
+     "end_field": "commit_sent",
+     "start_field": "vad_speech_end"
+    },
+    "total": {
+     "end_field": "first_audio_played",
+     "start_field": "vad_speech_end"
+    },
+    "unexplained": {
+     "endpoints": "rows[].unexplained_spans[].start_field/end_field",
+     "formula": "total - sum(available disjoint intervals)"
+    }
+   },
+   "group_fields": [
+    "scenario",
+    "mode",
+    "encounter_reply",
+    "participant_reply",
+    "family",
+    "model"
+   ],
+   "groups": [
+    {
+     "diagnostics": {
+      "commit_to_transcript_arrival": {
+       "mean_share": null,
+       "n": 1,
+       "p50_s": 2,
+       "p90_s": 2,
+       "share_n": 0
+      },
+      "speech_end_to_director_decision": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      }
+     },
+     "encounter_reply": "first",
+     "family": "cascade",
+     "missing_played_ack": 0,
+     "mode": "1:1",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_rows": 1,
+     "scenario": "S1A",
+     "source_kind": "turn_timing",
+     "stages": {
+      "client_to_played": {
+       "mean_share": 0.25,
+       "n": 1,
+       "p50_s": 2,
+       "p90_s": 2,
+       "share_n": 1
+      },
+      "commit_to_grant": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "gateway_to_client": {
+       "mean_share": 0.125,
+       "n": 1,
+       "p50_s": 1,
+       "p90_s": 1,
+       "share_n": 1
+      },
+      "speech_end_to_commit": {
+       "mean_share": 0.125,
+       "n": 1,
+       "p50_s": 1,
+       "p90_s": 1,
+       "share_n": 1
+      },
+      "total": {
+       "mean_share": 1.0,
+       "n": 1,
+       "p50_s": 8,
+       "p90_s": 8,
+       "share_n": 1
+      },
+      "unexplained": {
+       "mean_share": 0.5,
+       "n": 1,
+       "p50_s": 4,
+       "p90_s": 4,
+       "share_n": 1
+      }
+     }
+    },
+    {
+     "diagnostics": {
+      "commit_to_transcript_arrival": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "speech_end_to_director_decision": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      }
+     },
+     "encounter_reply": "later",
+     "family": "cascade",
+     "missing_played_ack": 1,
+     "mode": "1:1",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_rows": 1,
+     "scenario": "S1A",
+     "source_kind": "turn_timing",
+     "stages": {
+      "client_to_played": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "commit_to_grant": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "gateway_to_client": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "speech_end_to_commit": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "total": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "unexplained": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      }
+     }
+    }
+   ],
+   "issues": [],
+   "missing_boundaries": [
+    "reply request sent",
+    "first content token",
+    "first sentence ready",
+    "first TTS send",
+    "TTS first audio",
+    "transcript accepted",
+    "floor lock acquired",
+    "director start",
+    "director end",
+    "browser receipt"
+   ],
+   "rows": [
+    {
+     "boundaries_s": {
+      "commit_sent": 2,
+      "director_decided": null,
+      "first_audio_from_gateway": 6,
+      "first_audio_played": 9,
+      "first_audio_to_client": 7,
+      "grant_sent": null,
+      "transcript_arrived": 4,
+      "vad_speech_end": 1
+     },
+     "cascade_diagnostics_ms": {
+      "first_audio_ms": 2500,
+      "llm_first_token_ms": 1200,
+      "llm_total_ms": 9000,
+      "stt_ms": 800,
+      "tts_connect_ms": 500,
+      "tts_slot_wait_ms": 10
+     },
+     "diagnostics_s": {
+      "commit_to_transcript_arrival": 2,
+      "speech_end_to_director_decision": null
+     },
+     "encounter_reply": "first",
+     "family": "cascade",
+     "intervals_s": {
+      "client_to_played": 2,
+      "commit_to_grant": null,
+      "gateway_to_client": 1,
+      "speech_end_to_commit": 1,
+      "unexplained": 4
+     },
+     "issues": [],
+     "mode": "1:1",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_index_inferred": false,
+     "scenario": "S1A",
+     "source": "$TMP/sessions/s_1_abcdef/events.jsonl",
+     "total_s": 8,
+     "turn": 1,
+     "unexplained_spans": [
+      {
+       "duration_s": 4,
+       "end_field": "first_audio_from_gateway",
+       "start_field": "commit_sent"
+      }
+     ],
+     "vad_speech_end": 1
+    },
+    {
+     "boundaries_s": {
+      "commit_sent": 2,
+      "director_decided": null,
+      "first_audio_from_gateway": 6,
+      "first_audio_played": null,
+      "first_audio_to_client": 7,
+      "grant_sent": null,
+      "transcript_arrived": 4,
+      "vad_speech_end": 21
+     },
+     "cascade_diagnostics_ms": {
+      "first_audio_ms": 2500,
+      "llm_first_token_ms": 1200,
+      "llm_total_ms": 9000,
+      "stt_ms": 800,
+      "tts_connect_ms": 500,
+      "tts_slot_wait_ms": 10
+     },
+     "diagnostics_s": {
+      "commit_to_transcript_arrival": null,
+      "speech_end_to_director_decision": null
+     },
+     "encounter_reply": "later",
+     "family": "cascade",
+     "intervals_s": {
+      "client_to_played": null,
+      "commit_to_grant": null,
+      "gateway_to_client": null,
+      "speech_end_to_commit": null,
+      "unexplained": null
+     },
+     "issues": [
+      "missing_or_invalid_total"
+     ],
+     "mode": "1:1",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_index_inferred": false,
+     "scenario": "S1A",
+     "source": "$TMP/sessions/s_1_abcdef/events.jsonl",
+     "total_s": null,
+     "turn": 2,
+     "unexplained_spans": [],
+     "vad_speech_end": 21
+    }
+   ],
+   "sampling": {
+    "encounter_reply": "first = first 1:1 reply after the start boundary; first_after_handoff = first 1:1 reply after each handoff; later = other replies. Awaiting-participant boundaries take precedence over acceptance timestamps. Without boundaries, the lowest page turn is first and handoffs cannot be identified.",
+    "mean_share": "mean of each available interval / its own positive total; share_n is its denominator; missing is not zero",
+    "participant_reply": "first = reply_index 0; later = follow-up to the same speech end; legacy rows use page turn order",
+    "percentiles": "linear interpolation, tools.sim.analyze.percentile; seconds rounded to 0.001",
+    "sim_summary_difference": "sim summaries use the earliest first_audio_played per vad_speech_end regardless of reply_index. If reply 0 has no played ACK and reply 1 plays, the sim counts that wait as first response; raw rows keep reply 1 in participant_reply later.",
+    "small_n": "all groups and per-stage sample counts are retained",
+    "total_n": "reply rows with finite, nonnegative speech-end-to-ACK intervals; later participant replies are not first-response latency"
+   },
+   "schema_version": 2,
+   "sources": [
+    {
+     "path": "$TMP/sessions/s_1_abcdef/events.jsonl",
+     "reply_rows": 2
+    }
+   ],
+   "units": "seconds (cascade diagnostics remain milliseconds)"
+  },
+  "markdown": "| Scenario | Mode | Encounter reply | Participant reply | Family / model | Status | Reply rows | No played ACK | n | Total p50 / p90 (s) | Unexplained n; p50 / p90 (s); mean share |\n|---|---|---|---|---|---|---:|---:|---:|---|---|\n| S1A | 1:1 | first | first | cascade / cascade-argon-elevenlabs | turn_timing | 1 | 0 | 1 | 8.000 / 8.000 | 1; 4.000 / 4.000; 50.0% |\n| S1A | 1:1 | later | first | cascade / cascade-argon-elevenlabs | turn_timing | 1 | 1 | 0 | unavailable / unavailable | 0; unavailable / unavailable; unavailable |\n\n| Interval | Start field | End field |\n|---|---|---|\n| total | vad_speech_end | first_audio_played |\n| speech_end_to_commit | vad_speech_end | commit_sent |\n| commit_to_grant | commit_sent | grant_sent |\n| gateway_to_client | first_audio_from_gateway | first_audio_to_client |\n| client_to_played | first_audio_to_client | first_audio_played |\n| commit_to_transcript_arrival | commit_sent | transcript_arrived |\n| speech_end_to_director_decision | vad_speech_end | director_decided |\n\n| Scenario / mode / encounter reply / participant reply / model | Interval | n | p50 / p90 (s) | Mean share | share_n |\n|---|---|---:|---|---|---:|\n| S1A / 1:1 / first / first / cascade-argon-elevenlabs | speech_end_to_commit | 1 | 1.000 / 1.000 | 12.5% | 1 |\n| S1A / 1:1 / first / first / cascade-argon-elevenlabs | commit_to_grant | 0 | unavailable / unavailable | unavailable | 0 |\n| S1A / 1:1 / first / first / cascade-argon-elevenlabs | gateway_to_client | 1 | 1.000 / 1.000 | 12.5% | 1 |\n| S1A / 1:1 / first / first / cascade-argon-elevenlabs | client_to_played | 1 | 2.000 / 2.000 | 25.0% | 1 |\n| S1A / 1:1 / later / first / cascade-argon-elevenlabs | speech_end_to_commit | 0 | unavailable / unavailable | unavailable | 0 |\n| S1A / 1:1 / later / first / cascade-argon-elevenlabs | commit_to_grant | 0 | unavailable / unavailable | unavailable | 0 |\n| S1A / 1:1 / later / first / cascade-argon-elevenlabs | gateway_to_client | 0 | unavailable / unavailable | unavailable | 0 |\n| S1A / 1:1 / later / first / cascade-argon-elevenlabs | client_to_played | 0 | unavailable / unavailable | unavailable | 0 |\n\nUnexplained = total minus the available disjoint intervals. JSON rows retain each uncovered span's exact endpoint fields.\nParticipant reply uses reply_index; later replies include room follow-ups and probes. Sim summaries use the earliest played reply even when reply 0 has no ACK. Encounter reply separates the first reply at start, the first after each 1:1 handoff, and later replies.\nEach stage uses its own available replies. Mean shares with different share_n values need not sum to 100%. Missing intervals are unavailable. Small groups remain visible.\n\n- first_audio_played is the server receipt time of the page ACK minus lag_s; it includes return network time and does not establish when sound was heard.\n- The page queues audio, adds a 20 ms cushion, and uses a media element. output_latency_s is recorded but is not applied to these timestamps.\n- vad_speech_end follows the VAD silence run; the last voiced frame is absent.\n- cascade.llm_first_token_ms is overwritten until the first sentence is released; it is not time to first token. Final-flush replies may have no sentence-release stamp.\n- cascade.llm_total_ms includes TTS waits and is not pure LLM generation time.\n- cascade.stt_ms can be stale between replies; it is never charged to the total.\n- Room member cascade timings do not describe the scribe's STT.\n- STT, generation and TTS connection overlap. Cascade durations are diagnostics, not additive stages or exposed waits; no reply start timestamp anchors them.\n- transcript_arrived is not transcript accepted; director_decided is an endpoint, not a director duration. These diagnostic intervals can overlap the breakdown.\n- Saved sim summaries cannot recover stages, means, or first-versus-later splits. The sim does not model the browser audio path.\n- Mode uses session metadata. Mixed room and 1:1 interactions are not separated; the current v3 scenarios use one mode per session.\n\nBoundaries not recorded: reply request sent; first content token; first sentence ready; first TTS send; TTS first audio; transcript accepted; floor lock acquired; director start; director end; browser receipt.\n"
+ },
+ "saved_sim": {
+  "json": {
+   "caveats": [
+    "first_audio_played is the server receipt time of the page ACK minus lag_s; it includes return network time and does not establish when sound was heard.",
+    "The page queues audio, adds a 20 ms cushion, and uses a media element. output_latency_s is recorded but is not applied to these timestamps.",
+    "vad_speech_end follows the VAD silence run; the last voiced frame is absent.",
+    "cascade.llm_first_token_ms is overwritten until the first sentence is released; it is not time to first token. Final-flush replies may have no sentence-release stamp.",
+    "cascade.llm_total_ms includes TTS waits and is not pure LLM generation time.",
+    "cascade.stt_ms can be stale between replies; it is never charged to the total.",
+    "Room member cascade timings do not describe the scribe's STT.",
+    "STT, generation and TTS connection overlap. Cascade durations are diagnostics, not additive stages or exposed waits; no reply start timestamp anchors them.",
+    "transcript_arrived is not transcript accepted; director_decided is an endpoint, not a director duration. These diagnostic intervals can overlap the breakdown.",
+    "Saved sim summaries cannot recover stages, means, or first-versus-later splits. The sim does not model the browser audio path.",
+    "Mode uses session metadata. Mixed room and 1:1 interactions are not separated; the current v3 scenarios use one mode per session."
+   ],
+   "counts": {},
+   "definitions": {
+    "client_to_played": {
+     "end_field": "first_audio_played",
+     "start_field": "first_audio_to_client"
+    },
+    "commit_to_grant": {
+     "end_field": "grant_sent",
+     "start_field": "commit_sent"
+    },
+    "diagnostics": {
+     "commit_to_transcript_arrival": {
+      "additive": false,
+      "end_field": "transcript_arrived",
+      "start_field": "commit_sent"
+     },
+     "speech_end_to_director_decision": {
+      "additive": false,
+      "end_field": "director_decided",
+      "start_field": "vad_speech_end"
+     }
+    },
+    "gateway_to_client": {
+     "end_field": "first_audio_to_client",
+     "start_field": "first_audio_from_gateway"
+    },
+    "speech_end_to_commit": {
+     "end_field": "commit_sent",
+     "start_field": "vad_speech_end"
+    },
+    "total": {
+     "end_field": "first_audio_played",
+     "start_field": "vad_speech_end"
+    },
+    "unexplained": {
+     "endpoints": "rows[].unexplained_spans[].start_field/end_field",
+     "formula": "total - sum(available disjoint intervals)"
+    }
+   },
+   "group_fields": [
+    "scenario",
+    "mode",
+    "encounter_reply",
+    "participant_reply",
+    "family",
+    "model"
+   ],
+   "groups": [
+    {
+     "build": "1469925",
+     "completed": false,
+     "diagnostics": {},
+     "encounter_reply": "unknown",
+     "error": null,
+     "family": "cascade",
+     "generated_at": "2026-11-06T23:01:59Z",
+     "missing_played_ack": null,
+     "mode": "1:1",
+     "mode_basis": "fixed sim scenario",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_rows": null,
+     "scenario": "S1A",
+     "session_id": "s_1794004505_c4ac55",
+     "source": "$REPO/tools/sim/reports/1469925.json",
+     "source_kind": "sim_summary",
+     "stages": {
+      "client_to_played": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "commit_to_grant": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "gateway_to_client": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "speech_end_to_commit": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "total": {
+       "mean_share": null,
+       "n": 9,
+       "p50_s": 2.163,
+       "p90_s": 2.638,
+       "share_n": 0
+      },
+      "unexplained": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      }
+     },
+     "status": "incomplete"
+    },
+    {
+     "build": "1469925",
+     "completed": true,
+     "diagnostics": {},
+     "encounter_reply": "unknown",
+     "error": null,
+     "family": "cascade",
+     "generated_at": "2026-11-06T23:01:59Z",
+     "missing_played_ack": null,
+     "mode": "1:1",
+     "mode_basis": "fixed sim scenario",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_rows": null,
+     "scenario": "S2A",
+     "session_id": "s_1794004721_1cc043",
+     "source": "$REPO/tools/sim/reports/1469925.json",
+     "source_kind": "sim_summary",
+     "stages": {
+      "client_to_played": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "commit_to_grant": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "gateway_to_client": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "speech_end_to_commit": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "total": {
+       "mean_share": null,
+       "n": 25,
+       "p50_s": 2.108,
+       "p90_s": 2.998,
+       "share_n": 0
+      },
+      "unexplained": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      }
+     },
+     "status": "completed"
+    },
+    {
+     "build": "1469925",
+     "completed": false,
+     "diagnostics": {},
+     "encounter_reply": "unknown",
+     "error": null,
+     "family": "cascade",
+     "generated_at": "2026-11-06T23:01:59Z",
+     "missing_played_ack": null,
+     "mode": "room",
+     "mode_basis": "fixed sim scenario",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_rows": null,
+     "scenario": "S3A",
+     "session_id": "s_1794005326_9528db",
+     "source": "$REPO/tools/sim/reports/1469925.json",
+     "source_kind": "sim_summary",
+     "stages": {
+      "client_to_played": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "commit_to_grant": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "gateway_to_client": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "speech_end_to_commit": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "total": {
+       "mean_share": null,
+       "n": 9,
+       "p50_s": 2.813,
+       "p90_s": 3.268,
+       "share_n": 0
+      },
+      "unexplained": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      }
+     },
+     "status": "incomplete"
+    },
+    {
+     "build": "1469925",
+     "completed": true,
+     "diagnostics": {},
+     "encounter_reply": "unknown",
+     "error": null,
+     "family": "cascade",
+     "generated_at": "2026-11-06T23:01:59Z",
+     "missing_played_ack": null,
+     "mode": "room",
+     "mode_basis": "fixed sim scenario",
+     "model": "cascade-argon-elevenlabs",
+     "participant_reply": "first",
+     "reply_rows": null,
+     "scenario": "S4A",
+     "session_id": "s_1794005518_4eacdb",
+     "source": "$REPO/tools/sim/reports/1469925.json",
+     "source_kind": "sim_summary",
+     "stages": {
+      "client_to_played": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "commit_to_grant": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "gateway_to_client": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "speech_end_to_commit": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      },
+      "total": {
+       "mean_share": null,
+       "n": 32,
+       "p50_s": 2.647,
+       "p90_s": 3.581,
+       "share_n": 0
+      },
+      "unexplained": {
+       "mean_share": null,
+       "n": 0,
+       "p50_s": null,
+       "p90_s": null,
+       "share_n": 0
+      }
+     },
+     "status": "completed"
+    }
+   ],
+   "issues": [],
+   "missing_boundaries": [
+    "reply request sent",
+    "first content token",
+    "first sentence ready",
+    "first TTS send",
+    "TTS first audio",
+    "transcript accepted",
+    "floor lock acquired",
+    "director start",
+    "director end",
+    "browser receipt"
+   ],
+   "rows": [],
+   "sampling": {
+    "encounter_reply": "first = first 1:1 reply after the start boundary; first_after_handoff = first 1:1 reply after each handoff; later = other replies. Awaiting-participant boundaries take precedence over acceptance timestamps. Without boundaries, the lowest page turn is first and handoffs cannot be identified.",
+    "mean_share": "mean of each available interval / its own positive total; share_n is its denominator; missing is not zero",
+    "participant_reply": "first = reply_index 0; later = follow-up to the same speech end; legacy rows use page turn order",
+    "percentiles": "linear interpolation, tools.sim.analyze.percentile; seconds rounded to 0.001",
+    "sim_summary_difference": "sim summaries use the earliest first_audio_played per vad_speech_end regardless of reply_index. If reply 0 has no played ACK and reply 1 plays, the sim counts that wait as first response; raw rows keep reply 1 in participant_reply later.",
+    "small_n": "all groups and per-stage sample counts are retained",
+    "total_n": "reply rows with finite, nonnegative speech-end-to-ACK intervals; later participant replies are not first-response latency"
+   },
+   "schema_version": 2,
+   "sources": [],
+   "units": "seconds (cascade diagnostics remain milliseconds)"
+  },
+  "markdown": "| Scenario | Mode | Encounter reply | Participant reply | Family / model | Status | Reply rows | No played ACK | n | Total p50 / p90 (s) | Unexplained n; p50 / p90 (s); mean share |\n|---|---|---|---|---|---|---:|---:|---:|---|---|\n| S1A | 1:1 | unknown | first | cascade / cascade-argon-elevenlabs | incomplete | unavailable | unavailable | 9 | 2.163 / 2.638 | 0; unavailable / unavailable; unavailable |\n| S2A | 1:1 | unknown | first | cascade / cascade-argon-elevenlabs | completed | unavailable | unavailable | 25 | 2.108 / 2.998 | 0; unavailable / unavailable; unavailable |\n| S3A | room | unknown | first | cascade / cascade-argon-elevenlabs | incomplete | unavailable | unavailable | 9 | 2.813 / 3.268 | 0; unavailable / unavailable; unavailable |\n| S4A | room | unknown | first | cascade / cascade-argon-elevenlabs | completed | unavailable | unavailable | 32 | 2.647 / 3.581 | 0; unavailable / unavailable; unavailable |\n\n| Interval | Start field | End field |\n|---|---|---|\n| total | vad_speech_end | first_audio_played |\n| speech_end_to_commit | vad_speech_end | commit_sent |\n| commit_to_grant | commit_sent | grant_sent |\n| gateway_to_client | first_audio_from_gateway | first_audio_to_client |\n| client_to_played | first_audio_to_client | first_audio_played |\n| commit_to_transcript_arrival | commit_sent | transcript_arrived |\n| speech_end_to_director_decision | vad_speech_end | director_decided |\n\nUnexplained = total minus the available disjoint intervals. JSON rows retain each uncovered span's exact endpoint fields.\nParticipant reply uses reply_index; later replies include room follow-ups and probes. Sim summaries use the earliest played reply even when reply 0 has no ACK. Encounter reply separates the first reply at start, the first after each 1:1 handoff, and later replies.\nEach stage uses its own available replies. Mean shares with different share_n values need not sum to 100%. Missing intervals are unavailable. Small groups remain visible.\n\n- first_audio_played is the server receipt time of the page ACK minus lag_s; it includes return network time and does not establish when sound was heard.\n- The page queues audio, adds a 20 ms cushion, and uses a media element. output_latency_s is recorded but is not applied to these timestamps.\n- vad_speech_end follows the VAD silence run; the last voiced frame is absent.\n- cascade.llm_first_token_ms is overwritten until the first sentence is released; it is not time to first token. Final-flush replies may have no sentence-release stamp.\n- cascade.llm_total_ms includes TTS waits and is not pure LLM generation time.\n- cascade.stt_ms can be stale between replies; it is never charged to the total.\n- Room member cascade timings do not describe the scribe's STT.\n- STT, generation and TTS connection overlap. Cascade durations are diagnostics, not additive stages or exposed waits; no reply start timestamp anchors them.\n- transcript_arrived is not transcript accepted; director_decided is an endpoint, not a director duration. These diagnostic intervals can overlap the breakdown.\n- Saved sim summaries cannot recover stages, means, or first-versus-later splits. The sim does not model the browser audio path.\n- Mode uses session metadata. Mixed room and 1:1 interactions are not separated; the current v3 scenarios use one mode per session.\n\nBoundaries not recorded: reply request sent; first content token; first sentence ready; first TTS send; TTS first audio; transcript accepted; floor lock acquired; director start; director end; browser receipt.\n"
+ }
+}

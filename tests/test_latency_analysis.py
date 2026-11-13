@@ -384,3 +384,279 @@ def test_cli_writes_json_and_markdown_offline(tmp_path):
     assert report["definitions"]["gateway_to_client"] == {"start_field": "first_audio_from_gateway", "end_field": "first_audio_to_client"}
     assert "floor lock acquired" in (out / "summary.md").read_text(encoding="utf-8")
     assert "missing_boundaries" in report and "a6_missing_boundaries" not in report
+
+
+@pytest.fixture
+def traced_session(tmp_path, monkeypatch):
+    """Write schema 1 using all three production writers on one fake clock."""
+    import asyncio
+    from server import conversation_audio, reply_trace, storage, turn_timing
+
+    base = 1_800_000_000
+    clock = {"now": 0.0}
+    fake = SimpleNamespace(time=lambda: base + clock["now"], monotonic=lambda: 5000 + clock["now"])
+    for module in (storage, turn_timing, reply_trace):
+        monkeypatch.setattr(module, "time", fake)
+    monkeypatch.setattr(conversation_audio, "finish_later", lambda _: None)
+    for name, value in (("DATA_DIR", tmp_path), ("SESSIONS_DIR", tmp_path / "sessions"),
+                        ("PARTICIPANTS_DIR", tmp_path / "participants"), ("DB_PATH", tmp_path / "index.db")):
+        monkeypatch.setattr(storage, name, value)
+
+    def make(*, slow="model", cancelled=False, trigger="punctuation", reverse_stt=False, sid="s_1800000000_aaaaaa"):
+        async def produce():
+            clock["now"] = 0
+            store = storage.SessionStore(sid, scenario="S2A", model="m", participant_id=None, capture_audio=False)
+            store.event("session_start", scenario="S2A", mode="single")
+            store.event("realtime_session_started", model="cascade-argon-elevenlabs")
+            timer = turn_timing.TurnTimer(store)
+            trace = reply_trace.ReplyTrace(store)
+            owner = SimpleNamespace(_reply_trace=trace, ws=object())
+            operations = []
+            for i in range(2 if reverse_stt else 1):
+                offset, iid, rid = i, f"commit-{i}", f"response-{i}"
+                detected = 1 + offset
+                # Task-local call context ties the exact commit to its create.
+                clock["now"] = detected
+                timer.speech_end()
+                trace.vad({"detected_mono": fake.monotonic(), "trailing_silence_samples": 14400,
+                           "sample_rate_hz": 16000, "estimate": "sample_position"})
+                trace.briefing("entered")
+                clock["now"] = detected + .2
+                trace.briefing("completed")
+                with reply_trace.context(owner, "participant_commit"):
+                    clock["now"] = detected + .3
+                    trace.commit(iid, id(owner.ws))
+                    timer.commit_sent()
+                    clock["now"] = detected + .4
+                    trace.create(rid, id(owner.ws))
+                sentence, connected = 3 + offset, (4 if slow == "tts" else 2) + offset
+                audio = max(sentence, connected) + .3
+                stt_done = (7 if i == 0 else 4) if reverse_stt else (5 if slow == "stt" else 2.5)
+                stages = {"create_released": 1.5 + offset, "request_started": 1.55 + offset,
+                          "tts_slot_wait_start": 1.51 + offset, "tts_slot_acquired": 1.6 + offset,
+                          "first_content": 2 + offset, "first_sentence_ready": sentence,
+                          "tts_connected": connected, "first_text_sent": audio - .2,
+                          "tts_first_audio": audio, "first_output_emitted": audio + .01}
+                for name, at in stages.items():
+                    if not cancelled or at <= 2.1:
+                        fields = {"sentence_trigger": trigger} if name == "first_sentence_ready" else {}
+                        operations.append((at, lambda rid=rid, name=name, fields=fields: trace.stamp(rid, name, **fields)))
+                operations += [(1.31 + offset, lambda iid=iid: trace.stt(iid, "started")),
+                               (stt_done, lambda iid=iid: trace.stt(iid, "done", "completed")),
+                               (stt_done + .1, lambda iid=iid: trace.decision(iid, "accepted"))]
+                if cancelled:
+                    operations.append((2.1, lambda rid=rid: trace.done(rid, "cancelled")))
+                    continue
+                held = not reverse_stt
+                release = max(audio + .03, stt_done + .1) + .01
+                if held:
+                    operations += [(audio + .03, lambda rid=rid: trace.stamp(rid, "first_output_hold_started")),
+                                   (release, lambda rid=rid, iid=iid: trace.stamp(rid, "first_output_hold_released", release_commit_item_id=iid))]
+                client = (release if held else audio + .03) + .01
+                def page(rid=rid, audio=audio):
+                    turn = timer.started("dan")
+                    trace.page(rid, turn)
+                    timer.audio_to_client(base + audio + .01)
+                    timer.done("dan")
+                    timer.ack({"phase": "start", "turn": turn, "lag_s": 0})
+                    timer.ack({"phase": "end", "turn": turn, "lag_s": 0})
+                operations.append((client, page))
+                operations.append((client + .1, lambda rid=rid: trace.done(rid, "done")))
+            for at, operation in sorted(operations, key=lambda pair: pair[0]):
+                clock["now"] = at
+                operation()
+            clock["now"] = 10
+            timer.flush()
+            trace.flush()
+            store.close()
+            return store.dir
+        return asyncio.run(produce())
+    return make
+
+
+@pytest.mark.parametrize("slow", ["model", "tts", "stt"])
+def test_trace_critical_paths_select_causal_branches(traced_session, slow):
+    directory = traced_session(slow=slow)
+    report = latency.analyze_paths([directory])
+    row, = report["trace"]["rows"]
+    assert row["match"] == "matched" and row["commits"][0]["commit_item_id"] == "commit-0"
+    provider = row["paths"]["provider_audio"]
+    assert provider["unexplained_s"] == 0
+    assert sum(provider["exposed_s"].values()) == pytest.approx(provider["total_s"])
+    if slow == "tts":
+        assert "tts_connect" in provider["exposed_s"]
+        assert "request_to_content" not in provider["exposed_s"]
+        assert row["readiness_gaps_s"]["tts_readiness_after_sentence"] == 1
+    else:
+        assert "request_to_content" in provider["exposed_s"]
+        assert "tts_connect" not in provider["exposed_s"]
+        assert row["readiness_gaps_s"]["sentence_readiness_after_connection"] == 1
+    client = row["paths"]["client_audio"]
+    assert client["unexplained_s"] == 0
+    if slow == "stt":
+        assert "stt" in client["exposed_s"] and "request_to_content" not in client["exposed_s"]
+        assert row["readiness_gaps_s"]["transcript_readiness_after_audio_hold"] > 0
+    assert any(span["duration_s"] > 0 for span in row["overlaps"])
+    stats = report["trace"]["groups"][0]["stages"]
+    assert all(stage["n"] == 1 for stage in stats)
+    assert "Reply-path trace" in latency.markdown(report)
+    assert report["trace"]["counts"]["matched"] == 1
+
+
+def test_trace_cancelled_reply_without_page_keeps_partial_work(traced_session):
+    report = latency.analyze_paths([traced_session(cancelled=True)])
+    row, = report["trace"]["rows"]
+    assert row["status"] == "cancelled" and row["page_turn"] is None
+    assert "request_to_content" in row["work"]
+    assert row["paths"]["provider_audio"]["total_s"] is None
+    assert report["trace"]["counts"]["traces_without_turn_timing"] == 1
+    assert "cancelled" in latency.markdown(report)
+
+
+def test_trace_final_flush_first_has_its_own_content_and_sentence_stamps(traced_session):
+    row, = latency.analyze_paths([traced_session(trigger="final_flush")])["trace"]["rows"]
+    assert row["sentence_trigger"] == "final_flush"
+    assert row["stamps_s"]["first_content"] < row["stamps_s"]["first_sentence_ready"]
+    assert row["work"]["content_to_sentence"]["duration_s"] == 1
+
+
+def test_trace_reversed_stt_completion_joins_commit_ids_not_order(traced_session):
+    directory = traced_session(reverse_stt=True)
+    events, _ = latency.read_events(directory / "events.jsonl")
+    # Teardown write order and reply identity order need not match.
+    events.sort(key=lambda e: e.get("commit_item_id", ""), reverse=True)
+    (directory / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8", newline="")
+    section = latency.analyze_paths([directory])["trace"]
+    rows = {row["response_id"]: row for row in section["rows"]}
+    assert rows["response-0"]["commits"][0]["stages"]["stt_done"] == 7
+    assert rows["response-1"]["commits"][0]["stages"]["stt_done"] == 4
+    assert rows["response-0"]["commit_item_ids"] == ["commit-0"]
+    assert rows["response-1"]["commit_item_ids"] == ["commit-1"]
+    assert section["counts"]["matched"] == 2
+
+
+def test_trace_missing_reply_trace_keeps_coarse_timing_and_counts_gap(traced_session):
+    directory = traced_session()
+    events, _ = latency.read_events(directory / "events.jsonl")
+    events = [e for e in events if e["type"] != "reply_trace"]
+    (directory / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8", newline="")
+    report = latency.analyze_paths([directory])
+    assert len(report["rows"]) == 1 and report["rows"][0]["total_s"] is not None
+    assert report["trace"]["counts"]["turn_timings_without_trace"] == 1
+    assert report["trace"]["counts"]["unreferenced_commits"] == 1
+
+
+def test_trace_without_timing_still_reports_the_full_provider_path(traced_session):
+    directory = traced_session()
+    events, _ = latency.read_events(directory / "events.jsonl")
+    events = [e for e in events if e["type"] != "turn_timing"]
+    (directory / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8", newline="")
+    section = latency.analyze_paths([directory])["trace"]
+    assert section["counts"]["traces_without_turn_timing"] == 1
+    assert section["rows"][0]["paths"]["provider_audio"]["unexplained_s"] == 0
+    assert section["rows"][0]["page_turn"] == 1
+
+
+@pytest.mark.parametrize("version", [2, 99, True])
+def test_trace_unknown_schema_is_reported_without_parsing_stages(traced_session, version):
+    directory = traced_session()
+    events, _ = latency.read_events(directory / "events.jsonl")
+    for event in events:
+        if event["type"] == "reply_trace":
+            event["schema_version"] = version
+            event["stages"] = "unknown schema; do not parse"
+    (directory / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8", newline="")
+    report = latency.analyze_paths([directory])
+    assert report["trace"]["counts"]["unsupported"] == 1
+    assert not report["trace"]["rows"]
+    assert report["trace"]["counts"]["turn_timings_without_trace"] == 1
+    assert "unsupported_schema_version" in latency.markdown(report)
+
+
+def test_trace_duplicate_page_identity_does_not_choose_an_arbitrary_row(traced_session):
+    directory = traced_session()
+    events, _ = latency.read_events(directory / "events.jsonl")
+    original = next(e for e in events if e["type"] == "reply_trace")
+    events.append({**original, "response_id": "different-response-same-page"})
+    (directory / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8", newline="")
+    section = latency.analyze_paths([directory])["trace"]
+    assert section["counts"]["matched"] == 0
+    assert section["counts"]["traces_without_turn_timing"] == 2
+    assert section["counts"]["turn_timings_without_trace"] == 1
+    assert all("ambiguous_reply_or_page_identity" in r["issues"] for r in section["rows"])
+
+
+def test_trace_release_uses_its_named_commit_and_does_not_reparent_its_stt(traced_session):
+    directory = traced_session(reverse_stt=True)
+    events, _ = latency.read_events(directory / "events.jsonl")
+    reply = next(e for e in events if e.get("response_id") == "response-0")
+    reply["release_commit_item_id"] = "commit-1"
+    reply["stages"].update(first_output_hold_started=3.33, first_output_hold_released=4.2)
+    (directory / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8", newline="")
+    row = next(r for r in latency.analyze_paths([directory])["trace"]["rows"] if r["response_id"] == "response-0")
+    assert row["stamps_s"]["release_transcript_decided"] == 4.1
+    assert row["readiness_gaps_s"]["transcript_readiness_after_audio_hold"] == .77
+    assert row["stamps_s"]["vad_detected"] == 1
+
+
+def test_trace_identity_scope_is_per_session(traced_session):
+    first = traced_session(sid="s_1800000000_aaaaaa")
+    second = traced_session(sid="s_1800000001_bbbbbb")
+    result = latency.analyze_paths([first, second])["trace"]
+    assert result["counts"]["matched"] == 2
+    assert result["groups"][0]["stages"][0]["n"] == 2
+
+
+def test_trace_missing_dependency_stays_unexplained(traced_session):
+    directory = traced_session()
+    events, _ = latency.read_events(directory / "events.jsonl")
+    for event in events:
+        if event["type"] == "reply_trace":
+            del event["stages"]["first_content"]
+    (directory / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8", newline="")
+    row, = latency.analyze_paths([directory])["trace"]["rows"]
+    path = row["paths"]["provider_audio"]
+    assert path["unexplained_s"] > 0
+    assert sum(path["exposed_s"].values()) + path["unexplained_s"] == pytest.approx(path["total_s"])
+    assert "missing_dependency:first_sentence_ready" in path["issues"]
+
+
+def test_trace_unknown_clock_is_not_used_for_intervals(traced_session):
+    directory = traced_session()
+    events, _ = latency.read_events(directory / "events.jsonl")
+    for event in events:
+        if event["type"] == "reply_trace":
+            event["clock"] = "provider_relative"
+    (directory / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8", newline="")
+    section = latency.analyze_paths([directory])["trace"]
+    assert not section["rows"]
+    assert section["unsupported"][0]["reason"] == "unsupported_clock_or_units"
+
+
+def test_trace_cli_writes_the_new_json_and_markdown_sections(traced_session, tmp_path):
+    directory = traced_session()
+    out = tmp_path / "report"
+    subprocess.run([sys.executable, "-m", "tools.sim.latency", str(directory),
+                    "--json-out", str(out / "trace.json"), "--markdown-out", str(out / "trace.md")],
+                   check=True, capture_output=True, text=True)
+    report = json.loads((out / "trace.json").read_text(encoding="utf-8"))
+    assert report["trace"]["counts"]["matched"] == 1
+    text = (out / "trace.md").read_text(encoding="utf-8")
+    assert "Reply-path trace" in text and "readiness_gap" in text and "overlap" in text
+
+
+def test_legacy_outputs_equal_complete_038fc3b_snapshots(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    expected = json.loads((root / "tests/fixtures/latency/legacy_038fc3b.json").read_text(encoding="utf-8"))
+    directory = session(tmp_path, [timing(), timing(turn=2, vad_speech_end=21, first_audio_played=None)])
+    def check(name, path):
+        report = latency.analyze_paths([path])
+        result = json.dumps({"json": report, "markdown": latency.markdown(report)})
+        result = result.replace(str(tmp_path), "$TMP").replace(str(root), "$REPO")
+        assert json.loads(result) == expected[name]
+        assert "trace" not in report
+    check("events", directory / "events.jsonl")
+    check("record_with_events", directory / "record.json")
+    check("saved_sim", root / "tools/sim/reports/1469925.json")
+    (directory / "events.jsonl").unlink()
+    check("record_only", directory / "record.json")
