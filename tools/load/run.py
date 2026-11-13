@@ -531,6 +531,7 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
               "capacity_scope": "this host; TTS uses the recorded profile; fake gateway timing and speaker/tool probabilities remain assumptions",
               "configuration": {"ramp": args.ramp, "repeat": args.repeat, "scenarios": args.scenarios,
                                 "live_guard_rule": measure.LIVE_GUARD_RULE,
+                                "live_guard_counted_purposes": list(measure.LIVE_RATE_PURPOSES),
                                 "tts_destination_guard": "active in every mode; blocked-only journal outside latency mode",
                                 "fake_tts_profile": config.tts_profile,
                                 "fake_revision_sha256": hashlib.sha256((ROOT / "tools/load/fake_upstream.py").read_bytes()).hexdigest(),

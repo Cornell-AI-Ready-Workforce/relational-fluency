@@ -25,13 +25,14 @@ def test_one_timeout_at_attempt_four_does_not_stop_below_or_at_sample_floor():
     guard = measure.LiveGuard()
     for i in range(40):
         assert guard.observe(TIMEOUT if i == 3 else OK, 1) is None
-    assert (guard.attempts, guard.errors) == (40, 1)
+    assert (guard.attempts, guard.errors) == (39, 0)
+    assert (guard.gateway_attempts, guard.gateway_errors) == (40, 1)
 
 
 def test_two_errors_in_twenty_five_gateway_attempts_stop():
     guard = measure.LiveGuard()
     for i in range(25):
-        stop = guard.observe(TIMEOUT if i in {3, 24} else OK, 1)
+        stop = guard.observe({**TIMEOUT, "purpose": "stt"} if i in {3, 24} else OK, 1)
         assert bool(stop) == (i == 24)
     assert stop["reason"] == "gateway attempt error rate > 5%"
     assert (stop["attempts"], stop["errors"]) == (25, 2)
@@ -50,7 +51,7 @@ def test_sample_floor_is_twenty_and_slot_only_rows_never_count():
         assert guard.observe({**TIMEOUT, "detail": "slot_wait"}, 1) is None
         assert guard.observe({"upstream": "elevenlabs", "outcome": "timeout"}, 1) is None
     for i in range(19):
-        assert guard.observe(TIMEOUT if i in {3, 18} else OK, 1) is None
+        assert guard.observe({**TIMEOUT, "purpose": "actor"} if i in {3, 18} else OK, 1) is None
     stop = guard.observe(OK, 1)
     assert stop and stop["attempts"] == 20 and stop["errors"] == 2
 
@@ -80,7 +81,8 @@ def test_real_step_watcher_allows_early_steering_timeout(monkeypatch, tmp_path):
     assert len(result["gateway_errors"]) == 1 and result["gateway_errors"][0]["purpose"] == "steering"
 
 
-def test_latency_pass_keeps_early_timeout_in_both_reports_and_runs_both_scenarios(monkeypatch, tmp_path):
+@pytest.mark.parametrize("steering_errors", [1, 30])
+def test_latency_pass_keeps_steering_timeouts_in_both_reports_and_runs_both_scenarios(monkeypatch, tmp_path, steering_errors):
     root = checkout(tmp_path)
     calls = []
     class RT(FakeRuntime):
@@ -98,7 +100,11 @@ def test_latency_pass_keeps_early_timeout_in_both_reports_and_runs_both_scenario
                  "finalized_at": "encounter_teardown"} for k in ("reply_trace", "commit_trace", "turn_timing")]
         (folder / "events.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
         with (rt.data / "upstream-attempts.jsonl").open("a", encoding="utf-8") as fh:
-            for row in ([TIMEOUT] + [OK] * 16 if len(calls) == 1 else [OK] * 20): fh.write(json.dumps(row) + "\n")
+            if steering_errors == 30:
+                gateway_rows = [TIMEOUT] * 17 if len(calls) == 1 else [TIMEOUT] * 13 + [OK] * 7
+            else:
+                gateway_rows = [TIMEOUT] + [OK] * 16 if len(calls) == 1 else [OK] * 20
+            for row in gateway_rows: fh.write(json.dumps(row) + "\n")
             fh.write('{"upstream":"elevenlabs","route":"tts_ws"}\n')
         with (rt.data / "tts-destinations.jsonl").open("a", encoding="utf-8") as fh: fh.write('{"allowed":true}\n')
         rt.tts += 1
@@ -108,7 +114,8 @@ def test_latency_pass_keeps_early_timeout_in_both_reports_and_runs_both_scenario
     args = latency.parse_args(["--server-checkout", str(root), "--report-dir", str(tmp_path / "run"), "--allow-live", "--turns", "1"])
     report, directory = asyncio.run(latency.run_latency(args, runtime_factory=RT, key_loader=lambda: "mock-only"))
     assert report["verdict"] == "PASS" and calls == ["S1A", "S2A"]
-    assert report["gateway_request_count"] == 40 and len(report["gateway_errors"]) == 1
+    assert report["gateway_request_count"] == 40 and len(report["gateway_errors"]) == steering_errors
+    assert report["configuration"]["live_guard_counted_purposes"] == list(measure.LIVE_RATE_PURPOSES)
     row = report["gateway_errors"][0]
     for key in ("route", "purpose", "outcome", "detail"):
         assert row[key] == TIMEOUT[key] and TIMEOUT[key] in (directory / "report.md").read_text(encoding="utf-8")
@@ -123,6 +130,7 @@ def test_capacity_pass_also_reports_recovered_gateway_error(monkeypatch, tmp_pat
     args = run.parse_args(["--ramp", "1", "--scenarios", "S1A", "--report-dir", str(tmp_path)])
     report, directory = asyncio.run(run.run_experiment(args, runtime_factory=FakeRuntime))
     assert report["verdict"] == "PASS" and len(report["gateway_errors"]) == 1
+    assert report["configuration"]["live_guard_counted_purposes"] == list(measure.LIVE_RATE_PURPOSES)
     assert "steering" in (directory / "report.md").read_text(encoding="utf-8")
 
 

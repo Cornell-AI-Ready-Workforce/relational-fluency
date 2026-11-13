@@ -230,11 +230,18 @@ is 20 and requires a compatible ramp. TTS remains fake. Live mode uses a normal
 Docker network for gateway egress and has no fake-mode isolation claim.
 The 100 ms telemetry watcher kills the server before cancelling participants
 or waiting for close. Every live guard uses the same rule: stop immediately on
-the first gateway 429, 401 or 403; apply gateway-only error rate > 5% only after
-at least 20 gateway attempts. Fake TTS and slot-wait-only rows never dilute that
-denominator. Steering timeouts are errors under the same rule, without a
-purpose-specific exemption. JSON and Markdown retain every gateway error's
+the first gateway 429, 401 or 403 for any purpose, including steering/director.
+Only reply-path purposes `preflight` (models or messages), `stt` and `actor`
+count in the >5% error-rate rule, which applies after at least 20 such attempts.
+Steering, director, unknown purposes, fake TTS and slot-only waits contribute
+neither errors nor attempts to that rate. Configuration records the counted
+purpose list and the shared rule. JSON and Markdown retain every gateway error's
 route, purpose, outcome and detail, including recovered errors on a PASS.
+Rate-stop `attempts`/`errors` are the counted reply-path values;
+`gateway_attempts`/`gateway_errors` retain the totals across all gateway purposes.
+The stop's route/purpose/outcome/detail identify the last counted error, with
+per-purpose counted error totals and a separately labeled threshold-crossing
+`trigger` row. A successful trigger does not replace the error attribution.
 It also stops if observer output is stale for more than two seconds, the
 observer log task ends, or the observer reports an error. Malformed observer
 lines are counted and retained in the log; the live stop records the cause

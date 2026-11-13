@@ -238,6 +238,7 @@ def test_latency_mode_archives_raw_traces_counts_gateway_and_keeps_tts_fake(monk
     report, directory = asyncio.run(latency.run_latency(args, runtime_factory=Recorded, key_loader=lambda: "mock-only-secret"))
     assert report["gateway_request_count"] == 13 and "Gateway requests: 13" in capsys.readouterr().out
     assert report["verdict"] == ("FAIL" if missing else "PASS") and not report["capacity_eligible"]
+    assert report["configuration"]["live_guard_counted_purposes"] == ["preflight", "stt", "actor"]
     assert len(report["sessions"]) == 4 and observed[0][0].stopped
     options = observed[0][1]
     assert options["record_tts_destinations"] is True

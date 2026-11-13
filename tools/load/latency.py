@@ -124,6 +124,7 @@ async def run_latency(args, *, runtime_factory=Runtime, participant_factory=Part
                   "fake_source_sha256": hashlib.sha256((ROOT / "tools/load/fake_upstream.py").read_bytes()).hexdigest(),
                   "tts_slots_override": args.tts_slots,
                   "live_guard_rule": measure.LIVE_GUARD_RULE, "tts_allowed_destination_journal": True,
+                  "live_guard_counted_purposes": list(measure.LIVE_RATE_PURPOSES),
                   "policy": "one encounter per participant per selected scenario; fresh participant state; shared local server; scripted hang-up after turns"},
               "steps": [], "sessions": [], "errors": [], "verdict": "INVALID"}
 

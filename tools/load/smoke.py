@@ -115,7 +115,9 @@ async def run_with_smoke(args, *, smoke_runner=run_smoke, experiment=None):
     if gate:
         args.smoke_results = await smoke_runner(args, directory)
         if args.smoke or args.smoke_results['verdict'] != 'PASS':
-            report = {'rule': 'Diagnostic smoke; no capacity estimate.', 'configuration': {'smoke': args.smoke_results},
+            report = {'rule': 'Diagnostic smoke; no capacity estimate.', 'configuration': {
+                      'smoke': args.smoke_results, 'live_guard_rule': measure.LIVE_GUARD_RULE,
+                      'live_guard_counted_purposes': list(measure.LIVE_RATE_PURPOSES)},
                       'gateway_errors': args.smoke_results.get('gateway_errors', []),
                       'smoke': args.smoke_results, 'capacity_eligible': False, 'capacity': None,
                       'verdict': args.smoke_results['verdict'], 'steps': []}

@@ -11,8 +11,10 @@ from tools.sim import analyze
 
 
 ERROR_OUTCOMES = {"http_error", "timeout", "closed", "exception"}
-LIVE_GUARD_RULE = ("Immediate stop on gateway 429, 401 or 403; gateway error rate > 5% "
-                   "only after at least 20 gateway attempts; slot-only waits excluded.")
+LIVE_RATE_PURPOSES = ("preflight", "stt", "actor")
+LIVE_GUARD_RULE = ("Immediate stop on gateway 429, 401 or 403 for every purpose; reply-path error rate > 5% "
+                   "only after at least 20 counted attempts, purposes: " + ", ".join(LIVE_RATE_PURPOSES) +
+                   "; other purposes and slot-only waits excluded from the rate.")
 RULE = ("INVALID if achieved concurrency < 90% of N or generator loop-lag p99 > 50 ms, "
         "or required measurements/full encounters are missing. Otherwise FAIL if speech-end-to-first-played "
         "p90 > max(1.5 * N=1 p90, N=1 p90 + 2 s), reply_missing per 100 participant turns "
@@ -259,9 +261,12 @@ def gateway_error(event):
                                        isinstance(status, int) and status >= 400)
 
 
+def _gateway_row(event):
+    return {key: event.get(key) for key in ("t", "session_id", "route", "purpose", "outcome", "detail", "status")}
+
+
 def gateway_errors(attempts):
-    return [{key: event.get(key) for key in ("t", "session_id", "route", "purpose", "outcome", "detail", "status")}
-            for event in attempts if gateway_error(event)]
+    return [_gateway_row(event) for event in attempts if gateway_error(event)]
 
 
 def gateway_errors_markdown(rows):
@@ -276,25 +281,44 @@ def gateway_errors_markdown(rows):
 
 class LiveGuard:
     def __init__(self):
+        # attempts/errors are the rate denominator/numerator. Gateway totals
+        # retain uncounted purposes for diagnostics and immediate safety stops.
         self.attempts = 0
         self.errors = 0
+        self.gateway_attempts = 0
+        self.gateway_errors = 0
+        self.last_counted_error = None
+        self.error_counts_by_purpose = Counter()
         self.stopped = None
 
     def observe(self, event, concurrency):
         if not gateway_attempt(event):
             return self.stopped
-        self.attempts += 1
-        self.errors += gateway_error(event)
+        self.gateway_attempts += 1
+        error = gateway_error(event)
+        self.gateway_errors += error
+        if event.get("purpose") in LIVE_RATE_PURPOSES:
+            self.attempts += 1
+            if error:
+                self.errors += 1
+                self.last_counted_error = _gateway_row(event)
+                self.error_counts_by_purpose[event["purpose"]] += 1
         reason = None
         if event.get("status") in {429, 401, 403}:
             reason = "first gateway " + str(event["status"])
         elif self.attempts >= 20 and self.errors / self.attempts > 0.05:
             reason = "gateway attempt error rate > 5%"
         if reason and self.stopped is None:
-            self.stopped = {"reason": reason, "route": event.get("route"),
-                            "purpose": event.get("purpose"), "concurrency": concurrency,
-                            "outcome": event.get("outcome"), "detail": event.get("detail"),
-                            "attempts": self.attempts, "errors": self.errors, "t": event.get("t")}
+            cause = event if event.get("status") in {429, 401, 403} else self.last_counted_error
+            self.stopped = {"reason": reason, "route": cause.get("route"),
+                            "purpose": cause.get("purpose"), "concurrency": concurrency,
+                            "outcome": cause.get("outcome"), "detail": cause.get("detail"),
+                            "status": cause.get("status"), "t": event.get("t"),
+                            "attempts": self.attempts, "errors": self.errors,
+                            "gateway_attempts": self.gateway_attempts, "gateway_errors": self.gateway_errors,
+                            "counted_purposes": list(LIVE_RATE_PURPOSES),
+                            "error_counts_by_purpose": dict(self.error_counts_by_purpose),
+                            "last_counted_error": self.last_counted_error, "trigger": _gateway_row(event)}
         return self.stopped
 
 

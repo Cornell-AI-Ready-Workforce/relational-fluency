@@ -291,10 +291,10 @@ def test_f15_live_rate_denominator_excludes_fake_tts_and_slot_wait():
         assert guard.observe({"upstream": "elevenlabs", "outcome": "http_error"}, 1) is None
     assert guard.attempts == 0
     assert guard.observe({"upstream": "gateway", "detail": "slot_wait", "outcome": "cancelled"}, 1) is None
-    assert guard.observe({"upstream": "gateway", "outcome": "http_error", "status": 503}, 1) is None
+    assert guard.observe({"upstream": "gateway", "purpose": "actor", "outcome": "http_error", "status": 503}, 1) is None
     for _ in range(18):
-        assert guard.observe({"upstream": "gateway", "outcome": "ok", "status": 200}, 1) is None
-    stop = guard.observe({"upstream": "gateway", "outcome": "http_error", "status": 503}, 1)
+        assert guard.observe({"upstream": "gateway", "purpose": "actor", "outcome": "ok", "status": 200}, 1) is None
+    stop = guard.observe({"upstream": "gateway", "purpose": "actor", "outcome": "http_error", "status": 503}, 1)
     assert stop["attempts"] == 20 and stop["errors"] == 2 and "gateway" in stop["reason"]
 
 
