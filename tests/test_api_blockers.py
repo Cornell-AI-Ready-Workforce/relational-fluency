@@ -312,6 +312,20 @@ def test_a_confirmed_upload_is_status_ok_with_no_error(sessions_root, client, s3
     assert ev["status"] == "ok" and "error" not in ev and ev["bytes"] == 148_221
 
 
+def test_a_confirmation_refreshes_the_archived_record(sessions_root, client, s3,
+                                                      monkeypatch):
+    """The close archive is taken before the page confirms, so without this the
+    bucket's record.json says "no video" beside the video."""
+    from server import archive
+    seen = []
+    monkeypatch.setattr(archive, "refresh_record_later", lambda d: seen.append(Path(d).name))
+    s3.missing = False
+    s3.size = 148_221
+    r = client.post(confirm_url(), params={"participant_id": OWNER, "key": KEY})
+    assert r.status_code == 200
+    assert len(seen) == 1 and seen[0].startswith("s_")
+
+
 def test_an_absent_object_is_a_settled_answer_not_a_failure_to_ask(
         sessions_root, client, s3):
     """S3 answered "nothing there". That is a 200 with ok=false, as before —
