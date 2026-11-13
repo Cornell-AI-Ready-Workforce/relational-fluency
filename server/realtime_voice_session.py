@@ -954,7 +954,8 @@ class RealtimeVoiceSessionRunner:
         # When the 1:1 reply now (or last) speaking began; see _withdraw_reply.
         self._agent_turn_began_at = 0.0
         self._closed = False
-        # Observer facts only; they do not control runner teardown.
+        # A clean run() return can also mean a fatal gateway exit. The route
+        # reports success only after encounter_complete is sent.
         self.completed = False
         self.client_disconnected = False
         self._agent_text: List[str] = []
@@ -11882,9 +11883,6 @@ class RealtimeVoiceSessionRunner:
 
     # ── transport helpers ──────────────────────────────────────────────────
     async def _send(self, payload: dict) -> None:
-        # Completion is an observer fact. D2's future close finalizer can read it.
-        if isinstance(payload, dict) and payload.get("type") == "encounter_complete":
-            self.completed = True
         # The turn clock watches the three frames the page opens and closes
         # its own `currentTurn` on, so its idea of which turn a chunk belongs
         # to is the page's. assistant_started carries the turn number the
@@ -11920,6 +11918,8 @@ class RealtimeVoiceSessionRunner:
         except Exception:  # noqa: BLE001, client vanished
             self._closed = True
             return
+        if kind == "encounter_complete":
+            self.completed = True
         if kind in ("assistant_done", "assistant_interrupted"):
             # A line that sent the page no audio has nothing to wait for.
             await self._maybe_turn_open()

@@ -4101,6 +4101,10 @@ async def _report_encounter_failure(session, kind: str, detail: str, *,
 
 # --- Participant: voice path ---
 
+# Bound the close write independently of the runner's cleanup waits.
+_VOICE_CLOSE_TIMEOUT = 2.0
+
+
 @app.websocket("/ws/participant/voice")
 @_metrics.observe_voice_route
 async def ws_participant_voice(
@@ -4148,6 +4152,7 @@ async def ws_participant_voice(
     # try whose finally drops it, an early disconnect during setup would
     # otherwise leak the session forever.
     runner = None
+    close_code = None
     try:
         # Researcher-configured launch: apply gear presets before the first turn.
         if launch_cfg:
@@ -4180,6 +4185,7 @@ async def ws_participant_voice(
         pass
     except Exception as e:
         _metrics.voice_route_fact(ws, cause="runner_error" if runner is not None else "setup_failed")
+        close_code = 1011
         # The credential-disclosure site. RealtimeVoiceSessionRunner.run() has no
         # except of its own, so a failure in the first connect() to the realtime
         # gateway lands here whole — and that is precisely the exception that
@@ -4198,9 +4204,32 @@ async def ws_participant_voice(
             await ws.send_json({"type": "error", "message": safe})
         except Exception:
             pass
+    else:
+        # run() also returns normally after its own fatal gateway exits.
+        close_code = 1000 if runner.completed else 1011
     finally:
         _metrics.voice_route_fact(ws, cleanup=True)
-        registry.drop(session.id)
+        import asyncio
+
+        # The runner has exited. Claim only this route's socket via
+        # Session's clear-before-await latch, shared with withdrawal. Its
+        # bounded finalizer/console waits can still leave tasks writing after
+        # this route returns; closed-store events are dropped (storage.event).
+        # Closing the socket does not fix that existing teardown gap.
+        # v2.html's close listener ignores codes: 1011 follows the same drop,
+        # reconnect and retry paths as the previous transport close (1006).
+        try:
+            if close_code is not None and (
+                    session.participant_ws is ws or session.participant_ws is None):
+                await asyncio.wait_for(
+                    session.close_participant_socket(code=close_code),
+                    timeout=_VOICE_CLOSE_TIMEOUT,
+                )
+        except Exception as e:  # noqa: BLE001, still drop the session
+            print(f"  WARNING: could not close the voice socket "
+                  f"of session {session.id}: {type(e).__name__}")
+        finally:
+            registry.drop(session.id)
 
 
 # --- Researcher ---

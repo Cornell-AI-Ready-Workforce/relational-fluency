@@ -142,11 +142,11 @@ def route_env(monkeypatch, sink):
 
 
 @pytest.mark.parametrize("name,cause,close", [
-    ("completed", "completed", "none"),
-    ("returned", "runner_returned", "none"),
+    ("completed", "completed", "sent_1000"),
+    ("returned", "runner_returned", "sent_1011"),
     ("missing_scenario", "setup_failed", "sent_1000"),
-    ("constructor_failed", "setup_failed", "none"),
-    ("runner_error", "runner_error", "none"),
+    ("constructor_failed", "setup_failed", "sent_1011"),
+    ("runner_error", "runner_error", "sent_1011"),
     ("client", "client_disconnected", "client_first"),
     ("client_then_close", "client_disconnected", "client_first"),
     ("server_then_client", "runner_returned", "sent_1000"),
@@ -157,7 +157,7 @@ def route_env(monkeypatch, sink):
     ("close_other", "runner_returned", "sent_other"),
     ("close_failed", "runner_error", "close_failed"),
     ("close_timeout", "runner_error", "close_failed"),
-    ("cleanup_failed", "other", "none"),
+    ("cleanup_failed", "other", "sent_1000"),
     ("cancelled", "cancelled", "none"),
 ])
 def test_voice_route_ends_once_after_cleanup(route_env, sink, name, cause, close):
