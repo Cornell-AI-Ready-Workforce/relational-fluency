@@ -40,13 +40,21 @@ TTS always uses a synthetic key and the fake.
 STT accepts a single waveform anchor from the committed sim clips. Valid
 speech fragments without an anchor get a canned transcript whose word count
 scales with audio duration. `unmatched_fragment` counts these responses in
-fake stats and step reports. Quiet yields an empty transcript. Malformed
-requests and unknown routes log protocol errors and fail the run.
+fake stats and step reports. STT choices include `index: 0`,
+`finish_reason: "stop"` and an assistant message with a `content` key. The
+request's model selects quiet output: `nto.gemini-3.5-transcribe` returns
+`content: null` for silence/room tone, ignores the text prompt, and never
+writes `"[no speech]"` (orchestrator gateway probe, 2026-11-12).
+`nto.gemini-3.5-flash-lite` keeps the `"[no speech]"` text used by the
+pre-D3 profile image. Malformed requests and unknown routes log protocol
+errors and fail the run.
 
 Director responses use valid cast IDs, with distinct speakers when two are
 selected. Steering returns a valid adjustment on every fourth review and no
 change otherwise. Actor SSE includes text, split tool-call deltas when a
-scenario offers a tool, and `[DONE]`. The current offered `end_conversation`
+scenario offers a tool, a final `finish_reason: "stop"` chunk, and `[DONE]`.
+Director/steering use the Messages protocol's `stop_reason: "tool_use"`.
+The current offered `end_conversation`
 tool accepts `{}`. TTS handles registration, incremental input, flush,
 keepalive and close, emits PCM16 at 24 kHz, then sends the final message.
 

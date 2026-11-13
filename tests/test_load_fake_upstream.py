@@ -1,5 +1,6 @@
 """Actual cascade/SDK clients against an in-process fake upstream."""
 import asyncio
+import base64
 import json
 
 import httpx
@@ -101,7 +102,12 @@ def test_actual_director_and_steering_prompts_have_valid_tool_responses(isolated
     valid = {agent.id for agent in scenario.cast}
 
     async def run():
-        async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app)) as http:
+        async def check_stop(response):
+            await response.aread()
+            assert response.json()["stop_reason"] == "tool_use"
+
+        async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app),
+                                     event_hooks={"response": [check_stop]}) as http:
             client = llm.text_client().with_options(http_client=http)
             route = director.Director(scenario, client=client)
             control = steering.SteeringController(scenario, client=client)
@@ -191,3 +197,99 @@ def test_http_keepalive_configuration_reaches_uvicorn(monkeypatch, tmp_path, ove
 def test_http_keepalive_rejects_invalid_timeouts(value):
     with pytest.raises(ValueError, match="HTTP keep-alive"):
         FakeConfig.from_dict({"http_keepalive_s": value})
+
+
+def d3_hearing(body):
+    """Copy of CascadeSocket._hear validation at D3 48f14bc, with no branch import."""
+    choices = body.get("choices") if isinstance(body, dict) else None
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("STT response has no choices")
+    choice = choices[0]
+    if not isinstance(choice, dict) or choice.get("finish_reason") != "stop":
+        raise ValueError("STT response did not finish with stop")
+    message = choice.get("message")
+    if not isinstance(message, dict) or "content" not in message:
+        raise ValueError("STT response has no message content")
+    if any("refusal" in part for part in (body, choice, message)):
+        raise ValueError("STT response contains a refusal")
+    content = message["content"]
+    if content is not None and not isinstance(content, str):
+        raise ValueError("STT response content is not text or null")
+    return (content or "").strip() or "[no speech]"
+
+
+@pytest.mark.parametrize("model", ["nto.gemini-3.5-transcribe", "nto.gemini-3.5-flash-lite"])
+@pytest.mark.parametrize("stimulus", ["a1", "c5", "silence", "room-tone"])
+def test_fake_stt_wire_shape_passes_d3_validation(model, stimulus):
+    quiet = stimulus in {"silence", "room-tone"}
+    pcm = (b"\0" * 32000 if stimulus == "silence" else stim.room_tone(1)
+           if stimulus == "room-tone" else stim.load(stimulus))
+    expected = ("[no speech]" if model.endswith("flash-lite") else None) if quiet else stim.text(stimulus)
+    body = {"model": model, "messages": [{"role": "user", "content": [
+        {"type": "text", "text": 'Write "[no speech]" if there is no speech.'},
+        {"type": "input_audio", "input_audio": {
+            "data": base64.b64encode(cascade.wav_bytes(pcm, 16000)).decode(), "format": "wav"}},
+    ]}]}
+    with TestClient(create_app(fast_config())) as client:
+        assert model in {row["id"] for row in client.get("/v1/models").json()["data"]}
+        response = client.post("/v1/chat/completions", json=body)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["choices"] == [{"index": 0, "finish_reason": "stop", "message": {
+            "role": "assistant", "content": expected}}]
+        assert d3_hearing(result) == ("[no speech]" if quiet else stim.text(stimulus))
+        assert client.get("/__load/stats").json()["errors"] == []
+
+
+@pytest.mark.parametrize("body", [
+    {}, {"choices": []}, {"choices": [{"message": {"content": "hello"}}]},
+    {"choices": [{"finish_reason": "length", "message": {"content": "hello"}}]},
+    {"choices": [{"finish_reason": "stop", "message": {}}]},
+    {"choices": [{"finish_reason": "stop", "message": {"content": []}}]},
+    {"choices": [{"finish_reason": "stop", "message": {"content": None, "refusal": "no"}}]},
+])
+def test_d3_validation_rejects_incomplete_or_malformed_stt(body):
+    with pytest.raises(ValueError):
+        d3_hearing(body)
+
+
+@pytest.mark.parametrize("model", ["nto.gemini-3.5-transcribe", "nto.gemini-3.5-flash-lite"])
+def test_cascade_stt_model_selects_fake_quiet_shape(isolated_llm, monkeypatch, model):
+    monkeypatch.setenv("CASCADE_STT_MODEL", model)
+    app = create_app(fast_config())
+    responses = []
+
+    async def run():
+        async def check(response):
+            await response.aread()
+            assert json.loads(response.request.content)["model"] == model
+            responses.append(response.json())
+            assert d3_hearing(responses[-1]) == "[no speech]"
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app),
+                                     event_hooks={"response": [check]}) as http:
+            sock = cascade.CascadeSocket(http=http, api_key="test")
+            await sock._hear(stim.room_tone(1))
+
+    asyncio.run(run())
+    assert len(responses) == 1
+    assert responses[0]["choices"][0]["message"]["content"] == (
+        "[no speech]" if model.endswith("flash-lite") else None)
+
+
+@pytest.mark.parametrize("with_tool", [False, True])
+def test_actor_sse_has_terminal_stop_before_done(with_tool):
+    body = {"model": "nto.gemini-4-argon", "stream": True, "messages": []}
+    if with_tool:
+        body["tools"] = [{"type": "function", "function": {"name": "end_conversation"}}]
+    with TestClient(create_app(fast_config(tool_call_every=1))) as client:
+        response = client.post("/v1/chat/completions", json=body)
+    assert response.status_code == 200
+    frames = [line.removeprefix("data: ") for line in response.text.splitlines() if line.startswith("data: ")]
+    assert frames[-1] == "[DONE]"
+    choices = [json.loads(frame)["choices"][0] for frame in frames[:-1]]
+    assert all(choice["index"] == 0 for choice in choices)
+    assert choices[-1] == {"index": 0, "delta": {}, "finish_reason": "stop"}
+    assert all(choice["finish_reason"] is None for choice in choices[:-1])
+    assert any("content" in choice["delta"] for choice in choices)
+    assert any("tool_calls" in choice["delta"] for choice in choices) == with_tool

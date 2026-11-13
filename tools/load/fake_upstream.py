@@ -210,7 +210,7 @@ def create_app(config=None, *, log_path=None):
             return JSONResponse({"error": "injected"}, status_code=failure)
         await state.delay(config.models_ms)
         ids = set(config.model_ids)
-        ids.update({"nto.gemini-4-argon", "nto.gemini-3.5-flash-lite",
+        ids.update({"nto.gemini-4-argon", "nto.gemini-3.5-flash-lite", "nto.gemini-3.5-transcribe",
                     "nto.gemini-live-2.5-flash-native-audio"})
         return {"object": "list", "data": [{"id": name, "object": "model"} for name in sorted(ids)]}
 
@@ -233,7 +233,14 @@ def create_app(config=None, *, log_path=None):
             except (KeyError, IndexError, ValueError, StopIteration, TypeError, wave.Error) as exc:
                 return state.error(request.url.path, str(exc))
             await state.delay(config.stt_ms)
-            return {"choices": [{"message": {"role": "assistant", "content": text}}]}
+            # Gateway probe, 2026-11-12: transcribe ignores the text prompt and
+            # returns content:null with finish_reason:stop for silence/room tone.
+            # The pre-D3 profile image selects flash-lite, which writes the
+            # prompted [no speech] sentinel instead. Select by the wire model.
+            if not text:
+                text = "[no speech]" if body.get("model") == "nto.gemini-3.5-flash-lite" else None
+            return {"choices": [{"index": 0, "finish_reason": "stop",
+                                 "message": {"role": "assistant", "content": text}}]}
 
         async def stream():
             await state.delay(config.actor_first_ms)
@@ -241,7 +248,8 @@ def create_app(config=None, *, log_path=None):
             count = round(config.reply_words.draw(state.rng))
             text = " ".join((words * (count // len(words) + 1))[:count]).rstrip(".,?") + "."
             for word in text.split():
-                yield "data: " + json.dumps({"choices": [{"delta": {"content": word + " "}}]}) + "\n\n"
+                yield "data: " + json.dumps({"choices": [{"index": 0, "finish_reason": None,
+                                                         "delta": {"content": word + " "}}]}) + "\n\n"
                 await state.delay(config.token_ms)
             tool_due = (request_number % config.tool_call_every == 0 if config.tool_call_every
                         else state.rng.random() < config.tool_call_probability)
@@ -252,7 +260,9 @@ def create_app(config=None, *, log_path=None):
                     {"index": 0, "id": f"call_fake_{request_number}", "type": "function", "function": {"name": name, "arguments": "{"}},
                     {"index": 0, "function": {"arguments": "}"}},
                 ):
-                    yield "data: " + json.dumps({"choices": [{"delta": {"tool_calls": [delta]}}]}) + "\n\n"
+                    yield "data: " + json.dumps({"choices": [{"index": 0, "finish_reason": None,
+                                                             "delta": {"tool_calls": [delta]}}]}) + "\n\n"
+            yield "data: " + json.dumps({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}) + "\n\n"
             yield "data: [DONE]\n\n"
         return StreamingResponse(stream(), media_type="text/event-stream")
 
