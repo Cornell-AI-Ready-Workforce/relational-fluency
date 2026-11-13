@@ -72,3 +72,28 @@ def test_the_close_path_archives_in_a_thread_and_can_be_switched_off(tmp_path, m
     assert seen == [d]
     monkeypatch.setenv(archive.ENABLED_ENV, "0")
     assert archive.archive_session_later(d, runner=lambda p: seen.append(p)) is None
+
+
+def test_a_record_refresh_uploads_only_the_small_files_and_keeps_the_close_result(tmp_path):
+    d = _session(tmp_path)
+    archive.archive_session(d, client=FakeS3(), bucket="b")
+    s3 = FakeS3()
+    res = archive.refresh_record(d, client=s3, bucket="b")
+    assert res["ok"]
+    assert [c[0] for c in s3.calls] == ["manifest.json", "record.json", "events.jsonl"]
+    assert all(c[2] == f"encounters/s_1/{c[0]}" for c in s3.calls)
+    saved = json.loads((d / "archive.json").read_text(encoding="utf-8"))
+    assert "user_audio.wav" in saved["uploaded"]          # the close archive's result
+    assert saved["refreshed"]["uploaded"] == res["uploaded"]
+
+
+def test_a_record_refresh_never_raises_and_can_be_switched_off(tmp_path, monkeypatch):
+    d = _session(tmp_path)
+    res = archive.refresh_record(d, client=FakeS3(fail={"record.json"}), bucket="b")
+    assert not res["ok"] and res["failed"][0]["file"] == "record.json"
+    seen = []
+    archive.refresh_record_later(d, runner=lambda p: seen.append(p)).join(5)
+    assert seen == [d]
+    monkeypatch.setenv(archive.ENABLED_ENV, "0")
+    assert archive.refresh_record_later(d, runner=lambda p: seen.append(p)) is None
+
