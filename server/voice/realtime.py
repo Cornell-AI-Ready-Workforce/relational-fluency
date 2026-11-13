@@ -270,6 +270,8 @@ class RealtimeCapabilities:
     # Whether a room should relay a colleague's finished line to this member as
     # TEXT instead of fanning that colleague's audio into its input.
     relay_colleagues_as_text: bool = False
+    # Rooms use a single scribe and deliver accepted participant words.
+    relay_participant_as_text: bool = False
     # Whether give_floor hands this member the floor by injecting a text nudge
     # and asking, instead of padding and committing its audio buffer.
     grant_via_text_prompt: bool = False
@@ -620,6 +622,7 @@ REALTIME_FAMILIES = {
     ),
     "cascade": RealtimeCapabilities(
         family="cascade",
+        relay_participant_as_text=True,
         # Argon hears, Argon thinks, ElevenLabs speaks (server/voice/cascade.py).
         # The roster is ElevenLabs default voice names; a scenario's Gemini
         # names alias onto it below. ELEVENLABS_VOICE_IDS adds cast voices.
@@ -1242,8 +1245,9 @@ def room_has_second_transcriber(model: str) -> bool:
     room's near-duplicate filter runs only where this is True; anywhere else
     two transcripts of one utterance cannot happen and the filter could only
     delete real speech."""
-    return bool(model) and (relays_colleagues_as_text(model)
-                            and not is_openai_realtime(model))
+    caps = capabilities_for(model)
+    return (bool(model) and not (caps and caps.relay_participant_as_text)
+            and relays_colleagues_as_text(model) and not is_openai_realtime(model))
 
 
 def speech_check_family(model: str) -> bool:
@@ -1254,7 +1258,8 @@ def speech_check_family(model: str) -> bool:
     return bool(caps and caps.participant_speech_check)
 
 
-def turn_gate_provenance(model: Optional[str] = None) -> dict:
+def turn_gate_provenance(model: Optional[str] = None, *,
+                         room_text_relay: Optional[bool] = None) -> dict:
     """The knob values above, as this process will apply them. With `model`,
     also whether a room on it runs the near-duplicate filter at all."""
     out = {
@@ -1276,6 +1281,12 @@ def turn_gate_provenance(model: Optional[str] = None) -> dict:
     }
     if model:
         out["room_dedupe_second_source"] = room_has_second_transcriber(model)
+        caps = capabilities_for(model)
+        if caps and caps.relay_participant_as_text:
+            relay = (os.getenv("CASCADE_ROOM_TEXT_RELAY", "1") != "0"
+                     if room_text_relay is None else room_text_relay)
+            out["room_participant_text_relay"] = relay
+            out["room_dedupe_second_source"] = not relay
     if model and speech_check_family(model):
         # Pipeline 2026-09-30a, gpt only: which lines are heard again, on
         # what, within how long. Absent on every other route.
@@ -5574,6 +5585,8 @@ class RealtimeVoiceSession:
                     item_id = ev.get("item_id")
                     tag = self._tag_for(item_id) or {}
                     meta = {"item_id": item_id,
+                            **({"room_sequence": tag["room_sequence"]}
+                               if "room_sequence" in tag else {}),
                             "probe": bool(tag.get("probe")),
                             "replay": bool(tag.get("replay")),
                             "voiced_ms": tag.get("voiced_ms"),
@@ -5622,6 +5635,8 @@ class RealtimeVoiceSession:
                     tag = self._tag_for(ev.get("item_id")) or {}
                     observe(self, "decision", ev.get("item_id"), "failed", "transcript_failed")
                     yield {"type": "transcript_missing", "why": "transcript_failed",
+                           **({"room_sequence": tag["room_sequence"]}
+                              if "room_sequence" in tag else {}),
                            "item_id": ev.get("item_id"),
                            "probe": bool(tag.get("probe")),
                            "committed_at": tag.get("committed_at")}

@@ -507,6 +507,9 @@ class CascadeSocket:
 
     async def _on_response_create(self, ev: dict) -> None:
         rid = self._id("resp")
+        # Relay rooms freeze at create, before either lock acquisition or
+        # the cancelled reply's join can admit later participant text.
+        messages = self._messages() if getattr(self, "snapshot_on_create", False) else None
         observe(self, "create", rid, id(self))
         # A turn-end cancel can be followed immediately by a commit/create.
         # Creates and cancels share this lock. A cancel arriving during the
@@ -538,7 +541,7 @@ class CascadeSocket:
             if self._closed:
                 return
             observe(self, "stamp", rid, "create_released")
-            task = self._spawn(self._respond(rid))
+            task = self._spawn(self._respond(rid, messages=messages))
             self._reply, self._reply_id = task, rid
             task.add_done_callback(lambda _t, rid=rid: self._ensure_done(rid))
 
@@ -659,7 +662,7 @@ class CascadeSocket:
             self._emit({"type": "response.done", "response": {
                 "id": rid, "status": "cancelled", "output": []}})
 
-    async def _respond(self, rid: str) -> None:
+    async def _respond(self, rid: str, *, messages: Optional[list] = None) -> None:
         """One reply: stream Argon's words into one ElevenLabs stream."""
         self.timings = {k: v for k, v in self.timings.items() if k == "stt_ms"}
         started = time.time()
@@ -684,7 +687,8 @@ class CascadeSocket:
             # once even when every slot is taken.
             tts = self._spawn(self._open_reply_tts(voice_id, rid, iid, started))
             # _stream_llm has sent close_socket once the words were all in.
-            call = await self._stream_llm(tts, voice_id, spoken, rid, iid, started)
+            call = await self._stream_llm(tts, voice_id, spoken, rid, iid, started,
+                                          messages=messages)
             ws, reader, _slot = await tts
             await reader
             if call:
@@ -793,12 +797,13 @@ class CascadeSocket:
                     f"{exc.response.body.decode('utf-8', 'replace')[:300]}")
 
     async def _stream_llm(self, tts: asyncio.Task, voice_id: str, spoken: list,
-                          rid: str, iid: str, started: float) -> Optional[dict]:
+                          rid: str, iid: str, started: float, *,
+                          messages: Optional[list] = None) -> Optional[dict]:
         """Stream the reply; each sentence goes into the stream the moment it
         is whole. `tts` is the task opening the ElevenLabs stream
         (_open_reply_tts); the first sentence waits for it. Returns a
         function call if the model made one."""
-        payload = {"model": llm_model(), "messages": self._messages(),
+        payload = {"model": llm_model(), "messages": (self._messages() if messages is None else messages),
                    "stream": True, "max_tokens": 1200}
         if reasoning_effort():
             payload["reasoning_effort"] = reasoning_effort()

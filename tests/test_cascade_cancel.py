@@ -27,7 +27,7 @@ def cascade_policy(monkeypatch):
 
 
 def test_cascade_discard_policy_has_its_own_version_and_rollback(monkeypatch):
-    assert llm.PIPELINE_VERSION == "2026-11-12c"
+    assert llm.PIPELINE_VERSION == "2026-11-12d"
     assert llm.provenance(MODEL)["cancelled_output"] == "discard"
     assert R.discards_cancelled_output(MODEL)
     assert not R.discards_cancelled_output("nto.gemini-live-2.5-flash-native-audio")

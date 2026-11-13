@@ -738,7 +738,15 @@ def text_client() -> AsyncAnthropic:
 #   2026-11-12c  instrumentation only: 1:1 cascade reply/commit traces on
 #                a monotonic encounter clock, finalized independently of page
 #                playback records. Requests, frames and turn rules unchanged.
-PIPELINE_VERSION = "2026-11-12c"
+#   2026-11-12d  cascade room hearing: accepted participant text in commit
+#                order, per-instance delivery and durable reconnect history;
+#                no participant PCM fan-out. Probe grants keep the old cue;
+#                clarification returns its planted beat. Deadline and scribe
+#                closure release gaps; pre-grant accepted turns merge once.
+#                Frozen relay provenance, seed-loss records, close-time
+#                transcript draining and observed hearing tasks complete the
+#                room path. CASCADE_ROOM_TEXT_RELAY=0 restores the old mode.
+PIPELINE_VERSION = "2026-11-12d"
 ROOM_PACING_VERSION = "2026-11-04a"
 
 
@@ -751,7 +759,8 @@ def _voice_style_provenance():
 
 
 def provenance(model: Optional[str] = None,
-               room: Optional[bool] = None) -> dict:
+               room: Optional[bool] = None, *,
+               room_text_relay: Optional[bool] = None) -> dict:
     """Recorded with each session so the record shows what served it.
 
     `model` is the realtime model the session actually opened; the audio
@@ -786,7 +795,7 @@ def provenance(model: Optional[str] = None,
         **audio_provenance(model or realtime),
         # The participant-turn gate's knob values (pipeline 2026-09-23c); see
         # server/voice/realtime.py turn_gate_provenance.
-        "turn_gate": turn_gate_provenance(model or realtime),
+        "turn_gate": turn_gate_provenance(model or realtime, room_text_relay=room_text_relay),
         # cancelled_output ("discard"/"relay") and agent_transcript_items
         # (pipeline 2026-09-23d); see bridge_provenance.
         **bridge_provenance(model or realtime),
