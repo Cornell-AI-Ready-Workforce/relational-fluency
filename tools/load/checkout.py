@@ -5,6 +5,14 @@ import ast
 from pathlib import Path
 
 
+async def revision(checkout):
+    from tools.load.runtime import command
+    code, sha, _ = await command("git", "rev-parse", "HEAD", cwd=checkout, check=False)
+    status, dirty, _ = await command("git", "status", "--porcelain", cwd=checkout, check=False)
+    return {"checkout": str(checkout), "commit": sha.strip() if code == 0 else None,
+            "dirty": bool(dirty.strip()) if status == 0 else None}
+
+
 def validate_checkout(root, *, require_traces=False):
     root = Path(root).resolve()
     missing = []

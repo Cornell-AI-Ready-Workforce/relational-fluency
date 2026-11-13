@@ -311,7 +311,9 @@ The gate has its own runtime and removes its containers before the capacity
 runtime starts. It cannot provide a capacity estimate: `capacity_eligible=false`.
 The diagnostic verdict requires a successful same-TLS-socket HTTP probe (one
 response, six seconds idle, another response with no reconnect), then five
-single-encounter participants spanning all four scenarios. Each speaks a short
+single-encounter participants spanning all four scenarios. A room-only subset
+(`--scenarios S3A,S4A`, or either room alone) instead runs one N=1 participant
+per selected room in sequence, so `--max-concurrency 1` is sufficient. Each speaks a short
 committed line, then sends tone through the 60-second server ceiling. Webcam,
 playback for each participant, closed manifests, rendered mixes and valid
 instrumentation are required. Post-completion closure is diagnostic; an earlier
@@ -393,6 +395,38 @@ The low-level `run_experiment` API runs the capacity experiment only; the CLI's
 `run_with_smoke` orchestration owns the isolated gate. Direct API callers must
 choose that orchestration if they require the same gate. Reports record the
 choice. Real Docker probe checks require `RF_LOAD_DOCKER_TESTS=1`.
+
+## Room runs against a selected checkout
+
+```sh
+python -m tools.load.run --backend local --server-checkout /Users/haocheng/code/rf-integ2 \
+  --gateway live --allow-live --max-concurrency 1 --scenarios S3A,S4A \
+  --fake-tts-profile calibrated --smoke --report-dir /private/tmp/rf-room-smoke
+```
+
+Replace `--smoke` with `--ramp 1 --webcam` for full-length room encounters.
+The full run first completes the room smoke gate in a separate runtime.
+The default K=all runs S3A then S4A at N=1; subset runs do not advance the
+participant's Williams run. A room smoke is diagnostic and cannot set capacity.
+
+`--server-checkout` is optional; the default uses this harness checkout.
+An explicit checkout requires `--backend local`. Parsing refuses sources
+without upstream telemetry, `ELEVENLABS_WS_URL` or `STORAGE_PREFLIGHT` support
+before reading keys or starting processes. Room/ramp runs do not require reply
+traces. Pure main `e949063` lacks these seams; compare with a separate checkout
+at `317556f` (main plus the upstream measurement seam). The operator creates
+that checkout. The harness does not create or modify server checkouts.
+
+The selected checkout supplies server code and Terraform production settings.
+Reports record its commit, dirty state and model settings. Every session has
+an `events` path in JSON and Markdown, including smoke sessions, for reading
+`user_turn` and `assistant_turn` text. Session files stay in the report directory.
+The existing shared live guard covers startup and attempts through settling.
+Every settled step of an explicit checkout run also requires positive fake-side
+TTS connections matching server ElevenLabs attempts, excluding slot waits.
+A blocked destination or count mismatch fails the step. This proof uses the
+blocked-only destination journal; allowed destinations are journaled only in
+latency mode. Local runs have no CPU quota or network isolation.
 
 ## Reply-trace latency diagnostics
 

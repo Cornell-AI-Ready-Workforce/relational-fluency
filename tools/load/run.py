@@ -17,6 +17,8 @@ import time
 import httpx
 
 from tools.load import measure, fast
+from tools.load.checkout import revision, validate_checkout
+from tools.load.tts_proof import verify_runtime
 from tools.load.search import Search
 from tools.load.fake_upstream import FakeConfig, load_config
 from tools.load.participant import Participant, ServerError, error_side, full_sequence, open_identity
@@ -74,6 +76,8 @@ def parse_args(argv=None):
     parser.add_argument("--allow-live", action="store_true")
     parser.add_argument("--max-concurrency", type=int, default=20)
     parser.add_argument("--backend", choices=("docker", "local"), default="docker")
+    parser.add_argument("--server-checkout", type=Path,
+                        help="selected server source; requires --backend local and upstream seams")
     parser.add_argument("--image")
     parser.add_argument("--profile-image", help="local image containing py-spy; sidecar only")
     parser.add_argument("--continue-after-fail", action="store_true")
@@ -135,13 +139,32 @@ def parse_args(argv=None):
     if args.gateway == "live":
         if not args.allow_live:
             parser.error("live gateway requires --allow-live")
-        if max(args.ramp) > args.max_concurrency:
+        if not args.smoke and max(args.ramp) > args.max_concurrency:
             parser.error("live ramp exceeds --max-concurrency")
         if args.isolation_only:
             parser.error("isolation proof is available only with --gateway fake")
     if args.isolation_only and args.backend != "docker":
         parser.error("isolation proof requires Docker")
+    try:
+        selected_server(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     return args
+
+
+def selected_server(args):
+    checkout = getattr(args, "server_checkout", None)
+    if checkout is None:
+        return ROOT
+    if args.backend != "local":
+        raise ValueError("--server-checkout requires --backend local")
+    args.server_checkout = validate_checkout(checkout)
+    return args.server_checkout
+
+
+def server_production(args):
+    root = selected_server(args)
+    return production_environment(root / "infra/terraform") if args.server_checkout else production_environment()
 
 
 def load_key():
@@ -156,6 +179,14 @@ def load_key():
 
 def _write_report(directory, report):
     directory.mkdir(parents=True, exist_ok=True)
+    steps = list(report.get("steps", []))
+    smoke = report.get("smoke", report.get("configuration", {}).get("smoke", {}))
+    steps.extend(o["step"] for o in smoke.get("outcomes", []) if "step" in o)
+    profile = report.get("first_failure_profile", {}).get("repeat")
+    if profile:
+        steps.append(profile)
+    report["sessions"] = list({(s["session_id"], s["events"]): s
+                               for step in steps for s in step.get("sessions", [])}.values())
     (directory / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     configuration = dict(report.get("configuration", {}))
     if isinstance(configuration.get("smoke"), dict):
@@ -184,6 +215,12 @@ def _write_report(directory, report):
                           f"{len(step['metrics']['post_complete_close'])}."])
     lines.extend(["", f"Capacity for the tested configuration on this host (K={configuration.get('encounters_per_participant', 'diagnostic')}): {report.get('capacity_range', report.get('capacity'))}", ""])
     lines.extend([measure.gateway_errors_markdown(report.get("gateway_errors", [])), ""])
+    lines.extend(["Server source: " + json.dumps(report.get("server")), "",
+                  "| Session | Scenario | Events |", "| --- | --- | --- |"])
+    lines.extend(f"| {s['session_id']} | {s['scenario']} | {s['events']} |" for s in report["sessions"])
+    for step in steps:
+        if "tts_proof" in step:
+            lines.extend(["", "TTS proof (cumulative runtime counts): " + json.dumps(step["tts_proof"])])
     for ramp in report.get("ramps", []):
         lines.extend(["", "Tested Ns: " + json.dumps(ramp.get("tested_ns", [])),
                       "Search path: " + json.dumps(ramp.get("search_path", [])),
@@ -504,18 +541,24 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
               "live_stop": guard.stopped, "early_stop": early_stop, "profile": profile_result, "profile_only": profile_only}
     result["gateway_errors"] = measure.gateway_errors(attempts)
     result["timelines"] = timelines
+    result["sessions"] = [{"session_id": t["session_id"], "scenario": t["scenario"],
+                           "events": str((runtime.data / "sessions" / t["session_id"] / "events.jsonl").resolve()),
+                           "events_exists": (runtime.data / "sessions" / t["session_id"] / "events.jsonl").is_file()}
+                          for t in timelines if t.get("session_id")]
     result["observer_telemetry"] = runtime.observer_telemetry()
     await asyncio.to_thread((directory / "timelines.json").write_text, json.dumps(timelines, indent=2), encoding="utf-8")
     return result
 
 
 async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=Participant):
+    server_root = selected_server(args)  # Static checks precede keys, git commands and runtime startup.
+    server = await revision(server_root)
     if args.gateway == "live" and (not args.allow_live or max(args.ramp) > args.max_concurrency):
         raise ValueError("live gateway was not explicitly authorized within its concurrency cap")
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     directory = (args.report_dir or ROOT / "tools" / "load" / "reports" / (stamp + "-" + secrets.token_hex(3))).resolve()
     config = await asyncio.to_thread(load_config, args.fake_config, profile=args.fake_tts_profile)
-    env = await asyncio.to_thread(production_environment)
+    env = await asyncio.to_thread(server_production, args)
     def preload():
         for scenario in args.scenarios:
             for name in sequences.lines_used(args.steps or sequences.DEFAULT_SEQUENCES[scenario]):
@@ -527,9 +570,11 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
     factors = args.tts_factors or [config.tts_realtime_factor]
     report = {"rule": measure.RULE + " " + fast.BASELINE_RULE, "generated_at": stamp, "steps": [], "ramps": [], "capacity": None,
               "gateway_errors": list(getattr(args, "smoke_results", {}).get("gateway_errors", [])),
-              "gateway": args.gateway, "tts": "fake", "fake_configuration": asdict(config),
+              "gateway": args.gateway, "tts": "fake", "server": server, "fake_configuration": asdict(config),
               "capacity_scope": "this host; TTS uses the recorded profile; fake gateway timing and speaker/tool probabilities remain assumptions",
               "configuration": {"ramp": args.ramp, "repeat": args.repeat, "scenarios": args.scenarios,
+                                "server_checkout": str(server_root), "tts_proof_required": args.server_checkout is not None,
+                                "server_models": {key: value for key, value in env.items() if "MODEL" in key},
                                 "live_guard_rule": measure.LIVE_GUARD_RULE,
                                 "live_guard_counted_purposes": list(measure.LIVE_RATE_PURPOSES),
                                 "tts_destination_guard": "active in every mode; blocked-only journal outside latency mode",
@@ -556,12 +601,19 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                                    fake_config=replace(config, tts_realtime_factor=factor), live_key=live_key,
                                    live_url=args.live_url or env.get("LLM_BASE_URL"), cpu_scale=args.cpu_scale,
                                    fargate_reference=args.fargate_reference, profile_image=args.profile_image,
-                                   encounter_seconds=args.encounter_seconds)
+                                   encounter_seconds=args.encounter_seconds, server_checkout=args.server_checkout,
+                                   server_environment={"BUILD_SHA": server["commit"]} if server["commit"] else {})
         generation = 0
         runtime = new_runtime(generation, args.image)
         ramp = {"tts_realtime_factor": factor, "steps": [], "capacity": None, "runtime_history": []}
         report["ramps"].append(ramp)
         recorded_generations = set()
+
+        async def observed_step(*pos, **kwargs):
+            step = await run_step(runtime, args, *pos, participant_factory=participant_factory, **kwargs)
+            if args.server_checkout is not None:
+                step["tts_proof"] = await verify_runtime(runtime)
+            return step
 
         async def collect_gateway_errors():
             if generation not in recorded_generations:
@@ -619,12 +671,12 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                     if n == 1 and args.encounters_per_participant != "all":
                         units = []
                         for unit in range(len(args.scenarios)):
-                            units.append(await run_step(runtime, args, 1, repeat, ceiling, participant_factory=participant_factory,
+                            units.append(await observed_step(1, repeat, ceiling,
                                 label=f"N1-repeat{repeat}-unit{unit + 1}-attempt{attempt}", scenario_offset=unit))
                             if units[-1]["live_stop"] or units[-1].get("early_stop"): break
                         step = fast.combine_units(units, args.scenarios, args.encounters_per_participant)
                     else:
-                        step = await run_step(runtime, args, n, repeat, ceiling, participant_factory=participant_factory,
+                        step = await observed_step(n, repeat, ceiling,
                                               reference=reference)
                     step["metrics"].setdefault("encounters_per_participant", args.encounters_per_participant)
                     step["tts_realtime_factor"] = factor
@@ -655,8 +707,7 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                     if report.get("live_stop"):
                         profile.update(status="unavailable", reason="live guard killed the server")
                     elif await runtime.profile_available():
-                        extra = await run_step(runtime, args, n, 0, ceiling,
-                                               participant_factory=participant_factory, profile_only=True)
+                        extra = await observed_step(n, 0, ceiling, profile_only=True)
                         profile.update(extra["profile"] or {}, repeat=extra)
                         if extra["live_stop"]:
                             report["live_stop"] = extra["live_stop"]

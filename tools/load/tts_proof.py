@@ -42,7 +42,7 @@ def install_guard(expected, path, *, record_allowed=False):
     legacy.connect = wrap(old)
 
 
-def verify(fake_count, attempts, destinations):
+def verify(fake_count, attempts, destinations, *, record_allowed=True):
     rows = [r for r in attempts if r.get("upstream") == "elevenlabs" and r.get("detail") != "slot_wait"]
     blocked = [r for r in destinations if not r.get("allowed")]
     accepted = sum(r.get("allowed") is True for r in destinations)
@@ -51,8 +51,21 @@ def verify(fake_count, attempts, destinations):
         reasons.append("non-fake ElevenLabs destination attempted (blocked)")
     if not isinstance(fake_count, int) or fake_count <= 0:
         reasons.append("no fake-side TTS connections proved")
-    if fake_count != len(rows) or accepted != len(rows):
+    if fake_count != len(rows) or (record_allowed and accepted != len(rows)):
         reasons.append("fake/server/destination TTS connection counts do not match")
     return {"passed": not reasons, "fake_connections": fake_count,
-            "server_elevenlabs_attempts": len(rows), "guard_allowed": accepted,
+            "server_elevenlabs_attempts": len(rows), "guard_allowed": accepted if record_allowed else None,
+            "allowed_destination_journal": record_allowed,
             "blocked_destinations": blocked, "reasons": reasons}
+
+
+async def verify_runtime(runtime):
+    """Compare cumulative, settled fake/server counts; ramp journals blocked hosts only."""
+    import asyncio
+    from tools.load.measure import JsonlTail
+    fake = await runtime.fake_stats()
+    attempts, destinations = await asyncio.gather(
+        asyncio.to_thread(JsonlTail(runtime.data / "upstream-attempts.jsonl").read),
+        asyncio.to_thread(JsonlTail(runtime.data / "tts-destinations.jsonl").read))
+    return verify(fake.get("counts", {}).get("tts_ws", 0), attempts, destinations,
+                  record_allowed=runtime.record_tts_destinations)

@@ -12,14 +12,16 @@ import secrets
 from tools.load import measure
 from tools.load.fake_upstream import FakeConfig, load_config
 from tools.load.runtime import ROOT, Runtime
+from tools.load.checkout import revision
+from tools.load.tts_proof import verify_runtime
 
 
-def preset(args):
+def preset(args, scenarios=None):
     smoke = copy.copy(args)
     smoke.encounters_per_participant = 1
     smoke.encounter_seconds = 60.0
     smoke.duration, smoke.steps = None, None
-    smoke.scenarios = ['S1A', 'S2A', 'S3A', 'S4A']
+    smoke.scenarios = scenarios or ['S1A', 'S2A', 'S3A', 'S4A']
     smoke.arrival, smoke.warmup, smoke.webcam, smoke.fail_fast = 0, 0, True, False
     smoke.repeat, smoke.ramp = 1, [5]
     smoke.ramp_search = None
@@ -27,24 +29,27 @@ def preset(args):
     return smoke
 
 
-def diagnostic(step, probe, expected=('S1A', 'S2A', 'S3A', 'S4A')):
+def diagnostic(step, probe, expected=('S1A', 'S2A', 'S3A', 'S4A'), *, concurrency=5, participants=5):
     m = step['metrics']
     reasons = list(step['errors']) + list(step.get('server_errors', []))
     if not probe.get('passed') or not probe.get('same_socket'): reasons.append('same-socket keep-alive probe failed')
     if step['fake_errors']: reasons.append('fake route/protocol error')
     if m.get('whole_step', m).get('voice_error'): reasons.append('non-benign voice_error during smoke')
     if not m.get('settled_artifacts'): reasons.append('closed manifests or rendered mixes missing')
-    if m['achieved_concurrency'] < 4.5: reasons.append('smoke achieved concurrency < 90% of N=5')
+    if m['achieved_concurrency'] < concurrency * .9:
+        reasons.append(f'smoke achieved concurrency < 90% of N={concurrency}')
     if m['generator_loop_lag_ms']['p99'] is None or m['generator_loop_lag_ms']['p99'] > 50:
         reasons.append('generator lag missing or >50 ms')
     if m['server_loop_lag_ms']['p99'] is None or m['server_loop_lag_ms']['p99'] > 250:
         reasons.append('server loop lag missing or >250 ms')
     if m['server_rss_bytes']['max'] is None or m['server_rss_bytes']['max'] > 900_000_000:
         reasons.append('server RSS missing or >900 MB')
-    if set(m.get('scenario_mix', {})) != set(expected): reasons.append('smoke did not cover all four scenarios')
+    if set(m.get('scenario_mix', {})) != set(expected): reasons.append('smoke did not cover every expected scenario')
     timelines = step.get('timelines', [])
     encounters = {e['session_id']: e for e in m.get('whole_step', m).get('encounters', [])}
-    if len(timelines) != 5: reasons.append('smoke needs five single-encounter participants')
+    if len(timelines) != participants: reasons.append(f'smoke needs {participants} single-encounter participants')
+    if step.get('live_stop'): reasons.append('live safety stop: ' + step['live_stop']['reason'])
+    if step.get('tts_proof', {}).get('passed') is False: reasons.extend(step['tts_proof']['reasons'])
     for t in timelines:
         if not t.get('completed') or t.get('completion_reason') != 'ceiling' or t.get('duration_limit_reached'):
             reasons.append('smoke did not end through the server ceiling')
@@ -71,35 +76,59 @@ def diagnostic(step, probe, expected=('S1A', 'S2A', 'S3A', 'S4A')):
 
 
 async def run_smoke(args, directory, *, runtime_factory=Runtime, participant_factory=None):
-    from tools.load.run import run_step, Participant, load_key, production_environment
+    from tools.load.run import run_step, Participant, load_key, selected_server, server_production
+    root = selected_server(args)
+    server = await revision(root)
+    production = server_production(args)
     config = load_config(args.fake_config, profile=args.fake_tts_profile)
     outcomes, gateway_errors = [], []
-    if args.gateway == 'live' and args.max_concurrency < 5:
+    room_subset = set(args.scenarios) <= {'S3A', 'S4A'}
+    n = 1 if room_subset else 5
+    if args.gateway == 'live' and args.max_concurrency < n:
         return {'ran': False, 'verdict': 'FAIL', 'capacity_eligible': False,
-                'reasons': ['N=5 smoke exceeds live concurrency cap'], 'outcomes': []}
+                'reasons': [f'N={n} smoke exceeds live concurrency cap'], 'outcomes': [], 'server': server}
     for factor in args.tts_factors or [config.tts_realtime_factor]:
         runtime = runtime_factory(directory / f'smoke-tts-{factor:g}', backend=args.backend, gateway=args.gateway,
             image=args.image, profile_image=args.profile_image, fake_config=replace(config, tts_realtime_factor=factor),
             live_key=load_key() if args.gateway == 'live' else None,
-            live_url=args.live_url or production_environment().get('LLM_BASE_URL'), cpu_scale=args.cpu_scale,
-            fargate_reference=args.fargate_reference, encounter_seconds=60)
+            live_url=args.live_url or production.get('LLM_BASE_URL'), cpu_scale=args.cpu_scale,
+            fargate_reference=args.fargate_reference, encounter_seconds=60, server_checkout=args.server_checkout,
+            server_environment={'BUILD_SHA': server['commit']} if server['commit'] else {})
         try:
             await runtime.start()
+            if args.gateway == 'live':
+                guard = measure.LiveGuard()
+                for row in measure.JsonlTail(runtime.data / 'upstream-attempts.jsonl').read():
+                    guard.observe(row, 0)
+                if guard.stopped:
+                    await runtime.kill_server()
+                    raise RuntimeError('live safety stop during smoke startup: ' + guard.stopped['reason'])
             probe = await runtime.keepalive_probe()
-            step = await run_step(runtime, preset(args), 5, 1, 60, participant_factory=participant_factory or Participant)
-            outcome = {**diagnostic(step, probe), 'tts_factor': factor, 'step': step}
+            for scenario in args.scenarios if room_subset else [None]:
+                workload = preset(args, [scenario] if scenario else None)
+                step = await run_step(runtime, workload, n, 1, 60, participant_factory=participant_factory or Participant,
+                                      **({'label': f'room-{scenario}'} if scenario else {}))
+                if args.server_checkout is not None:
+                    step['tts_proof'] = await verify_runtime(runtime)
+                outcome = {**diagnostic(step, probe, workload.scenarios, concurrency=n, participants=n),
+                           'tts_factor': factor, 'step': step}
+                outcomes.append(outcome)
+                if outcome['verdict'] != 'PASS': break
         except (RuntimeError, OSError, ValueError, HTTPException) as exc:
             outcome = {'verdict': 'FAIL', 'reasons': [type(exc).__name__ + ': ' + str(exc)],
                        'diagnostic': True, 'capacity_eligible': False}
+            outcomes.append(outcome)
         finally:
             await runtime.stop()
             rows = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read()
             gateway_errors.extend({"phase": "smoke", "tts_realtime_factor": factor, **row}
                                   for row in measure.gateway_errors(rows))
-        outcomes.append(outcome)
         print('Smoke: ' + outcome['verdict'] + ' ' + '; '.join(outcome['reasons']), flush=True)
         if outcome['verdict'] != 'PASS': break
-    return {'ran': True, 'fake_tts_profile': config.tts_profile, 'fake_configuration': asdict(config),
+    return {'ran': True, 'server': server, 'concurrency': n,
+            'server_models': {key: value for key, value in production.items() if 'MODEL' in key},
+            'scenario_policy': 'sequential N=1 room encounters' if room_subset else 'five participants covering all four scenarios',
+            'fake_tts_profile': config.tts_profile, 'fake_configuration': asdict(config),
             'gateway_errors': gateway_errors,
             'verdict': 'PASS' if all(o['verdict'] == 'PASS' for o in outcomes) else 'FAIL',
             'capacity_eligible': False, 'outcomes': outcomes}
@@ -117,7 +146,12 @@ async def run_with_smoke(args, *, smoke_runner=run_smoke, experiment=None):
         if args.smoke or args.smoke_results['verdict'] != 'PASS':
             report = {'rule': 'Diagnostic smoke; no capacity estimate.', 'configuration': {
                       'smoke': args.smoke_results, 'live_guard_rule': measure.LIVE_GUARD_RULE,
-                      'live_guard_counted_purposes': list(measure.LIVE_RATE_PURPOSES)},
+                      'live_guard_counted_purposes': list(measure.LIVE_RATE_PURPOSES),
+                      'server_checkout': str(args.server_checkout or ROOT),
+                      'server_models': args.smoke_results.get('server_models', {}),
+                      'tts_proof_required': args.server_checkout is not None,
+                      'tts_destination_guard': 'active in every mode; blocked-only journal outside latency mode'},
+                      'server': args.smoke_results.get('server'),
                       'gateway_errors': args.smoke_results.get('gateway_errors', []),
                       'smoke': args.smoke_results, 'capacity_eligible': False, 'capacity': None,
                       'verdict': args.smoke_results['verdict'], 'steps': []}

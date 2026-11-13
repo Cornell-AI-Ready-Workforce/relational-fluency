@@ -83,6 +83,10 @@ def evaluate(step, ref, *, baseline_valid=True):
         if actual != set(step['expected_scenarios']) and not step.get('early_stop'):
             decision.update(verdict='INVALID', reasons=['N=1 first-encounter baseline did not cover every selected scenario'])
     decision['matched_reference'] = matched
+    if step.get('tts_proof', {}).get('passed') is False:
+        decision['reasons'].extend(step['tts_proof']['reasons'])
+        if decision['verdict'] != 'INVALID':
+            decision['verdict'] = 'FAIL'
     return decision
 
 
@@ -120,12 +124,17 @@ def combine_units(units, scenarios, k):
     metrics['encounter_positions'] = [p for u in units for p in u['metrics'].get('encounter_positions', [])]
     metrics['encounters_per_participant'] = k
     result.update(baseline_units=units, expected_scenarios=list(scenarios),
+                  sessions=[s for u in units for s in u.get('sessions', [])],
                   timelines=[t for u in units for t in u.get('timelines', [])],
                   early_stop=next((u.get('early_stop') for u in units if u.get('early_stop')), None),
                   errors=[e for u in units for e in u['errors']],
                   server_errors=[e for u in units for e in u.get('server_errors', [])],
                   fake_errors=[e for u in units for e in u['fake_errors']],
                   live_stop=next((u['live_stop'] for u in units if u['live_stop']), None))
+    if 'tts_proof' in units[-1]:
+        result['tts_proof'] = dict(units[-1]['tts_proof'],
+            passed=all(u['tts_proof']['passed'] for u in units),
+            reasons=sorted({r for u in units for r in u['tts_proof']['reasons']}))
     return result
 
 

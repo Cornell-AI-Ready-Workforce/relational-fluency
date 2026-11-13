@@ -17,8 +17,8 @@ from tools.load import measure
 from tools.load.fake_upstream import load_config
 from tools.load.participant import Participant
 from tools.load import run
-from tools.load.runtime import ROOT, Runtime, command
-from tools.load.checkout import validate_checkout
+from tools.load.runtime import ROOT, Runtime
+from tools.load.checkout import revision, validate_checkout
 from tools.load.tts_proof import verify as verify_tts
 from tools.sim import sequences
 from tools.sim.serve import production_environment
@@ -64,12 +64,6 @@ def sequence(scenario, turns, seed):
     names = list(sequences.lines_used(sequences.DEFAULT_SEQUENCES[scenario]))
     random.Random(seed).shuffle(names)
     return "tone:1," + ",".join("say:" + names[i % len(names)] for i in range(turns)) + ",tone:3"
-
-
-async def revision(checkout):
-    code, sha, _ = await command("git", "rev-parse", "HEAD", cwd=checkout, check=False)
-    _, dirty, _ = await command("git", "status", "--porcelain", cwd=checkout, check=False)
-    return {"checkout": str(checkout), "commit": sha.strip() if code == 0 else None, "dirty": bool(dirty.strip())}
 
 
 def archive_events(runtime, directory, timelines):
