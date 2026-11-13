@@ -1297,7 +1297,10 @@ def cancelled_output_discard() -> bool:
     off the participant's speaker and out of the turn, and written instead as
     a cancelled_output_dropped event with its text and duration. Only on the
     gpt family, where a cancel was measured to be honoured with a short tail
-    (0.15-0.4 s of audio, diag track3 probe_cancel); on Gemini the cancel is
+    (0.15-0.4 s of audio, diag track3 probe_cancel), and the cascade, whose
+    response.cancel cancels its reply task (pipeline 2026-11-12b). This applies
+    to all default-tail cancels: withdrawal, barge-in, scribe, rebrief and
+    stale room holds. Already-queued frames still need to be discarded. On Gemini the cancel is
     inert and the "tail" is the rest of the reply, which the runner has always
     treated as a continuation (see _resume_seam), so that route is unchanged.
     Off ("0") puts back the old relay, the one that re-armed the reply flags
@@ -1309,7 +1312,7 @@ def cancelled_output_discard() -> bool:
 def discards_cancelled_output(model: str) -> bool:
     """True when sessions on `model` drop a cancelled reply's tail; see
     cancelled_output_discard."""
-    return is_openai_realtime(model) and cancelled_output_discard()
+    return (is_openai_realtime(model) or family_of(model) == "cascade") and cancelled_output_discard()
 
 
 def bridge_provenance(model: str) -> dict:
@@ -4170,7 +4173,7 @@ class RealtimeVoiceSession:
         commit by up to 0.9 s); the gateway handles frames in order, so the
         next reply it names is this one, and it is marked for discard as a
         retry's is (see cancel_response). Only where the tail is discarded at
-        all (discards_cancelled_output, the gpt route): elsewhere a cancel is
+        all (discards_cancelled_output, gpt and cascade): elsewhere a cancel is
         inert and the reply would play anyway. Returns the reply's id where
         it was known, "" where it was not yet named, None where nothing was
         done."""
@@ -4835,7 +4838,7 @@ class RealtimeVoiceSession:
 
         `discard_tail`: whatever the gateway still sends for this reply after
         the cancel is dropped in events() and summarised as cancelled_output
-        (see cancelled_output_discard; gpt family only). The room's
+        (see cancelled_output_discard; gpt and cascade families). The room's
         suppression of an unsolicited reply passes False, because there the
         tail is what the hold is made of and a later grant can adopt it.
 

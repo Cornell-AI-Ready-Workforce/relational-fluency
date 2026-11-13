@@ -804,6 +804,26 @@ waits, and backoff. This release claims no room-turn latency or capacity
 gain. Live adapter probes and a new simulation baseline require a separate
 run; the load ramp's server image predates this change.
 
+## What changed on 2026-11-12, cascade cancellation (pipeline_version 2026-11-12b)
+
+Cascade now uses the bridge's cancelled-output discard policy. This is a
+separate change from the transcriber switch in 11-12a. `cancel_unheard_reply`
+can now cancel a cascade reply. Every existing `cancel_response` call with
+`discard_tail=True` also discards the cancelled reply's queued frames for
+a known response ID, or an unnamed reply tracked by the existing cancel
+latch. This affects withdrawal, barge-in, scribe cancellation, interaction
+rebriefs, and stale room holds. Explicit `discard_tail=False` room holds
+retain their queued tail. `CANCELLED_OUTPUT_DISCARD=0` restores the earlier
+policy; `cancelled_output` in provenance reports the effective policy.
+
+The existing withdrawal guards keep replies whose audio has already been
+sent to the participant and replies to later commits. First-reply holds
+have played nothing. Barge-ins and interaction boundaries retain their
+existing cancellation triggers. The policy adds no cancellation trigger or
+page interruption message. Frames already delivered to the page are under
+the existing playback and interruption rules; the bridge cannot recall
+them. Queued frames discarded at the bridge are counted as cancelled output.
+
 ## The seven-minute floor, and the twelve-minute stop
 
 Every encounter runs **at least 5:00** and **at most 10:00** (7:00 / 12:00 until 2026-10-15; the figures below are from that period). Since `28b` the

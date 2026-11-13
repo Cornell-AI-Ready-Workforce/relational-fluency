@@ -717,7 +717,16 @@ def text_client() -> AsyncAnthropic:
 #                rollback, is input_transcription_model in the session event
 #                and record. Cascade cancellation policy is unchanged.
 #                Reply, speech-check and offline transcribers are unchanged.
-PIPELINE_VERSION = "2026-11-12a"
+#   2026-11-12b  enable cancelled-output discard on the cascade, separately
+#                from the transcriber change. cancel_unheard_reply now stops
+#                a cascade reply; every cancel_response with discard_tail
+#                true also drops its named queued tail. This includes barge-in,
+#                scribe cancellation, rebrief and stale room holds. Existing
+#                withdrawal guards retain audible and later-commit replies;
+#                existing barge-in and boundary rules still own those cuts.
+#                Explicit discard_tail=False holds keep their queued frames.
+#                CANCELLED_OUTPUT_DISCARD=0 restores the prior policy.
+PIPELINE_VERSION = "2026-11-12b"
 ROOM_PACING_VERSION = "2026-11-04a"
 
 
