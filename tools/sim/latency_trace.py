@@ -39,6 +39,7 @@ EDGE_NAMES = {
     'first_output_hold_released': 'hold_release_after_readiness',
     'release_stt_started': 'stt_dispatch', 'release_stt_done': 'stt',
     'release_transcript_decided': 'transcript_decision',
+    'first_audio_from_gateway': 'output_to_gateway',
     'first_audio_to_client': 'available_output_to_client', 'first_audio_played': 'client_to_played_ack',
 }
 WORK_EDGES = {
@@ -63,8 +64,9 @@ NOTES = [
     'Unmatched traces, timings, missing commits, duplicates and unsupported schemas remain explicit. Ambiguous identities are not joined by order or by nearest timestamp.',
     'Coverage includes untraced sessions in the same input set. Legacy sessions, rooms and other model families can legitimately lack this 1:1 cascade trace.',
     'Groups inherit the matched legacy row and also split by origin, so participant_commit, silence_probe, replay and other creates do not mix work populations.',
-    'Clock alignment uses paired VAD marks and, for unheld output, the preferred gateway/output pair. Each source records the median preferred offset and the spread of all anchors. commit_sent is not an offset anchor because it follows an awaited commit/create operation.',
-    'Offsets and anchor disagreement above 0.005 s exclude client/ACK paths as cross_clock_unverified. Verified row offsets are subtracted explicitly. Legacy-boundary reversals up to the 0.001 s rounding unit clamp to zero and are recorded; pure trace edges stay strict.',
+    'Only paired VAD marks estimate and guard clock offset. Each source records their median and spread. Gateway/output is a causal queue hop, never a clock anchor; commit_sent also includes awaited work.',
+    'VAD offsets or spread above 0.005 s exclude client/ACK paths. Offsets within the 0.001 s legacy rounding unit are not subtracted. Other verified offsets are applied with an explicit clamp budget of 0.001 s plus their magnitude, at most 0.006 s. Pure trace edges stay strict.',
+    'Unheld client paths expose output_to_gateway separately from the exact gateway-to-client wall interval. The queue-hop estimate uses the applied VAD correction; the raw gateway-minus-VAD estimate is also retained. Unresolved sub-ms VAD hop is not subtracted as latency.',
     'Anchor checks detect observed offsets, not a clock step after the final paired mark. Raw stamps, offsets, correction values and clamps remain inspectable.',
     'felt_* paths start at last_voiced_estimate and expose estimated_trailing_silence serially. They are sample-position estimates alongside the VAD-rooted paths, not measured hearing.',
     'tied_joins counts distinct response/join identities on complete paths, once across all targets; ties use deterministic branch allocation and are not evidence of one dominant branch.',
@@ -116,6 +118,8 @@ def critical_path(values, edges, target, root_field='vad_detected'):
         span['prerequisite_fields'] = list(parents)
         span['critical_parents'] = [p for p in parents if values[p] == values[parent]]
         span['stage'] = EDGE_NAMES.get(node, node)
+        if node == 'first_audio_to_client' and parent == 'first_audio_from_gateway':
+            span['stage'] = 'gateway_to_client'
         out['steps'].append(span)
         out['exposed_s'][span['stage']] = span['duration_s']
         node = parent
@@ -125,11 +129,9 @@ def critical_path(values, edges, target, root_field='vad_detected'):
 
 
 def align_clocks(values, timing):
-    """Use paired marks as offset estimates; never absorb a large clock step."""
+    """Verify with VAD; preserve the causal emit-to-bridge hop as work."""
     anchors = []
     pairs = [('vad', 'vad_speech_end', 'vad_detected')]
-    if 'first_output_hold_started' not in values:
-        pairs.append(('gateway_output', 'first_audio_from_gateway', 'first_output_emitted'))
     for name, wall, mono in pairs:
         if timing is not None and number(timing.get(wall)) and number(values.get(mono)):
             anchors.append({'name': name, 'wall_field': 'turn_timing.' + wall, 'trace_field': mono,
@@ -137,12 +139,13 @@ def align_clocks(values, timing):
     info = {'status': 'not_applicable' if timing is None else 'cross_clock_unverified',
             'anchors': anchors, 'clock_offset_s': None, 'preferred_anchor': None,
             'offset_limit_s': CLOCK_OFFSET_LIMIT_S, 'quantization_tolerance_s': LEGACY_ROUNDING_S,
+            'applied_offset_s': 0, 'clamp_tolerance_s': LEGACY_ROUNDING_S,
             'corrected_fields': [], 'clamps': [], 'issues': []}
     if not anchors:
         if timing is not None:
             info['issues'].append('no_paired_clock_anchor')
         return info
-    preferred = next((a for a in anchors if a['name'] == 'gateway_output'), anchors[0])
+    preferred = anchors[0]
     offset = preferred['offset_s']
     info.update(clock_offset_s=offset, preferred_anchor=preferred['name'])
     if any(abs(a['offset_s']) > CLOCK_OFFSET_LIMIT_S for a in anchors):
@@ -152,16 +155,46 @@ def align_clocks(values, timing):
     if info['issues']:
         return info
     info['status'] = 'verified'
-    for name in ('first_audio_to_client', 'first_audio_played'):
+    # The VAD mark has its own rounding and runner hop. Do not subtract an
+    # unresolved offset. For larger verified offsets include that uncertainty
+    # in the clamp budget, rather than losing a valid held-reply sample.
+    applied = 0 if abs(offset) <= LEGACY_ROUNDING_S else offset
+    info.update(applied_offset_s=applied, clamp_tolerance_s=LEGACY_ROUNDING_S + abs(applied))
+    unheld_gateway = ('first_output_hold_started' not in values
+                      and number(values.get('first_audio_from_gateway'))
+                      and number(values.get('first_output_emitted')))
+    if unheld_gateway:
+        gateway_offset = values['first_audio_from_gateway'] - values['first_output_emitted']
+        info['gateway_observation'] = {'gateway_minus_output_s': round(gateway_offset, 6),
+            'gateway_minus_vad_offset_s': round(gateway_offset - offset, 6),
+            'used_as_clock_anchor': False}
+    for name in ('first_audio_from_gateway', 'first_audio_to_client', 'first_audio_played'):
         if number(values.get(name)):
             info['corrected_fields'].append({'field': name, 'raw_s': values[name],
-                                            'corrected_s': round(values[name] - offset, 6)})
-            values[name] = round(values[name] - offset, 6)
+                                            'corrected_s': round(values[name] - applied, 6)})
+            values[name] = round(values[name] - applied, 6)
+    if unheld_gateway:
+        delta = values['first_output_emitted'] - values['first_audio_from_gateway']
+        if 0 < delta <= info['clamp_tolerance_s'] + 1e-9:
+            info['clamps'].append({'field': 'first_audio_from_gateway', 'prerequisite_field': 'first_output_emitted',
+                'raw_s': values['first_audio_from_gateway'], 'corrected_s': values['first_output_emitted'],
+                'delta_s': round(delta, 6)})
+            values['first_audio_from_gateway'] = values['first_output_emitted']
+            # Preserve both legacy wall-to-wall intervals exactly when their
+            # common gateway origin needs a sub-resolution adjustment.
+            for name in ('first_audio_to_client', 'first_audio_played'):
+                if number(values.get(name)):
+                    before = values[name]
+                    values[name] = round(before + delta, 6)
+                    info['corrected_fields'].append({'field': name, 'raw_s': before, 'corrected_s': values[name],
+                        'reason': 'preserve_wall_tail_after_gateway_clamp'})
     parent = 'first_output_hold_released' if 'first_output_hold_started' in values else 'first_output_emitted'
+    if unheld_gateway:
+        parent = 'first_audio_from_gateway'
     for name, before in (('first_audio_to_client', parent), ('first_audio_played', 'first_audio_to_client')):
         if number(values.get(name)) and number(values.get(before)):
             delta = values[before] - values[name]
-            if 0 < delta <= LEGACY_ROUNDING_S + 1e-9:
+            if 0 < delta <= info['clamp_tolerance_s'] + 1e-9:
                 info['clamps'].append({'field': name, 'prerequisite_field': before,
                     'raw_s': values[name], 'corrected_s': values[before], 'delta_s': round(delta, 6)})
                 values[name] = values[before]
@@ -247,16 +280,23 @@ def split_reply(reply, commits, timing):
                 and (release[0].get('decision') or {}).get('outcome') == 'accepted'):
             gates['transcript_readiness_after_audio_hold'] = round(max(0, decided - hold), 6)
     if timing is not None:
-        for name in ('first_audio_to_client', 'first_audio_played'):
+        for name in ('first_audio_from_gateway', 'first_audio_to_client', 'first_audio_played'):
             value = timing.get(name)
             if number(value):
                 values[name] = value
                 fields[name] = 'turn_timing.' + name
     held = 'first_output_hold_started' in values
     edges['first_audio_to_client'] = ('first_output_hold_released',) if held else ('first_output_emitted',)
+    if not held and 'first_audio_from_gateway' in values:
+        edges['first_audio_from_gateway'] = ('first_output_emitted',)
+        edges['first_audio_to_client'] = ('first_audio_from_gateway',)
     edges['first_audio_played'] = ('first_audio_to_client',)
     raw_values = dict(values)
     alignment = align_clocks(values, timing)
+    if not held:
+        bridge_hop = interval(values, 'first_output_emitted', 'first_audio_from_gateway')
+        if bridge_hop is not None:
+            work['output_to_gateway'] = {**bridge_hop, 'estimate': 'vad_clock_anchor'}
     for node, parents in edges.items():
         if number(values.get(node)):
             problems.extend('invalid_causal_edge:' + parent + '->' + node for parent in parents
@@ -270,6 +310,8 @@ def split_reply(reply, commits, timing):
     for label, path in paths.items():
         if label.endswith(('client_audio', 'played_ack')):
             used_fields = {'first_audio_to_client'} | ({'first_audio_played'} if label.endswith('played_ack') else set())
+            if not held:
+                used_fields.add('first_audio_from_gateway')
             path['cross_clock_clamped'] = any(c['field'] in used_fields for c in alignment['clamps'])
     out = {'stamps_s': values, 'raw_stamps_s': raw_values, 'stamp_fields': fields,
             'clock_alignment': alignment, 'clock_offset_s': alignment['clock_offset_s'],
@@ -301,7 +343,11 @@ def session(events, source, meta, legacy_rows):
             reason = 'invalid_trace_shape'
         if reason is None and event['type'] == 'reply_trace' and (
                 (event.get('page_turn') is not None and type(event['page_turn']) is not int)
-                or (event.get('origin') is not None and not isinstance(event['origin'], str))):
+                or (event.get('origin') is not None and not isinstance(event['origin'], str))
+                or (event.get('status') is not None and not isinstance(event['status'], str))
+                or (event.get('sentence_trigger') is not None and not isinstance(event['sentence_trigger'], str))
+                or (event.get('participant_turn_id') is not None and type(event['participant_turn_id']) is not int)
+                or (event.get('release_commit_item_id') is not None and not isinstance(event['release_commit_item_id'], str))):
             reason = 'invalid_trace_shape'
         if reason:
             rejected.append({'source': source, 'type': event['type'], 'schema_version': event.get('schema_version'),
@@ -434,7 +480,7 @@ def combine(sessions):
                 samples[('readiness_gap', stage)].append(duration)
         out['groups'].append({**dict(zip(GROUP_FIELDS, key)), 'reply_traces': len(members),
             'path_counts': path_counts, 'tied_joins': len(tied_joins),
-            'status_counts': dict(Counter(r['status'] for r in members)),
+            'status_counts': dict(Counter(r['status'] if r['status'] is not None else 'unknown' for r in members)),
             'stages': sorted(path_stages + [{'section': section, 'stage': stage, **summary_stats(values)}
                        for (section, stage), values in sorted(samples.items())], key=lambda s: (s['section'], s['stage']))})
     out.update(schema_version=1, clock='encounter_s', units='seconds',

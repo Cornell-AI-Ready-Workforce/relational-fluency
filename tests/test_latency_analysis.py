@@ -393,8 +393,8 @@ def traced_session(tmp_path, monkeypatch):
     from server import conversation_audio, reply_trace, storage, turn_timing
 
     base = 1_800_000_000
-    clock = {"now": 0.0}
-    fake = SimpleNamespace(time=lambda: base + clock["now"], monotonic=lambda: 5000 + clock["now"])
+    clock = {"now": 0.0, "epoch": base}
+    fake = SimpleNamespace(time=lambda: clock["epoch"] + clock["now"], monotonic=lambda: 5000 + clock["now"])
     for module in (storage, turn_timing, reply_trace):
         monkeypatch.setattr(module, "time", fake)
     monkeypatch.setattr(conversation_audio, "finish_later", lambda _: None)
@@ -405,6 +405,7 @@ def traced_session(tmp_path, monkeypatch):
     def make(*, slow="model", cancelled=False, trigger="punctuation", reverse_stt=False, sid="s_1800000000_aaaaaa"):
         async def produce():
             clock["now"] = 0
+            clock["epoch"] = int(sid.split('_')[1])
             store = storage.SessionStore(sid, scenario="S2A", model="m", participant_id=None, capture_audio=False)
             store.event("session_start", scenario="S2A", mode="single")
             store.event("realtime_session_started", model="cascade-argon-elevenlabs")
@@ -456,7 +457,7 @@ def traced_session(tmp_path, monkeypatch):
                 def page(rid=rid, audio=audio):
                     turn = timer.started("dan")
                     trace.page(rid, turn)
-                    timer.audio_to_client(base + audio + .01)
+                    timer.audio_to_client(clock["epoch"] + audio + .01)
                     timer.done("dan")
                     timer.ack({"phase": "start", "turn": turn, "lag_s": 0})
                     timer.ack({"phase": "end", "turn": turn, "lag_s": 0})
@@ -702,7 +703,7 @@ def test_f2_large_clock_offsets_are_flagged_and_excluded(review_trace_cases, cas
     assert not any(s["section"] in ("client_audio", "played_ack") for s in group["stages"])
 
 
-def test_f2_small_offset_is_corrected_and_tail_anchor_is_preferred(review_trace_cases):
+def test_f2_small_offset_is_corrected_using_vad_anchor(review_trace_cases):
     import copy
     events = copy.deepcopy(review_trace_cases["normal"])
     timing = next(e for e in events if e["type"] == "turn_timing")
@@ -711,20 +712,21 @@ def test_f2_small_offset_is_corrected_and_tail_anchor_is_preferred(review_trace_
     timing["first_audio_from_gateway"] = 11.7021
     row, = probe_trace(events)["rows"]
     assert row["clock_offset_s"] == pytest.approx(.002)
-    assert row["clock_alignment"]["preferred_anchor"] == "gateway_output"
+    assert row["clock_alignment"]["preferred_anchor"] == "vad"
     assert row["stamps_s"]["first_audio_to_client"] == pytest.approx(11.701)
     assert row["paths"]["client_audio"]["total_s"] == pytest.approx(1.701)
 
 
-def test_f2_disagreeing_anchors_and_session_offsets_are_reported(review_trace_cases):
+def test_f2_gateway_delay_is_not_clock_disagreement(review_trace_cases):
     import copy
     events = copy.deepcopy(review_trace_cases["normal"])
     timing = next(e for e in events if e["type"] == "turn_timing")
     timing["first_audio_from_gateway"] = 11.7201
     row, = probe_trace(events)["rows"]
-    assert "anchor_disagreement" in row["clock_alignment"]["issues"]
+    assert not row["clock_alignment"]["issues"]
     assert row["clock_alignment"]["session_offset_s"] is not None
-    assert row["clock_alignment"]["status"] == "cross_clock_unverified"
+    assert row["clock_alignment"]["status"] == "verified"
+    assert row["clock_alignment"]["gateway_observation"]["gateway_minus_vad_offset_s"] == pytest.approx(.02)
 
 
 def test_f2_session_guard_excludes_locally_small_offset_when_other_rows_disagree(review_trace_cases):
@@ -853,3 +855,135 @@ def test_f8_non_participant_work_has_a_separate_origin_group(review_trace_cases)
                                     probe_trace(probe, "probe")])["groups"]
     assert {g["origin"] for g in groups} == {"participant_commit", "silence_probe"}
     assert all(g["reply_traces"] == 1 for g in groups)
+
+
+def order_legacy_inputs(tmp_path):
+    directories = []
+    for name, sid, scenario in (("run", "s_1_aaaaaa", "S1A"), ("run-b", "s_2_bbbbbb", "S2A")):
+        old = session(tmp_path / name, [timing()], scenario=scenario)
+        directory = old.with_name(sid)
+        old.rename(directory)
+        write_json(directory / "record.json", build(directory))
+        directories.append(directory)
+    return directories
+
+
+def test_n1_held_reply_vad_rounding_does_not_create_an_invalid_tail(review_trace_cases):
+    import copy
+    events = copy.deepcopy(review_trace_cases["slow_stt_held"])
+    reply = next(e for e in events if e["type"] == "reply_trace")
+    reply["stages"]["first_output_hold_released"] = 12.5024
+    timing = next(e for e in events if e["type"] == "turn_timing")
+    timing.update(vad_speech_end=10.001, first_audio_to_client=12.502)
+    row, = probe_trace(events)["rows"]
+    assert not row["paths"]["client_audio"]["issues"]
+    assert row["paths"]["client_audio"]["unexplained_s"] == 0
+    assert row["clock_alignment"]["applied_offset_s"] == 0
+    assert row["clock_alignment"]["clamps"][0]["delta_s"] == pytest.approx(.0004)
+
+
+@pytest.mark.parametrize("hop", [0, .0002, .0005, .0015])
+@pytest.mark.parametrize("gap", [.00005, .0002])
+def test_n1_held_clock_phase_simulation_preserves_valid_tails(hop, gap):
+    import random
+    from tools.sim import latency_trace
+    rng = random.Random(20261113)
+    for _ in range(4096):
+        vad = round(10 + rng.random() * .001, 6)
+        release = round(12.5 + rng.random() * .001, 6)
+        actual = release + gap
+        values = {"vad_detected": vad, "first_output_hold_started": 12.49,
+                  "first_output_hold_released": release, "first_audio_to_client": round(actual, 3),
+                  "first_audio_played": round(actual + .05, 3)}
+        info = latency_trace.align_clocks(values, {"vad_speech_end": round(vad + hop, 3)})
+        assert info["status"] == "verified"
+        assert values["first_audio_to_client"] >= release - 1e-9
+        bound = .001 + abs(info["applied_offset_s"])
+        assert abs(values["first_audio_to_client"] - actual) <= bound + 1e-9
+        assert info["clamp_tolerance_s"] == pytest.approx(bound)
+
+
+@pytest.mark.parametrize("queue", [.0002, .003, .020])
+def test_n2_gateway_queue_is_preserved_and_does_not_fail_clock_guard(review_trace_cases, queue):
+    import copy
+    from tools.sim import latency_trace
+    events = copy.deepcopy(review_trace_cases["normal"])
+    emitted = next(e for e in events if e["type"] == "reply_trace")["stages"]["first_output_emitted"]
+    timing = next(e for e in events if e["type"] == "turn_timing")
+    timing.update(first_audio_from_gateway=round(emitted + queue, 3),
+                  first_audio_to_client=round(emitted + queue + .002, 3),
+                  first_audio_played=round(emitted + queue + .05, 3))
+    section = probe_trace(events)
+    row, = section["rows"]
+    assert row["clock_offset_s"] == 0
+    assert row["clock_alignment"]["preferred_anchor"] == "vad"
+    assert row["clock_alignment"]["status"] == "verified"
+    assert section["clock_session"]["verified"] is True
+    path = row["paths"]["client_audio"]
+    assert not path["issues"] and path["unexplained_s"] == 0
+    assert path["exposed_s"]["output_to_gateway"] == pytest.approx(queue, abs=.001)
+    assert path["exposed_s"]["gateway_to_client"] == pytest.approx(
+        timing["first_audio_to_client"] - timing["first_audio_from_gateway"])
+    stages = latency_trace.combine([section])["groups"][0]["stages"]
+    assert any(s["section"] == "client_audio" and s["stage"] == "output_to_gateway" for s in stages)
+
+
+def test_n3_nondeduplicated_json_and_markdown_match_038fc3b_path_order(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    expected = json.loads((root / "tests/fixtures/latency/legacy_order_038fc3b.json").read_text(encoding="utf-8"))
+    directories = order_legacy_inputs(tmp_path)
+    report = latency.analyze_paths(directories)
+    normalized = json.dumps(report, indent=1, sort_keys=True, ensure_ascii=False).replace(str(tmp_path), "$TMP") + "\n"
+    assert normalized == expected["json_text"]
+    assert latency.markdown(report).replace(str(tmp_path), "$TMP") == expected["markdown"]
+    assert [Path(s["path"]).parts[-4] for s in report["sources"]] == ["run", "run-b"]
+
+
+def test_n4_known_session_and_renamed_byte_copy_count_once(traced_session, tmp_path):
+    import shutil
+    original = traced_session()
+    renamed = tmp_path / "renamed/alice"
+    renamed.mkdir(parents=True)
+    shutil.copyfile(original / "events.jsonl", renamed / "events.jsonl")
+    single = latency.analyze_paths([original])
+    mixed = latency.analyze_paths([original, renamed])
+    assert len(mixed["rows"]) == len(single["rows"])
+    assert mixed["trace"]["counts"] == single["trace"]["counts"]
+    assert mixed["duplicate_sources"][0]["reason"] == "duplicate_content_hash"
+
+
+@pytest.mark.parametrize("status", [["done"], {"state": "done"}, 1])
+def test_n5_malformed_reply_status_is_reported_without_stopping_other_rows(review_trace_cases, status):
+    import copy
+    from tools.sim import latency_trace
+    events = copy.deepcopy(review_trace_cases["normal"])
+    next(e for e in events if e["type"] == "reply_trace")["status"] = status
+    bad = probe_trace(events, "bad")
+    good = probe_trace(review_trace_cases["normal"], "good")
+    result = latency_trace.combine([bad, good])
+    assert result["counts"]["unsupported"] == 1
+    assert result["unsupported"][0]["reason"] == "invalid_trace_shape"
+    assert result["counts"]["reply_traces"] == 1
+
+
+@pytest.mark.parametrize("field,value", [("sentence_trigger", {}), ("participant_turn_id", [1]),
+                                         ("release_commit_item_id", [])])
+def test_n5_other_malformed_reply_scalars_are_rejected(review_trace_cases, field, value):
+    import copy
+    events = copy.deepcopy(review_trace_cases["normal"])
+    next(e for e in events if e["type"] == "reply_trace")[field] = value
+    section = probe_trace(events)
+    assert not section["rows"]
+    assert section["unsupported"][0]["reason"] == "invalid_trace_shape"
+
+
+def test_n5_null_status_stays_valid_and_serializes_with_string_statuses(review_trace_cases):
+    import copy
+    from tools.sim import latency_trace
+    events = copy.deepcopy(review_trace_cases["normal"])
+    next(e for e in events if e["type"] == "reply_trace")["status"] = None
+    summary = latency_trace.combine([probe_trace(events, "null-status"),
+                                     probe_trace(review_trace_cases["normal"], "done-status")])
+    assert summary["counts"]["unsupported"] == 0
+    assert summary["groups"][0]["status_counts"] == {"unknown": 1, "done": 1}
+    json.dumps(summary, sort_keys=True)

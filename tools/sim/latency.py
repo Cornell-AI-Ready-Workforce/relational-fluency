@@ -249,7 +249,7 @@ def content_hash(path):
 
 
 def deduplicate_sessions(loaded):
-    """Prefer the richest copy; keep independent known session IDs distinct."""
+    """Prefer the richest copy, then remove equal content across ID buckets."""
     buckets = defaultdict(list)
     for item in loaded:
         identity = item['session_id']
@@ -266,7 +266,19 @@ def deduplicate_sessions(loaded):
                 dropped.append({'path': item['source'], 'kept': winner['source'],
                     'session_id': item['session_id'], 'reason': 'duplicate_' + kind,
                     'same_content': item['hash'] == winner['hash']})
-    return sorted(kept, key=lambda item: item['source']), dropped
+    # Prefer the identified/richer representative for equal bytes, even if an
+    # anonymous export sorts first. The output itself keeps original Path order.
+    hashes, content_kept = {}, set()
+    for item in sorted(kept, key=lambda item: (bool(item['session_id']), bool(item['record'])), reverse=True):
+        digest = item['hash']
+        if digest and digest in hashes:
+            dropped.append({'path': item['source'], 'kept': hashes[digest]['source'],
+                            'session_id': item['session_id'], 'reason': 'duplicate_content_hash', 'same_content': True})
+        else:
+            if digest:
+                hashes[digest] = item
+            content_kept.add(id(item))
+    return [item for item in loaded if id(item) in content_kept], dropped
 
 
 def analyze_paths(paths):
