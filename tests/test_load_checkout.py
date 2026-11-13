@@ -102,12 +102,12 @@ def test_selected_room_ramp_records_real_provenance_paths_and_tts_proof(tmp_path
     rt = ProvenRuntime.instances[0]
     assert rt.options["server_checkout"] == ROOT and rt.options["server_environment"]["BUILD_SHA"] == expected["commit"]
     assert rt.stopped and not rt.record_tts_destinations
-    saved = json.loads((directory / "report.json").read_text())
+    saved = json.loads((directory / "report.json").read_text(encoding="utf-8"))
     assert saved["server"] == expected and len(saved["sessions"]) == 2
-    markdown = (directory / "report.md").read_text()
+    markdown = (directory / "report.md").read_text(encoding="utf-8")
     for session in saved["sessions"]:
         assert session["events"] in markdown
-        assert "assistant_turn" in Path(session["events"]).read_text()
+        assert "assistant_turn" in Path(session["events"]).read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("fake_count,blocked,passed", [(1, False, True), (2, False, False), (1, True, False)])
@@ -157,7 +157,7 @@ def test_live_selected_room_smoke_kills_server_on_startup_429(tmp_path, monkeypa
     class Denied(ProvenRuntime):
         async def start(self):
             await super().start()
-            with (self.data / "upstream-attempts.jsonl").open("a") as stream:
+            with (self.data / "upstream-attempts.jsonl").open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"upstream": "gateway", "purpose": "steering", "status": 429,
                                          "outcome": "http_error", "route": "messages"}) + "\n")
             return self
@@ -235,7 +235,7 @@ def test_real_room_runner_uses_fake_gateway_and_tts_and_retains_turn_text(
                     assert await runner.room.close_participant_turn()
                     async def wait_event(kind):
                         while True:
-                            rows = [json.loads(line) for line in encounter.store.events_path.read_text().splitlines()]
+                            rows = [json.loads(line) for line in encounter.store.events_path.read_text(encoding="utf-8").splitlines()]
                             if any(r["type"] == kind for r in rows): return rows
                             await asyncio.sleep(.01)
                     await asyncio.wait_for(wait_event("user_turn"), 3)

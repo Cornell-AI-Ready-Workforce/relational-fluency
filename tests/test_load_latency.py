@@ -130,7 +130,8 @@ def test_stt_completion_reversal_failure_and_no_speech_keep_commit_ids(isolated_
             assert heard[0]["item_id"] == items[1]
             assert next(f for f in heard if f["item_id"] == items[0])["transcript"] == "first"
             assert next(f for f in frames if f["type"].endswith("transcription.failed"))["item_id"] == items[2]
-            assert all(next(f for f in heard if f["item_id"] == iid)["transcript"] == "" for iid in items[3:])
+            # fix/stt-transcribe maps empty replies to "[no speech]" on the integrated stack.
+            assert all(next(f for f in heard if f["item_id"] == iid)["transcript"] in ("", "[no speech]") for iid in items[3:])
     asyncio.run(exercise())
 
 
