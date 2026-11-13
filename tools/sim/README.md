@@ -167,14 +167,25 @@ python -m tools.sim.latency data/sessions/*/record.json --json-out /tmp/latency.
 python -m tools.sim.latency tools/sim/reports/1469925.json --json-out /tmp/sim-latency.json
 ```
 
-Inputs can be run directories, `record.json` files, or event JSONL files. The
-tool reads sibling `events.jsonl` files for records. It reuses the event reader,
-sim JSON reader, writer, and percentile function. It makes no network calls.
+Inputs can be run directories, `record.json` files, event JSONL files, or saved
+sim reports. The tool reads sibling `events.jsonl` files for records. Directory
+scans use `events.jsonl` and `*.events.jsonl`. They skip raw debug logs. Give
+other JSONL names explicitly. Bad JSON inputs appear as issues while valid
+inputs continue. The tool makes no network calls.
 
 Each reply with a participant speech end has a row. The tool groups rows by
-scenario, room or 1:1, first encounter reply or later, first reply to that
-participant turn or follow-up, and family/model. It keeps small groups and
-missing ACK counts. Each stage has n, p50, p90, and the mean of its share of
+scenario, room or 1:1, encounter reply, participant reply, and family/model.
+Encounter reply separates the first reply at start, the first after each 1:1
+handoff (`first_after_handoff`), and later replies. Start and handoff boundaries
+come from the recorded participant wait and acceptance events. Without these
+events, the tool uses page turn order and cannot identify handoffs.
+
+Participant reply uses `reply_index`: 0 is first; later values are follow-ups
+to the same speech end. The sim summary uses the earliest played reply. These
+definitions differ if reply 0 has no played ACK and a later reply plays.
+
+The tables keep small groups, reply row counts, and missing played ACK counts.
+They show errored and incomplete sim scenarios. Each stage has n, p50, p90, and the mean of its share of
 the same reply's total. `share_n` counts positive totals for that stage.
 
 The breakdown uses speech end to commit, room commit to grant, gateway audio
@@ -190,5 +201,6 @@ residual.
 quantiles and n only. The tool keeps those values and marks other results
 unavailable. It does not infer stages or reply groups from quantiles. Playback
 ACK timing includes return network time. It does not measure hearing. The sim
-does not model the browser audio path. Both outputs list these limits and the
-missing A6 boundaries.
+does not model the browser audio path. Mode uses session metadata. The tool
+cannot separate mixed room and 1:1 interactions within one session. Both
+outputs list these limits and the boundaries not recorded.
