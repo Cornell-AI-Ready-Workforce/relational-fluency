@@ -115,6 +115,11 @@ def summarize(events_by_session, timelines, *, attempts, resources, concurrency,
                                        if measurement_start <= line["end"] < measurement_end]} for t in timelines]
     result = event_metrics(windowed, window_timelines, [a for a in attempts if inside(a)])
     result["whole_step"] = event_metrics(events_by_session, timelines, attempts)
+    result["by_scenario"] = {}
+    for scenario in {t["scenario"] for t in timelines if t.get("scenario")}:
+        members = [t for t in window_timelines if t.get("scenario") == scenario]
+        result["by_scenario"][scenario] = event_metrics(
+            {t["session_id"]: windowed.get(t["session_id"], []) for t in members}, members, [])
     steady = [s["active"] for s in concurrency if inside(s)]
     conversing = [s.get("conversing", 0) for s in concurrency if inside(s)]
     window_resources = [s for s in resources if inside(s)]
@@ -162,15 +167,17 @@ def baseline(repeats):
     }
 
 
-def verdict(n, metrics, reference, *, full_length=True, errors=(), server_errors=(), fake_errors=(), baseline_valid=True):
+def verdict(n, metrics, reference, *, full_length=True, errors=(), server_errors=(), fake_errors=(), baseline_valid=True,
+            early_stop=None):
     invalid = list(errors)
-    known_failure = bool(server_errors or fake_errors)
+    known_failure = bool(server_errors or fake_errors or early_stop)
     ack_exceeded = (reference is not None and reference.get("first_played_missing_per_100_turns") is not None
                     and metrics.get("first_played_missing_per_100_turns") is not None
                     and metrics["first_played_missing_per_100_turns"] > reference["first_played_missing_per_100_turns"] + 1)
     if not full_length and not known_failure:
         invalid.append("short diagnostic encounter; not a capacity measurement")
-    if metrics["achieved_concurrency"] < 0.9 * n and not known_failure:
+    if metrics["achieved_concurrency"] < 0.9 * n and (not known_failure or
+            (early_stop and metrics.get("steady_sample_count", 1) > 0)):
         invalid.append(f"achieved concurrency {metrics['achieved_concurrency']:.3f} < {0.9 * n:.3f}")
     lag = metrics["generator_loop_lag_ms"]["p99"]
     if (lag is None and not known_failure) or (lag is not None and lag > 50):
@@ -184,8 +191,12 @@ def verdict(n, metrics, reference, *, full_length=True, errors=(), server_errors
             invalid.append(label + " missing")
     if (not reference or reference.get("p90_s") is None or not baseline_valid) and not known_failure:
         invalid.append("valid N=1 baseline missing")
+    elif early_stop and not baseline_valid:
+        invalid.append("valid N=1 baseline missing before deliberate stop")
     if invalid:
         return {"verdict": "INVALID", "reasons": invalid, "rule": RULE}
+    if early_stop:
+        return {"verdict": "FAIL", "reasons": ["stopped early: " + early_stop["reason"]], "rule": RULE}
     if server_errors:
         count = len(server_errors)
         encounters = metrics.get("encounter_count", 0) or 1

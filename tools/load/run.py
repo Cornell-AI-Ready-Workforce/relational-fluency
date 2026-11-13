@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import asyncio
 from dataclasses import asdict, replace
 import datetime as dt
@@ -14,7 +15,8 @@ import time
 
 import httpx
 
-from tools.load import measure
+from tools.load import measure, fast
+from tools.load.search import Search
 from tools.load.fake_upstream import FakeConfig
 from tools.load.participant import Participant, ServerError, error_side, full_sequence, open_identity
 from tools.load.runtime import ROOT, Runtime, RuntimeUnavailable, read_encounters
@@ -48,7 +50,16 @@ def arrival(value):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ramp", default="1,5,10,20,30")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--ramp", default="1,5,10,20,30")
+    mode.add_argument("--ramp-search", nargs="?", const=20, type=int)
+    parser.add_argument("--search-ceiling", type=int, default=40)
+    parser.add_argument("--search-step", type=int, default=10)
+    parser.add_argument("--search-resolution", type=int, default=5)
+    parser.add_argument("--encounters-per-participant", default="all")
+    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--skip-smoke", action="store_true")
+    parser.add_argument("--fail-fast", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--scenarios", default=",".join(SCENARIOS))
     parser.add_argument("--arrival", type=arrival, default="burst", metavar="burst|stagger:<s>")
@@ -91,6 +102,22 @@ def parse_args(argv=None):
                 raise ValueError("duplicate factors")
         except (ValueError, argparse.ArgumentTypeError):
             parser.error("--tts-factors requires unique finite positive numbers")
+    if args.ramp_search is not None:
+        try:
+            Search(args.ramp_search, args.search_ceiling, args.search_step, args.search_resolution,
+                   args.max_concurrency if args.gateway == "live" else None)
+        except ValueError as exc:
+            parser.error(str(exc))
+        args.ramp = [1]
+    if args.encounters_per_participant != "all":
+        try:
+            args.encounters_per_participant = int(args.encounters_per_participant)
+            if not 1 <= args.encounters_per_participant <= 4:
+                raise ValueError()
+        except ValueError:
+            parser.error("--encounters-per-participant requires all or an integer in 1..4")
+    if args.smoke and args.skip_smoke:
+        parser.error("--smoke and --skip-smoke conflict")
     args.scenarios = args.scenarios.split(",")
     if not args.scenarios or len(set(args.scenarios)) != len(args.scenarios) or set(args.scenarios) - set(SCENARIOS):
         parser.error("--scenarios requires unique S1A,S2A,S3A,S4A IDs")
@@ -128,7 +155,10 @@ def load_key():
 def _write_report(directory, report):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    lines = ["# Load run", "", report["rule"], "", f"Configuration: {report.get('isolation', {}).get('label', 'not started')}", "",
+    configuration = dict(report.get("configuration", {}))
+    if isinstance(configuration.get("smoke"), dict):
+        configuration["smoke"] = {k: v for k, v in configuration["smoke"].items() if k != "outcomes"}
+    lines = ["# Load run", "", report["rule"], "", "Configuration: " + json.dumps(configuration), "", f"Configuration: {report.get('isolation', {}).get('label', 'not started')}", "",
              "| TTS factor / N | Repeat | Verdict | Played p90 (s) | Achieved N | Generator p99 (ms) | RSS max (MB) | Reasons |",
              "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     for step in report.get("steps", []):
@@ -139,11 +169,22 @@ def _write_report(directory, report):
                      f"{m['generator_loop_lag_ms']['p99']} | {rss / 1e6 if rss is not None else None} | "
                      + "; ".join(step["reasons"]) + " |")
     for step in report.get("steps", []):
+        m = step["metrics"]
+        if "encounters_per_participant" in m:
+            lines.extend(["", f"N={step['concurrency']} workload K={m['encounters_per_participant']}; "
+                          f"actual mix={m.get('scenario_mix', {})}; encounter positions={m.get('encounter_positions', [])}."])
+        if step.get("baseline_units"):
+            lines.append("Baseline unit windows: " + json.dumps(m.get("measurement_windows", [])))
+        if step.get("matched_reference", {}).get("scenario_weights"):
+            lines.append("Reference scenario-turn weights: " + json.dumps(step["matched_reference"]["scenario_weights"]))
         if step["metrics"].get("post_complete_close"):
             lines.extend(["", f"Post-completion close diagnostics at N={step['concurrency']}: "
                           f"{len(step['metrics']['post_complete_close'])}."])
     lines.extend(["", f"Capacity for the tested configuration on this host: {report.get('capacity_range', report.get('capacity'))}", ""])
     for ramp in report.get("ramps", []):
+        lines.extend(["", "Tested Ns: " + json.dumps(ramp.get("tested_ns", [])),
+                      "Search path: " + json.dumps(ramp.get("search_path", [])),
+                      "Untested intervals: " + json.dumps(ramp.get("untested_intervals", []))])
         if ramp.get("non_monotonic_warning"):
             lines.extend([ramp["non_monotonic_warning"], ""])
     if report.get("fatal_error"):
@@ -156,13 +197,23 @@ def _write_report(directory, report):
     (directory / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Participant, profile_only=False):
+async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Participant, profile_only=False, reference=None, label=None):
     start = time.time()
-    directory = runtime.directory / (f"N{n}-profile-only" if profile_only else f"N{n}-repeat{repeat}")
+    directory = runtime.directory / (label or (f"N{n}-profile-only" if profile_only else f"N{n}-repeat{repeat}")
+                                      + (f"-attempt{args.search_attempt}" if getattr(args, "search_attempt", 1) > 1 else ""))
     await asyncio.to_thread(directory.mkdir, exist_ok=True)
     participants, timelines, finished, errors, server_errors, measurement_errors = [], [], [], [], [], []
     resources, concurrency, attempts, log_rows, generator_lag = [], [], [], [], []
     guard, stopped, done, attempts_done = measure.LiveGuard(), asyncio.Event(), asyncio.Event(), asyncio.Event()
+    live_shutdown = asyncio.Event()
+    early_stop = None
+    measurement_error_records = []
+    window_start = start + (n - 1) * args.arrival + args.warmup
+    observed_events, observed_fake, worker_error_events = [], [], []
+    event_tail = measure.JsonlTail(runtime.data / "encounter-events.jsonl")
+    fake_tail = measure.JsonlTail(runtime.directory / "fake-log.jsonl")
+    await asyncio.to_thread(fake_tail.read)
+    await asyncio.to_thread(event_tail.read)
     attempt_tail = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl")
     log_tail = measure.JsonlTail(runtime.directory / "server-log.jsonl")
     await asyncio.to_thread(attempt_tail.read)
@@ -172,24 +223,39 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
     full_length = (args.duration is None or args.duration >= ceiling) and args.encounter_seconds is None
     settle_poller = SettlePoller(runtime)
 
+    def record_measurement_error(message):
+        measurement_errors.append(message)
+        measurement_error_records.append({"t": time.time(), "message": message,
+            "server_failure_known": bool(server_errors or guard.stopped or
+                any(p.tl.get("server_errors") for p in participants))})
+
+    k = args.encounters_per_participant
+    slots = len(args.scenarios) if k == "all" else k
+
     async def worker(index):
         await asyncio.sleep(index * args.arrival)
         client = await asyncio.to_thread(httpx.AsyncClient, timeout=30, follow_redirects=False, trust_env=False)
         async with client as http:
-            identity = await open_identity(http, runtime.base, runtime.key, f"N{n}_{repeat}_{index}")
+            identity_name = f"{label}_{index}" if label else f"N{n}_{repeat}_{index}"
+            if getattr(args, "search_attempt", 1) > 1:
+                identity_name += f"_attempt{args.search_attempt}"
+            identity = await open_identity(http, runtime.base, runtime.key, identity_name)
             run_id, view = identity["run"], None
             if default_mix:
                 response = await http.get(runtime.base + f"/api/run/{run_id}", params={"key": runtime.key})
                 response.raise_for_status()
                 view = response.json()
-            for slot in range(len(args.scenarios)):
+            for slot in range(slots):
                 scenario = view["current"]["id"] if default_mix else args.scenarios[(slot + index + repeat - 1) % len(args.scenarios)]
                 if scenario not in args.scenarios:
                     raise RuntimeError("server Williams run selected an unexpected scenario")
                 participant = participant_factory(
-                    runtime.base, scenario, args.steps or full_sequence(scenario, ceiling),
+                    runtime.base, scenario, (f"tone:1,say:{sequences.lines_used(sequences.DEFAULT_SEQUENCES[scenario])[0]},until:{ceiling + 5}"
+                        if getattr(args, "smoke_workload", False) else args.steps or full_sequence(scenario, ceiling)),
                     index=f"{n}_{repeat}_{index}_{slot}", key=runtime.key,
                     duration_s=args.duration or ceiling + 30, webcam=args.webcam, http=http, identity=identity)
+                participant.tl.update(encounter_position=slot + 1, encounters_per_participant=k,
+                                      advance_policy="advance after every encounter" if default_mix else "selected scenarios; no study-run advance")
                 participants.append(participant)
                 try:
                     timeline = await participant.run()
@@ -199,6 +265,7 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
                 if not timeline.get("completed"):
                     if full_length:
                         server_errors.append("encounter did not reach encounter_complete")
+                        worker_error_events.append({"t": time.time(), "message": "encounter did not reach encounter_complete"})
                     break
                 if default_mix:
                     if not await settle_poller.wait(timeline["session_id"], args.close_timeout):
@@ -212,6 +279,7 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
     async def kill_and_stop():
         # Stop billed work before cancellation or storage settling can wait.
         await runtime.kill_server()
+        live_shutdown.set()
         stopped.set()
 
     async def check_observer():
@@ -229,6 +297,7 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
         return True
 
     async def watch_attempts():
+        nonlocal early_stop
         while not attempts_done.is_set():
             if await check_observer():
                 return
@@ -248,6 +317,39 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
                     if guard.observe(row, sum(p.active for p in participants)):
                         await kill_and_stop()
                         return
+            if args.fail_fast and full_length and not profile_only:
+                now = time.time()
+                end = min(finished, default=now + 1)
+                if window_start <= now < end:
+                    try:
+                        if hasattr(runtime, "event_rows"):
+                            observed_events.extend(await asyncio.to_thread(runtime.event_rows))
+                        for item in await asyncio.to_thread(fake_tail.read):
+                            try:
+                                event = json.loads(item["line"])
+                                if event.get("kind") == "protocol_error": observed_fake.append(event)
+                            except (ValueError, KeyError):
+                                pass
+                    except (OSError, ValueError) as exc:
+                        errors.append("incremental observation: " + type(exc).__name__)
+                    current_events = [e for e in observed_events if window_start <= e.get("wall", 0) < end]
+                    current_fake = [e for e in observed_fake if window_start <= e.get("t", 0) < end]
+                    current_server = [e["message"] for e in worker_error_events if window_start <= e["t"] < end]
+                    current_server += [e["message"] for p in participants for e in p.tl.get("server_error_events", [])
+                                       if window_start <= e["t"] < end]
+                    cause = fast.irreversible(server_errors=current_server, fake_errors=current_fake, events=current_events,
+                        resources=[r for r in resources if window_start <= r["t"] < end],
+                        lag=[r for r in measure.server_lag_windows(log_rows, window_start, end)
+                             if r["t"] - 5 >= window_start],
+                        allowed_kinds=set(reference["voice_error_kinds"]) if reference else None)
+                    if cause:
+                        early_stop = {"reason": cause, "t": now, "measurement_start": window_start}
+                        stopped.set()
+                        return
+                    if errors:
+                        early_stop = {"reason": "generator error invalidates step", "t": now, "measurement_start": window_start}
+                        stopped.set()
+                        return
             await asyncio.sleep(0.1)
 
     async def sample_concurrency():
@@ -266,22 +368,36 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
                 log_rows.extend(await asyncio.to_thread(log_tail.read))
             except (RuntimeError, OSError, ValueError) as exc:
                 if not stopped.is_set():
-                    measurement_errors.append("resource sampling: " + type(exc).__name__)
+                    record_measurement_error("resource sampling: " + type(exc).__name__)
             due += 1.0
             await asyncio.sleep(max(0, due - time.monotonic()))
 
     async def sample_lag():
         while True:
             before = time.perf_counter()
-            await asyncio.sleep(0.05)
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                overshoot = (time.perf_counter() - before - 0.05) * 1000
+                if overshoot > 0:
+                    generator_lag.append({"t": time.time(), "lag_ms": overshoot})
+                raise
             generator_lag.append({"t": time.time(), "lag_ms": max(0, (time.perf_counter() - before - 0.05) * 1000)})
 
     workers = [asyncio.create_task(worker(index)) for index in range(n)]
     async def workers_done():
-        for result in await asyncio.gather(*workers, return_exceptions=True):
+        for future in asyncio.as_completed(workers):
+            try:
+                result = await future
+            except asyncio.CancelledError:
+                continue
+            except Exception as exc:
+                result = exc
             if isinstance(result, SettlePollError):
-                measurement_errors.append("settle polling: " + str(result))
+                record_measurement_error("settle polling: " + str(result))
             elif isinstance(result, Exception):
+                if error_side(result) == "server_errors":
+                    worker_error_events.append({"t": time.time(), "message": str(result)})
                 (server_errors if error_side(result) == "server_errors" else errors).append(
                     "participant worker: " + type(result).__name__ + ": " + str(result)[:100])
     all_workers = asyncio.create_task(workers_done())
@@ -308,15 +424,15 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
     close_waiter = close_stop = None
     try:
         await check_observer()
-        if timelines and not stopped.is_set():
+        if timelines and not live_shutdown.is_set():
             close_waiter = asyncio.gather(*(settle_poller.wait(sid, args.close_timeout)
                 for sid in dict.fromkeys(t["session_id"] for t in timelines)), return_exceptions=True)
-            close_stop = asyncio.create_task(stopped.wait())
+            close_stop = asyncio.create_task(live_shutdown.wait())
             await asyncio.wait({close_waiter, close_stop}, return_when=asyncio.FIRST_COMPLETED)
             if close_waiter.done():
                 results = close_waiter.result()
                 poll_errors = [str(result) for result in results if isinstance(result, Exception)]
-                measurement_errors.extend("settle polling: " + error for error in poll_errors)
+                for error in poll_errors: record_measurement_error("settle polling: " + error)
                 settled = all(result is True for result in results)
                 if settled:
                     close_burst = max(0, time.time() - last_hangup)
@@ -363,18 +479,24 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
     metrics = measure.summarize(
         events, timelines, attempts=attempts, resources=resources, concurrency=concurrency,
         generator_lag_ms=generator_lag, server_lag=measure.server_lag_windows(log_rows, start, end),
-        measurement_start=start + (n - 1) * args.arrival + args.warmup,
+        measurement_start=window_start,
         measurement_end=measurement_end, close_burst_s=close_burst, artifact_bytes=sizes)
     metrics.update(encounter_count=max(len(participants), n), server_error_count=len(server_errors),
                    post_complete_close=[{"session_id": p.tl.get("session_id"), **event}
                                         for p in participants for event in p.tl.get("post_complete_close", [])],
                    server_errors_per_100_encounters=100 * len(server_errors) / max(len(participants), n),
                    unmatched_fragment=fake.get("unmatched_fragment", 0) - fake_before.get("unmatched_fragment", 0))
+    metrics.update(encounters_per_participant=k,
+                   scenario_mix=dict(Counter(t["scenario"] for t in timelines)),
+                   encounter_positions=[t["encounter_position"] for t in timelines],
+                   scenario_order="server-assigned first/current encounters" if default_mix else "selected scenario rotation",
+                   settled_artifacts=settled)
     result = {"concurrency": n, "repeat": repeat, "started": start, "ended": end,
               "metrics": metrics, "errors": errors, "server_errors": server_errors,
-              "measurement_errors": measurement_errors,
+              "measurement_errors": measurement_errors, "measurement_error_records": measurement_error_records,
               "fake_errors": fake["errors"][len(fake_before["errors"]):], "full_length": full_length,
-              "live_stop": guard.stopped, "profile": profile_result, "profile_only": profile_only}
+              "live_stop": guard.stopped, "early_stop": early_stop, "profile": profile_result, "profile_only": profile_only}
+    result["timelines"] = timelines
     result["observer_telemetry"] = runtime.observer_telemetry()
     await asyncio.to_thread((directory / "timelines.json").write_text, json.dumps(timelines, indent=2), encoding="utf-8")
     return result
@@ -397,7 +519,7 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
     ceiling = args.encounter_seconds or float(env.get("ENCOUNTER_MAX_SECONDS", "600"))
     live_key = await asyncio.to_thread(load_key) if args.gateway == "live" else None
     factors = args.tts_factors or [config.tts_realtime_factor]
-    report = {"rule": measure.RULE, "generated_at": stamp, "steps": [], "ramps": [], "capacity": None,
+    report = {"rule": measure.RULE + " " + fast.BASELINE_RULE, "generated_at": stamp, "steps": [], "ramps": [], "capacity": None,
               "gateway": args.gateway, "tts": "fake", "fake_configuration": asdict(config),
               "capacity_scope": "this host; fake timing and speaker/tool probabilities are uncalibrated assumptions",
               "configuration": {"ramp": args.ramp, "repeat": args.repeat, "scenarios": args.scenarios,
@@ -407,6 +529,12 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                                 "continue_after_fail": args.continue_after_fail,
                                 "default_encounter_ceiling_s": ceiling, "backend": args.backend,
                                 "encounter_seconds": args.encounter_seconds,
+                                "encounters_per_participant": args.encounters_per_participant,
+                                "workload": "four-encounter sustained study run" if args.encounters_per_participant == "all" else "partial study run; different workload from K=all",
+                                "warmup_reset_policy": "warmup per baseline unit; fresh participant/playback state; runtime and gateway pool persist across ramp steps",
+                                "advance_policy": "server view.current, advance once per completed encounter",
+                                "search": {"target": args.ramp_search, "ceiling": args.search_ceiling, "step": args.search_step, "resolution": args.search_resolution},
+                                "smoke": getattr(args, "smoke_results", {"ran": False, "reason": "low-level experiment API or --skip-smoke"}),
                                 "scenario_order": "server Williams run" if set(args.scenarios) == set(SCENARIOS) else "rotating selected scenarios"}}
     for factor in factors:
         runtime = runtime_factory(directory / f"tts-{factor:g}", backend=args.backend, gateway=args.gateway, image=args.image,
@@ -435,27 +563,42 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                 report["verdict"] = "PASS" if runtime.isolation["passed"] else "FAIL"
                 break
             reference, baseline_valid = None, True
-            for n in args.ramp:
+            planner = Search(args.ramp_search, args.search_ceiling, args.search_step, args.search_resolution,
+                             args.max_concurrency if args.gateway == "live" else None) if args.ramp_search else None
+            fixed = iter(args.ramp)
+            n, attempt = 1 if planner else next(fixed), 1
+            while n is not None:
+                if n > (min(args.search_ceiling, args.max_concurrency) if args.gateway == "live" and planner else
+                        args.search_ceiling if planner else args.max_concurrency if args.gateway == "live" else max(args.ramp)):
+                    raise ValueError("proposed N exceeds hard/live ceiling")
+                args.search_attempt = attempt
                 repeats = []
                 for repeat in range(1, args.repeat + 1):
-                    step = await run_step(runtime, args, n, repeat, ceiling, participant_factory=participant_factory)
+                    if n == 1 and args.encounters_per_participant != "all":
+                        units = []
+                        for unit in range(len(args.scenarios)):
+                            units.append(await run_step(runtime, args, 1, repeat, ceiling, participant_factory=participant_factory,
+                                label=f"N1-repeat{repeat}-unit{unit + 1}-attempt{attempt}"))
+                            if units[-1]["live_stop"] or units[-1].get("early_stop"): break
+                        step = fast.combine_units(units, args.scenarios, args.encounters_per_participant)
+                    else:
+                        step = await run_step(runtime, args, n, repeat, ceiling, participant_factory=participant_factory,
+                                              reference=reference)
+                    step["metrics"].setdefault("encounters_per_participant", args.encounters_per_participant)
                     step["tts_realtime_factor"] = factor
                     repeats.append(step)
                     if step["live_stop"]:
                         report["live_stop"] = step["live_stop"]
                         break
-                    preliminary = measure.verdict(n, step["metrics"], measure.baseline(repeats) if n == 1 else reference,
-                        full_length=step["full_length"], errors=step["errors"], server_errors=step.get("server_errors", []),
-                        fake_errors=step["fake_errors"], baseline_valid=baseline_valid)
+                    preliminary = fast.evaluate(step, fast.reference(repeats) if n == 1 else reference,
+                                                baseline_valid=baseline_valid)
                     if step["fake_errors"] or (preliminary["verdict"] == "FAIL" and not args.continue_after_fail):
                         break
                 if n == 1:
-                    reference = measure.baseline(repeats)
+                    reference = fast.reference(repeats)
                     ramp["baseline"] = reference
                 for step in repeats:
-                    step.update(measure.verdict(n, step["metrics"], reference,
-                        full_length=step["full_length"], errors=step["errors"], server_errors=step.get("server_errors", []),
-                        fake_errors=step["fake_errors"], baseline_valid=baseline_valid))
+                    step.update(fast.evaluate(step, reference, baseline_valid=baseline_valid))
                     if step["live_stop"] and not step["errors"]:
                         step.update(verdict="FAIL", reasons=["live safety stop: " + step["live_stop"]["reason"]])
                     report["steps"].append(step)
@@ -476,11 +619,27 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                             report["live_stop"] = extra["live_stop"]
                     else:
                         profile.update(status="unavailable", reason="no py-spy image (--profile-image) or local binary")
+                state = "INVALID" if any(s["verdict"] == "INVALID" for s in repeats) else "FAIL" if any(s["verdict"] == "FAIL" for s in repeats) else "PASS"
+                if planner:
+                    next_n = planner.observe(n, state)
+                    print(f"Search N={n} {state}: {planner.path[-1]['reason']}; next={next_n}", flush=True)
+                    ramp["search_path"] = planner.path
+                    ramp["untested_intervals"] = planner.untested()
+                    if next_n == n:
+                        for s in repeats:
+                            if s["verdict"] != "FAIL": s["superseded_invalid_attempt"] = True
+                        attempt += 1
+                    else: attempt = 1
+                else:
+                    next_n = next(fixed, None)
+                    if not args.continue_after_fail and state == "FAIL": next_n = None
+                if n == 1 and state != "PASS" and planner: next_n = None
+                if report.get("live_stop") or any(step["fake_errors"] for step in repeats): next_n = None
                 await asyncio.to_thread(_write_report, directory, report)
-                if (report.get("live_stop") or any(step["fake_errors"] for step in repeats)
-                        or (not args.continue_after_fail and any(step["verdict"] == "FAIL" for step in repeats))):
-                    break
-            ramp["capacity"] = measure.capacity(ramp["steps"], args.repeat)
+                n = next_n
+            resolved = [s for s in ramp["steps"] if not s.get("superseded_invalid_attempt")]
+            ramp["tested_ns"] = sorted({s["concurrency"] for s in ramp["steps"]})
+            ramp["capacity"] = measure.capacity(resolved, args.repeat)
             ramp["non_monotonic_warning"] = measure.non_monotonic(ramp["steps"])
         except (RuntimeError, OSError, ValueError) as exc:
             report.update(verdict="INVALID", fatal_error=type(exc).__name__ + ": " + str(exc))
@@ -504,7 +663,7 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
         report["capacity_by_tts_factor"] = {str(r["tts_realtime_factor"]): r["capacity"] for r in report["ramps"]}
         report["capacity_range"] = [min(values), max(values)] if values and all(v is not None for v in values) else None
         report["capacity_range_complete"] = len(values) == len(factors) and all(v is not None for v in values)
-        states = {step["verdict"] for step in report["steps"]}
+        states = {step["verdict"] for step in report["steps"] if not step.get("superseded_invalid_attempt")}
         report["verdict"] = ("FAIL" if "FAIL" in states or report.get("live_stop")
                              else "INVALID" if "INVALID" in states else "PASS")
     await asyncio.to_thread(_write_report, directory, report)
@@ -514,7 +673,8 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
 def main(argv=None):
     args = parse_args(argv)
     print(measure.RULE, flush=True)
-    report, directory = asyncio.run(run_experiment(args))
+    from tools.load.smoke import run_with_smoke
+    report, directory = asyncio.run(run_with_smoke(args))
     print(str(directory / "report.json"), flush=True)
     return 0 if report["verdict"] == "PASS" else 1 if report["verdict"] == "FAIL" else 2
 

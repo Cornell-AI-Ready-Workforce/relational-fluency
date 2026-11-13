@@ -152,6 +152,7 @@ class Runtime:
         self.observer_log_task = None
         self.observer_last_output = None
         self.observer_malformed_lines = 0
+        self._event_tails = {}
         self.volume_created = False
         self.key = secrets.token_hex(20)
         self.prefix = "rf-load-" + secrets.token_hex(5)
@@ -194,7 +195,7 @@ class Runtime:
                 try:
                     event = json.loads(row["line"])
                     kind = event["kind"]
-                    field = {"resource": "sample", "error": "detail", "attempt": "event"}[kind]
+                    field = {"resource": "sample", "error": "detail", "attempt": "event", "encounter": "event"}[kind]
                     value = event[field]
                     if not isinstance(value, str if kind == "error" else dict):
                         raise ValueError("invalid observer payload")
@@ -206,6 +207,11 @@ class Runtime:
                         self.resource_rows.append(value)
                     elif kind == "error":
                         self.observer_errors.append(value)
+                    elif kind == "encounter":
+                        def write_event():
+                            with (self.data / "encounter-events.jsonl").open("a", encoding="utf-8") as fh:
+                                fh.write(json.dumps({**value, "session_id": event["session_id"]}) + "\n")
+                        await asyncio.to_thread(write_event)
                     else:
                         def write_attempt():
                             with (self.data / "upstream-attempts.jsonl").open("a", encoding="utf-8") as fh:
@@ -419,6 +425,23 @@ class Runtime:
             response = await http.get(self.fake_base + "/__load/stats")
             response.raise_for_status()
             return response.json()
+
+    def event_rows(self):
+        paths = [self.data / "encounter-events.jsonl"] if self.backend == "docker" else list(
+            (self.data / "sessions").glob("*/events.jsonl"))
+        rows = []
+        for path in paths:
+            tail = self._event_tails.setdefault(path, JsonlTail(path))
+            rows.extend(tail.read())
+        return rows
+
+    async def keepalive_probe(self):
+        if self.backend == "docker":
+            _, output, _ = await command("docker", "exec", self.fake_name, "python", "-m", "tools.load.probe",
+                                         "--config", "/load/fake-config.json", timeout=20)
+            return json.loads(output)
+        from tools.load.probe import probe
+        return await asyncio.to_thread(probe, self.fake_base, self.cert, self.fake_config.http_keepalive_s)
 
     async def prove_isolation(self):
         _, net, _ = await command("docker", "network", "inspect", self.network)

@@ -4,7 +4,7 @@
 python -m tools.load.run --gateway fake --ramp 1,5,10,20,30 --repeat 1 --tts-factors 1.0,3.0
 ```
 
-One server uses the repository Dockerfile, a 0.5 host CPU quota and 1 GiB of
+By default, one server uses the repository Dockerfile, a 0.5 host CPU quota and 1 GiB of
 memory. This is a host measurement, not a Fargate capacity estimate. Each
 logical participant follows the server-assigned S1A–S4A Williams order. It
 keeps the same identity and HTTP cookies across four full encounters and uses
@@ -252,3 +252,84 @@ Its default four-scenario workload takes about 6 h 40 min, plus setup and
 close settling. An available profiler can add one 40-minute repeat. Existing
 local images can be selected with `--image`; otherwise the repo image builds
 when absent. Each command uses a fresh report directory.
+
+
+## Fast iteration
+
+```sh
+python -m tools.load.run --smoke --gateway fake --report-dir /private/tmp/rf-load-fast-smoke
+python -m tools.load.run --gateway fake --encounters-per-participant 1 \
+  --ramp-search 20 --search-ceiling 40 --tts-factors 1.0,3.0 --webcam \
+  --profile-image rf-load-profile:f3b8cfb --report-dir /private/tmp/rf-load-fast
+```
+
+The CLI runs a smoke gate before a long ramp, once per configured TTS factor.
+`--skip-smoke` opts out and records the omission. `--smoke` runs only the gate.
+The gate has its own runtime and removes its containers before the capacity
+runtime starts. It cannot provide a capacity estimate: `capacity_eligible=false`.
+The diagnostic verdict requires a successful same-TLS-socket HTTP probe (one
+response, six seconds idle, another response with no reconnect), then five
+single-encounter participants spanning all four scenarios. Each speaks a short
+committed line, then sends tone through the 60-second server ceiling. Webcam,
+playback for each participant, closed manifests, rendered mixes and valid
+instrumentation are required. Post-completion closure is diagnostic; an earlier
+closure is a failure. The diagnostic count itself is not an assertion.
+
+`--encounters-per-participant all` is the unchanged workload default.
+Integers 1–4 limit the number of full encounters for each participant. The full
+mix follows the first/current encounter assigned by the server's Williams run
+and advances after each completed encounter, including the last requested one.
+It never substitutes a different scenario before advancing. The report records
+actual scenario counts and encounter positions, rather than promising a fixed
+index rotation. Selected scenario subsets retain their existing rotation and
+no-advance behavior. K=1 omits later run positions and three transitions; it is
+**a different workload from K=all**, not proof of equivalent sustained capacity.
+Retain a final K=all pre-pilot run.
+
+For K=1, one N=1 baseline repeat consists of four sequential fresh participants,
+each completing one full encounter. Each gets its own warmup and measurement
+window. The server-assigned first encounters must cover the selected scenarios;
+missing coverage makes the baseline INVALID. Each unit validates independently.
+The repeat pools these units, and all N=1 repeats freeze the allowed voice-error
+kinds before a higher N runs. Numeric K=2–4 similarly uses separate N=1 units
+with that K. A step and baseline with different K are INVALID. Higher-N reference
+latency distributions and missing-reply/ACK rates are weighted by the step's
+measured participant-turn counts per scenario. The report includes those weights.
+Participant state resets between encounters; identity/cookies persist for the
+requested K, while the server runtime and gateway pool persist across ramp steps.
+
+`--fail-fast` is on for full-length steps; `--no-fail-fast` disables it. It stops
+on irreversible observations inside the measurement window: server errors,
+fake route/protocol errors, RSS >900 MB, a completed five-second server lag
+window with p99 >250 ms, or a voice-error kind outside the frozen N=1 set.
+Encounter events stream from the observer, fake errors come from logs, and
+worker exceptions are observed as they finish. Recovered errors remain recorded.
+Latency percentiles and missing-reply/ACK rates never cause an early stop.
+Generator errors and excessive generator lag still give INVALID. An intentional
+stop excuses measurements it prevented, and does not excuse recorded low achieved
+concurrency or other independent invalid evidence. Teardown and the one optional
+extra profile-only repeat still run; profiling never affects capacity verdicts.
+
+`--ramp-search [target]` replaces a fixed ramp list. Its default target is 20.
+N=1 must PASS; FAIL or INVALID there stops the search. Above N=1, INVALID retries
+once at the same N and aborts if still INVALID, without changing search bounds.
+PASS increases by `--search-step` (default 10), clamped to `--search-ceiling`
+(default 40) and the live cap. FAIL bisects the passing/failing bracket until
+`--search-resolution` (default 5) is reached. A custom target uses that same
+increment rule. All PASS terminates at the effective ceiling. Each decision is
+printed and saved. Superseded INVALID attempts remain in history; a recorded
+FAIL is retained. Capacity uses the sorted passing prefix of resolved tested
+points. Untested inclusive intervals and non-monotonic results are explicit;
+search does not establish that skipped participant counts pass.
+
+The N=1 baseline still costs about 40 minutes per factor. Three or four total
+search points cost about 60–70 minutes per factor before setup, smoke, settling
+and profiling. The default bracket can require 80 minutes per factor; two
+factors with the default search normally need about 2 h 20 min–2 h 40 min plus smoke/setup. A first-failure profile
+adds one approximately 10-minute K=1 repeat. INVALID retries add another full
+step each. These are workload-duration estimates, not measured runtimes.
+
+The low-level `run_experiment` API runs the capacity experiment only; the CLI's
+`run_with_smoke` orchestration owns the isolated gate. Direct API callers must
+choose that orchestration if they require the same gate. Reports record the
+choice. Real Docker probe checks require `RF_LOAD_DOCKER_TESTS=1`.

@@ -8,6 +8,31 @@ import time
 from tools.load.measure import JsonlTail
 
 
+class EncounterEvents:
+    """Tail only error observations; stop opening a session once its store closes."""
+    def __init__(self, directory=Path("/data/sessions")):
+        self.directory = Path(directory)
+        self.tails, self.finished = {}, set()
+
+    def read(self):
+        result = []
+        for path in self.directory.glob("*/events.jsonl"):
+            if path not in self.finished:
+                self.tails.setdefault(path, JsonlTail(path))
+        for path, tail in list(self.tails.items()):
+            for row in tail.read():
+                if row.get("type") in {"voice_error", "error"}:
+                    result.append({"kind": "encounter", "session_id": path.parent.name, "event": row})
+            try:
+                closed = json.loads((path.parent / "manifest.json").read_text(encoding="utf-8")).get("status") == "closed"
+            except (OSError, ValueError):
+                closed = False
+            if closed and not tail.partial:
+                self.finished.add(path)
+                del self.tails[path]
+        return result
+
+
 def cgroup_stats(proc=Path("/proc/1"), root=Path("/host-cgroup")):
     groups = [line.split(":", 2) for line in (proc / "cgroup").read_text(encoding="utf-8").splitlines()]
     for _, controllers, name in groups:
@@ -29,10 +54,16 @@ def resource_sample(proc=Path("/proc/1"), root=Path("/host-cgroup")):
 def main():
     tail = JsonlTail("/data/upstream-attempts.jsonl")
     due, previous = time.monotonic(), None
+    events = EncounterEvents()
+    discover = 0.0
     while True:
         try:
             for row in tail.read():
                 print(json.dumps({"kind": "attempt", "event": row}), flush=True)
+            if time.monotonic() >= discover:
+                for row in events.read():
+                    print(json.dumps(row), flush=True)
+                discover = time.monotonic() + 0.5
             if time.monotonic() >= due:
                 sample = resource_sample()
                 sample["cpu_percent"] = (100 * (sample["usage_usec"] - previous["usage_usec"]) / 1e6

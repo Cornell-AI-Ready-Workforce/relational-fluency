@@ -69,7 +69,7 @@ class Participant:
                    "conversation_started": None, "hangup_requested": None,
                    "completed": False, "completed_at": None, "completion_reason": None,
                    "post_complete_close": [], "lines": [], "error_frames": [],
-                   "server_errors": [], "generator_errors": [], "video_ticks": [],
+                   "server_errors": [], "server_error_events": [], "generator_errors": [], "video_ticks": [],
                    "websocket_disconnects": 0, "unexpected_disconnect": False,
                    "video_chunks": 0, "replies_started": 0}
         self.pending = set()
@@ -85,6 +85,10 @@ class Participant:
         self.completed = asyncio.Event()
         self._close_errors_seen = set()
 
+    def server_error(self, message):
+        self.tl["server_errors"].append(message)
+        self.tl["server_error_events"].append({"t": time.time(), "message": message})
+
     def record_close(self, exc, task):
         if exc in self._close_errors_seen:
             return
@@ -99,7 +103,7 @@ class Participant:
                 "completed_at": self.tl["completed_at"],
             })
         else:
-            self.tl["server_errors"].append(type(exc).__name__ + ": " + str(exc))
+            self.server_error(type(exc).__name__ + ": " + str(exc))
             self.tl["unexpected_disconnect"] = True
 
     async def observe_close(self, coro, task):
@@ -182,10 +186,10 @@ class Participant:
                 self.completed.set()
             elif kind == "error":
                 self.tl["error_frames"].append(str(message.get("message", ""))[:200])
-                self.tl["server_errors"].append("server error frame")
+                self.server_error("server error frame")
         if not self.completed.is_set() and not self.tl["hangup_requested"]:
             self.tl["unexpected_disconnect"] = True
-            self.tl["server_errors"].append("server-initiated websocket close")
+            self.server_error("server-initiated websocket close")
 
     async def send(self, pcm):
         due = time.monotonic()
@@ -289,7 +293,7 @@ class Participant:
                     except httpx.HTTPError as exc:
                         self.tl["video_error"] = type(exc).__name__
                         # The page retains the head and retries on the next chunk.
-                        self.tl["server_errors"].append("video upload: " + type(exc).__name__)
+                        self.server_error("video upload: " + type(exc).__name__)
                         tick.clear()
                         break
         finally:
@@ -355,7 +359,10 @@ class Participant:
             if isinstance(exc, websockets.ConnectionClosed):
                 self.record_close(exc, "Participant.run")
             elif not self.tl["completed"]:
-                self.tl[error_side(exc)].append(type(exc).__name__ + ": " + str(exc)[:100])
+                if error_side(exc) == "server_errors":
+                    self.server_error(type(exc).__name__ + ": " + str(exc)[:100])
+                else:
+                    self.tl["generator_errors"].append(type(exc).__name__ + ": " + str(exc)[:100])
                 self.tl["unexpected_disconnect"] = error_side(exc) == "server_errors"
         finally:
             self.tl["hangup_requested"] = self.tl["hangup_requested"] or time.time()
