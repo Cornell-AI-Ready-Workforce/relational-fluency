@@ -138,11 +138,15 @@ def folded_top20(text):
 class Runtime:
     def __init__(self, directory, *, backend="docker", gateway="fake", image=None,
                  fake_config=None, live_key=None, live_url=None, cpu_scale=1.0, fargate_reference=None, profile_image=None,
-                 encounter_seconds=None):
+                 encounter_seconds=None, server_checkout=None, server_environment=None):
         self.directory = Path(directory).resolve()
         self.data = self.directory / "server-data"
         self.backend, self.gateway, self.image = backend, gateway, image
         self.fake_config = fake_config or FakeConfig()
+        self.server_checkout = Path(server_checkout).resolve() if server_checkout else ROOT
+        self.server_environment = dict(server_environment or {})
+        if server_checkout and (backend != "local" or not (self.server_checkout / "server/app.py").is_file()):
+            raise ValueError("server checkout requires the local backend and server/app.py")
         self.live_key, self.live_url = live_key, live_url
         self.encounter_seconds = encounter_seconds
         self.cpu_scale, self.fargate_reference, self.profile_image = cpu_scale, fargate_reference, profile_image
@@ -168,11 +172,16 @@ class Runtime:
         self.health = None
         self.server_pid = None
 
+    def production(self):
+        values = (production_environment() if self.server_checkout == ROOT else
+                  production_environment(self.server_checkout / "infra/terraform"))
+        return {**values, **self.server_environment}
+
     def _prepare(self):
         self.directory.mkdir(parents=True, exist_ok=True)
         self.data.mkdir(exist_ok=True)
         self.data.chmod(0o777)  # production image runs as uid 1000
-        self.fake_config.model_ids = sorted({value for key, value in production_environment().items() if "MODEL" in key})
+        self.fake_config.model_ids = sorted({value for key, value in self.production().items() if "MODEL" in key})
         _write_json(self.directory / "fake-config.json", asdict(self.fake_config))
         # Reports default to tools/load/reports. Mounting the checkout's entire
         # tools directory would also expose server.env and exported recordings.
@@ -353,7 +362,7 @@ class Runtime:
         env = environment(gateway=self.gateway, fake_url="https://upstream:8443", data_dir="/data",
                           key=self.key, live_key=self.live_key, live_url=self.live_url,
                           certificate="/load/ca-bundle.pem", isolated=self.gateway == "fake",
-                          encounter_seconds=self.encounter_seconds)
+                          encounter_seconds=self.encounter_seconds, production=self.production())
         env_path = self.directory / "server.env"
         def write_env():
             if any("\n" in str(value) or "\r" in str(value) for value in env.values()):
@@ -412,8 +421,10 @@ class Runtime:
         await self._wait(self.fake_base + "/__load/stats", verify=self.fake_ssl)
         env = environment(gateway=self.gateway, fake_url=self.fake_base, data_dir=self.data,
                           key=self.key, live_key=self.live_key, live_url=self.live_url, certificate=self.bundle,
-                          encounter_seconds=self.encounter_seconds)
+                          encounter_seconds=self.encounter_seconds, production=self.production())
         env.update(PORT=str(server_port), HOST="127.0.0.1")
+        if self.server_checkout != ROOT:
+            env["RF_LOAD_SERVER_CHECKOUT"] = str(self.server_checkout)
         process = await self._spawn([sys.executable, "-m", "tools.load.server"], "server", env={**inherited, **env})
         self.server_pid = process.pid
 

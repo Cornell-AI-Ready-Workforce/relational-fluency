@@ -18,7 +18,7 @@ import httpx
 
 from tools.load import measure, fast
 from tools.load.search import Search
-from tools.load.fake_upstream import FakeConfig
+from tools.load.fake_upstream import FakeConfig, load_config
 from tools.load.participant import Participant, ServerError, error_side, full_sequence, open_identity
 from tools.load.runtime import ROOT, Runtime, RuntimeUnavailable, read_encounters
 from tools.load.settle import SettlePollError, SettlePoller
@@ -81,6 +81,7 @@ def parse_args(argv=None):
     parser.add_argument("--fargate-reference", type=Path, help="stored calibration JSON; never contacts AWS")
     parser.add_argument("--tts-factors", help="separate ramps, for example 1.0,3.0; default: fake config factor")
     parser.add_argument("--fake-config", type=Path)
+    parser.add_argument("--fake-tts-profile", choices=("calibrated", "legacy"))
     parser.add_argument("--report-dir", type=Path)
     parser.add_argument("--close-timeout", type=positive, default=120)
     parser.add_argument("--profile-seconds", type=positive, default=10)
@@ -511,8 +512,7 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
         raise ValueError("live gateway was not explicitly authorized within its concurrency cap")
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     directory = (args.report_dir or ROOT / "tools" / "load" / "reports" / (stamp + "-" + secrets.token_hex(3))).resolve()
-    config = await asyncio.to_thread(lambda: FakeConfig.from_dict(json.loads(args.fake_config.read_text(encoding="utf-8")))
-                                     if args.fake_config else FakeConfig())
+    config = await asyncio.to_thread(load_config, args.fake_config, profile=args.fake_tts_profile)
     env = await asyncio.to_thread(production_environment)
     def preload():
         for scenario in args.scenarios:
@@ -525,8 +525,9 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
     factors = args.tts_factors or [config.tts_realtime_factor]
     report = {"rule": measure.RULE + " " + fast.BASELINE_RULE, "generated_at": stamp, "steps": [], "ramps": [], "capacity": None,
               "gateway": args.gateway, "tts": "fake", "fake_configuration": asdict(config),
-              "capacity_scope": "this host; fake timing and speaker/tool probabilities are uncalibrated assumptions",
+              "capacity_scope": "this host; TTS uses the recorded profile; fake gateway timing and speaker/tool probabilities remain assumptions",
               "configuration": {"ramp": args.ramp, "repeat": args.repeat, "scenarios": args.scenarios,
+                                "fake_tts_profile": config.tts_profile,
                                 "fake_revision_sha256": hashlib.sha256((ROOT / "tools/load/fake_upstream.py").read_bytes()).hexdigest(),
                                 "arrival_spacing_s": args.arrival, "duration_s": args.duration,
                                 "warmup_s": args.warmup, "webcam": args.webcam, "custom_steps": args.steps,

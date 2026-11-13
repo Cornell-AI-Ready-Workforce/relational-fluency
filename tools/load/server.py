@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import sys
 
 
 class RedactKey(logging.Filter):
@@ -19,6 +20,15 @@ class RedactKey(logging.Filter):
 
 
 def main():
+    checkout = os.environ.get("RF_LOAD_SERVER_CHECKOUT")
+    if checkout:
+        # Select server code before importing any server module. The harness
+        # tools package remains the already loaded package from this checkout.
+        root = Path(checkout).resolve()
+        if not (root / "server/app.py").is_file():
+            raise ValueError("selected server checkout has no server/app.py")
+        sys.path.insert(0, str(root))
+        os.chdir(root)
     import dotenv
     # Production env was resolved first by the parent. Neither .env reader may
     # undo the fake endpoint overrides or import the operator's credentials.

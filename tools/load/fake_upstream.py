@@ -39,6 +39,7 @@ class Distribution:
 @dataclass
 class FakeConfig:
     seed: int = 20261112
+    tts_profile: str = "calibrated"
     # measured 2026-11-12: the Cornell gateway kept an idle keep-alive
     # connection open > 150 s; the server's pool expires at 55 s.
     http_keepalive_s: float = 160.0
@@ -47,10 +48,19 @@ class FakeConfig:
     actor_first_ms: Distribution = field(default_factory=lambda: Distribution(1400, 2600))
     token_ms: Distribution = field(default_factory=lambda: Distribution(25, 55))
     messages_ms: Distribution = field(default_factory=lambda: Distribution(300, 900))
-    tts_first_ms: Distribution = field(default_factory=lambda: Distribution(150, 350))
+    tts_connect_ms: Distribution | None = None
+    tts_first_ms: Distribution | None = None
     reply_words: Distribution = field(default_factory=lambda: Distribution(15, 35))
-    tts_words_per_minute: float = 160.0
-    tts_realtime_factor: float = 2.0
+    tts_words_per_minute: float | None = None
+    tts_realtime_factor: float | None = None
+    tts_close_ms: Distribution = field(default_factory=lambda: Distribution(0, 0))
+    tts_final_flush_only: bool = False
+    actor_sse_mode: str = "words"
+    actor_replies: list[str] = field(default_factory=list)
+    # One entry per STT request/commit arrival. Delays allow completion reversal;
+    # status injects HTTP failure; an explicit content key can be empty or null.
+    # Commit item IDs are not sent on the real gateway's HTTP wire.
+    stt_plan: list[dict] = field(default_factory=list)
     second_speaker_probability: float = 0.25
     tool_call_probability: float = 0.01
     audio_chunk_ms: int = 100
@@ -60,6 +70,34 @@ class FakeConfig:
     failures: dict[str, list[int]] = field(default_factory=dict)
 
     def __post_init__(self):
+        if self.tts_profile not in {"calibrated", "legacy"}:
+            raise ValueError("TTS profile must be calibrated or legacy")
+        if not isinstance(self.tts_final_flush_only, bool):
+            raise ValueError("tts_final_flush_only must be boolean")
+        # 2026-11-12 tts-cal/results/summary.{md,json}: 30 successes, 15
+        # single-sentence fits. Rounded first delay/WPM/factor as requested.
+        # Connect uniform fits pooled p50=107, p90=176; separate from first audio.
+        legacy = self.tts_profile == "legacy"
+        if self.tts_connect_ms is None:
+            self.tts_connect_ms = Distribution(0, 0) if legacy else Distribution(20.75, 193.25)
+        if self.tts_first_ms is None:
+            self.tts_first_ms = Distribution(150, 350) if legacy else Distribution(486, 696)
+        if self.tts_words_per_minute is None:
+            self.tts_words_per_minute = 160.0 if legacy else 189.0
+        if self.tts_realtime_factor is None:
+            self.tts_realtime_factor = 2.0 if legacy else 9.3
+        if self.actor_sse_mode not in {"words", "fragmented"} or any(not isinstance(s, str) or not s for s in self.actor_replies):
+            raise ValueError("actor replies require nonempty strings and words/fragmented SSE mode")
+        for case in self.stt_plan:
+            if not isinstance(case, dict) or set(case) - {"delay_ms", "status", "content"}:
+                raise ValueError("STT plan requires delay_ms, status or content")
+            delay = case.get("delay_ms", 0)
+            if not isinstance(delay, (int, float)) or not math.isfinite(delay) or delay < 0:
+                raise ValueError("STT plan delay must be finite and nonnegative")
+            if "status" in case and (not isinstance(case["status"], int) or not 400 <= case["status"] <= 599):
+                raise ValueError("STT plan status requires HTTP 400..599")
+            if "content" in case and case["content"] is not None and not isinstance(case["content"], str):
+                raise ValueError("STT plan content must be text or null")
         if not math.isfinite(self.http_keepalive_s) or self.http_keepalive_s <= 0:
             raise ValueError("positive finite HTTP keep-alive timeout required")
         if (not math.isfinite(self.tts_words_per_minute) or self.tts_words_per_minute <= 0
@@ -86,10 +124,28 @@ class FakeConfig:
         if unknown:
             raise ValueError("unknown fake configuration keys: " + ", ".join(sorted(unknown)))
         for name in ("models_ms", "stt_ms", "actor_first_ms", "token_ms", "messages_ms",
-                     "tts_first_ms", "reply_words"):
-            if name in values:
+                     "tts_first_ms", "tts_connect_ms", "tts_close_ms", "reply_words"):
+            if name in values and values[name] is not None:
                 values[name] = Distribution(**values[name])
         return cls(**values)
+
+
+def load_config(path=None, *, profile=None, seed=None):
+    values = json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
+    if profile is not None:
+        values["tts_profile"] = profile
+    if seed is not None:
+        values["seed"] = seed
+    return FakeConfig.from_dict(values)
+
+
+def content_chunks(text, mode):
+    if mode == "words":
+        return [word + " " for word in text.split()]
+    # Whitespace and punctuation are independent deltas. Terminal punctuation
+    # has no invented trailing whitespace, so it can require a final flush.
+    return [token[i:i + 3] for token in re.findall(r"\w+|[^\w\s]|\s+", text)
+            for i in range(0, len(token), 3)]
 
 
 class StimulusMatcher:
@@ -223,6 +279,7 @@ def create_app(config=None, *, log_path=None):
         if failure:
             return JSONResponse({"error": "injected"}, status_code=failure)
         if route == "stt":
+            plan = config.stt_plan[request_number - 1] if request_number <= len(config.stt_plan) else {}
             try:
                 content = body["messages"][0]["content"]
                 encoded = next(p["input_audio"]["data"] for p in content if p.get("type") == "input_audio")
@@ -232,13 +289,27 @@ def create_app(config=None, *, log_path=None):
                 text = await asyncio.to_thread(state.matcher.transcribe, wav)
             except (KeyError, IndexError, ValueError, StopIteration, TypeError, wave.Error) as exc:
                 return state.error(request.url.path, str(exc))
-            await state.delay(config.stt_ms)
+            state.log("stt_started", request_number=request_number)
+            try:
+                if "delay_ms" in plan:
+                    await asyncio.sleep(plan["delay_ms"] / 1000)
+                else:
+                    await state.delay(config.stt_ms)
+            except asyncio.CancelledError:
+                state.log("stt_cancelled", request_number=request_number)
+                raise
+            if "status" in plan:
+                state.log("stt_completed", request_number=request_number, status=plan["status"])
+                return JSONResponse({"error": "planned STT failure"}, status_code=plan["status"])
             # Gateway probe, 2026-11-12: transcribe ignores the text prompt and
             # returns content:null with finish_reason:stop for silence/room tone.
             # The pre-D3 profile image selects flash-lite, which writes the
             # prompted [no speech] sentinel instead. Select by the wire model.
             if not text:
                 text = "[no speech]" if body.get("model") == "nto.gemini-3.5-flash-lite" else None
+            if "content" in plan:
+                text = plan["content"]
+            state.log("stt_completed", request_number=request_number, status=200)
             return {"choices": [{"index": 0, "finish_reason": "stop",
                                  "message": {"role": "assistant", "content": text}}]}
 
@@ -247,9 +318,11 @@ def create_app(config=None, *, log_path=None):
             words = REPLY.split()
             count = round(config.reply_words.draw(state.rng))
             text = " ".join((words * (count // len(words) + 1))[:count]).rstrip(".,?") + "."
-            for word in text.split():
+            if config.actor_replies:
+                text = config.actor_replies[(request_number - 1) % len(config.actor_replies)]
+            for chunk in content_chunks(text, config.actor_sse_mode):
                 yield "data: " + json.dumps({"choices": [{"index": 0, "finish_reason": None,
-                                                         "delta": {"content": word + " "}}]}) + "\n\n"
+                                                         "delta": {"content": chunk}}]}) + "\n\n"
                 await state.delay(config.token_ms)
             tool_due = (request_number % config.tool_call_every == 0 if config.tool_call_every
                         else state.rng.random() < config.tool_call_probability)
@@ -297,6 +370,7 @@ def create_app(config=None, *, log_path=None):
     @app.websocket("/v1/text-to-dialogue/stream-input")
     async def tts(ws: WebSocket):
         failure = state.attempt("tts_ws")
+        await state.delay(config.tts_connect_ms)
         if failure:
             await ws.send_denial_response(JSONResponse({"error": "injected"}, status_code=failure))
             return
@@ -306,6 +380,7 @@ def create_app(config=None, *, log_path=None):
             return
         await ws.accept()
         pending = asyncio.Queue()
+        held = []
         voices = set()
 
         async def audio():
@@ -313,6 +388,7 @@ def create_app(config=None, *, log_path=None):
             while True:
                 text = await pending.get()
                 if text is None:
+                    await state.delay(config.tts_close_ms)
                     await ws.send_json({"is_final": True})
                     return
                 if first:
@@ -343,6 +419,8 @@ def create_app(config=None, *, log_path=None):
                     state.protocol["keepalives"] += 1
                 elif message.get("close_socket"):
                     state.protocol["close_socket"] += 1
+                    for text in held:
+                        pending.put_nowait(text)
                     pending.put_nowait(None)
                     await worker
                     return
@@ -350,7 +428,10 @@ def create_app(config=None, *, log_path=None):
                     for item in message["inputs"]:
                         if item.get("voice_id") not in voices or not isinstance(item.get("text"), str):
                             raise ValueError("input needs registered voice_id and text")
-                        pending.put_nowait(item["text"])
+                        if config.tts_final_flush_only:
+                            held.append(item["text"])
+                        else:
+                            pending.put_nowait(item["text"])
                         state.protocol["inputs"] += 1
                     if message.get("flush"):
                         state.protocol["flushes"] += 1

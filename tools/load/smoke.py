@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import replace
+from dataclasses import asdict, replace
 import datetime as dt
 from http.client import HTTPException
 import json
@@ -10,7 +10,7 @@ from pathlib import Path
 import secrets
 
 from tools.load import measure
-from tools.load.fake_upstream import FakeConfig
+from tools.load.fake_upstream import FakeConfig, load_config
 from tools.load.runtime import ROOT, Runtime
 
 
@@ -72,7 +72,7 @@ def diagnostic(step, probe, expected=('S1A', 'S2A', 'S3A', 'S4A')):
 
 async def run_smoke(args, directory, *, runtime_factory=Runtime, participant_factory=None):
     from tools.load.run import run_step, Participant, load_key, production_environment
-    config = FakeConfig.from_dict(json.loads(args.fake_config.read_text(encoding='utf-8'))) if args.fake_config else FakeConfig()
+    config = load_config(args.fake_config, profile=args.fake_tts_profile)
     outcomes = []
     if args.gateway == 'live' and args.max_concurrency < 5:
         return {'ran': False, 'verdict': 'FAIL', 'capacity_eligible': False,
@@ -96,7 +96,8 @@ async def run_smoke(args, directory, *, runtime_factory=Runtime, participant_fac
         outcomes.append(outcome)
         print('Smoke: ' + outcome['verdict'] + ' ' + '; '.join(outcome['reasons']), flush=True)
         if outcome['verdict'] != 'PASS': break
-    return {'ran': True, 'verdict': 'PASS' if all(o['verdict'] == 'PASS' for o in outcomes) else 'FAIL',
+    return {'ran': True, 'fake_tts_profile': config.tts_profile, 'fake_configuration': asdict(config),
+            'verdict': 'PASS' if all(o['verdict'] == 'PASS' for o in outcomes) else 'FAIL',
             'capacity_eligible': False, 'outcomes': outcomes}
 
 

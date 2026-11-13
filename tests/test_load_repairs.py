@@ -137,7 +137,7 @@ def test_f5_tts_factors_run_independent_baselines_and_report_capacity_range(monk
     report, _ = asyncio.run(run.run_experiment(args, runtime_factory=Capture))
     assert configs == [1, 3] and report["capacity_range"] == [1, 5]
     assert report["capacity_range_complete"] and len(report["ramps"]) == 2
-    assert FakeConfig().tts_realtime_factor == 2 and FakeConfig().reply_words == Distribution(15, 35)
+    assert FakeConfig(tts_profile="legacy").tts_realtime_factor == 2 and FakeConfig().reply_words == Distribution(15, 35)
 
 
 def window_summary():

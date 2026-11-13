@@ -19,7 +19,7 @@ from tools.sim import stim
 
 def fast_config(**kwargs):
     values = {name: Distribution(0, 0) for name in (
-        "models_ms", "stt_ms", "actor_first_ms", "token_ms", "messages_ms", "tts_first_ms")}
+        "models_ms", "stt_ms", "actor_first_ms", "token_ms", "messages_ms", "tts_first_ms", "tts_connect_ms")}
     values.update(reply_words=Distribution(30, 30), tts_words_per_minute=60000, **kwargs)
     return FakeConfig(**values)
 

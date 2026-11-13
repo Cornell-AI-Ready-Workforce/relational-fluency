@@ -37,6 +37,14 @@ POST `/v1/messages` as director/steering tool responses; ElevenLabs WSS
 The server trusts it plus public roots for explicitly enabled live mode.
 TTS always uses a synthetic key and the fake.
 
+The default TTS profile is `calibrated`, fitted to the orchestrator's
+2026-11-12 ElevenLabs sample: 30 measured successes, with 15 single-sentence
+requests for the first-audio/duration/generation fits. `--fake-tts-profile legacy`
+selects the earlier connect=0 ms, first audio=150–350 ms, 160 WPM, factor=2.0
+settings. JSON `tts_profile` also selects the base profile. Explicit JSON fields
+override profile defaults; an explicit CLI profile overrides the JSON profile
+name. Reports retain the resolved profile and all effective values.
+
 STT accepts a single waveform anchor from the committed sim clips. Valid
 speech fragments without an anchor get a canned transcript whose word count
 scales with audio duration. `unmatched_fragment` counts these responses in
@@ -80,10 +88,11 @@ replaces selected fields. Equal low/high bounds give a constant. For example:
 | actor_first_ms | 1,400–2,600 ms | Argon first-token observation, 2026-10-15, in `server/voice/cascade.py:reasoning_effort`; uniform shape is an assumption. |
 | token_ms | 25–55 ms per word-sized SSE piece | Uncalibrated assumption. |
 | messages_ms | 300–900 ms | Uncalibrated director/steering assumption. |
-| tts_first_ms | 150–350 ms | Uncalibrated assumption; no ElevenLabs key. |
+| tts_connect_ms | 20.75–193.25 ms | Uniform fit to pooled connect p50=107 / p90=176 ms, 30 measured successes on 2026-11-12. Applied before WebSocket accept, separately from first audio. Local transport overhead is additional. |
+| tts_first_ms | 486–696 ms | Rounded uniform fit to single-sentence text-to-first-audio p50=590.617 / p90=674.535 ms (n=15). Once per stream; handshake excluded. |
 | reply_words | 15–35 words | Uncalibrated distribution centred on `server/engine.py:SPEECH_RULES`, about 25 words. |
-| tts_realtime_factor | 2.0 | Uncalibrated assumption: generation speed divided by playback speed. Each chunk sleeps audio-duration / factor. |
-| tts_words_per_minute | 160 | Assumption for synthetic audio duration. |
+| tts_realtime_factor | 9.3 | Rounded through-origin single-sentence audio-duration/generation-time fit (n=15; unrounded 9.3393). Each chunk sleeps audio-duration / factor, including its final chunk. |
+| tts_words_per_minute | 189 | Rounded zero-intercept duration fit (n=15; unrounded 188.836). The unconstrained slope is not the fake's fit. |
 | second_speaker_probability | 0.25 | Uncalibrated P(second speaker) in casts with at least two members. |
 | tool_call_probability | 0.01 | Uncalibrated probability per actor response, only when the request offers a tool. `tool_call_every` overrides it for deterministic tests. |
 | audio_chunk_ms | 100 | Packet-size assumption; a full PCM24k chunk has 4,800 bytes. |
@@ -92,8 +101,9 @@ replaces selected fields. Equal low/high bounds give a constant. For example:
 `--tts-factors 1.0,3.0` runs a ramp at each factor and reports capacities by
 factor and a range. A missing capacity at either factor leaves the range
 incomplete. The old sim report `tools/sim/reports/1469925.json` gives end-to-end
-latency, not isolated stage calibration. These timings, speaker counts and
-tool rates remain assumptions.
+latency, not isolated stage calibration. Gateway timings, speaker counts and
+tool rates remain assumptions. The pooled TTS profile does not reproduce
+voice-specific effects, burstiness or sentence-dependent tail delays.
 
 Calibration from future production records: pair each `turn_timing` interval
 from `first_audio_from_gateway` to `assistant_done` with that reply's generated
@@ -359,3 +369,76 @@ The low-level `run_experiment` API runs the capacity experiment only; the CLI's
 `run_with_smoke` orchestration owns the isolated gate. Direct API callers must
 choose that orchestration if they require the same gate. Reports record the
 choice. Real Docker probe checks require `RF_LOAD_DOCKER_TESTS=1`.
+
+## Reply-trace latency diagnostics
+
+```sh
+python -m tools.load.latency --server-checkout /Users/haocheng/code/rf-a6 \
+  --gateway live --allow-live --participants 1 --scenarios S1A,S2A --turns 24 \
+  --seed 20261112 --fake-tts-profile calibrated \
+  --report-dir "$HOME/code/rf-load-runs/latency-a6"
+```
+
+Set `LITELLM_API_KEY` in the operator's environment, or use the existing
+harness checkout's `.env` credential loader. The key is never written into
+the report. `--live-url` overrides the selected checkout's production gateway.
+The local backend imports server code and production configuration from
+`--server-checkout`; harness tools come from this checkout. It suppresses the
+selected checkout's `.env` readers before importing the server. The TTS URL
+always points to the local fake and the ElevenLabs key is synthetic. No real
+ElevenLabs request is required. This backend has no CPU cap or egress isolation.
+
+Each participant completes one scripted encounter per selected 1:1 scenario.
+`--turns` selects the number of committed synthetic lines, shuffled by the
+fixed seed and repeated as needed. Each `say` waits for playback/settling;
+these are scripted participant utterances, not a promise of exactly one model
+request per utterance. A timeout defaults to 60 seconds per turn plus 60;
+the diagnostic server ceiling is another 30 seconds later. The participant
+hangs up after its script. Live attempt and observer safety guards remain on.
+`--tts-slots 1` changes the server's `ELEVENLABS_CONCURRENCY` for contention
+diagnostics. Group scenarios are rejected. No N=1 reference or capacity verdict
+is calculated; `capacity_eligible=false`.
+
+Raw, complete session events are copied without rewriting to
+`sessions/<session_id>/events.jsonl` in the report directory after artifact
+settling. The runtime directory retains original events and other session
+artifacts. Reports index `reply_trace`, `commit_trace` and `turn_timing` counts,
+the selected checkout revision/dirty state, workload seed and effective fake
+profile. Missing traces or incomplete scripts fail the diagnostic. The command
+prints the gateway request count, including startup/preflight attempts and
+excluding TTS and slot-only waits. The count comes from upstream-attempt
+telemetry; it is not a token or billing estimate. Server teardown must finish
+to preserve the buffered A6 traces. Playback is a byte-duration simulation;
+browser receipt, scheduling and clock telemetry remain outside this harness.
+
+Fake-only parity settings can be supplied with `--fake-config` and
+`--gateway fake`. Live mode sends actor/STT work to the gateway, so these fake
+gateway settings affect only fake-mode tests:
+
+```json
+{
+  "actor_sse_mode": "fragmented",
+  "actor_replies": ["A first reply with no punctuation", "A first reply ending in punctuation."],
+  "stt_plan": [{"delay_ms": 2000}, {"delay_ms": 0}, {"status": 503}, {"content": null}, {"content": ""}],
+  "tts_connect_ms": {"low": 1000, "high": 1000},
+  "tts_close_ms": {"low": 500, "high": 500},
+  "tts_final_flush_only": false
+}
+```
+
+Fragmented SSE splits words, punctuation and whitespace into separate deltas.
+It adds no terminal whitespace. The two example replies therefore release
+their first sentence only at the model's final flush. All actor/STT successful
+choices retain `finish_reason: "stop"`. `stt_plan` entries select successive
+non-streaming audio request arrivals; delays can reverse completion order,
+status injects a failure, and an explicit content key can give empty/no-speech.
+Cancellation of a delayed hearing remains a client/server operation and is
+logged by the fake when its handler is cancelled. Commit item IDs are absent
+from the gateway payload, so a fake cannot address those IDs directly; the
+server retains the request-to-commit association. Concurrent sessions and
+speech-check requests share the arrival counter. Use N=1 and a known request
+sequence for controlled cases. `tts_final_flush_only=true` additionally holds
+provider audio until `close_socket`; it is a fault scenario, not part of the
+calibrated profile. Slow connect/close and `--tts-slots` provide contention and
+cancellation stimuli; D4 joins, held/withheld output and early ACK decisions
+belong to the selected server and participant path, not fabricated trace rows.
