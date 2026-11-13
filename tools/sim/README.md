@@ -204,3 +204,53 @@ ACK timing includes return network time. It does not measure hearing. The sim
 does not model the browser audio path. Mode uses session metadata. The tool
 cannot separate mixed room and 1:1 interactions within one session. Both
 outputs list these limits and the boundaries not recorded.
+
+Files with `reply_trace` or `commit_trace` events also produce a `trace` section
+in JSON and a reply-path table in Markdown. The reader supports trace schema
+version 1, `clock: encounter_s`, and seconds. Event `t` and `wall` date teardown;
+they do not date the stages. Unknown versions and clocks are listed without
+parsing their stage data. Inputs without trace events keep the same output.
+
+The trace joins `reply_trace.page_turn` to `turn_timing.turn` within each session.
+It joins `commit_item_ids` and `release_commit_item_id` to their exact
+`commit_trace.commit_item_id`. It does not join by event order or nearby time.
+The coverage counts show traces without a timing row, timing rows without a
+trace, rejected schemas and unreferenced commits. Duplicate identities remain
+unjoined. Cancelled and failed replies retain their observed partial stages.
+
+| Trace section | Meaning |
+|---|---|
+| `provider_audio` | Critical path from the commit's `participant.vad_detected` to `reply.stages.tts_first_audio`. |
+| `adapter_output` | That path through `first_output_emitted`. |
+| `client_audio` | Critical path through any transcript hold to `turn_timing.first_audio_to_client`. |
+| `played_ack` | Client path through `turn_timing.first_audio_played`. |
+| `work` | Full generation, slot wait, connection and other observed spans. These spans can overlap. |
+| `commit_work` | STT and transcript decision spans, tied to their commit IDs. |
+| `overlap` | Intersections of generation, connection and STT spans. |
+| `readiness_gap` | TTS readiness after sentence readiness, sentence readiness after connection, or transcript readiness after held audio. |
+
+The critical path follows causal edges. Request, content and sentence stamps
+form one branch. Slot acquisition and connection form another. The first text
+send waits for both sentence and connection readiness. The later prerequisite
+selects the path at that join. Transcript decision and held audio form a
+separate join at hold release. A different release commit does not inherit the
+reply's participant clock or STT history.
+
+Each group retains scenario, mode, family/model and the first, handoff and later
+labels from its matched timing row. A trace without that row keeps unavailable
+group labels as unknown. Each stage reports n, p50 and p90. Commit work counts
+commit spans per reply; its n can exceed the reply count. Missing stamps stay
+missing. Each path reports an unexplained residual when a dependency is absent
+or has invalid order. Complete recorded paths have no unexplained time.
+
+Do not add work, overlaps, readiness gaps and critical-path stages together.
+Readiness gaps describe observed waits. They do not predict an optimization's
+gain. The legacy coarse split stays available for comparison and for untraced
+rows. Its missing-boundary list does not describe the stamps present in a trace.
+
+Trace stamps use monotonic elapsed time after attachment. Legacy client and
+playback stamps use wall elapsed time. Their combined tails require aligned
+encounter clocks. Reversed causal edges remain unexplained. Last voice is a
+sample-position estimate, and playback ACK remains an estimate of scheduling,
+not hearing. This trace covers the 1:1 cascade. Room routing, floor waits and
+browser receipt still need separate observations.

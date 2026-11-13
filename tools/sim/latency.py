@@ -11,6 +11,7 @@ from server.voice.realtime import family_of
 from tools.encounter_health import read_events
 from tools.sim.analyze import percentile
 from tools.sim.check import load_baseline as read_json, write_json
+from tools.sim import latency_trace
 
 # These intervals are disjoint when their recorded endpoints are ordered.
 INTERVALS = {
@@ -277,6 +278,7 @@ def analyze_paths(paths):
                 if isinstance(doc.get("scenarios"), dict) and "generated_at" in doc:
                     reports[candidate] = doc
     session_ids = set()
+    trace_sessions = []
     for selected, directory in sorted(sessions.items()):
         event_path = selected
         record_path = directory / "record.json"
@@ -291,6 +293,8 @@ def analyze_paths(paths):
         if len(valid_events) != len(events):
             issues.append(f"{source}: non-object events ignored")
         current = session_rows(record, valid_events, source, timelines.get(directory.name))
+        trace_sessions.append(latency_trace.session(valid_events, source,
+            context(record, valid_events, timelines.get(directory.name)), current))
         rows.extend(current)
         sources.append({"path": source, "reply_rows": len(current)})
         if any(e.get("type") == "turn_timing" for e in valid_events):
@@ -306,7 +310,7 @@ def analyze_paths(paths):
     for path, report in sorted(reports.items()):
         # A run directory can contain both the summary and its underlying events.
         groups.extend(g for g in summary_groups(report, str(path), issues) if g.get("session_id") not in session_ids)
-    return {"schema_version": 2, "units": "seconds (cascade diagnostics remain milliseconds)",
+    report = {"schema_version": 2, "units": "seconds (cascade diagnostics remain milliseconds)",
             "group_fields": list(GROUP_FIELDS),
             "definitions": {"total": {"start_field": TOTAL[0], "end_field": TOTAL[1]},
                             **{k: {"start_field": v[0], "end_field": v[1]} for k, v in INTERVALS.items()},
@@ -323,6 +327,10 @@ def analyze_paths(paths):
             "sources": sources, "issues": issues, "caveats": CAVEATS,
             "missing_boundaries": MISSING_BOUNDARIES, "rows": rows, "groups": groups,
             "counts": dict(Counter("timed" if r["total_s"] is not None else "missing_or_invalid_total" for r in rows))}
+    trace = latency_trace.combine(trace_sessions)
+    if trace is not None:
+        report["trace"] = trace
+    return report
 
 
 def markdown(report):
@@ -365,7 +373,7 @@ def markdown(report):
     if report["issues"]:
         lines.extend([""] + [f"- {item}" for item in report["issues"]])
     lines.extend(["", "Boundaries not recorded: " + "; ".join(report["missing_boundaries"]) + "."])
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n" + (latency_trace.markdown(report["trace"]) if "trace" in report else "")
 
 
 def main(argv=None):
