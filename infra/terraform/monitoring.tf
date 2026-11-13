@@ -225,9 +225,9 @@ resource "aws_cloudwatch_dashboard" "collection" {
       {
         type = "metric", x = 0, y = 15, width = 12, height = 6
         properties = {
-          title   = "TTS slot wait and upstream request duration (ms)"
+          title   = "Gateway latency, TTS stream lifetime and slot wait (ms)"
           region  = var.region, view = "timeSeries", period = 60, stat = "p90"
-          metrics = [["RelationalFluency", "TtsQueueWait"], ["RelationalFluency", "UpstreamLatency", "Upstream", "gateway"], ["RelationalFluency", "UpstreamLatency", "Upstream", "elevenlabs"]]
+          metrics = [["RelationalFluency", "TtsQueueWait"], ["RelationalFluency", "UpstreamLatency", "Upstream", "gateway", { label = "Gateway request latency (ms)" }], ["RelationalFluency", "UpstreamLatency", "Upstream", "elevenlabs", { label = "TTS stream lifetime (ms)" }]]
         }
       },
       {

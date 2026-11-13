@@ -310,21 +310,25 @@ def test_real_upstream_listener_wiring_once_and_no_session_event_double_count(st
                                   outcome="ok", duration_ms=5, attempt=2, session_id=store.id)
         upstream_telemetry.record(upstream="elevenlabs", route="tts_ws", purpose="tts", outcome="ok",
                                   duration_ms=20, queue_wait_ms=100, session_id=store.id)
+        upstream_telemetry.record(upstream="elevenlabs", route="tts_ws", purpose="tts", outcome="cancelled",
+                                  duration_ms=0, queue_wait_ms=90, session_id=store.id, detail="slot_wait")
         await metrics.stop()
         assert all(task.done() for task in first_tasks)
 
     asyncio.run(check())
     docs = documents(capsys)
-    assert len(docs) == 3
+    assert len(docs) == 4
     assert samples(docs, "UpstreamRequests") == [1, 1, 1]
     assert samples(docs, "UpstreamErrors") == [1, 0, 0]
     assert samples(docs, "UpstreamLatency") == [3, 5, 20]
-    assert samples(docs, "TtsQueueWait") == [100]
+    assert samples(docs, "TtsQueueWait") == [100, 90]
+    assert samples(docs, "UpstreamCancelled") == [0, 0, 0, 1]
     assert all(d["Cohort"] == "study" for d in docs)
     assert store.id not in json.dumps(docs) and "private" not in json.dumps(docs)
     events = [json.loads(line) for line in store.events_path.read_text(encoding="utf-8").splitlines()]
-    assert [e["type"] for e in events] == ["upstream_attempt"] * 3
-    assert [e["duration_ms"] for e in events] == [3, 5, 20]
+    assert [e["type"] for e in events] == ["upstream_attempt"] * 4
+    assert [e["duration_ms"] for e in events] == [3, 5, 20, 0]
+    assert events[-1]["detail"] == "slot_wait"
     hooks = appmod.app.router.on_startup
     assert hooks.index(appmod._start_metrics_on_startup) < hooks.index(appmod._run_preflights_on_startup)
     assert metrics.stop in appmod.app.router.on_shutdown
@@ -340,6 +344,21 @@ def test_each_upstream_outcome_is_an_attempt(outcome, capsys):
     assert samples(docs, "UpstreamCancelled") == [int(outcome == "cancelled")]
     assert len(docs) == 1
     assert docs[0]["Cohort"] == "internal"
+
+
+@pytest.mark.parametrize("detail", [None, "slot_wait", "slot_wait_other"])
+def test_slot_wait_is_not_an_upstream_request(detail, capsys):
+    from server import upstream_telemetry
+    metrics.install_upstream_listener()
+    upstream_telemetry.record(upstream="elevenlabs", route="tts_ws", purpose="tts",
+                              outcome="cancelled", duration_ms=12, queue_wait_ms=120, detail=detail)
+    docs = documents(capsys)
+    assert len(docs) == 1
+    assert samples(docs, "UpstreamRequests") == ([] if detail == "slot_wait" else [1])
+    assert samples(docs, "UpstreamErrors") == ([] if detail == "slot_wait" else [0])
+    assert samples(docs, "UpstreamLatency") == ([] if detail == "slot_wait" else [12])
+    assert samples(docs, "TtsQueueWait") == [120]
+    assert samples(docs, "UpstreamCancelled") == [1]
 
 
 def test_one_stdout_write_and_all_metrics_per_upstream_attempt(monkeypatch):

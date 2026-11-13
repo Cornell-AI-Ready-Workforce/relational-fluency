@@ -136,3 +136,12 @@ def test_alb_5xx_volume_and_stopped_task_alarm_semantics():
     assert "TargetGroup = aws_lb_target_group.agent.arn_suffix" in healthy
     assert "LoadBalancer = aws_lb.main.arn_suffix" in healthy
     assert 0 < literal(healthy, "threshold") and not 1 < literal(healthy, "threshold")
+
+
+def test_tts_stream_lifetime_is_labelled_and_has_no_latency_alarm():
+    assert "UpstreamLatency" not in block(r"\bapplication_alarms\s*=")
+    names = re.findall(r'resource "aws_cloudwatch_metric_alarm" "([^"]+)"', MONITORING)
+    assert names
+    for name in names:
+        assert "UpstreamLatency" not in block(rf'resource "aws_cloudwatch_metric_alarm" "{re.escape(name)}"')
+    assert re.search(r'"UpstreamLatency",\s*"Upstream",\s*"elevenlabs",\s*\{\s*label\s*=\s*"TTS stream lifetime \(ms\)"', MONITORING)

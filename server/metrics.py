@@ -233,9 +233,12 @@ def upstream_attempt(event: dict) -> None:
         group = _cohorts.get(event.get("session_id"), "internal")
     dims = {"Purpose": event["purpose"], "Upstream": event["upstream"],
             "Outcome": event["outcome"], "Cohort": group}
-    values = {"UpstreamRequests": 1, "UpstreamErrors": int(event["outcome"] in UPSTREAM_ERRORS),
-              "UpstreamCancelled": int(event["outcome"] == "cancelled"),
-              "UpstreamLatency": event["duration_ms"]}
+    values = {"UpstreamCancelled": int(event["outcome"] == "cancelled")}
+    # A cancelled slot wait sent no request. Keep only its queue/cancellation signals.
+    if event.get("detail") != "slot_wait":
+        values.update(UpstreamRequests=1,
+                      UpstreamErrors=int(event["outcome"] in UPSTREAM_ERRORS),
+                      UpstreamLatency=event["duration_ms"])
     if event["upstream"] == "elevenlabs" and event.get("queue_wait_ms") is not None:
         values["TtsQueueWait"] = event["queue_wait_ms"]
     emit_many(values, **dims)

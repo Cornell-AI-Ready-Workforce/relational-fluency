@@ -939,10 +939,10 @@ Change them through `monitoring_thresholds` after reviewing collection data.
 |---|---|---|---|
 | `LoopLagMax` | Maximum > 250 ms, 2 of 3 minutes | The event loop stopped serving audio on time. | Check task CPU and recent blocking work in the logs. |
 | `LoopLagP99` | Maximum reported window p99 > 250 ms, 2 of 3 minutes | Sustained event-loop lag can delay audio. | Check task CPU and compare lag with active sessions. |
-| `SpeechEndToFirstPlayed` | p90 > 8000 ms in 5 minutes | Played replies started late after participant speech ended. | Check TTS wait and upstream duration. Check the sample count. |
+| `SpeechEndToFirstPlayed` | p90 > 8000 ms in 5 minutes | Played replies started late after participant speech ended. | Check TTS wait and gateway latency. Check the sample count. |
 | `UpstreamErrorRate-gateway` | At least 3 errors and error attempts / attempts > 5%, 2 of 3 minutes | Gateway requests failed. Recovered retries count. Cancellations do not count as errors. | Inspect `upstream_attempt` events by route, purpose and status. |
 | `UpstreamErrorRate-elevenlabs` | At least 3 errors and error attempts / attempts > 5%, 2 of 3 minutes | TTS connections failed. Recovered retries count. Cancellations do not count as errors. | Check handshake status and TTS queue wait. |
-| `TtsQueueWait` | p90 > 2000 ms in 1 minute | Replies waited for a local TTS slot. | Compare queue wait with upstream duration and active sessions. |
+| `TtsQueueWait` | p90 > 2000 ms in 1 minute | Replies waited for a local TTS slot. | Compare queue wait with TTS stream lifetime and active sessions. |
 | `ReplyMissing` | Count > 0 in 1 minute | A requested reply did not arrive before the runner retried. | Inspect the encounter's `reply_missing` event. A later recovery keeps this count. |
 | `ArchiveFailed` | Count > 0 in 1 minute | An archive attempt ended without a complete upload. | Inspect `archive.json`. Preserve local files and retry the archive. |
 | `ECS-cpu` | CPU used / reserved > 80%, 2 of 3 minutes | The service is near its CPU allocation. | Check loop lag and task CPU. Reduce new arrivals if replies slow down. |
@@ -998,6 +998,10 @@ Disabled archiving produces no archive result.
 Upstream attempts come from `server/upstream_telemetry.py`.
 Errors are `http_error`, `timeout`, `exception` and `closed`.
 `UpstreamCancelled` counts caller cancellations separately on the dashboard.
+Records with `detail=slot_wait` sent no request and do not enter `UpstreamRequests` or error-rate denominators.
+They retain their queue-wait and cancellation samples.
+TTS `UpstreamLatency` measures stream lifetime, from handshake through final audio or attempt end.
+It grows with reply length. The dashboard labels it TTS stream lifetime; it has no latency alarm.
 Each attempt writes one EMF document with all its metric samples.
 Metrics use stdout and the existing ECS log stream. They make no AWS calls.
 EMF delivery can duplicate a sample. Counts support operations; durable records remain authoritative.
