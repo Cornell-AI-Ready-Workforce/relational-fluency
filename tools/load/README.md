@@ -298,8 +298,9 @@ no-advance behavior. K=1 omits later run positions and three transitions; it is
 **a different workload from K=all**, not proof of equivalent sustained capacity.
 Retain a final K=all pre-pilot run.
 
-For K=1, one N=1 baseline repeat consists of four sequential fresh participants,
-each completing one full encounter. Each gets its own warmup and measurement
+For K=1, one N=1 baseline repeat uses one sequential fresh participant per
+selected scenario (four for the default mix), each completing one full encounter.
+Each gets its own warmup and measurement
 window. The server-assigned first encounters must cover the selected scenarios;
 missing coverage makes the baseline INVALID. Each unit validates independently.
 The repeat pools these units, and all N=1 repeats freeze the allowed voice-error

@@ -32,7 +32,7 @@ def diagnostic(step, probe, expected=('S1A', 'S2A', 'S3A', 'S4A')):
     reasons = list(step['errors']) + list(step.get('server_errors', []))
     if not probe.get('passed') or not probe.get('same_socket'): reasons.append('same-socket keep-alive probe failed')
     if step['fake_errors']: reasons.append('fake route/protocol error')
-    if m.get('voice_error'): reasons.append('non-benign voice_error during smoke')
+    if m.get('whole_step', m).get('voice_error'): reasons.append('non-benign voice_error during smoke')
     if not m.get('settled_artifacts'): reasons.append('closed manifests or rendered mixes missing')
     if m['achieved_concurrency'] < 4.5: reasons.append('smoke achieved concurrency < 90% of N=5')
     if m['generator_loop_lag_ms']['p99'] is None or m['generator_loop_lag_ms']['p99'] > 50:

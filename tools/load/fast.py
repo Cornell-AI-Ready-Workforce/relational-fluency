@@ -8,8 +8,9 @@ from tools.load import measure
 from tools.sim import analyze
 
 
-BASELINE_RULE = ('K=1 is a different workload from K=all. Its N=1 repeat is four sequential fresh '
-                 'single-encounter participants, each with its own warmup/window; all scenarios must validate. '
+BASELINE_RULE = ('K=1 is a different workload from K=all. Its N=1 repeat uses one sequential fresh '
+                 'single-encounter participant per selected scenario, each with its own warmup/window; '
+                 'all selected scenarios must validate. '
                  'The reference is weighted to the measured participant-turn mix of each step. '
                  'K=all retains the server Williams run and encounter transitions. Capacity covers tested points only.')
 

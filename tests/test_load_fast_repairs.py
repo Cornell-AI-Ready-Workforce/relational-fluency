@@ -78,6 +78,7 @@ def test_live_guard_remains_active_during_settling_after_fail_fast(monkeypatch, 
             await super().start()
             self.in_settle, self.kill_seen = asyncio.Event(), asyncio.Event()
             self.participant_started = False
+            self.settle_waiting = self.settle_timed_out = self.killed_during_settle = False
 
         def event_rows(self):
             return ([{"type": "voice_error", "where": "new", "wall": time.time()}]
@@ -88,15 +89,23 @@ def test_live_guard_remains_active_during_settling_after_fail_fast(monkeypatch, 
 
         async def settled_sessions(self, ids):
             self.in_settle.set()
+            self.settle_waiting = True
             if safety_failure == "429":
                 row = {"upstream": "gateway", "purpose": "actor", "route": "chat_completions_stream",
                        "outcome": "http_error", "status": 429, "t": time.time()}
                 (self.data / "upstream-attempts.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
-            await asyncio.wait_for(self.kill_seen.wait(), 1.5)
+            try:
+                await asyncio.wait_for(self.kill_seen.wait(), 1.5)
+            except asyncio.TimeoutError:
+                self.settle_timed_out = True
+                raise
+            finally:
+                self.settle_waiting = False
             return set()
 
         async def kill_server(self):
             self.killed = True
+            self.killed_during_settle = self.settle_waiting and not self.settle_timed_out
             self.kill_seen.set()
 
     async def exercise():
@@ -110,6 +119,7 @@ def test_live_guard_remains_active_during_settling_after_fail_fast(monkeypatch, 
         step = await asyncio.wait_for(run.run_step(rt, args, 1, 1, 600,
             participant_factory=InFlight, reference=REFERENCE), 3)
         assert rt.killed and rt.in_settle.is_set()
+        assert rt.killed_during_settle and not rt.settle_timed_out, "live guard killed only after the settle wait ended"
         return step
 
     step = asyncio.run(exercise())
@@ -316,3 +326,29 @@ def test_smoke_playback_evidence_covers_complete_encounters():
     step["metrics"]["encounters"] = []
     step["metrics"]["by_scenario"] = {}
     assert smoke.diagnostic(step, {"passed": True, "same_socket": True})["verdict"] == "PASS"
+
+
+@pytest.mark.parametrize("error_at", [1, 61], ids=["before-last-session", "after-first-completion"])
+def test_smoke_rejects_whole_run_voice_errors_outside_concurrency_window(error_at):
+    from test_load_fastmode import healthy_smoke
+    step = healthy_smoke()
+    m = step["metrics"]
+    for i, timeline in enumerate(step["timelines"]):
+        timeline["scenario"] = run.SCENARIOS[i % 4]
+    whole = m["whole_step"] = {"encounters": copy.deepcopy(m["encounters"]), "voice_error": 0}
+    for encounter in whole["encounters"]:
+        encounter["lines_said"] = 1
+    probe = {"passed": True, "same_socket": True}
+    assert smoke.diagnostic(step, probe)["verdict"] == "PASS"
+    events = {"0": [{"type": "voice_error", "where": "smoke-close", "wall": error_at}]}
+    m["measurement_window"] = {"start": 2, "end": 60}
+    m["voice_error"] = measure.event_metrics(measure.event_window(events, 2, 60), [], [])["voice_error"]
+    whole["voice_error"] = measure.event_metrics(events, [], [])["voice_error"]
+    assert m["voice_error"] == 0 and whole["voice_error"] == 1
+    verdict = smoke.diagnostic(step, probe)
+    assert verdict["verdict"] == "FAIL" and verdict["reasons"] == ["non-benign voice_error during smoke"]
+
+
+def test_baseline_rule_describes_selected_scenarios():
+    assert "per selected scenario" in fast.BASELINE_RULE
+    assert "four sequential" not in fast.BASELINE_RULE
