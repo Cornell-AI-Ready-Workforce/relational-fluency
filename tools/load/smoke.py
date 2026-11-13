@@ -73,7 +73,7 @@ def diagnostic(step, probe, expected=('S1A', 'S2A', 'S3A', 'S4A')):
 async def run_smoke(args, directory, *, runtime_factory=Runtime, participant_factory=None):
     from tools.load.run import run_step, Participant, load_key, production_environment
     config = load_config(args.fake_config, profile=args.fake_tts_profile)
-    outcomes = []
+    outcomes, gateway_errors = [], []
     if args.gateway == 'live' and args.max_concurrency < 5:
         return {'ran': False, 'verdict': 'FAIL', 'capacity_eligible': False,
                 'reasons': ['N=5 smoke exceeds live concurrency cap'], 'outcomes': []}
@@ -93,10 +93,14 @@ async def run_smoke(args, directory, *, runtime_factory=Runtime, participant_fac
                        'diagnostic': True, 'capacity_eligible': False}
         finally:
             await runtime.stop()
+            rows = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read()
+            gateway_errors.extend({"phase": "smoke", "tts_realtime_factor": factor, **row}
+                                  for row in measure.gateway_errors(rows))
         outcomes.append(outcome)
         print('Smoke: ' + outcome['verdict'] + ' ' + '; '.join(outcome['reasons']), flush=True)
         if outcome['verdict'] != 'PASS': break
     return {'ran': True, 'fake_tts_profile': config.tts_profile, 'fake_configuration': asdict(config),
+            'gateway_errors': gateway_errors,
             'verdict': 'PASS' if all(o['verdict'] == 'PASS' for o in outcomes) else 'FAIL',
             'capacity_eligible': False, 'outcomes': outcomes}
 
@@ -112,6 +116,7 @@ async def run_with_smoke(args, *, smoke_runner=run_smoke, experiment=None):
         args.smoke_results = await smoke_runner(args, directory)
         if args.smoke or args.smoke_results['verdict'] != 'PASS':
             report = {'rule': 'Diagnostic smoke; no capacity estimate.', 'configuration': {'smoke': args.smoke_results},
+                      'gateway_errors': args.smoke_results.get('gateway_errors', []),
                       'smoke': args.smoke_results, 'capacity_eligible': False, 'capacity': None,
                       'verdict': args.smoke_results['verdict'], 'steps': []}
             _write_report(directory, report)

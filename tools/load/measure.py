@@ -11,6 +11,8 @@ from tools.sim import analyze
 
 
 ERROR_OUTCOMES = {"http_error", "timeout", "closed", "exception"}
+LIVE_GUARD_RULE = ("Immediate stop on gateway 429, 401 or 403; gateway error rate > 5% "
+                   "only after at least 20 gateway attempts; slot-only waits excluded.")
 RULE = ("INVALID if achieved concurrency < 90% of N or generator loop-lag p99 > 50 ms, "
         "or required measurements/full encounters are missing. Otherwise FAIL if speech-end-to-first-played "
         "p90 > max(1.5 * N=1 p90, N=1 p90 + 2 s), reply_missing per 100 participant turns "
@@ -247,6 +249,31 @@ def non_monotonic(steps):
     return None
 
 
+def gateway_attempt(event):
+    return event.get("upstream") == "gateway" and event.get("detail") != "slot_wait"
+
+
+def gateway_error(event):
+    status = event.get("status")
+    return gateway_attempt(event) and (event.get("outcome") in ERROR_OUTCOMES or
+                                       isinstance(status, int) and status >= 400)
+
+
+def gateway_errors(attempts):
+    return [{key: event.get(key) for key in ("t", "session_id", "route", "purpose", "outcome", "detail", "status")}
+            for event in attempts if gateway_error(event)]
+
+
+def gateway_errors_markdown(rows):
+    lines = [f"Gateway errors ({len(rows)}):", "", "| Route | Purpose | Outcome | Detail | Status |",
+             "| --- | --- | --- | --- | --- |"]
+    for row in rows:
+        cells = [json.dumps(row.get(key), ensure_ascii=False).replace("|", "\\|")
+                 for key in ("route", "purpose", "outcome", "detail", "status")]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
 class LiveGuard:
     def __init__(self):
         self.attempts = 0
@@ -254,18 +281,19 @@ class LiveGuard:
         self.stopped = None
 
     def observe(self, event, concurrency):
-        if event.get("upstream") != "gateway" or event.get("detail") == "slot_wait":
+        if not gateway_attempt(event):
             return self.stopped
         self.attempts += 1
-        self.errors += event.get("outcome") in ERROR_OUTCOMES
+        self.errors += gateway_error(event)
         reason = None
-        if event.get("upstream") == "gateway" and event.get("status") == 429:
-            reason = "first gateway 429"
-        elif self.errors / self.attempts > 0.05:
+        if event.get("status") in {429, 401, 403}:
+            reason = "first gateway " + str(event["status"])
+        elif self.attempts >= 20 and self.errors / self.attempts > 0.05:
             reason = "gateway attempt error rate > 5%"
         if reason and self.stopped is None:
             self.stopped = {"reason": reason, "route": event.get("route"),
                             "purpose": event.get("purpose"), "concurrency": concurrency,
+                            "outcome": event.get("outcome"), "detail": event.get("detail"),
                             "attempts": self.attempts, "errors": self.errors, "t": event.get("t")}
         return self.stopped
 

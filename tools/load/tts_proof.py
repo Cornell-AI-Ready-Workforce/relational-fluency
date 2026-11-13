@@ -13,7 +13,7 @@ def destination(uri):
     return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == "wss" else 80), parsed.path
 
 
-def install_guard(expected, path):
+def install_guard(expected, path, *, record_allowed=False):
     import websockets
     from websockets.asyncio import client
     from websockets.legacy import client as legacy
@@ -26,8 +26,9 @@ def install_guard(expected, path):
             except ValueError:
                 actual = ("invalid", None, None, None)
             row = {"allowed": actual == allowed, "destination": list(actual)}
-            with Path(path).open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row) + "\n")
+            if record_allowed or not row["allowed"]:
+                with Path(path).open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(row) + "\n")
             if not row["allowed"]:
                 raise RuntimeError("blocked non-fake TTS websocket destination")
             return connect(uri, *args, **kwargs)

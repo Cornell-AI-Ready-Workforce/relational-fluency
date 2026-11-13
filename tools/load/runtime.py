@@ -48,7 +48,7 @@ async def command(*args, timeout=120, check=True, **kwargs):
 
 
 def environment(*, gateway, fake_url, data_dir, key, live_key=None, live_url=None,
-                certificate=None, isolated=False, production=None, encounter_seconds=None):
+                certificate=None, isolated=False, production=None, encounter_seconds=None, record_tts_destinations=False):
     """Apply harness overrides AFTER the checked-in task environment."""
     env = dict(production if production is not None else production_environment())
     if not env.get("REALTIME_MODEL", "").startswith("cascade"):
@@ -66,6 +66,7 @@ def environment(*, gateway, fake_url, data_dir, key, live_key=None, live_url=Non
         ELEVENLABS_API_KEY="load-only-fake-tts-key", SESSION_KEY=key,
         STORAGE_PREFLIGHT="0", ARCHIVE_SESSIONS_TO_S3="0", LOOP_LAG_REPORT_S="5",
         RF_LOAD_FAKE_TTS_ONLY="1",
+        RF_LOAD_TTS_JOURNAL_ALLOWED="1" if record_tts_destinations else "0",
         DATA_DIR=str(data_dir), HOST="0.0.0.0", PORT="8080",
         AWS_ACCESS_KEY_ID="load-only-synthetic-access", AWS_SECRET_ACCESS_KEY="load-only-synthetic-secret",
         AWS_SHARED_CREDENTIALS_FILE="/dev/null", AWS_CONFIG_FILE="/dev/null",
@@ -140,13 +141,14 @@ def folded_top20(text):
 class Runtime:
     def __init__(self, directory, *, backend="docker", gateway="fake", image=None,
                  fake_config=None, live_key=None, live_url=None, cpu_scale=1.0, fargate_reference=None, profile_image=None,
-                 encounter_seconds=None, server_checkout=None, server_environment=None):
+                 encounter_seconds=None, server_checkout=None, server_environment=None, record_tts_destinations=False):
         self.directory = Path(directory).resolve()
         self.data = self.directory / "server-data"
         self.backend, self.gateway, self.image = backend, gateway, image
         self.fake_config = fake_config or FakeConfig()
         self.server_checkout = Path(server_checkout).resolve() if server_checkout else ROOT
         self.server_environment = dict(server_environment or {})
+        self.record_tts_destinations = record_tts_destinations
         if server_checkout and (backend != "local" or not (self.server_checkout / "server/app.py").is_file()):
             raise ValueError("server checkout requires the local backend and server/app.py")
         if server_checkout:
@@ -366,7 +368,8 @@ class Runtime:
         env = environment(gateway=self.gateway, fake_url="https://upstream:8443", data_dir="/data",
                           key=self.key, live_key=self.live_key, live_url=self.live_url,
                           certificate="/load/ca-bundle.pem", isolated=self.gateway == "fake",
-                          encounter_seconds=self.encounter_seconds, production=self.production())
+                          encounter_seconds=self.encounter_seconds, production=self.production(),
+                          record_tts_destinations=self.record_tts_destinations)
         env_path = self.directory / "server.env"
         def write_env():
             if any("\n" in str(value) or "\r" in str(value) for value in env.values()):
@@ -425,7 +428,8 @@ class Runtime:
         await self._wait(self.fake_base + "/__load/stats", verify=self.fake_ssl)
         env = environment(gateway=self.gateway, fake_url=self.fake_base, data_dir=self.data,
                           key=self.key, live_key=self.live_key, live_url=self.live_url, certificate=self.bundle,
-                          encounter_seconds=self.encounter_seconds, production=self.production())
+                          encounter_seconds=self.encounter_seconds, production=self.production(),
+                          record_tts_destinations=self.record_tts_destinations)
         env.update(PORT=str(server_port), HOST="127.0.0.1")
         if self.server_checkout != ROOT:
             env["RF_LOAD_SERVER_CHECKOUT"] = str(self.server_checkout)

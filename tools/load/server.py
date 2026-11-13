@@ -37,7 +37,8 @@ def main():
     data.mkdir(parents=True, exist_ok=True)
     if os.environ.get("RF_LOAD_FAKE_TTS_ONLY") == "1":
         from tools.load.tts_proof import install_guard
-        install_guard(os.environ["ELEVENLABS_WS_URL"], data / "tts-destinations.jsonl")
+        install_guard(os.environ["ELEVENLABS_WS_URL"], data / "tts-destinations.jsonl",
+                      record_allowed=os.environ.get("RF_LOAD_TTS_JOURNAL_ALLOWED") == "1")
     from server import llm, upstream_telemetry
     llm._FILE.clear()
     if os.environ.get("LOAD_REQUIRE_ISOLATION") == "1":

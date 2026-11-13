@@ -120,6 +120,14 @@ model/configuration, sample counts and distributions with any revised defaults.
 
 ## Measurements and verdict
 
+Every mode keeps the fake-TTS destination guard active, including local and
+Docker ramp/capacity runs and smoke runs. It blocks and records non-fake
+destinations before transport dispatch. Capacity and smoke servers journal
+blocked destinations only: successful fake connects do no destination-journal
+open/write/close. Latency mode explicitly enables allowed-destination journaling
+for its independent connection proof. URI checks remain part of the tested
+harness configuration; this guard is not OS-level network isolation.
+
 Active concurrency starts at the `session` frame and ends at hang-up.
 Conversing concurrency starts at the first final user transcript and is
 secondary. Both are sampled every second independently of resource reads.
@@ -221,8 +229,12 @@ recorded. Default production images have no py-spy.
 is 20 and requires a compatible ramp. TTS remains fake. Live mode uses a normal
 Docker network for gateway egress and has no fake-mode isolation claim.
 The 100 ms telemetry watcher kills the server before cancelling participants
-or waiting for close. It stops on the first gateway 429 or gateway-only attempt
-error rate > 5%. Fake TTS and slot-wait-only rows never dilute that denominator.
+or waiting for close. Every live guard uses the same rule: stop immediately on
+the first gateway 429, 401 or 403; apply gateway-only error rate > 5% only after
+at least 20 gateway attempts. Fake TTS and slot-wait-only rows never dilute that
+denominator. Steering timeouts are errors under the same rule, without a
+purpose-specific exemption. JSON and Markdown retain every gateway error's
+route, purpose, outcome and detail, including recovered errors on a PASS.
 It also stops if observer output is stale for more than two seconds, the
 observer log task ends, or the observer reports an error. Malformed observer
 lines are counted and retained in the log; the live stop records the cause
@@ -406,7 +418,9 @@ integration checkout.
 The server bootstrap guards modern/public/legacy WebSocket connect entry
 points before importing the selected server. Only the configured fake origin
 and path are allowed; queries are not logged. Wrong destinations are recorded
-and blocked before transport dispatch. At run end the server is stopped while
+and blocked before transport dispatch in every mode. Latency mode additionally
+journals allowed connects; ramp/capacity and smoke modes journal blocked
+destinations only. At run end the server is stopped while
 the fake remains available. A positive fake-side TTS connection count must
 exactly match both the server's ElevenLabs attempt rows (excluding slot-only
 waits) and allowed destination records. Any blocked destination, zero count,
@@ -441,7 +455,10 @@ The command also prints its verdict. Startup, between-scenario and final
 gateway attempts pass through the live safety guard. Reply traces must use
 `units: "seconds"`, and their count must cover observed assistant starts;
 session counts remain adjacent to sent-line and reply-start counts in reports.
-SIGTERM cancels the run, stops/reaps both children and writes the failed report.
+Every SIGTERM sets an interruption flag and cancels the main task, including
+repeated signals. An interrupted run is INVALID even if worker code absorbs
+cancellation. Shielded cleanup still stops/reaps both children and writes the
+report; another SIGTERM cannot cancel that cleanup task.
 A nonempty report directory, including one left without report.json after an
 interrupted run, is refused. SIGKILL cannot run cleanup; inspect and stop any
 surviving processes before choosing a new directory.

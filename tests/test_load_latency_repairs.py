@@ -101,7 +101,7 @@ def test_destination_guard_blocks_real_elevenlabs_without_calling_transport(monk
     def connect(uri, *a, **kw): calls.append(uri); return sentinel
     for module in (websockets, client, legacy): monkeypatch.setattr(module, "connect", connect)
     path = tmp_path / "destinations.jsonl"
-    install_guard("wss://fake.invalid:8443/tts", path)
+    install_guard("wss://fake.invalid:8443/tts", path, record_allowed=True)
     for module in (websockets, client, legacy):
         assert module.connect("wss://fake.invalid:8443/tts?model_id=fake") is sentinel
         with pytest.raises(RuntimeError, match="blocked non-fake"):
@@ -112,7 +112,7 @@ def test_destination_guard_blocks_real_elevenlabs_without_calling_transport(monk
     assert "must-not-log" not in path.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("fault", [None, "zero", "mismatch", "real", "units", "lost-reply", "startup-429", "final-429"])
+@pytest.mark.parametrize("fault", [None, "zero", "mismatch", "real", "units", "lost-reply", "startup-429", "final-429", "startup-401", "final-401"])
 def test_latency_run_enforces_tts_trace_and_full_journal_guards(monkeypatch, tmp_path, capsys, fault):
     root = checkout(tmp_path)
     instances = []
@@ -121,7 +121,7 @@ def test_latency_run_enforces_tts_trace_and_full_journal_guards(monkeypatch, tmp
         async def start(self):
             await super().start()
             row = {"upstream": "gateway", "route": "models", "purpose": "preflight", "t": time.time()}
-            if fault == "startup-429": row.update(status=429, outcome="http_error")
+            if fault in {"startup-429", "startup-401"}: row.update(status=int(fault.rsplit("-", 1)[1]), outcome="http_error")
             (self.data / "upstream-attempts.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
         async def fake_stats(self):
             return {"counts": {"tts_ws": 0 if fault == "zero" else 2 if fault == "mismatch" else 1}, "errors": []}
@@ -136,9 +136,9 @@ def test_latency_run_enforces_tts_trace_and_full_journal_guards(monkeypatch, tmp
         (folder / "events.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
         with (rt.data / "upstream-attempts.jsonl").open("a", encoding="utf-8") as fh:
             fh.write('{"upstream":"elevenlabs","route":"tts_ws","purpose":"tts"}\n')
-            if fault == "final-429":
+            if fault in {"final-429", "final-401"}:
                 fh.write(json.dumps({"upstream": "gateway", "route": "chat_completions_stream", "purpose": "actor",
-                                    "status": 429, "outcome": "http_error", "t": time.time()}) + "\n")
+                                    "status": int(fault.rsplit("-", 1)[1]), "outcome": "http_error", "t": time.time()}) + "\n")
         destinations = [{"allowed": True}]
         if fault == "real": destinations.append({"allowed": False, "destination": ["wss", "api.elevenlabs.io", 443, "/tts"]})
         (rt.data / "tts-destinations.jsonl").write_text("".join(json.dumps(r) + "\n" for r in destinations), encoding="utf-8")
@@ -152,9 +152,9 @@ def test_latency_run_enforces_tts_trace_and_full_journal_guards(monkeypatch, tmp
     assert report["verdict"] == ("PASS" if fault is None else "FAIL")
     assert instances[0].stopped and instances[0].killed
     assert "Verdict: " + report["verdict"] in capsys.readouterr().out
-    if fault in {"startup-429", "final-429"}:
-        assert report["live_stop"]["reason"] == "first gateway 429"
-        assert bool(calls) == (fault == "final-429")
+    if fault in {"startup-429", "final-429", "startup-401", "final-401"}:
+        assert report["live_stop"]["reason"] == "first gateway " + fault.rsplit("-", 1)[1]
+        assert bool(calls) == fault.startswith("final-")
     if fault in {"zero", "mismatch", "real"}: assert not report["tts_proof"]["passed"]
     if fault == "lost-reply": assert any("observed replies" in r for r in report["errors"])
 

@@ -183,6 +183,7 @@ def _write_report(directory, report):
             lines.extend(["", f"Post-completion close diagnostics at N={step['concurrency']}: "
                           f"{len(step['metrics']['post_complete_close'])}."])
     lines.extend(["", f"Capacity for the tested configuration on this host (K={configuration.get('encounters_per_participant', 'diagnostic')}): {report.get('capacity_range', report.get('capacity'))}", ""])
+    lines.extend([measure.gateway_errors_markdown(report.get("gateway_errors", [])), ""])
     for ramp in report.get("ramps", []):
         lines.extend(["", "Tested Ns: " + json.dumps(ramp.get("tested_ns", [])),
                       "Search path: " + json.dumps(ramp.get("search_path", [])),
@@ -501,6 +502,7 @@ async def run_step(runtime, args, n, repeat, ceiling, *, participant_factory=Par
               "measurement_errors": measurement_errors, "measurement_error_records": measurement_error_records,
               "fake_errors": fake["errors"][len(fake_before["errors"]):], "full_length": full_length,
               "live_stop": guard.stopped, "early_stop": early_stop, "profile": profile_result, "profile_only": profile_only}
+    result["gateway_errors"] = measure.gateway_errors(attempts)
     result["timelines"] = timelines
     result["observer_telemetry"] = runtime.observer_telemetry()
     await asyncio.to_thread((directory / "timelines.json").write_text, json.dumps(timelines, indent=2), encoding="utf-8")
@@ -524,9 +526,12 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
     live_key = await asyncio.to_thread(load_key) if args.gateway == "live" else None
     factors = args.tts_factors or [config.tts_realtime_factor]
     report = {"rule": measure.RULE + " " + fast.BASELINE_RULE, "generated_at": stamp, "steps": [], "ramps": [], "capacity": None,
+              "gateway_errors": list(getattr(args, "smoke_results", {}).get("gateway_errors", [])),
               "gateway": args.gateway, "tts": "fake", "fake_configuration": asdict(config),
               "capacity_scope": "this host; TTS uses the recorded profile; fake gateway timing and speaker/tool probabilities remain assumptions",
               "configuration": {"ramp": args.ramp, "repeat": args.repeat, "scenarios": args.scenarios,
+                                "live_guard_rule": measure.LIVE_GUARD_RULE,
+                                "tts_destination_guard": "active in every mode; blocked-only journal outside latency mode",
                                 "fake_tts_profile": config.tts_profile,
                                 "fake_revision_sha256": hashlib.sha256((ROOT / "tools/load/fake_upstream.py").read_bytes()).hexdigest(),
                                 "arrival_spacing_s": args.arrival, "duration_s": args.duration,
@@ -555,6 +560,14 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
         runtime = new_runtime(generation, args.image)
         ramp = {"tts_realtime_factor": factor, "steps": [], "capacity": None, "runtime_history": []}
         report["ramps"].append(ramp)
+        recorded_generations = set()
+
+        async def collect_gateway_errors():
+            if generation not in recorded_generations:
+                rows = await asyncio.to_thread(measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read)
+                report["gateway_errors"].extend({"tts_realtime_factor": factor, "runtime_generation": generation, **row}
+                                                for row in measure.gateway_errors(rows))
+                recorded_generations.add(generation)
 
         async def start_runtime(reason):
             await runtime.start()
@@ -591,6 +604,7 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
                 if reset_reason:
                     image = runtime.image
                     await runtime.stop()
+                    await collect_gateway_errors()
                     generation += 1
                     runtime = new_runtime(generation, image)
                     await start_runtime(reset_reason)
@@ -687,6 +701,7 @@ async def run_experiment(args, *, runtime_factory=Runtime, participant_factory=P
             break
         finally:
             await runtime.stop()
+            await collect_gateway_errors()
             await asyncio.to_thread(_write_report, directory, report)
         if report.get("live_stop"):
             break

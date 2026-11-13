@@ -114,7 +114,8 @@ async def run_latency(args, *, runtime_factory=Runtime, participant_factory=Part
         overrides["ELEVENLABS_CONCURRENCY"] = str(args.tts_slots)
     runtime = runtime_factory(directory / "runtime", backend="local", gateway=args.gateway,
         fake_config=config, live_key=key, live_url=args.live_url or production.get("LLM_BASE_URL"),
-        server_checkout=args.server_checkout, server_environment=overrides, encounter_seconds=timeout + 30)
+        server_checkout=args.server_checkout, server_environment=overrides, encounter_seconds=timeout + 30,
+        record_tts_destinations=True)
     report = {"mode": "latency", "capacity_eligible": False, "capacity": None, "gateway": args.gateway,
               "tts": "fake", "server": server, "harness": await revision(ROOT),
               "configuration": {"participants": args.participants, "turns_per_scenario": args.turns,
@@ -122,8 +123,18 @@ async def run_latency(args, *, runtime_factory=Runtime, participant_factory=Part
                   "fake_tts_profile": config.tts_profile, "fake_configuration": asdict(config),
                   "fake_source_sha256": hashlib.sha256((ROOT / "tools/load/fake_upstream.py").read_bytes()).hexdigest(),
                   "tts_slots_override": args.tts_slots,
+                  "live_guard_rule": measure.LIVE_GUARD_RULE, "tts_allowed_destination_journal": True,
                   "policy": "one encounter per participant per selected scenario; fresh participant state; shared local server; scripted hang-up after turns"},
               "steps": [], "sessions": [], "errors": [], "verdict": "INVALID"}
+
+    def apply_interruption():
+        report["interrupted"] = bool(getattr(args, "interrupted", False))
+        if report["interrupted"]:
+            message = "latency run interrupted; child cleanup requested"
+            if message not in report["errors"]:
+                report["errors"].append(message)
+            report["verdict"] = "INVALID"
+        return report["interrupted"]
 
     def live_guard(rows, phase):
         if args.gateway != "live":
@@ -140,6 +151,8 @@ async def run_latency(args, *, runtime_factory=Runtime, participant_factory=Part
         await runtime.start()
         report["host"] = runtime.metadata
         for index, scenario in enumerate(args.scenarios):
+            if apply_interruption():
+                break
             prior = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read()
             if reason := live_guard(prior, "before scenario"):
                 await runtime.kill_server()
@@ -155,7 +168,7 @@ async def run_latency(args, *, runtime_factory=Runtime, participant_factory=Part
                 participant_factory=participant_factory, label=f"latency-{scenario}")
             report["steps"].append(step)
             report["sessions"].extend(await asyncio.to_thread(archive_events, runtime, directory, step["timelines"]))
-            if step["live_stop"]:
+            if step["live_stop"] or apply_interruption():
                 break
         reasons = report["errors"]
         for step in report["steps"]:
@@ -175,42 +188,58 @@ async def run_latency(args, *, runtime_factory=Runtime, participant_factory=Part
                 reasons.append(session["session_id"] + ": required teardown traces/turn timing missing or invalid")
             if session["event_counts"].get("reply_trace", 0) < session["replies_started"]:
                 reasons.append(session["session_id"] + ": reply_trace records missing for observed replies")
-        report["verdict"] = "FAIL" if reasons else "PASS"
+        if not apply_interruption():
+            report["verdict"] = "FAIL" if reasons else "PASS"
     except asyncio.CancelledError:
-        report["errors"].append("latency run interrupted; child cleanup requested")
+        args.interrupted = True
+        apply_interruption()
     except (OSError, RuntimeError, ValueError) as exc:
         report["errors"].append(type(exc).__name__ + ": " + str(exc))
     finally:
-        try:
-            # Stop new upstream work, retain the fake long enough to obtain an
-            # independent final count, then read the server's durable journal.
-            await runtime.kill_server()
-            attempts = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read()
-            if reason := live_guard(attempts, "run end"):
-                report["errors"].append("live safety stop: " + reason)
-                report["verdict"] = "FAIL"
-            fake = await runtime.fake_stats()
-            destinations = measure.JsonlTail(runtime.data / "tts-destinations.jsonl").read()
-            proof = report["tts_proof"] = verify_tts(fake.get("counts", {}).get("tts_ws", 0), attempts, destinations)
-            report["errors"].extend(proof["reasons"])
-            if not proof["passed"] and report["verdict"] == "PASS":
-                report["verdict"] = "FAIL"
-        except (OSError, RuntimeError, ValueError, AttributeError, asyncio.CancelledError) as exc:
-            report["errors"].append("TTS proof unavailable: " + type(exc).__name__)
-            report["tts_proof"] = {"passed": False}
-            if report["verdict"] == "PASS":
-                report["verdict"] = "FAIL"
-        finally:
-            await runtime.stop()
+        apply_interruption()
+        async def finish_runtime():
+            try:
+                # Retain the fake until server work stops and final counts exist.
+                await runtime.kill_server()
+                attempts = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read()
+                if reason := live_guard(attempts, "run end"):
+                    report["errors"].append("live safety stop: " + reason)
+                    report["verdict"] = "FAIL"
+                fake = await runtime.fake_stats()
+                destinations = measure.JsonlTail(runtime.data / "tts-destinations.jsonl").read()
+                proof = report["tts_proof"] = verify_tts(fake.get("counts", {}).get("tts_ws", 0), attempts, destinations)
+                report["errors"].extend(proof["reasons"])
+                if not proof["passed"] and report["verdict"] == "PASS":
+                    report["verdict"] = "FAIL"
+            except (OSError, RuntimeError, ValueError, AttributeError, asyncio.CancelledError) as exc:
+                if isinstance(exc, asyncio.CancelledError):
+                    args.interrupted = True
+                report["errors"].append("TTS proof unavailable: " + type(exc).__name__)
+                report["tts_proof"] = {"passed": False}
+                if report["verdict"] == "PASS":
+                    report["verdict"] = "FAIL"
+            finally:
+                await runtime.stop()
+        cleanup = asyncio.create_task(finish_runtime())
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                args.interrupted = True
+                apply_interruption()
+        cleanup.result()
+        apply_interruption()
         attempts = measure.JsonlTail(runtime.data / "upstream-attempts.jsonl").read()
-        gateway = [row for row in attempts if row.get("upstream") == "gateway" and row.get("detail") != "slot_wait"]
+        gateway = [row for row in attempts if measure.gateway_attempt(row)]
         report["gateway_request_count"] = len(gateway)
         report["gateway_requests_by_purpose"] = dict(Counter(row.get("purpose") for row in gateway))
+        report["gateway_errors"] = measure.gateway_errors(attempts)
         (directory / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         (directory / "report.md").write_text("# Gateway latency diagnostic\n\n" +
             f"Verdict: {report['verdict']}. Capacity eligible: false. Gateway requests: {len(gateway)}.\n\n" +
             "Configuration: " + json.dumps(report["configuration"]) + "\n\nServer: " + json.dumps(server) +
             "\n\nSession events: " + json.dumps(report["sessions"]) + "\n\nTTS proof: " + json.dumps(report.get("tts_proof")) +
+            "\n\n" + measure.gateway_errors_markdown(report["gateway_errors"]) +
             "\n\nErrors: " + json.dumps(report["errors"]) + "\n",
             encoding="utf-8")
         print("Verdict: " + report["verdict"], flush=True)
@@ -221,7 +250,11 @@ async def run_latency(args, *, runtime_factory=Runtime, participant_factory=Part
 async def cli(args):
     loop, task = asyncio.get_running_loop(), asyncio.current_task()
     previous = signal.getsignal(signal.SIGTERM)
-    loop.add_signal_handler(signal.SIGTERM, lambda: task.cancel() if not task.cancelling() else None)
+    args.interrupted = False
+    def interrupt():
+        args.interrupted = True
+        task.cancel()
+    loop.add_signal_handler(signal.SIGTERM, interrupt)
     try:
         return await run_latency(args)
     finally:
