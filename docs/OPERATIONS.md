@@ -29,8 +29,12 @@ remains after the reconnect scene note is spent.
 Before the first grant, a newer accepted turn can merge into the turn being
 answered. The merge takes only commits through that newer turn's last accepted
 line. Later commits still being transcribed stay with its waiting task. A
-consumed task serves a new pending turn if the participant spoke during the
-merged reply. This prevents both duplicate answers and dropped replies.
+task whose captured turn is already granted or consumed serves an ungranted,
+unconsumed pending turn with commits, or returns if none exists. This check
+runs after the task takes the floor. A finishing task clears the transcript
+waiting flag only when no other live group-turn task remains; routing still
+clears it when its decision is ready. A turn end while the flag is up is
+withdrawn into the pending turn instead of spawning another task.
 
 A provisional planted beat returned before the grant is recorded as
 `trigger_deferred`, with a `transcript_missing` or `transcript_suppressed`

@@ -2330,10 +2330,12 @@ class RealtimeVoiceSessionRunner:
 
     def _on_group_turn_done(self, task: asyncio.Task) -> None:
         self._group_turn_tasks.discard(task)
-        # However this turn ended, it is no longer waiting for a transcript:
-        # the next turn_ended is a new turn. (_run_group_turn clears this
-        # itself once it has routed; this covers a turn that never got there.)
-        self._group_turn_waiting = False
+        # A queued task can take the floor and start its transcript wait
+        # before this callback runs. Keep that task's waiting flag intact.
+        # Routing clears it when ready; the final task also clears it here
+        # if it ended before reaching that decision.
+        if not any(not pending.done() for pending in self._group_turn_tasks):
+            self._group_turn_waiting = False
         if task.cancelled():
             return
         exc = task.exception()
@@ -9320,7 +9322,7 @@ class RealtimeVoiceSessionRunner:
             room = self.room
             if room is None or self._closed:
                 return
-            if text_turn is not None and text_turn.consumed:
+            if text_turn is not None and (text_turn.granted or text_turn.consumed):
                 pending = hearing.pending_turn
                 if (pending is None or not pending.commits
                         or pending.granted or pending.consumed):

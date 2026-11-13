@@ -1217,3 +1217,66 @@ async def test_a_stale_provisional_firing_cannot_hide_a_real_retraction(monkeypa
         assert notices[-1]["severity"] == "error"
     finally:
         await h.close()
+
+
+@pytest.mark.parametrize("duplicate_task", [False, True])
+@in_a_loop
+async def test_m4_one_turn_served_by_two_tasks(monkeypatch, duplicate_task):
+    """A finishing task must not reopen the pending turn's spawn window.
+
+    The second case also queues a stale capture explicitly, so the floor-entry
+    guard is tested independently of the waiting-flag repair.
+    """
+    from collections import Counter
+    two = "What about the budget for the pilot"
+    three = "And who owns the rollout after that"
+    gate, in_grant, resume_grant = (asyncio.Event() for _ in range(3))
+    scripts = [Transcript(), Transcript(two, gate), Transcript(three)]
+    chats, _ = wire(monkeypatch, scripts)
+    h = await Room(monkeypatch, model=CASCADE).open()
+    original_floor = h.room.give_floor
+    grants = []
+
+    async def give_floor(aid, **kw):
+        turn = h.room.hearing.active_turn
+        grants.append((aid, tuple(turn.commits)))
+        result = await original_floor(aid, **kw)
+        if len(grants) == 1:
+            in_grant.set()
+            await resume_grant.wait()
+        return result
+
+    monkeypatch.setattr(h.room, "give_floor", give_floor)
+    try:
+        await speak(h)
+        await in_grant.wait()
+        await speak(h)
+        await scripts[1].started.wait()
+        assert h.runner._group_turn_waiting
+        assert len(h.runner._group_turn_tasks) == 2
+        resume_grant.set()
+        await until(lambda: len(h.runner._group_turn_tasks) == 1, 10)
+        waiting = h.runner._group_turn_waiting
+        pending = h.room.hearing.pending_turn
+        if duplicate_task:
+            h.runner._spawn_group_turn(h.runner._run_group_turn(text_turn=pending))
+        await speak(h)
+        await scripts[2].finished.wait()
+        withdrawn = len(h.of("turn_end_withdrawn"))
+        gate.set()
+        await until(lambda: len(chats) >= 2)
+        await finished(h)
+        assert len(chats) == 2, (grants, waiting, withdrawn)
+        assert Counter(turn for _, turn in grants) == {(1,): 1, (2, 3): 1}
+        assert [route["speakers"] for route in h.of("director_route")] == [["dan"], ["priya"]]
+        deferred = Counter((e["interaction"], e["index"], e["trigger_id"])
+                           for e in h.of("trigger_deferred"))
+        assert len(deferred) == 1 and list(deferred.values()) == [1]
+        assert waiting and withdrawn == 1
+        assert_heard(chats[0], [WORDS])
+        assert_heard(chats[1], [WORDS, two, three])
+        assert user_lines(chats[1])[-2:] == [three, CASCADE_ROOM_GRANT_NUDGE]
+    finally:
+        resume_grant.set()
+        gate.set()
+        await h.close()
