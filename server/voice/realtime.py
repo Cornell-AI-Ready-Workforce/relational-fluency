@@ -1292,19 +1292,18 @@ def turn_gate_provenance(model: Optional[str] = None) -> dict:
 # ── bridge correctness (issue #23; pipeline 2026-09-23d) ─────────────────────
 
 def cancelled_output_discard() -> bool:
-    """CANCELLED_OUTPUT_DISCARD, default on. What the gateway still sends for a
-    reply this bridge cancelled (a barge-in, a stale hold, a re-brief) is kept
-    off the participant's speaker and out of the turn, and written instead as
-    a cancelled_output_dropped event with its text and duration. Only on the
-    gpt family, where a cancel was measured to be honoured with a short tail
-    (0.15-0.4 s of audio, diag track3 probe_cancel), and the cascade, whose
-    response.cancel cancels its reply task (pipeline 2026-11-12b). This applies
-    to all default-tail cancels: withdrawal, barge-in, scribe, rebrief and
-    stale room holds. Already-queued frames still need to be discarded. On Gemini the cancel is
-    inert and the "tail" is the rest of the reply, which the runner has always
-    treated as a continuation (see _resume_seam), so that route is unchanged.
-    Off ("0") puts back the old relay, the one that re-armed the reply flags
-    and opened a second, phantom turn for the tail."""
+    """CANCELLED_OUTPUT_DISCARD, default on, for the gpt family. A cancel was
+    measured to be honoured there with a short tail (0.15-0.4 s of audio,
+    diag track3 probe_cancel). Its queued audio/text is discarded before
+    reply bookkeeping and recorded as cancelled_output_dropped, so the tail
+    cannot open another turn. Off ("0") restores that old relay behavior.
+
+    Cascade has its own switch, CASCADE_CANCELLED_OUTPUT_DISCARD (11-12b).
+    Both policies apply to default-tail cancels from withdrawal, barge-in,
+    scribe, rebrief and stale holds. Explicit discard_tail=False keeps room
+    holds' queued frames. On native Gemini a cancel is inert and its output
+    remains a continuation (see _resume_seam).
+    """
     return setting("CANCELLED_OUTPUT_DISCARD", "1").strip().lower() not in (
         "0", "false", "no", "off", "")
 
@@ -1312,7 +1311,10 @@ def cancelled_output_discard() -> bool:
 def discards_cancelled_output(model: str) -> bool:
     """True when sessions on `model` drop a cancelled reply's tail; see
     cancelled_output_discard."""
-    return (is_openai_realtime(model) or family_of(model) == "cascade") and cancelled_output_discard()
+    if family_of(model) == "cascade":
+        return setting("CASCADE_CANCELLED_OUTPUT_DISCARD", "1").strip().lower() not in (
+            "0", "false", "no", "off", "")
+    return is_openai_realtime(model) and cancelled_output_discard()
 
 
 def bridge_provenance(model: str) -> dict:
@@ -4165,18 +4167,19 @@ class RealtimeVoiceSession:
         """Cancel the reply in flight before any of it has been played, and
         drop whatever the gateway still sends for it (pipeline 2026-09-24a).
 
-        For a participant turn withdrawn after its commit went out: on this
-        route the commit itself started the reply, and the transcript that
-        showed the turn was invented arrives 0.6-1.6 s later, usually before
-        the reply's first audio (1.9-24.8 s after the commit in the P5 sims).
-        The reply may not have a name yet (its response.created can trail the
-        commit by up to 0.9 s); the gateway handles frames in order, so the
-        next reply it names is this one, and it is marked for discard as a
-        retry's is (see cancel_response). Only where the tail is discarded at
-        all (discards_cancelled_output, gpt and cascade): elsewhere a cancel is
-        inert and the reply would play anyway. Returns the reply's id where
-        it was known, "" where it was not yet named, None where nothing was
-        done."""
+        On gpt, the commit itself starts a reply; the transcript arrived
+        0.6-1.6 s later in the P5 sims, usually before audio (1.9-24.8 s).
+        Cascade commit_turn explicitly sends response.create. Its adapter
+        emits response.created at the reply task's first step, and the
+        unnamed window ends when events() reads that frame. The adapter
+        joins a cancelled task before accepting the next create.
+
+        The reply can still be unnamed on either route. Frames stay ordered,
+        so the next created names this reply for discard (see cancel_response).
+        Callers must check that it is still unheard and belongs to this
+        commit. Active only when this family's discard switch is on; returns
+        the reply id, "" before it is named, or None when disabled.
+        """
         if not self.discards_cancelled_output:
             return None
         rid = self._response_created_id

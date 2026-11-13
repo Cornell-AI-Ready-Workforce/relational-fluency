@@ -813,8 +813,17 @@ can now cancel a cascade reply. Every existing `cancel_response` call with
 a known response ID, or an unnamed reply tracked by the existing cancel
 latch. This affects withdrawal, barge-in, scribe cancellation, interaction
 rebriefs, and stale room holds. Explicit `discard_tail=False` room holds
-retain their queued tail. `CANCELLED_OUTPUT_DISCARD=0` restores the earlier
-policy; `cancelled_output` in provenance reports the effective policy.
+retain their queued tail. `CASCADE_CANCELLED_OUTPUT_DISCARD=0` restores the
+earlier cascade policy; `cancelled_output` in provenance reports the effective
+policy. This switch leaves gpt unchanged. `CANCELLED_OUTPUT_DISCARD` controls
+gpt independently; turning that older switch off restores gpt's old tail relay.
+
+A create following cancellation waits for the old reply's teardown before
+starting the new reply. Old `response.done` precedes new `response.created`.
+The join has a 1 s bound. TTS close has a 0.5 s bound, rather than websockets'
+10 s default, and its concurrency slot is released in `finally`. The remaining
+join budget covers the HTTP drain (bounded to 0.25 s) and task cleanup. A create
+while a reply is active and not cancelling is still refused.
 
 The existing withdrawal guards keep replies whose audio has already been
 sent to the participant and replies to later commits. First-reply holds
@@ -823,6 +832,16 @@ existing cancellation triggers. The policy adds no cancellation trigger or
 page interruption message. Frames already delivered to the page are under
 the existing playback and interruption rules; the bridge cannot recall
 them. Queued frames discarded at the bridge are counted as cancelled output.
+
+A reply cancelled before its first audio was emitted to the bridge now leaves
+no assistant item in cascade's conversation. This does not establish what the
+participant heard after audio starts: raw TTS PCM carries no sentence alignment
+or timestamps, several generated sentences can be ahead of the audio, and
+the adapter has no page-playback acknowledgements. Generated text is still
+kept after the first audio, even if some of it was unheard or that audio was
+held or discarded by the bridge. Exact trimming then needs alignment and
+playback information across the TTS, bridge and runner; it is not implemented
+by this adapter repair.
 
 ## The seven-minute floor, and the twelve-minute stop
 

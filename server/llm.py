@@ -725,7 +725,13 @@ def text_client() -> AsyncAnthropic:
 #                withdrawal guards retain audible and later-commit replies;
 #                existing barge-in and boundary rules still own those cuts.
 #                Explicit discard_tail=False holds keep their queued frames.
-#                CANCELLED_OUTPUT_DISCARD=0 restores the prior policy.
+#                CASCADE_CANCELLED_OUTPUT_DISCARD=0 restores cascade's prior
+#                policy; the gpt switch is independent. The adapter joins a
+#                cancelling reply before the next create (1 s bound), with
+#                TTS close bounded to 0.5 s and the old done emitted first.
+#                A cancelled reply that emitted no audio leaves no assistant
+#                item. After audio starts, exact context trimming still needs
+#                TTS alignment and page playback acknowledgements.
 PIPELINE_VERSION = "2026-11-12b"
 ROOM_PACING_VERSION = "2026-11-04a"
 
