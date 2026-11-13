@@ -351,6 +351,14 @@ resource "aws_cloudwatch_dashboard" "collection" {
           region  = var.region, view = "timeSeries", period = 300, stat = "Sum"
           metrics = [["RelationalFluency", "Bargein", "Cohort", "study"]]
         }
+      },
+      {
+        type = "metric", x = 12, y = 63, width = 12, height = 6
+        properties = {
+          title   = "Study echo and duplicate drops"
+          region  = var.region, view = "timeSeries", period = 300, stat = "Sum", stacked = true
+          metrics = [for reason in local.turn_drop_reasons : ["RelationalFluency", "UserTurnSuppressed", "Cohort", "study", "Reason", reason]]
+        }
       }
     ])
   })
@@ -361,7 +369,8 @@ locals {
   voice_exit_causes    = ["auth_rejected", "setup_failed", "completed", "runner_returned", "runner_error", "withdrawn", "client_disconnected", "cancelled", "other"]
   voice_close_outcomes = ["sent_1000", "sent_1011", "sent_other", "none", "close_failed", "client_first", "other"]
   stt_outcomes         = ["speech", "no_speech", "failed", "cancelled"]
-  turn_gate_reasons    = ["no_speech", "implausible_rate", "probe_pad", "not_english", "low_transcriber_confidence", "replay_duplicate", "echo", "duplicate", "other"]
+  turn_gate_reasons    = ["no_speech", "implausible_rate", "probe_pad", "not_english", "low_transcriber_confidence", "replay_duplicate", "other"]
+  turn_drop_reasons    = ["echo", "duplicate"]
 }
 
 resource "aws_cloudwatch_metric_alarm" "voice_route_errors" {

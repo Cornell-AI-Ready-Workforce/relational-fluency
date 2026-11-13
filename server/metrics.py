@@ -66,7 +66,7 @@ def _safe(fn):
     def guarded(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except BaseException:  # instrumentation must never change encounter behaviour
+        except (Exception, asyncio.CancelledError):
             return None
     return guarded
 
@@ -395,10 +395,12 @@ class _VoiceRoute:
         if cause == "runner_returned":
             if getattr(self.runner, "completed", False):
                 cause = "completed"
-            elif getattr(self.runner, "client_disconnected", False) or self.client_first:
+            elif self.client_first or (self.close_outcome == "none"
+                                       and getattr(self.runner, "client_disconnected", False)):
                 cause = "client_disconnected"
         # Base completion is completed + none. After D2's close finalizer,
-        # completed + sent_1000 and runner_returned + sent_1011 are expected.
+        # completed + sent_1000, runner_returned + sent_1011 and
+        # runner_error + sent_1011 are expected.
         emit("VoiceRouteEnded", ExitCause=cause,
              CloseOutcome="client_first" if self.client_first else self.close_outcome,
              Cohort=self.group)
@@ -409,10 +411,12 @@ def voice_route_fact(ws, *, cause=None, runner=None, context=None, cleanup=False
     state = getattr(ws, "_metrics_voice_route", None)
     if state is None:
         return
-    if cause is not None:
+    if cause is not None and state.cause != "withdrawn":
         state.cause = cause
     if runner is not None:
-        state.runner, state.phase, state.cause = runner, "runner", "runner_returned"
+        state.runner, state.phase = runner, "runner"
+        if state.cause != "withdrawn":
+            state.cause = "runner_returned"
     if context is not None:
         state.group = cohort(context.get("cohort"), has_run=bool(context.get("run_id")))
         state.phase = "setup"

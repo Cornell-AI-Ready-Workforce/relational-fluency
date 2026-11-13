@@ -44,6 +44,7 @@ import httpx
 import websockets
 
 from ..llm import gateway_api_key, gateway_base_url, setting
+from ..speech_check import _NO_SPEECH
 from ..upstream_telemetry import _Attempt, record
 
 # What the cascade calls, read at use so a test or an operator can change them.
@@ -551,7 +552,6 @@ class CascadeSocket:
         outcome = "failed"
         try:
             text = await self._hear(pcm)
-            outcome = "no_speech" if not text.strip() or text.strip().lower() == "[no speech]" else "speech"
         except asyncio.CancelledError:
             outcome = "cancelled"
             raise
@@ -561,6 +561,9 @@ class CascadeSocket:
                             "type": "server_error", "code": "stt_failed",
                             "message": f"{type(exc).__name__}: {exc}"[:200]}})
             return
+        else:
+            # Keep metric classification outside the transcription-failure path.
+            outcome = "no_speech" if not text.strip() or _NO_SPEECH.fullmatch(text.strip()) else "speech"
         finally:
             self.timings["stt_ms"] = int((time.time() - started) * 1000)
             from .. import metrics

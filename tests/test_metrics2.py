@@ -149,7 +149,7 @@ def route_env(monkeypatch, sink):
     ("runner_error", "runner_error", "none"),
     ("client", "client_disconnected", "client_first"),
     ("client_then_close", "client_disconnected", "client_first"),
-    ("server_then_client", "client_disconnected", "sent_1000"),
+    ("server_then_client", "runner_returned", "sent_1000"),
     ("withdrawn", "withdrawn", "sent_1000"),
     ("completed_close", "completed", "sent_1000"),
     ("close_1011", "runner_returned", "sent_1011"),
@@ -178,6 +178,32 @@ def test_voice_route_ends_once_after_cleanup(route_env, sink, name, cause, close
         assert cleanup and session.store.events_fh.closed
     assert not hasattr(ws, "_metrics_voice_route")
     assert session.id not in json.dumps(doc) and "p_fake" not in json.dumps(doc)
+
+
+@pytest.mark.parametrize("name", ["client", "runner_error", "cancelled"])
+def test_withdrawal_during_session_wait_stays_withdrawn(route_env, sink, monkeypatch, name):
+    mode, drive, cleanup, _, session, ws = route_env
+    mode["name"] = name
+    original_send = ws._send
+
+    async def send(message):
+        if (message["type"] == "websocket.send"
+                and json.loads(message["text"])["type"] == "session"):
+            assert session.participant_ws is ws
+            session.store.events_fh.close()  # withdrawal closes storage first
+            await appmod._close_capture_socket(session, session.id)
+        await original_send(message)
+
+    monkeypatch.setattr(ws, "_send", send)
+    if name == "cancelled":
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(drive())
+    else:
+        asyncio.run(drive())
+    doc, = sink("VoiceRouteEnded")
+    assert (doc["ExitCause"], doc["CloseOutcome"]) == ("withdrawn", "sent_1000")
+    assert cleanup and session.store.events_fh.closed
+    assert not hasattr(ws, "_metrics_voice_route")
 
 
 @pytest.mark.parametrize("code", [4401, 4403])
@@ -213,15 +239,20 @@ def test_metric_properties_centrally_on_every_document(sink, monkeypatch):
             assert "Build" not in keys and "PipelineVersion" not in keys
 
 
-@pytest.mark.parametrize("field", ["ExitCause", "CloseOutcome", "Kind", "Reason", "Outcome", "Purpose", "Upstream"])
+@pytest.mark.parametrize("field", ["ExitCause", "CloseOutcome", "Kind", "Reason", "Outcome", "Purpose", "Upstream", "Cohort"])
 def test_unknown_dimension_values_are_other_without_raw_properties(sink, field):
     metrics.emit("Bargein", **{field: "participant-private-text"})
     doc, = sink()
-    assert doc[field] == "other" and "private" not in json.dumps(doc)
+    assert doc[field] == ("internal" if field == "Cohort" else "other")
+    assert "participant-private-text" not in json.dumps(doc)
 
 
 @pytest.mark.parametrize("result,outcome", [("A real sentence.", "speech"), ("", "no_speech"),
                                              (" [NO SPEECH] ", "no_speech"),
+                                             ("No speech.", "no_speech"),
+                                             ("[No speech.]", "no_speech"),
+                                             ("(silence)", "no_speech"),
+                                             ("[inaudible]", "no_speech"),
                                              ("failure", "failed"), ("cancel", "cancelled")])
 def test_stt_terminal_outcome_once(result, outcome, sink):
     from server.voice.cascade import CascadeSocket
@@ -480,9 +511,12 @@ def test_route_dimension_rollups_are_actually_emitted(sink):
 def test_metric_output_failure_does_not_change_stt_or_storage(monkeypatch):
     from server.voice.cascade import CascadeSocket
 
+    class MetricSinkError(Exception):
+        pass
+
     class FailedSink:
         def write(self, line):
-            raise BaseException("metric sink failed")
+            raise MetricSinkError("metric sink failed")
 
     monkeypatch.setattr(metrics, "sys", types.SimpleNamespace(stdout=FailedSink()))
     store = memory_store()
@@ -502,6 +536,20 @@ def test_metric_output_failure_does_not_change_stt_or_storage(monkeypatch):
         await socket.close()
 
     asyncio.run(check())
+
+
+@pytest.mark.parametrize("error", [RuntimeError, asyncio.CancelledError, KeyboardInterrupt, SystemExit])
+def test_metric_sink_exception_boundary(monkeypatch, error):
+    class FailedSink:
+        def write(self, line):
+            raise error("metric sink failed")
+
+    monkeypatch.setattr(metrics, "sys", types.SimpleNamespace(stdout=FailedSink()))
+    if issubclass(error, (Exception, asyncio.CancelledError)):
+        metrics.emit("Bargein", Cohort="study")
+    else:
+        with pytest.raises(error):
+            metrics.emit("Bargein", Cohort="study")
 
 
 def test_observer_construction_failure_preserves_route(route_env, monkeypatch):

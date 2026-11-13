@@ -173,3 +173,16 @@ def test_pr2_widgets_have_study_dimensions_and_duration_labels():
     assert '"Gateway request duration (ms)"' in dashboard
     assert '"Gateway request latency (ms)"' not in dashboard
     assert 'aws_cloudwatch_metric_alarm.voice_route_errors.arn' in dashboard
+    gates = re.split(r'title\s*=\s*"Study turn gate decisions"', dashboard, maxsplit=1)[1].split("\n      },", 1)[0]
+    drops = re.split(r'title\s*=\s*"Study echo and duplicate drops"', dashboard, maxsplit=1)[1].split("\n      }", 1)[0]
+    gate_reasons = re.search(r'turn_gate_reasons\s*=\s*(\[[^\]]+\])', MONITORING)[1]
+    drop_reasons = re.search(r'turn_drop_reasons\s*=\s*(\[[^\]]+\])', MONITORING)[1]
+    assert set(re.findall(r'"([^"]+)"', gate_reasons)) == {
+        "no_speech", "implausible_rate", "probe_pad", "not_english",
+        "low_transcriber_confidence", "replay_duplicate", "other",
+    }
+    assert set(re.findall(r'"([^"]+)"', drop_reasons)) == {"echo", "duplicate"}
+    assert 'local.turn_gate_reasons' in gates and 'local.turn_drop_reasons' not in gates
+    assert 'local.turn_drop_reasons' in drops and 'local.turn_gate_reasons' not in drops
+    assert '"UserTurnSuppressed", "Cohort", "study", "Reason", reason' in gates
+    assert '"UserTurnSuppressed", "Cohort", "study", "Reason", reason' in drops
