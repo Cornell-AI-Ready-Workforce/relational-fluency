@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import socket
 from contextlib import asynccontextmanager
 
 import pytest
@@ -362,3 +364,147 @@ async def test_cancel_join_timeout_still_releases_the_slot_and_orders_frames(mon
         assert streams[0].close_cancelled
         cancelled = next(f for f in sock.frames if f["type"] == "response.done")
         assert cancelled["response"]["status"] == "cancelled"
+
+
+@in_a_loop
+async def test_runner_withdrawal_during_create_join_cancels_the_new_reply(monkeypatch):
+    """A is withdrawn, B is also no speech while B's create joins A, then C
+    is real speech. B must be cancelled so C can receive a prompt reply."""
+    monkeypatch.setenv("ELEVENLABS_CONCURRENCY", "1")
+    monkeypatch.setattr(R, "REQUEST_UNANSWERED_S", 1.5)
+    runner, session, page = runner_for("S2A")
+    session.append_user("Hello Morgan.")
+    played = asyncio.Event()
+
+    async def play(pcm):
+        played.set()
+    page.send_bytes = play
+    first = Hearing(completed(None), blocked=True)
+    second = Hearing(completed(None), blocked=True)
+    third = Hearing(completed("I need more time to finish."))
+    async with delayed_tts_bridge(monkeypatch, [first, second, third], 0.45) as (rt, sock, streams, _):
+        async with pump(runner, rt):
+            await send_ms(rt, LOUD, 800)
+            await rt.commit_turn()
+            await until(lambda: runner._speaking)
+            first.ready.set()
+            await until(lambda: session.store.of("suppressed_turn_reply_cancelled"))
+            await streams[0].closing.wait()
+
+            await send_ms(rt, LOUD, 1200)
+            turn_b = asyncio.create_task(runner._on_turn_ended())
+            try:
+                await asyncio.wait_for(second.started.wait(), 1)
+                assert not turn_b.done() and sock._create_lock.locked()
+                second.ready.set()
+                await until(lambda: len(session.store.of("user_turn_suppressed")) == 2)
+                await asyncio.wait_for(turn_b, 1)
+                await until(lambda: len(session.store.of("suppressed_turn_reply_cancelled")) == 2)
+                reply_b = sock._reply
+                assert reply_b.cancelling() or reply_b.done(), "B's withdrawal cancel was lost"
+                await until(reply_b.done)
+                await until(lambda: len(session.store.of("cancelled_output_dropped")) == 2)
+
+                stream_count = len(streams)
+                await send_ms(rt, LOUD, 1200)
+                async with asyncio.timeout(1.0):
+                    await runner._on_turn_ended()
+                    await until(lambda: len(streams) > stream_count)
+                    streams[-1].audio()
+                    await played.wait()
+                created = [(n, f["response"]["id"]) for n, f in enumerate(sock.frames)
+                           if f["type"] == "response.created"]
+                assert len(created) == 3 and len({rid for _, rid in created}) == 3
+                for (_, rid), (next_at, _) in zip(created, created[1:]):
+                    done_at = next(n for n, f in enumerate(sock.frames)
+                                   if f["type"] == "response.done" and f["response"]["id"] == rid)
+                    assert done_at < next_at
+                assert not any(f.get("error", {}).get("code") == "conversation_already_has_active_response"
+                               for f in sock.frames)
+                assert not session.store.of("reply_missing") and not session.store.of("reply_retry")
+            finally:
+                if not turn_b.done():
+                    turn_b.cancel()
+                await asyncio.gather(turn_b, return_exceptions=True)
+
+
+@asynccontextmanager
+async def stalled_websocket(close_timeout):
+    """A real websocket over AF_UNIX socketpair. The peer upgrades, reads
+    frames, and never answers a close. No listener, DNS, or TCP connection."""
+    client_socket, peer_socket = socket.socketpair()
+    client_socket.setblocking(False)
+    peer_socket.setblocking(False)
+    loop = asyncio.get_running_loop()
+    peer_closed = asyncio.Event()
+
+    async def peer():
+        try:
+            header = b""
+            while b"\r\n\r\n" not in header:
+                chunk = await loop.sock_recv(peer_socket, 4096)
+                if not chunk:
+                    return
+                header += chunk
+            key = next(line.split(b":", 1)[1].strip() for line in header.split(b"\r\n")
+                       if line.lower().startswith(b"sec-websocket-key:"))
+            accept = base64.b64encode(hashlib.sha1(
+                key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
+            await loop.sock_sendall(peer_socket, b"HTTP/1.1 101 Switching Protocols\r\n"
+                                   b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                                   b"Sec-WebSocket-Accept: " + accept + b"\r\n\r\n")
+            while await loop.sock_recv(peer_socket, 4096):
+                pass
+        except (ConnectionResetError, BrokenPipeError):
+            pass
+        finally:
+            peer_closed.set()
+
+    peer_task = asyncio.create_task(peer())
+    ws = None
+    try:
+        ws = await cascade.websockets.connect("ws://localhost/", sock=client_socket,
+                                             proxy=None, ping_interval=None,
+                                             close_timeout=close_timeout)
+        yield ws, peer_closed
+    finally:
+        if ws is not None:
+            ws.transport.abort()
+            await asyncio.wait_for(ws.wait_closed(), 1)
+        peer_task.cancel()
+        await asyncio.gather(peer_task, return_exceptions=True)
+        client_socket.close()
+        peer_socket.close()
+
+
+@pytest.mark.parametrize("cancel_cleanup", [False, True])
+@in_a_loop
+async def test_stalled_tts_close_aborts_connection_when_slot_is_released(monkeypatch, cancel_cleanup):
+    close_bound = 10 if cancel_cleanup else 0.05
+    monkeypatch.setattr(cascade, "TTS_CLOSE_TIMEOUT_S", close_bound)
+    async with stalled_websocket(close_bound) as (ws, peer_closed):
+        slot = asyncio.Semaphore(1)
+        await slot.acquire()
+        reader = asyncio.create_task(asyncio.sleep(60))
+
+        async def opened():
+            return ws, reader, slot
+        tts = asyncio.create_task(opened())
+        await tts
+        cleanup = asyncio.create_task(cascade.CascadeSocket._close_reply_tts(tts))
+        try:
+            if cancel_cleanup:
+                await until(lambda: ws.protocol.close_sent is not None)
+                cleanup.cancel()  # The outer reply-join bound can do this.
+                with pytest.raises(asyncio.CancelledError):
+                    await cleanup
+            else:
+                await asyncio.wait_for(cleanup, 0.5)
+            await asyncio.wait_for(slot.acquire(), 0.1)
+            slot.release()
+            assert ws.transport.is_closing(), "the released slot still has an open connection"
+            await asyncio.wait_for(peer_closed.wait(), 0.1)
+        finally:
+            cleanup.cancel()
+            reader.cancel()
+            await asyncio.gather(cleanup, reader, return_exceptions=True)

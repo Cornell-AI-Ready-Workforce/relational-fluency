@@ -729,6 +729,9 @@ def text_client() -> AsyncAnthropic:
 #                policy; the gpt switch is independent. The adapter joins a
 #                cancelling reply before the next create (1 s bound), with
 #                TTS close bounded to 0.5 s and the old done emitted first.
+#                Cancels share the create lock; interrupted close aborts the
+#                transport before releasing the slot. The bridge-only rollback
+#                leaves this adapter cleanup and zero-audio removal active.
 #                A cancelled reply that emitted no audio leaves no assistant
 #                item. After audio starts, exact context trimming still needs
 #                TTS alignment and page playback acknowledgements.

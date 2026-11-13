@@ -260,12 +260,22 @@ def open_tts():
 
 async def _close_tts(ws) -> None:
     """Bound teardown even for an injected stream; a close is not reply work."""
+    closed = False
     try:
         await asyncio.wait_for(ws.close(), TTS_CLOSE_TIMEOUT_S)
+        closed = True
     except asyncio.TimeoutError:
         log.warning("Cascade TTS close exceeded %.1f s", TTS_CLOSE_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 - closing must not lose response.done
         log.warning("Cascade TTS close failed: %s", type(exc).__name__)
+    finally:
+        # Our deadline or a second reply cancel can interrupt close() before
+        # websockets reaches its own transport.abort(). Do not release a TTS
+        # slot with that connection still open; cancellation still propagates.
+        if not closed:
+            transport = getattr(ws, "transport", None)
+            if transport is not None:
+                transport.abort()
 
 
 def wav_bytes(pcm16: bytes, rate: int) -> bytes:
@@ -488,8 +498,8 @@ class CascadeSocket:
 
     async def _on_response_create(self, ev: dict) -> None:
         # A turn-end cancel can be followed immediately by a commit/create.
-        # Serialize creates across the await so two callers cannot both adopt
-        # the same cancelled task and then start overlapping replies.
+        # Creates and cancels share this lock. A cancel arriving during the
+        # join must target the replacement reply, not cancel the old one twice.
         async with self._create_lock:
             previous, previous_id = self._reply, self._reply_id
             if previous is not None and not previous.done():
@@ -521,11 +531,12 @@ class CascadeSocket:
             task.add_done_callback(lambda _t, rid=rid: self._ensure_done(rid))
 
     async def _on_response_cancel(self, ev: dict) -> None:
-        if self._reply is None or self._reply.done():
-            self._error("response_cancel_not_active",
-                        "no response is active", event_id=ev.get("event_id", ""))
-            return
-        self._reply.cancel()
+        async with self._create_lock:
+            if self._reply is None or self._reply.done():
+                self._error("response_cancel_not_active",
+                            "no response is active", event_id=ev.get("event_id", ""))
+                return
+            self._reply.cancel()
 
     # -- steps -----------------------------------------------------------------
     async def _transcribe(self, iid: str, pcm: bytes) -> None:
@@ -714,9 +725,11 @@ class CascadeSocket:
             await ws.send(json.dumps({"voices": [voice_id]}))
             reader = self._spawn(self._relay_audio(ws, rid, iid, started))
         except BaseException:
-            slot.release()
-            if ws is not None:
-                await _close_tts(ws)
+            try:
+                if ws is not None:
+                    await _close_tts(ws)
+            finally:
+                slot.release()
             raise
         return ws, reader, slot
 

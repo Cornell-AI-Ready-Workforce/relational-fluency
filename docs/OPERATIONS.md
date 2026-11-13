@@ -813,17 +813,37 @@ can now cancel a cascade reply. Every existing `cancel_response` call with
 a known response ID, or an unnamed reply tracked by the existing cancel
 latch. This affects withdrawal, barge-in, scribe cancellation, interaction
 rebriefs, and stale room holds. Explicit `discard_tail=False` room holds
-retain their queued tail. `CASCADE_CANCELLED_OUTPUT_DISCARD=0` restores the
-earlier cascade policy; `cancelled_output` in provenance reports the effective
-policy. This switch leaves gpt unchanged. `CANCELLED_OUTPUT_DISCARD` controls
-gpt independently; turning that older switch off restores gpt's old tail relay.
+retain their queued tail. `CASCADE_CANCELLED_OUTPUT_DISCARD=0` restores only
+the earlier cascade bridge discard policy: `cancel_unheard_reply` returns
+`None`, queued cancelled output is relayed, and the runner's cancelled-audio
+backstop is disabled. Existing unconditional `cancel_response` calls still
+cancel adapter generation. `cancelled_output` in provenance reports the
+effective bridge policy. This switch leaves gpt unchanged.
+`CANCELLED_OUTPUT_DISCARD` controls gpt independently; turning that older
+switch off restores gpt's old tail relay.
+
+The cascade switch is not a full rollback of 11-12b. Create/cancel ordering,
+the join and close bounds, transport abort on interrupted close, and zero-audio
+assistant-item removal stay active. With discard disabled, a cancelled
+zero-audio reply can still relay its queued transcript deltas, but has no
+final transcript event and its `response.done` has an empty output list.
 
 A create following cancellation waits for the old reply's teardown before
 starting the new reply. Old `response.done` precedes new `response.created`.
 The join has a 1 s bound. TTS close has a 0.5 s bound, rather than websockets'
-10 s default, and its concurrency slot is released in `finally`. The remaining
-join budget covers the HTTP drain (bounded to 0.25 s) and task cleanup. A create
+10 s default. An interrupted or timed-out close explicitly aborts the transport
+before its concurrency slot is released in `finally`. This also applies when
+the outer join bound cancels teardown. The remaining join budget covers the
+HTTP drain (bounded to 0.25 s) and task cleanup. Cancels share the create lock,
+so a cancel received during a join acts on the replacement reply. A create
 while a reply is active and not cancelling is still refused.
+
+The join is awaited inline in the participant pump at turn end. Microphone
+frames queue while it waits, so VAD and barge-in handling can run up to 0.5 s
+late during a slow close, or 1 s late at the join bound. A withdrawal on the
+model pump can also wait behind that join. This repair keeps the bounded wait;
+moving it off the participant pump needs a separate ordered dispatch queue
+and changes to the bridge's request-state timing.
 
 The existing withdrawal guards keep replies whose audio has already been
 sent to the participant and replies to later commits. First-reply holds
