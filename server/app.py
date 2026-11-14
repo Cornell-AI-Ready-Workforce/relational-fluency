@@ -425,6 +425,18 @@ async def _init_storage_on_startup() -> None:
 app.router.on_startup.append(_init_storage_on_startup)
 
 
+from . import metrics as _metrics  # noqa: E402
+
+
+async def _start_metrics_on_startup() -> None:
+    await _metrics.start(registry)
+
+
+# Install the upstream listener before gateway preflight runs.
+app.router.on_startup.append(_start_metrics_on_startup)
+app.router.on_shutdown.append(_metrics.stop)
+
+
 async def _run_preflights_on_startup() -> None:
     """Startup hook: the gateway and bucket checks, once the process is serving.
 

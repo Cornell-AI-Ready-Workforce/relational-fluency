@@ -77,6 +77,8 @@ def archive_session(session_dir: Path, *, client=None, bucket: Optional[str] = N
     else:
         log.warning("archive of %s incomplete: %s", session_dir.name,
                     result.get("error") or result["failed"])
+    from . import metrics
+    metrics.archive_finished(session_dir, result)
     return result
 
 

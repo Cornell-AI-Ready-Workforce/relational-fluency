@@ -185,7 +185,14 @@ def test_the_named_problem_is_what_the_boot_log_prints(gateway, monkeypatch, cap
 
     appmod._check_gateway()
 
-    out = capsys.readouterr().out
+    # Preflight also emits EMF to stdout. Its timestamps and samples are not
+    # the human-readable diagnosis, and may contain the digits "200".
+    lines = []
+    for line in capsys.readouterr().out.splitlines():
+        if line.startswith('{"_aws":') and "CloudWatchMetrics" in json.loads(line)["_aws"]:
+            continue
+        lines.append(line)
+    out = "\n".join(lines)
     assert "STEERING_MODEL" in out, out
     assert TYPO in out, out
     assert "200" not in out, "the HTTP status is not the diagnosis here"

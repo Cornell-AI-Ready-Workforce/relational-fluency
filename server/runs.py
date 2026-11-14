@@ -1320,6 +1320,11 @@ def withdraw(run_id: str, session_id: Optional[str] = None,
         }
         run["withdrawn"] = stamp
         save(run)
+        # Only the encounter explicitly named by the original withdrawal.
+        # Copies onto sibling runs/participant records are not new withdrawals.
+        if session_id:
+            from . import metrics
+            metrics.emit("EncounterWithdrawn", Cohort=metrics.cohort(run.get("cohort")))
 
     pkey = run.get("participant_id")
     touched = [run]
@@ -1452,13 +1457,17 @@ def advance(run_id: str, session_id: Optional[str] = None) -> Optional[dict]:
         c.get("session_id") == session_id for c in run.get("completed", [])
     ):
         return run
-    if run["index"] < len(run["scenarios"]):
+    advanced = run["index"] < len(run["scenarios"])
+    if advanced:
         entry = dict(run["scenarios"][run["index"]])
         entry["session_id"] = session_id
         entry["finished_at"] = time.time()
         run["completed"].append(entry)
         run["index"] += 1
     save(run)
+    if advanced:
+        from . import metrics
+        metrics.emit("EncounterCompleted", Cohort=metrics.cohort(run.get("cohort")))
     return run
 
 
