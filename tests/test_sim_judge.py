@@ -441,7 +441,7 @@ def test_a_soft_flag_alone_passes_and_a_flag_the_readings_dispute_is_listed_not_
 
 @pytest.mark.parametrize("answers, why", [
     ([RuntimeError("502 from the gateway")], "RuntimeError: 502"),
-    ([{"beats": [], "flags": [], "stop": "max_tokens"}], "cut off"),
+    ([{"beats": [], "flags": [], "stop": "max_tokens"}] * 2, "cut off"),
     ([{"prose": True}], "without the report tool"),
     ([{}], "no beats or flags list"),
     ([FOUND, {"answers": []}, {"answers": []}], "no second answer on the beat on turn 4"),
@@ -694,3 +694,8 @@ def test_the_judge_calls_the_pinned_sdk_with_arguments_it_accepts():
     model = Model(CLEAN)
     asyncio.run(J.judge_record(ENCOUNTER, client=model, model="m", working_tree=True))
     assert set(model.calls[0]) <= accepted, set(model.calls[0]) - accepted
+
+
+def test_an_answer_cut_off_once_is_asked_again():
+    r, model = run(ENCOUNTER, {"beats": [], "flags": [], "stop": "max_tokens"}, CLEAN)
+    assert r["passed"] and len(model.calls) == 2 and r["usage"]["calls"] == 2
