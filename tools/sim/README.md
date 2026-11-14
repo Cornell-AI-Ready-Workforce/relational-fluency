@@ -158,3 +158,139 @@ Room tone is generated in code (`stim.room_tone`), not recorded.
 `--allow-remote`: the check exists to test a build before it is deployed, and
 pointed at production it records internal sessions there and spends its
 gateway budget on the build already running.
+
+## Offline latency breakdown
+
+```bash
+python -m tools.sim.latency /path/to/sim-run --json-out /tmp/latency.json --markdown-out /tmp/latency.md
+python -m tools.sim.latency data/sessions/*/record.json --json-out /tmp/latency.json
+python -m tools.sim.latency tools/sim/reports/1469925.json --json-out /tmp/sim-latency.json
+```
+
+Inputs can be run directories, `record.json` files, event JSONL files, or saved
+sim reports. The tool reads sibling `events.jsonl` files for records. Directory
+scans use `events.jsonl` and `*.events.jsonl`. They skip raw debug logs. Give
+other JSONL names explicitly. Bad JSON inputs appear as issues while valid
+inputs continue. The tool makes no network calls.
+
+Each reply with a participant speech end has a row. The tool groups rows by
+scenario, room or 1:1, encounter reply, participant reply, and family/model.
+Encounter reply separates the first reply at start, the first after each 1:1
+handoff (`first_after_handoff`), and later replies. Start and handoff boundaries
+come from the recorded participant wait and acceptance events. Without these
+events, the tool uses page turn order and cannot identify handoffs.
+
+Participant reply uses `reply_index`: 0 is first; later values are follow-ups
+to the same speech end. The sim summary uses the earliest played reply. These
+definitions differ if reply 0 has no played ACK and a later reply plays.
+
+The tables keep small groups, reply row counts, and missing played ACK counts.
+They show errored and incomplete sim scenarios. Each stage has n, p50, p90, and the mean of its share of
+the same reply's total. `share_n` counts positive totals for that stage.
+
+The breakdown uses speech end to commit, room commit to grant, gateway audio
+to client send, and client send to playback ACK. The unexplained residual
+covers every remaining span. JSON records each interval's exact endpoint
+fields. Transcript arrival and director decision are separate diagnostics.
+Cascade durations can overlap. `llm_first_token_ms` records first sentence
+release, `llm_total_ms` includes TTS waits, and `stt_ms` can be stale. Room
+member timings do not measure scribe STT. These fields do not reduce the
+residual.
+
+`record.json` alone has no stage timings. Saved sim reports retain total
+quantiles and n only. The tool keeps those values and marks other results
+unavailable. It does not infer stages or reply groups from quantiles. Playback
+ACK timing includes return network time. It does not measure hearing. The sim
+does not model the browser audio path. Mode uses session metadata. The tool
+cannot separate mixed room and 1:1 interactions within one session. Both
+outputs list these limits and the boundaries not recorded.
+
+Files with `reply_trace` or `commit_trace` events also produce a `trace` section
+in JSON and a reply-path table in Markdown. The reader supports trace schema
+version 1, `clock: encounter_s`, and seconds. Event `t` and `wall` date teardown;
+they do not date the stages. Unknown versions and clocks are listed without
+parsing their stage data. Inputs without trace events keep the same output.
+
+The trace joins `reply_trace.page_turn` to `turn_timing.turn` within each session.
+It joins `commit_item_ids` and `release_commit_item_id` to their exact
+`commit_trace.commit_item_id`. It does not join by event order or nearby time.
+The coverage counts show traces without a timing row, timing rows without a
+trace, rejected schemas and unreferenced commits. Duplicate identities remain
+unjoined. Cancelled and failed replies retain their observed partial stages.
+Copied sessions are removed before the coarse and trace calculations. A known
+session ID identifies copies; anonymous exports use the event-file content
+hash. A second pass removes byte-identical event files across all ID groups,
+including files in renamed export folders. The copy with the most timing/trace
+events wins within a session ID. Retained sources keep the original Path order.
+Dropped source paths, the
+retained path and the reason appear in JSON and Markdown. Copied saved reports
+and repeated summary session IDs are also excluded.
+
+| Trace section | Meaning |
+|---|---|
+| `provider_audio` | Critical path from the commit's `participant.vad_detected` to `reply.stages.tts_first_audio`. |
+| `adapter_output` | That path through `first_output_emitted`. |
+| `client_audio` | Critical path through any transcript hold to `turn_timing.first_audio_to_client`. |
+| `played_ack` | Client path through `turn_timing.first_audio_played`. |
+| `felt_*` | The corresponding path rooted at `last_voiced_estimate`, with trailing VAD silence as an exposed step. These are sample-position estimates. |
+| `work` | Full generation, slot wait, connection and other observed spans. These spans can overlap. |
+| `commit_work` | STT and transcript decision spans, tied to their commit IDs. |
+| `overlap` | Intersections of generation, connection and STT spans. |
+| `readiness_gap` | TTS readiness after sentence readiness, sentence readiness after connection, or transcript readiness after held audio. |
+
+The critical path follows causal edges. Request, content and sentence stamps
+form one branch. Slot acquisition and connection form another. The first text
+send waits for both sentence and connection readiness. The later prerequisite
+selects the path at that join. Transcript decision and held audio form a
+separate join at hold release. A different release commit does not inherit the
+reply's participant clock or STT history.
+
+Each group retains scenario, mode, family/model and the first, handoff and later
+labels from its matched timing row. Origin is a separate group field, so probe
+and replay work does not enter participant-commit work statistics. A trace
+without a timing row keeps unavailable group labels as unknown. Each stage
+reports n, p50 and p90. Commit work counts
+commit spans per reply; its n can exceed the reply count. Missing stamps stay
+missing. Each path reports an unexplained residual when a dependency is absent
+or has invalid order. Complete recorded paths have no unexplained time.
+
+Path-stage statistics exclude incomplete and clock-unverified paths. The n and
+quantiles describe replies where a stage is critical. `path_n` counts all
+complete paths. `critical_share` is critical n divided by path n.
+`mean_contribution_s` averages the stage's time across complete paths, with zero
+for replies where the stage is not critical. The Markdown table shows both
+values. Work and overlap statistics retain their own observed spans. A group
+also reports tied joins, counted once per response and join across all targets.
+Ties use a deterministic path choice; the count exposes this ambiguity.
+
+Do not add work, overlaps, readiness gaps and critical-path stages together.
+Readiness gaps describe observed waits. They do not predict an optimization's
+gain. The legacy coarse split stays available for comparison and for untraced
+rows. Its missing-boundary list does not describe the stamps present in a trace.
+
+Trace stamps use monotonic elapsed time after attachment. Legacy client and
+playback stamps use wall elapsed time. Only paired VAD marks estimate and guard
+wall-minus-trace offset. Each session reports their median and spread. Neither
+the gateway pair nor `commit_sent` is an anchor: both include real work.
+A VAD offset or spread above 5 ms marks client and ACK paths
+`cross_clock_unverified` and excludes them from statistics. Offsets within 1 ms
+are left uncorrected because the VAD mark has its own rounding and runner hop.
+Larger verified offsets are subtracted and recorded. The clamp bound is 1 ms
+plus the applied offset's magnitude, at most 6 ms. Changed fields and deltas
+remain recorded. Larger reversals stay invalid. Pure trace edges stay strict.
+
+For unheld replies, `output_to_gateway` exposes the emit-to-bridge hop as an
+estimate under the applied VAD correction. The raw gateway-minus-VAD estimate
+is also recorded. A separate `gateway_to_client` step uses the exact wall-to-wall
+interval. A gateway rounding clamp moves its client/ACK endpoints together to
+preserve those wall intervals. Queue latency never enters the clock guard or
+gets removed as a clock offset. VAD correction remains limited by observation
+delay and timestamp resolution.
+
+JSON keeps raw stamps, corrected stamps, offsets and clamps. Markdown shows
+clock status, offset and clamp count. A clock step after the last paired mark
+cannot be detected by these anchors alone. Last voice is a sample-position
+estimate. Its felt totals and exposed silence step appear beside the VAD-rooted
+totals in the Markdown summary. Playback ACK measures scheduling, not hearing.
+This trace covers the 1:1 cascade. Room routing, floor waits and browser receipt
+still need separate observations.
