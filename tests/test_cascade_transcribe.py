@@ -154,6 +154,36 @@ async def record(runner, rt, **kw):
     return ev
 
 
+@in_a_loop
+async def test_ready_gateway_frame_cannot_swallow_pump_cancellation(monkeypatch):
+    # Exercise external cancellation independently of the short polling timer.
+    monkeypatch.setattr(R, "RECV_POLL_S", 60)
+    started = asyncio.Event()
+    frame = asyncio.get_running_loop().create_future()
+
+    class ReadySocket:
+        async def recv(self):
+            started.set()
+            return await frame
+
+    rt = R.RealtimeVoiceSession("test", model=MODEL, api_key="k")
+    rt.ws = ReadySocket()
+    frames = rt._frames()
+    reader = asyncio.create_task(anext(frames))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        # Resume recv and cancel its pump in the same loop turn. Python 3.11's
+        # wait_for can return the ready frame and lose the pump cancellation.
+        frame.set_result(json.dumps({"type": "session.updated"}))
+        reader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await reader
+    finally:
+        reader.cancel()
+        await asyncio.gather(reader, return_exceptions=True)
+        await frames.aclose()
+
+
 @pytest.mark.parametrize("content", [None, "", " \n\t ", "[no speech]"])
 @pytest.mark.parametrize("voiced_ms", [40, 800, None])
 @in_a_loop

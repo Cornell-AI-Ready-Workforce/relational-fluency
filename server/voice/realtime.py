@@ -4950,9 +4950,15 @@ class RealtimeVoiceSession:
                                       self._audio_absent_hold))
                 timeout = min(timeout, 1.0, max(0.25, left + 0.01))
             try:
-                yield await asyncio.wait_for(ws.recv(), timeout)
+                # Python 3.11's wait_for can swallow pump cancellation when
+                # recv finishes in the same loop turn. Keep the read in this
+                # task, and end its deadline before handing a frame upstream.
+                async with asyncio.timeout(timeout):
+                    raw = await ws.recv()
             except asyncio.TimeoutError:
                 yield None
+            else:
+                yield raw
 
     async def events(self) -> AsyncIterator[dict]:
         if not self.ws:
