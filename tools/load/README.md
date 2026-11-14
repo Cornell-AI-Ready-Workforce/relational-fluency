@@ -208,8 +208,9 @@ at info level with access logging; query `key=` values are redacted.
 Reports record host CPU model, Docker architecture, VM CPU count, quota and
 storage mount type. Each run first executes a fixed ten-second calibration
 in a container with the same CPU/memory caps: JSON parse, base64 decode and
-`audioop.ratecv` resampling of 100 ms PCM frames from 48 to 16 kHz. The score
-is frames/second with a version and checksum. `--cpu-scale 0.8` makes the host
+the server's `_ratecv` resampling of 100 ms PCM frames from 48 to 16 kHz. Python
+3.13 uses the server's pure-Python fallback and a separate calibration version.
+The score is frames/second with a version and checksum. `--cpu-scale 0.8` makes the host
 quota 0.4 CPU. `--fargate-reference file.json` accepts a stored score of the
 same version and reports the host/reference ratio. No Fargate reference is
 included and no AWS operation runs. No automatic capacity extrapolation is

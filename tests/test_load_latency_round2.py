@@ -135,6 +135,7 @@ def test_capacity_pass_also_reports_recovered_gateway_error(monkeypatch, tmp_pat
 
 
 @pytest.mark.parametrize("phase,signals", [("workers", 1), ("workers", 2), ("cleanup", 2)])
+@pytest.mark.skipif(sys.platform == "win32", reason="load harness requires POSIX signal handlers and SIGTERM delivery")
 def test_sigterm_probe_cannot_pass_when_cancellation_is_absorbed(tmp_path, phase, signals):
     # Adapted from scratchpad/r2/probe_sigterm_lost.py. Signals stay in this
     # subprocess, never in pytest. Both normal traces and TTS proof would pass.

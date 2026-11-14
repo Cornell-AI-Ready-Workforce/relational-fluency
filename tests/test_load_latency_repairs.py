@@ -167,6 +167,7 @@ def test_abandoned_runtime_is_rejected_before_startup(tmp_path, capsys):
     assert "fresh and empty" in capsys.readouterr().err
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="load harness requires POSIX signal handlers and SIGTERM delivery")
 def test_sigterm_cleans_up_children_and_writes_failed_report(tmp_path):
     root = checkout(tmp_path)
     ready, cleaned, directory = tmp_path / "ready.json", tmp_path / "cleaned", tmp_path / "run"

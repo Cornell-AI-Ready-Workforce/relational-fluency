@@ -381,6 +381,10 @@ def test_track0_slot_wait_only_contributes_queue_wait_not_sent_attempts():
 
 
 def test_f16_fake_mounts_only_its_three_input_files_and_tools(monkeypatch, tmp_path):
+    # Plan assertions run on every OS; host probes describe a synthetic POSIX host.
+    monkeypatch.setattr(runtime.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(runtime.os, "getuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(runtime.os, "getgid", lambda: 1000, raising=False)
     calls = []
     rt = runtime.Runtime(tmp_path, image="image")
     rt.bundle = tmp_path / "ca-bundle.pem"
@@ -403,7 +407,7 @@ def test_f16_fake_mounts_only_its_three_input_files_and_tools(monkeypatch, tmp_p
     asyncio.run(rt._docker_start())
     fake = next(c for c in calls if c[:2] == ('docker', 'run') and rt.fake_name in c)
     mounts = [fake[i + 1] for i, arg in enumerate(fake) if arg == '-v']
-    assert set(m.split(':', 1)[1] for m in mounts) == {
+    assert {':'.join(m.rsplit(':', 2)[1:]) for m in mounts} == {
         '/app/tools:ro', '/load/cert.pem:ro', '/load/key.pem:ro', '/load/fake-config.json:ro'}
     assert str(tmp_path) + ':/load:ro' not in mounts and not any('server.env' in m or ':/data' in m for m in mounts)
     assert f'{rt.directory / "code"}:/app/tools:ro' in mounts

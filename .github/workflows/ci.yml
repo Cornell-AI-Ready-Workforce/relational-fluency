@@ -200,6 +200,12 @@ jobs:
               # Postgres, which no cell of this job has; the same statements
               # are pinned offline by tests/test_load_analysis_db_refresh.py.
               "rf_analysis_test_dsn not set",
+              # Docker-gated harness tests need an explicit opt-in and a real
+              # daemon; the platform matrix runs their offline plan checks.
+              "requires rf_load_docker_tests=1",
+              # The load harness targets macOS/Linux. POSIX signal delivery
+              # and file modes run there, but are unavailable on Windows.
+              "load harness requires posix",
           )
 
           report = Path("platform-tests.xml")

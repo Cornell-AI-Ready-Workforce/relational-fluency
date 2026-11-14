@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import ssl
 import subprocess
+import sys
 
 import pytest
 
@@ -67,6 +68,10 @@ def test_egress_proof_requires_every_connect_to_fail_and_exactly_three_members()
 
 
 def test_docker_plan_uses_repo_image_internal_network_caps_and_synthetic_env(monkeypatch, tmp_path):
+    # Plan assertions run on every OS; host probes describe a synthetic POSIX host.
+    monkeypatch.setattr(runtime.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(runtime.os, "getuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(runtime.os, "getgid", lambda: 1000, raising=False)
     calls, captured_env = [], {}
     instance = runtime.Runtime(tmp_path)
     instance.bundle = tmp_path / "ca.pem"
@@ -134,6 +139,13 @@ def test_fake_tls_bundle_keeps_public_roots(tmp_path):
     assert context.get_ca_certs()
     text = bundle.read_text(encoding="ascii")
     assert cert.read_text(encoding="ascii") in text and text.count("BEGIN CERTIFICATE") > 1
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="load harness requires POSIX file permissions for TLS keys")
+def test_fake_tls_key_has_private_permissions(tmp_path):
+    if not shutil.which("openssl"):
+        pytest.skip("openssl is absent")
+    _, key, _ = asyncio.run(runtime.certificates(tmp_path))
     assert key.stat().st_mode & 0o777 == 0o600
 
 

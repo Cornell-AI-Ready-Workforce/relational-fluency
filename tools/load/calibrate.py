@@ -2,15 +2,19 @@
 from __future__ import annotations
 
 import argparse
-import audioop
 import base64
 import json
 import math
 import platform
 import time
 
+from server.voice.realtime import _ratecv, resampler_name
 
-VERSION = "pcm100ms-json-base64-ratecv-v1"
+
+# Keep existing C-path references valid; the Python fallback has a different
+# CPU cost and must not silently compare against those references.
+VERSION = "pcm100ms-json-base64-ratecv-v1" + (
+    "-linear-py" if resampler_name(48000, 16000) == "linear-py" else "")
 
 
 def calibrate(seconds=10.0):
@@ -21,7 +25,7 @@ def calibrate(seconds=10.0):
     while time.perf_counter() - start < seconds:
         row = json.loads(packet)
         decoded = base64.b64decode(row["audio"], validate=True)
-        frame, _ = audioop.ratecv(decoded, 2, 1, row["sample_rate"], 16000, None)
+        frame, _ = _ratecv(decoded, row["sample_rate"], 16000, None)
         checksum += len(frame)
         count += 1
     elapsed = time.perf_counter() - start
