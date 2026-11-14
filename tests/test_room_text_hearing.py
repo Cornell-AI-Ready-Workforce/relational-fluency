@@ -845,7 +845,9 @@ async def test_pregrant_next_turn_is_merged_and_its_task_is_consumed(monkeypatch
 def test_room_hearing_pipeline_version_follows_the_other_november_changes():
     import inspect
     from server import llm
-    assert llm.PIPELINE_VERSION == "2026-11-12d"
+    # At or after the version that introduced it: a later change (11-13a, the
+    # steering budget) bumps the version without undoing this one.
+    assert llm.PIPELINE_VERSION >= "2026-11-12d"
     source = inspect.getsource(llm)
     assert [source.index("#   2026-11-12" + suffix) for suffix in "abcd"] == sorted(
         source.index("#   2026-11-12" + suffix) for suffix in "abcd")
