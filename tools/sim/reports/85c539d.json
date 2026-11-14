@@ -1,0 +1,701 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "ac07319",
+   "date": "2026-11-13",
+   "pipeline_version": "2026-11-06a",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "85c539d",
+ "build_from": "HEAD's image contents are identical to the pinned tag 85c539d",
+ "failures": [
+  "S1A: no baseline yet: not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+  "S2A: no baseline yet: not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+  "S3A: no baseline yet: not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+  "S4A: judge: no verdict: the judge's answer was cut off at 2000 tokens",
+  "S4A: no baseline yet: not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline"
+ ],
+ "generated_at": "2026-11-14T07:49:55Z",
+ "health": {
+  "build": "85c539d",
+  "pipeline_version": "2026-11-13a",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S1A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 1,
+     "p": 0,
+     "x": 0,
+     "y": 7
+    },
+    "build": "85c539d",
+    "chances": {
+     "met": 4,
+     "of": 5,
+     "per_item": {
+      "bring_into_open": 3,
+      "de_escalate": 2,
+      "fester_r": 4,
+      "resolve_not_fester": 4,
+      "talk_openly": 3
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 0,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 0,
+     "ungrounded": 0
+    },
+    "flags": [],
+    "lines": 10,
+    "missed": [
+     {
+      "agent": "sam",
+      "at": 16,
+      "i": 15,
+      "line": "We have the sync on Thursday at ten, so let me know what you want to adjust by then.",
+      "trigger": "t6_how_it_works"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S1A",
+    "session_id": "s_1794640923_feccb3",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 6599,
+     "out": 159
+    },
+    "verdicts": [
+     {
+      "agent": "riley",
+      "at": 1,
+      "i": 1,
+      "trigger": "t1_retaliation_fork",
+      "v": "y"
+     },
+     {
+      "agent": "riley",
+      "at": 8,
+      "i": 7,
+      "trigger": null,
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 10,
+      "i": 9,
+      "trigger": "t2_the_opening",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 12,
+      "i": 11,
+      "trigger": "t3_defensiveness",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 14,
+      "i": 13,
+      "trigger": "t5_brush_it_off",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 16,
+      "i": 15,
+      "trigger": "t6_how_it_works",
+      "v": "n"
+     },
+     {
+      "agent": "sam",
+      "at": 17,
+      "i": 16,
+      "trigger": "t4_half_concession",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 19,
+      "i": 18,
+      "trigger": "t7_time_runs_out",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 11,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 8,
+    "lines_said": 8,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "85c539d",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-13a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794640923_feccb3",
+    "speech_end_to_first_played_s": {
+     "n": 8,
+     "p50": 1.898,
+     "p90": 2.362
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_retaliation_fork",
+     "t2_the_opening",
+     "t3_defensiveness",
+     "t5_brush_it_off",
+     "t6_how_it_works",
+     "t4_half_concession",
+     "t7_time_runs_out"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {
+     "probe_pad": 2
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794640923_feccb3"
+  },
+  "S2A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 3,
+     "p": 0,
+     "x": 0,
+     "y": 6
+    },
+    "build": "85c539d",
+    "chances": {
+     "met": 3,
+     "of": 5,
+     "per_item": {
+      "anticipates": 5,
+      "behind_scenes": 1,
+      "multiple_approaches": 5,
+      "self_interest": 2,
+      "through_discussion": 3
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 8,
+     "ROLE": 0,
+     "RULE": 1,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 7,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "morgan",
+      "at": 24,
+      "c": "RULE",
+      "i": 24,
+      "line": "That doesn't go anywhere on my word alone, since the director has to sign and whoever own…",
+      "q": "Two sentences a turn at the outside, and short ones.",
+      "source": "Two sentences a turn at the outside, and short ones."
+     },
+     {
+      "agent": "morgan",
+      "at": 28,
+      "c": "LOOP",
+      "i": 28,
+      "line": "Ten percent is past what I can sign on my own right now. If I take a written case up to t…",
+      "q": "turn 9",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 32,
+      "c": "LOOP",
+      "i": 32,
+      "line": "Managing two people is a real step up from where you started. Can you write that expanded…",
+      "q": "turn 13",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 34,
+      "c": "LOOP",
+      "i": 34,
+      "line": "That promise was real, and the freeze caught us both. Will you have those exact dates and…",
+      "q": "turn 15",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 36,
+      "c": "LOOP",
+      "i": 36,
+      "line": "Tomorrow afternoon works for me to look over what you write up. What time suits you?",
+      "q": "turn 17",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 40,
+      "c": "LOOP",
+      "i": 40,
+      "line": "We talked about that early finish, and the freeze is still where it is. What else can you…",
+      "q": "turn 19",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 42,
+      "c": "LOOP",
+      "i": 42,
+      "line": "That doesn't go anywhere on my word alone, since the director has to sign and whoever own…",
+      "q": "turn 24",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 44,
+      "c": "LOOP",
+      "i": 44,
+      "line": "You've taken on the June launch and vendor reporting on top of everything else. What spec…",
+      "q": "turn 26",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 46,
+      "c": "LOOP",
+      "i": 46,
+      "line": "Ten percent is past what I can sign on my own right now. If I take a written case up to t…",
+      "q": "turn 9",
+      "source": null
+     }
+    ],
+    "lines": 24,
+    "missed": [
+     {
+      "agent": "morgan",
+      "at": 17,
+      "i": 17,
+      "line": "Tomorrow afternoon works for me to look over what you write up. What time suits you?",
+      "trigger": "t2_the_money_is_not_there"
+     },
+     {
+      "agent": "morgan",
+      "at": 21,
+      "i": 21,
+      "line": "That migration got done, and the freeze still stands in the way. What else goes into the…",
+      "trigger": "t4_everyone_is_stretched"
+     },
+     {
+      "agent": "morgan",
+      "at": 28,
+      "i": 28,
+      "line": "Ten percent is past what I can sign on my own right now. If I take a written case up to t…",
+      "trigger": "t8_what_do_i_tell_the_others"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S2A",
+    "session_id": "s_1794641152_532734",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 10335,
+     "out": 581
+    },
+    "verdicts": [
+     {
+      "agent": "morgan",
+      "at": 1,
+      "i": 1,
+      "trigger": "t1_the_opening",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 17,
+      "i": 17,
+      "trigger": "t2_the_money_is_not_there",
+      "v": "n"
+     },
+     {
+      "agent": "morgan",
+      "at": 19,
+      "i": 19,
+      "trigger": "t3_the_argument_lands_flat",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 21,
+      "i": 21,
+      "trigger": "t4_everyone_is_stretched",
+      "v": "n"
+     },
+     {
+      "agent": "morgan",
+      "at": 22,
+      "i": 22,
+      "trigger": "t5_the_door",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 24,
+      "i": 24,
+      "trigger": "t6_who_else_has_to_back_it",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 26,
+      "i": 26,
+      "trigger": "t7_what_goes_in_writing",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 28,
+      "i": 28,
+      "trigger": "t8_what_do_i_tell_the_others",
+      "v": "n"
+     },
+     {
+      "agent": "morgan",
+      "at": 30,
+      "i": 30,
+      "trigger": "t9_settling",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 24,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 23,
+    "lines_heard": 23,
+    "lines_said": 23,
+    "participant_turns": 23,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "85c539d",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-13a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794641152_532734",
+    "speech_end_to_first_played_s": {
+     "n": 23,
+     "p50": 1.849,
+     "p90": 2.267
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_the_opening",
+     "t2_the_money_is_not_there",
+     "t3_the_argument_lands_flat",
+     "t4_everyone_is_stretched",
+     "t5_the_door",
+     "t6_who_else_has_to_back_it",
+     "t7_what_goes_in_writing",
+     "t8_what_do_i_tell_the_others",
+     "t9_settling"
+    ],
+    "triggers_fired": 9,
+    "turns_suppressed": {
+     "probe_pad": 1
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 1,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794641152_532734"
+  },
+  "S3A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 1,
+     "p": 0,
+     "x": 0,
+     "y": 6
+    },
+    "build": "85c539d",
+    "chances": {
+     "met": 2,
+     "of": 5,
+     "per_item": {
+      "brings_out_best": 3,
+      "builds_pride": 3,
+      "compelling_vision": 2,
+      "inspires": 2,
+      "not_inspire_r": 2
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 0,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 1,
+     "ungrounded": 0
+    },
+    "flags": [],
+    "lines": 9,
+    "missed": [
+     {
+      "agent": "jordan",
+      "at": 15,
+      "i": 15,
+      "line": "Fine.",
+      "trigger": "t5_a_fact_left_on_the_table"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S3A",
+    "session_id": "s_1794641777_9b8b2c",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 4679,
+     "out": 194
+    },
+    "verdicts": [
+     {
+      "agent": "alex",
+      "at": 1,
+      "i": 1,
+      "trigger": "t0_hello",
+      "v": "y"
+     },
+     {
+      "agent": "alex",
+      "at": 3,
+      "i": 3,
+      "trigger": "t1_public_challenge",
+      "v": "y"
+     },
+     {
+      "agent": "jordan",
+      "at": 8,
+      "i": 8,
+      "trigger": "t2_jordans_flat_fine",
+      "v": "y"
+     },
+     {
+      "agent": "casey",
+      "at": 9,
+      "i": 9,
+      "trigger": "t3_caseys_overload",
+      "v": "y"
+     },
+     {
+      "agent": "alex",
+      "at": 14,
+      "i": 14,
+      "trigger": "t4_what_the_team_is_for",
+      "v": "y"
+     },
+     {
+      "agent": "jordan",
+      "at": 15,
+      "i": 15,
+      "trigger": "t5_a_fact_left_on_the_table",
+      "v": "n"
+     },
+     {
+      "agent": "casey",
+      "at": 17,
+      "i": 17,
+      "trigger": "t6_one_clarifying_question",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 9,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 7,
+    "lines_heard": 9,
+    "lines_said": 9,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "85c539d",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-13a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794641777_9b8b2c",
+    "speech_end_to_first_played_s": {
+     "n": 8,
+     "p50": 2.23,
+     "p90": 3.386
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t0_hello",
+     "t1_public_challenge",
+     "t2_jordans_flat_fine",
+     "t3_caseys_overload",
+     "t4_what_the_team_is_for",
+     "t5_a_fact_left_on_the_table",
+     "t6_one_clarifying_question"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794641777_9b8b2c"
+  },
+  "S4A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+     "ok": false
+    }
+   ],
+   "judge": {
+    "build": "85c539d",
+    "error": "the judge's answer was cut off at 2000 tokens",
+    "lines": 35,
+    "model": "nto.gemini-4-argon",
+    "passed": false,
+    "rubric": "97e0ab8d",
+    "scenario": "S4A",
+    "session_id": "s_1794641964_8c99a1",
+    "spec_changed": null,
+    "usage": {
+     "calls": 1,
+     "in": 6916,
+     "out": 2000
+    }
+   },
+   "metrics": {
+    "assistant_turns": 35,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 30,
+    "lines_heard": 34,
+    "lines_said": 34,
+    "participant_turns": 34,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "85c539d",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-13a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794641964_8c99a1",
+    "speech_end_to_first_played_s": {
+     "n": 34,
+     "p50": 2.233,
+     "p90": 3.146
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_priya_interrupted",
+     "t2_idea_relabelled",
+     "t5_a_smaller_second_try",
+     "t8_splitting_it_up_is_slower",
+     "t9_chris_has_two_teams_dates",
+     "t10_priya_has_two_teams_dates",
+     "t4_dan_claims_the_writeup",
+     "t7_priya_waits_to_be_handed_work"
+    ],
+    "triggers_fired": 8,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 2,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794641964_8c99a1"
+  }
+ },
+ "server": "http://127.0.0.1:57667"
+}

@@ -28,7 +28,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SID = "S4A"
 SRC = J.source_of(SID)
 RULE_OF_DANS = "You never hand credit over before you are corrected."
-FACT_OF_CHRISS = "Sales is ready for Monday the 9th"
+# Chris speaks for Operations; the Sales date is Dan's.
+FACT_OF_CHRISS = "Operations wants Monday the 30th"
 
 
 def P(text):
@@ -221,7 +222,8 @@ def test_a_keep_going_probe_is_one_of_the_scenarios_own_lines_not_a_changed_scen
     other, _ = J.turns_of(record(C("alex", "x", "keep_going_1", direction="Sing a song."),
                                  scenario="S3A"))
     assert "worded differently" in J.spec_drift(other, s3)
-    assert J.spec_drift(other, SRC) == "keep_going_1 is not in the scenario file"   # S4A lists none
+    # S4A lists after_beats too (#214); S2A lists none.
+    assert J.spec_drift(other, J.source_of("S2A")) == "keep_going_1 is not in the scenario file"
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
@@ -441,7 +443,7 @@ def test_a_soft_flag_alone_passes_and_a_flag_the_readings_dispute_is_listed_not_
 
 @pytest.mark.parametrize("answers, why", [
     ([RuntimeError("502 from the gateway")], "RuntimeError: 502"),
-    ([{"beats": [], "flags": [], "stop": "max_tokens"}], "cut off"),
+    ([{"beats": [], "flags": [], "stop": "max_tokens"}] * 2, "cut off"),
     ([{"prose": True}], "without the report tool"),
     ([{}], "no beats or flags list"),
     ([FOUND, {"answers": []}, {"answers": []}], "no second answer on the beat on turn 4"),
@@ -694,3 +696,8 @@ def test_the_judge_calls_the_pinned_sdk_with_arguments_it_accepts():
     model = Model(CLEAN)
     asyncio.run(J.judge_record(ENCOUNTER, client=model, model="m", working_tree=True))
     assert set(model.calls[0]) <= accepted, set(model.calls[0]) - accepted
+
+
+def test_an_answer_cut_off_once_is_asked_again():
+    r, model = run(ENCOUNTER, {"beats": [], "flags": [], "stop": "max_tokens"}, CLEAN)
+    assert r["passed"] and len(model.calls) == 2 and r["usage"]["calls"] == 2

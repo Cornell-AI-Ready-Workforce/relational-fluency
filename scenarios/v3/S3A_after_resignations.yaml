@@ -37,14 +37,25 @@ esci_items:
 # (was Priya, who is also a character in S4, and a run holds both); the
 # second is Tom. Beats and ESCI map unchanged. NOT re-measured, and S3B has
 # not been given the matching detail.
+# 2026-11-13: the record is written down, and the participant has levers.
+# The setup now carries the record every actor reads: who left when, how many
+# reviews came over and who took them, and what leadership said about pay
+# (#219: the characters used to make these up, differently each run).
+# `assets` is new: what the lead can actually do, shown to the participant
+# only ("What you have"), so that "a plan they can live with" has content.
+# The actors never see it, so none of them can propose the lead's moves.
+# S3B has NOT been given the matching detail.
 setup: >-
   You are the interim lead of a three-person team that reviews supplier
   contracts before the company signs them. A review says what in a contract
   has to change, and it goes out under the name of the person who wrote it.
-  Two colleagues, Nadia and Tom, resigned over pay in the last six weeks, and
-  their reviews now fall on the three who stayed. You must lead the team
-  through a quarter with no new resources. Leadership above you will not
-  discuss compensation.
+  Two colleagues resigned over pay: Nadia six weeks ago and Tom two weeks
+  ago. Between them they left forty open reviews. Casey took eighteen of
+  Nadia's, and Alex and Jordan split the other twenty-two. A reviewer
+  normally carries about ten at a time. The team asked leadership about pay
+  in the spring and was told it would be looked at next year, and nothing
+  has been said since. The team has to get through this quarter with no new
+  resources. Leadership above you will not discuss compensation.
 
 # What the participant is told they are there to do. Shown on the situation
 # card and kept on screen under the header for the whole conversation. It is
@@ -68,13 +79,21 @@ intro_card:
     You have just become the interim lead of a team that reviews supplier
     contracts before the company signs them. Each review says what in a
     contract has to change, and it goes out under the name of the person who
-    wrote it. Two of your colleagues, Nadia and Tom, resigned over pay in the
-    last six weeks, and their reviews now fall on the three who stayed: Alex,
-    Jordan, and Casey. Jordan is the most experienced reviewer. Casey is the
-    most junior and has taken on most of Nadia's reviews. You have to get the
-    team through the next quarter with no extra people or budget, and
-    leadership will not discuss pay. You are meeting with the team, and
-    everyone already knows the news.
+    wrote it. Two of your colleagues resigned over pay: Nadia six weeks ago
+    and Tom two weeks ago. Between them they left forty open reviews, which
+    now fall on the three who stayed: Alex, Jordan, and Casey. A reviewer
+    normally carries about ten at a time. Jordan is the most experienced
+    reviewer. Casey is the most junior and took eighteen of Nadia's reviews;
+    Alex and Jordan split the other twenty-two. The team asked leadership
+    about pay in the spring and was told it would be looked at next year.
+    You have to get the team through the next quarter with no extra people
+    or budget, and leadership will not discuss pay. You are meeting with the
+    team, and everyone already knows the news.
+  assets:
+    - "Who does which review is your decision. You can move reviews from one person to another."
+    - "You can have two people sign off a piece of work together, so that nobody carries it alone."
+    - "You can delay low-risk renewals by up to two weeks without asking anyone above you."
+    - "You meet your director once a month and can report what the team is carrying. You cannot promise anything on pay or hiring."
   parts:
     - "They are your team, and you are leading the meeting."
   howto:
@@ -93,6 +112,14 @@ intro_card:
   start: "I am ready, let's start"
 
 # Two short notes stand in for the briefing, context lands in-scene.
+# Participant-only (the "What you have" card; actors never see this list).
+# These are the lead's levers: the specific things they can offer.
+assets:
+  - "Who does which review is your decision. You can move reviews from one person to another."
+  - "You can have two people sign off a piece of work together, so that nobody carries it alone."
+  - "You can delay low-risk renewals by up to two weeks without asking anyone above you."
+  - "You meet your director once a month and can report what the team is carrying. You cannot promise anything on pay or hiring."
+
 pre_reading:
   - "Jordan, strong reviewer, quietest since Nadia left."
   - "Casey, junior, absorbed most of Nadia's queue."
@@ -557,13 +584,14 @@ agents:
       cascade: burt  # calm, steady; Hale until 2026-10-16 (v4 swung 80-220 Hz within a reply)
     voice: Fenrir
     system_prompt: |
-      You are Alex. Nadia and Tom quit over pay in the last six weeks, and their
-      reviews now sit on the three of you who stayed. You are tired and dry, not
-      angry, and on the facts you are right.
+      You are Alex. Nadia quit over pay six weeks ago and Tom two weeks ago, and
+      their reviews now sit on the three of you who stayed. You are tired and dry,
+      not angry, and on the facts you are right.
 
-      Your facts, and no others: two people gone in six weeks over pay, their
-      reviews on three desks, and leadership will not talk about pay. You never
-      invent a figure, a date or a quote.
+      Your facts, and no others: Nadia gone six weeks ago and Tom two weeks ago,
+      both over pay; forty open reviews left on three desks, where ten each is a
+      normal load; and leadership saying in the spring that pay would be looked at
+      next year, with nothing since. You never invent a figure, a date or a quote.
 
       How you talk: one or two short, flat sentences. No sarcasm, no jokes. A
       question put to you gets its answer first. Mix statements and questions, and
@@ -640,12 +668,13 @@ agents:
       cascade: callie  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Leda
     system_prompt: |
-      You are Casey. You are eighteen months in and the most junior. Nadia's review
-      queue landed on you, and everything in it now goes out under your name. You
-      are out of your depth and have not said so.
+      You are Casey. You are eighteen months in and the most junior. Eighteen of
+      Nadia's reviews landed on you, on top of your own ten, and everything in them
+      now goes out under your name. You are out of your depth and have not said so.
 
-      Your facts, and no others: the size of Nadia's queue, and that it goes out
-      under your name. You never name a clause, contract or number.
+      Your facts, and no others: eighteen of Nadia's reviews on top of your own ten,
+      and that they go out under your name. You never name a clause or a contract,
+      or any other number.
 
       How you talk: Hesitant, polite and brief. You apologise for asking before you
       ask, in the same breath. It belongs to the thing you came in here to ask, not

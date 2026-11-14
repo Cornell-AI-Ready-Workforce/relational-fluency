@@ -171,9 +171,14 @@ the 720 s ceiling where 24c ended it about 451 s in, and the count limits
 shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
-check fails for it, saying so, until it is recorded. All four are pending as
-committed: pipeline 2026-11-13a has not been recorded yet. The last recording
-was on 2026-11-13 from build ac07319, pipeline
+check fails for it, saying so, until it is recorded. S1A, S2A and S3A were
+recorded on 2026-11-14 from build 85c539d, pipeline 2026-11-13a, with the new
+transcriber (reports/85c539d.json). S2A's manager there answers a line the
+participant repeats almost word for word (5 of 16 to 6 of 13 answers, against
+0 of 14 on the flash-lite transcriber); that was kept knowingly, because
+flash-lite dropped an S3A line as no speech. S4A is pending: see its
+`pending` entry (issue #217). The recording before was on 2026-11-13 from
+build ac07319, pipeline
 2026-11-06a / room pacing 2026-11-04a (s_1794603648_182505,
 s_1794603870_d09625, s_1794604520_f5de09, s_1794604724_9551d2): the first run
 of 11-06a, and the first to carry the judge's counts (beats made 8 of 8, 9 of

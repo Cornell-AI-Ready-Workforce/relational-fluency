@@ -2857,7 +2857,9 @@
       const left = minutesText(stopFirst ? MAX_S - s : MIN_S - floorElapsedS());
       $('gateLabel').textContent = s >= WRAP_S ? 'Wrapping up'
         : stopFirst ? `Ends automatically in about ${left}`
-        : floorStartMs ? `End unlocks at ${clockOf(unlockOnTimerS())}`
+        // Time left, not a clock time: the floor counts from the first line,
+        // so a start 2 s into the timer read "End unlocks at 05:02".
+        : floorStartMs ? `End unlocks in about ${left}`
         : `End unlocks ${minutesText(MIN_S)} after you start`;
       // Held until the floor. Not `disabled`, so the click can still explain
       // itself (see the handler); aria-disabled says what the styling shows.
