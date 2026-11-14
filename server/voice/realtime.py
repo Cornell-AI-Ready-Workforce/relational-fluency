@@ -208,6 +208,7 @@ COMMIT_AUDIO_TAGS = 4
 GATEWAY_OUTPUT_RATE = int(setting("REALTIME_OUTPUT_RATE", "24000"))
 
 
+from ..reply_trace import attach as attach_reply_trace, context as trace_context, observe
 from .cascade import (VOICE_ROSTER as _CASCADE_VOICES, CascadeSocket,
                       stt_model as cascade_stt_model)
 
@@ -2118,6 +2119,32 @@ class SilenceDetector:
     _floor: list = field(default_factory=list)
     _floor_len: int = 0
 
+    # Observation only: positions refer to samples passed to feed, not wall time.
+    _trace_samples: int = 0
+    _trace_last_voiced: int = 0
+    _trace_end: dict = field(default_factory=dict)
+
+    def _trace_frame(self, samples: int, voiced: bool) -> None:
+        try:
+            self._trace_samples += samples
+            if voiced:
+                self._trace_last_voiced = self._trace_samples
+        except Exception:  # noqa: BLE001 - observation cannot affect VAD
+            pass
+
+    def _trace_detection(self) -> None:
+        try:
+            self._trace_end = {
+                "detected_mono": time.monotonic(),
+                "trailing_silence_samples": self._trace_samples - self._trace_last_voiced,
+                "last_voiced_sample": self._trace_last_voiced,
+                "detected_sample": self._trace_samples,
+                "sample_rate_hz": self.rate,
+                "estimate": "sample_position",
+            }
+        except Exception:  # noqa: BLE001 - observation cannot affect VAD
+            pass
+
     def _note_level(self, rms: int, chunk_ms: float) -> None:
         """Keep the last `floor_window_ms` of levels, for the room's floor."""
         if self.noise_margin <= 0 or chunk_ms <= 0:
@@ -2176,6 +2203,7 @@ class SilenceDetector:
         chunk_ms = len(pcm) / 2 / self.rate * 1000.0
         rms = _rms(pcm)
         bar = self.effective_threshold()
+        self._trace_frame(len(pcm) // 2, rms >= bar)
         if rms >= self.hint_threshold():
             self._hint_ms_run += chunk_ms
             if self._hint_ms_run >= self.hint_ms:
@@ -2207,6 +2235,7 @@ class SilenceDetector:
         if self.speaking:
             self._silence_ms_run += chunk_ms
             if self._silence_ms_run >= self.silence_ms:
+                self._trace_detection()
                 self.speaking = False
                 self._speech_ms = 0.0
                 self._silence_ms_run = 0.0
@@ -2647,6 +2676,7 @@ class RealtimeVoiceSession:
         if self.capabilities.family == "cascade":
             # No socket to dial: the stand-in answers as a realtime server.
             self.ws = CascadeSocket(voice=self.voice, api_key=self.api_key)
+            attach_reply_trace(self)
             await self._send({
                 "type": "session.update", "session": self._session_payload(),
             })
@@ -4249,7 +4279,8 @@ class RealtimeVoiceSession:
         self._discard_next_created = False
         self._unnamed_cancel = self._recancel_on_created = False
         self._drop_deferred("new_turn")
-        await self._send({"type": "input_audio_buffer.commit"})
+        with trace_context(self, "silence_probe" if probe else "participant_commit"):
+            await self._send({"type": "input_audio_buffer.commit"})
 
     @property
     def responding(self) -> bool:
@@ -4613,7 +4644,8 @@ class RealtimeVoiceSession:
         self._cancelled_by_us = False
         self._retries_this_turn += 1
         self._retry_in_flight = True
-        await self.prompt_response(nudge or AUDIO_RETRY_NUDGE)
+        with trace_context(self, "retry"):
+            await self.prompt_response(nudge or AUDIO_RETRY_NUDGE)
         return True
 
     async def replay_input(self, pcm16: bytes) -> bool:
@@ -4671,14 +4703,15 @@ class RealtimeVoiceSession:
         # participant turn when the original commit's transcript turns up
         # after all (seen twice in the archive; see the runner's
         # _record_user_turn).
-        self._tag_commit(replay=True)
-        await self._send({"type": "input_audio_buffer.commit"})
-        self._response_active = True
-        self._requested = True
-        self._response_started_at = time.time()
-        self._response_saw_output = False
-        await self._send({"type": "response.create"})
-        return True
+        with trace_context(self, "replay"):
+            self._tag_commit(replay=True)
+            await self._send({"type": "input_audio_buffer.commit"})
+            self._response_active = True
+            self._requested = True
+            self._response_started_at = time.time()
+            self._response_saw_output = False
+            await self._send({"type": "response.create"})
+            return True
 
     async def answer_tool_call(self, call_id: Optional[str], output: str) -> bool:
         """Give the model the result of a function call it made: a
@@ -4735,7 +4768,8 @@ class RealtimeVoiceSession:
         self._request_hold_s = 0.0           # see expect_commit_reply
         self._discard_next_created = False   # see cancel_response
         self._unnamed_cancel = self._recancel_on_created = False
-        await self._send({"type": "response.create"})
+        with trace_context(self, "prompt_response"):
+            await self._send({"type": "response.create"})
 
     def _response_stalled(self) -> bool:
         """True when a reply is nominally in flight but has produced nothing
@@ -4777,7 +4811,8 @@ class RealtimeVoiceSession:
         self._request_hold_s = 0.0           # see expect_commit_reply
         self._discard_next_created = False   # see cancel_response
         self._unnamed_cancel = self._recancel_on_created = False
-        await self._send({"type": "response.create"})
+        with trace_context(self, "request_response"):
+            await self._send({"type": "response.create"})
 
     async def commit_turn(self, *, probe: bool = False) -> bool:
         """Close the participant's turn and ask for a reply. Required, the
@@ -4801,15 +4836,16 @@ class RealtimeVoiceSession:
             # pad with 300 ms of silence if an auto-fire consumed the audio.
             # The pad is CLIENT_RATE PCM, like everything send_audio takes.
             await self.send_audio(b"\x00" * (CLIENT_RATE * 2 * 3 // 10))
-        await self.commit_input(probe=probe)
-        if is_openai_realtime(self.model):
-            # Through the bridge, the commit itself starts the reply on the
-            # OpenAI route; an explicit response.create on top is rejected
-            # (active-response conflict) and can yield a second reply.
-            self.expect_commit_reply()
+        with trace_context(self, "silence_probe" if probe else "participant_commit"):
+            await self.commit_input(probe=probe)
+            if is_openai_realtime(self.model):
+                # Through the bridge, the commit itself starts the reply on the
+                # OpenAI route; an explicit response.create on top is rejected
+                # (active-response conflict) and can yield a second reply.
+                self.expect_commit_reply()
+                return True
+            await self.request_response()
             return True
-        await self.request_response()
-        return True
 
     def expect_commit_reply(self, hold_s: float = 0.0) -> None:
         """Book the reply a commit has just started as one we asked for.
@@ -5575,6 +5611,7 @@ class RealtimeVoiceSession:
                         # (pipeline 2026-09-28b; the runner's
                         # _hold_first_reply). No other pump reads it, and a
                         # room member's skips it (_pump_member).
+                        observe(self, "decision", item_id, "missing", "transcript_empty")
                         yield {"type": "transcript_missing",
                                "why": "transcript_empty", **meta}
 
@@ -5583,6 +5620,7 @@ class RealtimeVoiceSession:
                     # be left to be paired with the next one's. Said as
                     # transcript_missing, as an empty one is.
                     tag = self._tag_for(ev.get("item_id")) or {}
+                    observe(self, "decision", ev.get("item_id"), "failed", "transcript_failed")
                     yield {"type": "transcript_missing", "why": "transcript_failed",
                            "item_id": ev.get("item_id"),
                            "probe": bool(tag.get("probe")),

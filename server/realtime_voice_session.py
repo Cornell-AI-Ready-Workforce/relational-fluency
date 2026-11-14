@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from .director import Director, DIRECTOR_MAX_SPEAKERS
 # Per-turn latency stages and the page's playback acks (issue #25). Record only.
 from .turn_timing import NullTimer, TurnTimer
+from .reply_trace import bind as bind_reply_trace, context as trace_context, observe
 
 
 #: A sentence boundary the transcript stream ran together: a full stop,
@@ -1587,6 +1588,7 @@ class RealtimeVoiceSessionRunner:
         # And starts the speech check as each commit goes out (pipeline
         # 2026-09-30a; _on_participant_commit).
         rt.on_commit = self._on_participant_commit
+        bind_reply_trace(self, rt)
         window = _realtime.end_of_turn_for(getattr(rt, "model", realtime_model()))
         if window is not None:
             rt.turn_detection = window
@@ -4965,6 +4967,7 @@ class RealtimeVoiceSessionRunner:
                 task.cancel()
 
         def suppressed(reason: str, **extra) -> None:
+            observe(self, "decision", item_id, "duplicate" if reason == "replay_duplicate" else "suppressed", reason)
             drop_check()
             self.session.store.event(
                 "user_turn_suppressed", reason=reason, text=text,
@@ -4978,6 +4981,7 @@ class RealtimeVoiceSessionRunner:
                 unreliable(reason)
 
         if probe:
+            observe(self, "decision", item_id, "suppressed", "probe_pad")
             # The transcript of the watchdog's own pad (issue #21: "Thank you
             # very much." in S2A, which steering then read as the participant
             # being condescending). Nobody spoke; it is no participant's
@@ -5036,10 +5040,12 @@ class RealtimeVoiceSessionRunner:
                 await self._withdraw_reply(text, "no_speech", committed_at,
                                            voiced_ms)
             else:
+                observe(self, "decision", item_id, "suppressed", "no_speech")
                 unreliable("no_speech")
                 drop_check()
             return
         if not text:
+            observe(self, "decision", item_id, "missing", "empty_content")
             drop_check()
             if garbled:
                 self.session.store.event(
@@ -5165,6 +5171,7 @@ class RealtimeVoiceSessionRunner:
         if norm and norm == self._last_user_norm and now - self._last_user_at < 2:
             # Written down rather than dropped without a trace (pipeline
             # 2026-09-23c): the rule is right, and the record should say it ran.
+            observe(self, "decision", item_id, "duplicate", "exact")
             self.session.store.event("user_transcript_duplicate_dropped",
                                      text=text, matched=self._last_user_text,
                                      exact=True)
@@ -5208,6 +5215,7 @@ class RealtimeVoiceSessionRunner:
             #
             # See needs_elsewhere: if these are ever to reach a rater, the flag
             # has to be carried through encounter_record and rendered as a note.
+            observe(self, "decision", item_id, "echo", "character_playback")
             self.session.store.event(
                 "echo_dropped", matches=echo_of, text=text,
                 channel="voice", script_mismatch=_script_mismatch(text),
@@ -5254,6 +5262,7 @@ class RealtimeVoiceSessionRunner:
             if a and b:
                 overlap = len(a & b) / min(len(a), len(b))
                 if overlap >= _realtime.dedupe_overlap():
+                    observe(self, "decision", item_id, "duplicate", "overlap")
                     self.session.store.event(
                         "user_transcript_duplicate_dropped", text=text,
                         matched=self._last_user_text, overlap=round(overlap, 3))
@@ -5312,6 +5321,7 @@ class RealtimeVoiceSessionRunner:
         said_at = (round(spoken_at - started, 3)
                    if isinstance(spoken_at, (int, float))
                    and isinstance(started, (int, float)) else None)
+        observe(self, "decision", item_id, "accepted")
         self.session.store.event(
             "user_turn", text=text, channel="voice", script_mismatch=unclear,
             utterance=self._user_utterances, garbled=garbled,
@@ -6103,9 +6113,12 @@ class RealtimeVoiceSessionRunner:
             # ask now (see _reply_after_held_call).
             for task in list(getattr(self, "_held_call_tasks", ()) or ()):
                 task.cancel()
-            await self._close_room()
-            if self.rt:
-                await self.rt.close()
+            try:
+                await self._close_room()
+                if self.rt:
+                    await self.rt.close()
+            finally:
+                observe(self, "flush")
             # And the console frames still in flight, for the same reason. They
             # leave as tasks so a researcher's socket can never sit on the
             # participant's audio path — but a task that was only SCHEDULED is
@@ -6259,7 +6272,12 @@ class RealtimeVoiceSessionRunner:
                 # so it is dropped (pipeline 2026-09-28b).
                 if await self.rt.cancel_unheard_reply() is not None:
                     self._retract_withdrawn_beat()
-            await self._brief_next_beat(probing=False)
+            bind_reply_trace(self, self.rt)
+            observe(self, "briefing", "entered")
+            try:
+                await self._brief_next_beat(probing=False)
+            finally:
+                observe(self, "briefing", "completed")
             # Per family, not one number. This line read the raw env with a
             # 1.5 s default until 2026-09-15, which was the right bar for the
             # model every 1:1 measurement above was taken on and the wrong one
@@ -6365,6 +6383,9 @@ class RealtimeVoiceSessionRunner:
                 self.session.store.append_user_audio(pcm)
 
                 mark = self.vad.feed(pcm)
+                if mark == "turn_ended" and self.room is None:
+                    bind_reply_trace(self, self.rt)
+                    observe(self, "vad", getattr(self.vad, "_trace_end", None))
                 if mark:
                     self._last_activity = time.time()
                 if mark == "speech_started":
@@ -6835,6 +6856,7 @@ class RealtimeVoiceSessionRunner:
     async def _pump_events(self, rt) -> None:
         # The bridge's audio-absent clock is held while the participant is
         # talking (see voice/realtime.py AUDIO_ABSENT_S); this is how it knows.
+        bind_reply_trace(self, rt)
         rt.participant_speaking = lambda: bool(self.vad.active_within())
         # And this is how it counts voiced audio per commit for the
         # transcript gate (see _record_user_turn and _tag_commit), and dates
@@ -6878,6 +6900,7 @@ class RealtimeVoiceSessionRunner:
                     continue
                 late = self._end_settling() if not self._speaking else []
                 await self._begin_agent_turn()
+                observe(self, "page", ev.get("response_id"), _timer(self).turn_of(self.agent_id))
                 self._turn_response_id = rid
                 if late:
                     self._agent_text.extend(late)
@@ -6909,6 +6932,8 @@ class RealtimeVoiceSessionRunner:
                 # _transcript_target — such a delta is parked provisionally and
                 # the agent_audio branch above decides which turn it belongs to.
                 target = await self._transcript_target()
+                if self._speaking and target is self._agent_text:
+                    observe(self, "page", ev.get("response_id"), _timer(self).turn_of(self.agent_id))
                 text = _resume_seam(target, ev)
                 target.append(text)
                 await self._send({
@@ -7524,6 +7549,8 @@ class RealtimeVoiceSessionRunner:
                         dropping = etype != "response_done"
                         continue
                     if self._awaiting_participant:
+                        if etype == "agent_audio":
+                            observe(self, "stamp", ev.get("response_id"), "first_output_hold_started")
                         held.append((time.time(), ev))
                         continue
                 yield ev
@@ -7541,9 +7568,13 @@ class RealtimeVoiceSessionRunner:
                         if isinstance(latest, (int, float)):
                             since = max(since, latest)
                         keep = [h for at, h in held if at >= since]
+                        for at, h in held:
+                            if at < since:
+                                observe(self, "stamp", h.get("response_id"), "first_output_withheld")
                         self._note_first_reply("first_reply_released", held, len(keep))
                         held = []
                         for h in keep:
+                            observe(self, "stamp", h.get("response_id"), "first_output_hold_released", release_commit_item_id=ev.get("item_id"))
                             yield h
                     continue
                 committed_at = ev.get("committed_at")
@@ -7558,6 +7589,8 @@ class RealtimeVoiceSessionRunner:
                     rid = await fn() if fn is not None else None
                     cancel = "not_on_this_route" if rid is None else "cancelled"
                     dropping = rid is None
+                for _, h in gone:
+                    observe(self, "stamp", h.get("response_id"), "first_output_withheld")
                 if gone or cancel:
                     self._note_first_reply("first_reply_withheld", gone, 0,
                                            cancel=cancel, dropping=dropping,
@@ -7811,7 +7844,8 @@ class RealtimeVoiceSessionRunner:
                                      skipped=why, **fields)
             return
         self._held_call_reply_at = time.time()
-        await rt.request_response()
+        with trace_context(rt, "held_call"):
+            await rt.request_response()
         self.session.store.event("held_call_reply", requested=True, **fields)
 
     async def _announce_clock(self) -> None:
