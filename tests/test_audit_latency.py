@@ -59,7 +59,7 @@ def _sse_handler(first_token_delay_s=0.0):
                 yield b"data: [DONE]\n\n"
             return httpx.Response(200, content=gen(),
                                   headers={"content-type": "text/event-stream"})
-        return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": "hi"}}]})
     return handle
 
 
@@ -200,7 +200,7 @@ def _paced_handler(first_token_s, rest_s):
     async def handle(req):
         body = json.loads(req.content)
         if not body.get("stream"):
-            return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+            return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": "hi"}}]})
 
         async def gen():
             await asyncio.sleep(first_token_s)

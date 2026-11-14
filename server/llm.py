@@ -705,6 +705,47 @@ def text_client() -> AsyncAnthropic:
 #                real one-word line is silenced on the strength of a word
 #                list alone. The word list loads at import, off the live
 #                path. Suppressed lines keep their text in the record.
+#   2026-11-12a  cascade transcriber defaults to nto.gemini-3.5-transcribe.
+#                A 2xx, well-formed stop response with text/null content
+#                is a hearing; null/empty/whitespace becomes [no speech], as
+#                flash-lite wrote for silence. A length-capped hearing with
+#                non-empty text keeps that text; otherwise it is stt_failed.
+#                Other invalid responses also fail as stt_failed. The
+#                existing annotation gate suppresses the
+#                marker and rooms skip turns made only of rejected input.
+#                The effective cascade transcriber, including overrides and
+#                rollback, is input_transcription_model in the session event
+#                and record. Cascade cancellation policy is unchanged.
+#                Reply, speech-check and offline transcribers are unchanged.
+#   2026-11-12b  enable cancelled-output discard on the cascade, separately
+#                from the transcriber change. cancel_unheard_reply now stops
+#                a cascade reply; every cancel_response with discard_tail
+#                true also drops its named queued tail. This includes barge-in,
+#                scribe cancellation, rebrief and stale room holds. Existing
+#                withdrawal guards retain audible and later-commit replies;
+#                existing barge-in and boundary rules still own those cuts.
+#                Explicit discard_tail=False holds keep their queued frames.
+#                CASCADE_CANCELLED_OUTPUT_DISCARD=0 restores cascade's prior
+#                policy; the gpt switch is independent. The adapter joins a
+#                cancelling reply before the next create (1 s bound), with
+#                TTS close bounded to 0.5 s and the old done emitted first.
+#                Cancels share the create lock; interrupted close aborts the
+#                transport before releasing the slot. The bridge-only rollback
+#                leaves this adapter cleanup and zero-audio removal active.
+#                A cancelled reply that emitted no audio leaves no assistant
+#                item. After audio starts, exact context trimming still needs
+#                TTS alignment and page playback acknowledgements.
+#   2026-11-12c  instrumentation only: 1:1 cascade reply/commit traces on
+#                a monotonic encounter clock, finalized independently of page
+#                playback records. Requests, frames and turn rules unchanged.
+#   2026-11-12d  cascade room hearing: accepted participant text in commit
+#                order, per-instance delivery and durable reconnect history;
+#                no participant PCM fan-out. Probe grants keep the old cue;
+#                clarification returns its planted beat. Deadline and scribe
+#                closure release gaps; pre-grant accepted turns merge once.
+#                Frozen relay provenance, seed-loss records, close-time
+#                transcript draining and observed hearing tasks complete the
+#                room path. CASCADE_ROOM_TEXT_RELAY=0 restores the old mode.
 #   2026-11-13a  steering budget 20 s (was 10 s), 10 s an attempt with one
 #                retry (#235). Steering moved to Argon on 2026-10-15 with the
 #                budget sized for flash-lite, and about one review in three
@@ -728,7 +769,8 @@ def _voice_style_provenance():
 
 
 def provenance(model: Optional[str] = None,
-               room: Optional[bool] = None) -> dict:
+               room: Optional[bool] = None, *,
+               room_text_relay: Optional[bool] = None) -> dict:
     """Recorded with each session so the record shows what served it.
 
     `model` is the realtime model the session actually opened; the audio
@@ -763,7 +805,7 @@ def provenance(model: Optional[str] = None,
         **audio_provenance(model or realtime),
         # The participant-turn gate's knob values (pipeline 2026-09-23c); see
         # server/voice/realtime.py turn_gate_provenance.
-        "turn_gate": turn_gate_provenance(model or realtime),
+        "turn_gate": turn_gate_provenance(model or realtime, room_text_relay=room_text_relay),
         # cancelled_output ("discard"/"relay") and agent_transcript_items
         # (pipeline 2026-09-23d); see bridge_provenance.
         **bridge_provenance(model or realtime),
@@ -851,7 +893,7 @@ _MODEL_ROLES = (
     # Read only when REALTIME_MODEL is the cascade (server/voice/cascade.py):
     # the model that hears the participant and writes each reply.
     ("CASCADE_LLM_MODEL", "nto.gemini-4-argon", "the cascade's hearing and reply model", True),
-    ("CASCADE_STT_MODEL", "nto.gemini-3.5-flash-lite", "the cascade's transcriber", True),
+    ("CASCADE_STT_MODEL", "nto.gemini-3.5-transcribe", "the cascade's transcriber", True),
     ("TRANSCRIBE_MODEL", "nto.gemini-4-argon", "the re-transcriber, offline", False),
     # Not blocking: a check the gateway refuses keeps the line as it came,
     # which is the behaviour before 2026-09-30a.

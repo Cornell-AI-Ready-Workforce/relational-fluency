@@ -67,6 +67,8 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from .voice import realtime as _realtime
+from .room_hearing import RoomHearing
+from .room_hearing_texts import CASCADE_ROOM_GRANT_NUDGE, CASCADE_ROOM_UNHEARD_NUDGE
 from .voice.realtime import _rms as _frame_rms
 from .voice.realtime import (RealtimeVoiceSession, SilenceDetector,
                              capabilities_for, accepts_text_items,
@@ -163,6 +165,11 @@ class GroupRoom:
         # room simply stops second-guessing what it is handed.
         self._model = model or _configured_model()
         self.caps = capabilities_for(self._model)
+        # Freeze the complete hearing mode for this room's lifetime.
+        self.hearing = (RoomHearing() if self.caps
+                        and self.caps.relay_participant_as_text
+                        and os.getenv("CASCADE_ROOM_TEXT_RELAY", "1") != "0"
+                        else None)
         self.sessions: Dict[str, RealtimeVoiceSession] = {}
         # The scribe hears ONLY the participant. Member sessions cannot supply
         # the participant transcript: their input buffers also carry the other
@@ -450,6 +457,7 @@ class GroupRoom:
             # Before connect(): every item from the first one on is mirrored.
             self._configure_memory(rt)
             await rt.connect(open_conversation=False)
+            self._configure_hearing(rt)
             self.sessions[agent.id] = rt
 
         async def start_scribe():
@@ -514,6 +522,8 @@ class GroupRoom:
         self.lost[channel_id] = why
         self.lost_sessions[channel_id] = rt
         if channel_id == SCRIBE_ID:
+            if self.hearing is not None:
+                self.hearing.expire_pending(scribe=rt)
             self.scribe = None
         else:
             self.sessions.pop(channel_id, None)
@@ -553,6 +563,8 @@ class GroupRoom:
         nothing.
         """
         old = self.scribe
+        if self.hearing is not None and old is not None:
+            self.hearing.expire_pending(scribe=old)
         self.scribe = None
         if old is not None:
             try:
@@ -580,6 +592,50 @@ class GroupRoom:
         self.lost.pop(SCRIBE_ID, None)
         self.scribe_reopens += 1
         return rt
+
+    def _configure_hearing(self, rt) -> None:
+        if self.hearing is not None:
+            self.hearing.delivery(rt)
+            # Freeze at response.create, before a later local delivery can
+            # enter a request that has already been granted.
+            rt.ws.snapshot_on_create = True
+
+    def enqueue_participant(self, entry: dict) -> None:
+        """Called synchronously at acceptance, before captions can await."""
+        if self.hearing is None:
+            return
+        self.hearing.entries.append(dict(entry))
+        if self.hearing.closing:
+            return
+        for aid, rt in list(self.sessions.items()):
+            self.hearing.spawn(self.deliver_participant(aid, rt))
+
+    async def _deliver_participant_locked(self, aid, rt) -> bool:
+        hearing = self.hearing
+        state = hearing.delivery(rt)
+        for entry in hearing.entries:
+            if entry["seq"] <= state.cursor:
+                continue
+            if self.sessions.get(aid) is not rt:
+                return False
+            before = getattr(rt, "send_failures", 0)
+            try:
+                await rt.inject_text(entry["text"])
+                why = ("participant text delivery failed" if rt.ws is None
+                       or getattr(rt, "send_failures", 0) > before else None)
+            except Exception as exc:  # noqa: BLE001 - same policy as PCM fan-out
+                why = f"participant text delivery raised {type(exc).__name__}: {exc}"
+            if why:
+                await self._went_deaf(aid, rt, why)
+                return False
+            state.cursor = entry["seq"]
+            self._fanned_since_grant[aid] = (
+                self._fanned_since_grant.get(aid, 0) + len(entry["text"]))
+        return self.sessions.get(aid) is rt
+
+    async def deliver_participant(self, aid, rt) -> bool:
+        async with self.hearing.delivery(rt).lock:
+            return await self._deliver_participant_locked(aid, rt)
 
     async def reopen_member(self, agent_id: str, *, instructions: str,
                             voice: Optional[str] = None) -> RealtimeVoiceSession:
@@ -614,6 +670,7 @@ class GroupRoom:
         self._configure_memory(rt)
         try:
             await rt.connect(open_conversation=False)
+            self._configure_hearing(rt)
         except BaseException:
             try:
                 await rt.close()
@@ -686,6 +743,7 @@ class GroupRoom:
         targets = [
             (aid, rt) for aid, rt in self.sessions.items()
             if aid != exclude
+            and not (exclude is None and self.hearing is not None)
             and not (exclude is not None
                      and relays_colleagues_as_text(getattr(rt, "model", "")))
         ]
@@ -1163,7 +1221,7 @@ class GroupRoom:
         self.scribe_commits += 1
         return True
 
-    async def give_floor(self, agent_id: str) -> Optional[RealtimeVoiceSession]:
+    async def give_floor(self, agent_id: str, *, probing: bool = False) -> Optional[RealtimeVoiceSession]:
         """Give one character the floor.
 
         What "the floor" means depends on the family, and the honest version is
@@ -1244,6 +1302,25 @@ class GroupRoom:
         floor was granted, and would then wait out the full 45 s turn timeout
         listening to a session that never received the request.
         """
+        if self.hearing is None:
+            return await self._give_floor(agent_id)
+        rt = self.sessions.get(agent_id)
+        if rt is None:
+            return None
+        # Delivery, catch-up and grant eligibility belong to this instance.
+        # This is a local delivery wait, never a second transcript deadline.
+        async with self.hearing.delivery(rt).lock:
+            if not await self._deliver_participant_locked(agent_id, rt):
+                return None
+            turn = None if probing else self.hearing.active_turn
+            if turn is not None:
+                if turn.clarification is None:
+                    turn.clarification = self.hearing.missing(turn)
+                turn.granted = True
+            return await self._give_floor(agent_id, probing=probing)
+
+    async def _give_floor(self, agent_id: str, *, probing: bool = False) -> Optional[RealtimeVoiceSession]:
+        """Send the grant after the optional participant delivery gate."""
         rt = self.sessions.get(agent_id)
         if rt is None:
             return None
@@ -1304,7 +1381,13 @@ class GroupRoom:
                 # exactly as the commit path below does.
                 if rt.responding and not self._reply_evidently_started(rt):
                     rt.clear_response_state()
-                await rt.inject_text(_TEXT_GRANT_NUDGE)
+                nudge = _TEXT_GRANT_NUDGE
+                if self.hearing is not None and not probing:
+                    turn = self.hearing.active_turn
+                    nudge = (CASCADE_ROOM_UNHEARD_NUDGE
+                             if turn is not None and turn.clarification
+                             else CASCADE_ROOM_GRANT_NUDGE)
+                await rt.inject_text(nudge)
                 await rt.request_response()
                 self.last_grant = {"agent_id": agent_id, "via": "text_prompt"}
             else:
@@ -1491,6 +1574,8 @@ class GroupRoom:
         return self.sessions.get(agent_id)
 
     async def close(self) -> None:
+        if self.hearing is not None:
+            await self.hearing.close()
         closers = list(self.sessions.values())
         if self.scribe is not None:
             closers.append(self.scribe)
