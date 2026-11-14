@@ -128,6 +128,8 @@ class TurnTimer:
         pt.stages["vad_speech_end"] = self._t()
         self._pt = pt
         self._recent = (self._recent + [pt])[-4:]
+        from . import metrics
+        metrics.speech_end(self.store, pt.stages["vad_speech_end"])
 
     def _mark(self, stage: str) -> None:
         if self._pt is not None:
@@ -251,6 +253,15 @@ class TurnTimer:
                 rec["first_audio_played"] = at
                 rec["ack_lag_s"] = round(lag, 3)
                 rec["output_latency_s"] = out_lat
+                # Supply playback before play_end, which may arrive after the
+                # next participant speech end or the metric hold expires.
+                pt = rec.get("pt")
+                if pt is not None:
+                    from . import metrics
+                    metrics.session_event(self.store, "turn_timing", {
+                        "vad_speech_end": pt.stages.get("vad_speech_end"),
+                        "first_audio_played": at,
+                    })
             return
         cut = bool(msg.get("interrupted"))
         self.store.event("play_end", turn=turn, agent_id=agent_id, at=at,

@@ -954,6 +954,10 @@ class RealtimeVoiceSessionRunner:
         # When the 1:1 reply now (or last) speaking began; see _withdraw_reply.
         self._agent_turn_began_at = 0.0
         self._closed = False
+        # A clean run() return can also mean a fatal gateway exit. The route
+        # reports success only after encounter_complete is sent.
+        self.completed = False
+        self.client_disconnected = False
         self._agent_text: List[str] = []
         # The buffer of a 1:1 turn that has had its response.done but whose
         # transcript may still be arriving. See _take_turn_buffer.
@@ -1579,6 +1583,7 @@ class RealtimeVoiceSessionRunner:
         rt = RealtimeVoiceSession(
             instructions=instructions, voice=voice, tools=[END_SEGMENT_TOOL],
         )
+        rt.session_id = getattr(self.session, "id", None)
         # From the first frame, not only once its pump starts (see
         # _pump_events): the transcript gate counts voiced audio per commit.
         rt.voiced_bar = self.vad.effective_threshold
@@ -2201,6 +2206,7 @@ class RealtimeVoiceSessionRunner:
             # closed) is rebuilt (pipeline 2026-10-14a); the scribe is not.
             on_lost=self._on_room_channel_lost,
         )
+        room.session_id = getattr(self.session, "id", None)
         try:
             await room.open()
         except Exception as exc:  # noqa: BLE001, re-raised for _enter to contain
@@ -6350,6 +6356,7 @@ class RealtimeVoiceSessionRunner:
             while not self._closed:
                 msg = await self.ws.receive()
                 if msg["type"] == "websocket.disconnect":
+                    self.client_disconnected = True
                     return
                 text = msg.get("text")
                 if text:
@@ -6463,6 +6470,8 @@ class RealtimeVoiceSessionRunner:
                     queued = self._queued_cuts_safe(cut_now, cut)
                     self._play_cursor = time.time()
                     RealtimeVoiceSessionRunner._cut_play_spans(self, self._play_cursor)
+                    from . import metrics
+                    metrics.bargein(self.session.store)
                     await self._send({"type": "assistant_interrupted"})
                     # The line cut off keeps only what was heard of it, in its
                     # character's conversation and as its colleagues were told
@@ -6642,6 +6651,8 @@ class RealtimeVoiceSessionRunner:
                         self._barged = True
                         self._play_cursor = time.time()
                         RealtimeVoiceSessionRunner._cut_play_spans(self, self._play_cursor)
+                        from . import metrics
+                        metrics.bargein(self.session.store)
                         await self._send({"type": "assistant_interrupted"})
                         # The line playing, when it was not the floor
                         # holder's (or its turn was already over), and the
@@ -6692,6 +6703,8 @@ class RealtimeVoiceSessionRunner:
                         # playback clock (as the room branch does above).
                         self._play_cursor = time.time()
                         RealtimeVoiceSessionRunner._cut_play_spans(self, self._play_cursor)
+                        from . import metrics
+                        metrics.bargein(self.session.store)
                         await self._send({"type": "assistant_interrupted"})
 
                 if self.room is not None:
@@ -6739,6 +6752,7 @@ class RealtimeVoiceSessionRunner:
                             self._turn_end_pending_ms = None
                             await self._on_turn_ended()
         except WebSocketDisconnect:
+            self.client_disconnected = True
             return
         except Exception as exc:  # noqa: BLE001, surfaced in the session log
             self.session.store.event(
@@ -11904,6 +11918,8 @@ class RealtimeVoiceSessionRunner:
         except Exception:  # noqa: BLE001, client vanished
             self._closed = True
             return
+        if kind == "encounter_complete":
+            self.completed = True
         if kind in ("assistant_done", "assistant_interrupted"):
             # A line that sent the page no audio has nothing to wait for.
             await self._maybe_turn_open()

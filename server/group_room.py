@@ -376,6 +376,7 @@ class GroupRoom:
         rt = RealtimeVoiceSession(
             instructions=instructions, voice=voice, tools=tools,
         )
+        rt.session_id = getattr(self, "session_id", None)
         # Only when the room has an opinion. A room built with no model has
         # already defaulted to the process's own, and writing it back would be
         # the same value; a factory that does not carry `model` at all keeps

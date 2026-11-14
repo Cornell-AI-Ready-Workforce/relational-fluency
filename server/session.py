@@ -17,6 +17,8 @@ import secrets
 import time
 from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
+from starlette.websockets import WebSocketDisconnect, WebSocketState
+
 from .llm import redact_key, text_client
 
 from .director import Director
@@ -97,13 +99,15 @@ class Session:
             # lands in the encounter's own events.jsonl, where a later analysis
             # pass can find it. _store_event defers the lookup because the store
             # is built a few lines below this.
-            Director(self.scenario, client=client, on_event=self._store_event)
+            Director(self.scenario, client=client, on_event=self._store_event,
+                     session_id=self.id)
             if self.is_group else None
         )
         # Auto steering: on by default (see AUTO_STEERING_DEFAULT); researcher
         # can toggle it live. When on, the controller reviews each completed
         # turn and may shift persona gears, every shift logged with a reason.
-        self.steering = SteeringController(self.scenario, client=client)
+        self.steering = SteeringController(self.scenario, client=client,
+                                           session_id=self.id)
         self.auto_steering: bool = AUTO_STEERING_DEFAULT
 
         self.shared_history: List[dict] = []  # [{speaker: 'user'|agent_id, text, t}]
@@ -140,6 +144,7 @@ class Session:
         )
 
         self.participant_ws: Optional["WebSocket"] = None
+        self._participant_socket_closing: Optional[asyncio.Event] = None
         self.researcher_wss: Set["WebSocket"] = set()
         self.lock = asyncio.Lock()
         # Set once the session is being torn down; guards store writes from
@@ -475,18 +480,35 @@ class Session:
         first — is a no-op rather than a RuntimeError. The withdrawal is already
         on disk by the time this runs, and a socket that has already gone must
         not turn a participant's stop into a 500.
+
+        A concurrent caller waits for the close already in flight. Otherwise
+        the voice route could return before withdrawal sends its close frame,
+        and Uvicorn would close the transport without a closing handshake.
         """
         ws = self.participant_ws
         if ws is None:
+            closing = getattr(self, "_participant_socket_closing", None)
+            if closing is not None:
+                await closing.wait()
             return False
         self.participant_ws = None
+        closing = self._participant_socket_closing = asyncio.Event()
         try:
+            if (getattr(ws, "client_state", None) == WebSocketState.DISCONNECTED or
+                    getattr(ws, "application_state", None) == WebSocketState.DISCONNECTED):
+                return False
             await ws.close(code=code)
             return True
+        except WebSocketDisconnect:
+            # The peer can finish its close between the state check and send.
+            return False
         except Exception as e:  # noqa: BLE001, see the docstring
             print(f"  WARNING: could not close the capture socket of session "
                   f"{self.id}: {type(e).__name__}: {e}")
             return False
+        finally:
+            closing.set()
+            self._participant_socket_closing = None
 
     # --- broadcasting to researcher subscribers ---
 

@@ -922,6 +922,141 @@ Which is the real reason for rule 1 above: do not apply while anyone is in an
 encounter. Reconnect keeps a participant from being stranded; it does not save
 the measurement.
 
+## Watching a collection session
+
+The CloudWatch dashboard is `relational-fluency-collection` in `us-east-1`.
+A different Terraform `project` changes the name prefix.
+Application metrics use the `RelationalFluency` namespace.
+Set `monitoring_email` in local Terraform inputs to receive alarms.
+The empty default creates no email subscription.
+Confirm the SNS email subscription after deployment.
+
+Alarm names start with `relational-fluency-`.
+These thresholds are initial settings, not measured capacity limits.
+Change them through `monitoring_thresholds` after reviewing collection data.
+
+| Alarm suffix | Default condition | Meaning | First action |
+|---|---|---|---|
+| `LoopLagMax` | Maximum > 250 ms, 2 of 3 minutes | The event loop stopped serving audio on time. | Check task CPU and recent blocking work in the logs. |
+| `LoopLagP99` | Maximum reported window p99 > 250 ms, 2 of 3 minutes | Sustained event-loop lag can delay audio. | Check task CPU and compare lag with active sessions. |
+| `SpeechEndToFirstPlayed` | p90 > 8000 ms in 5 minutes | Played replies started late after participant speech ended. | Check TTS wait and gateway request duration. Check the sample count. |
+| `UpstreamErrorRate-gateway` | At least 3 errors and error attempts / attempts > 5%, 2 of 3 minutes | Gateway requests failed. Recovered retries count. Cancellations do not count as errors. | Inspect `upstream_attempt` events by route, purpose and status. |
+| `UpstreamErrorRate-elevenlabs` | At least 3 errors and error attempts / attempts > 5%, 2 of 3 minutes | TTS connections failed. Recovered retries count. Cancellations do not count as errors. | Check handshake status and TTS queue wait. |
+| `TtsQueueWait` | p90 > 2000 ms in 1 minute | Replies waited for a local TTS slot. | Compare queue wait with TTS stream lifetime and active sessions. |
+| `ReplyMissing` | Count > 0 in 1 minute | A requested reply did not arrive before the runner retried. | Inspect the encounter's `reply_missing` event. A later recovery keeps this count. |
+| `ArchiveFailed` | Count > 0 in 1 minute | An archive attempt ended without a complete upload. | Inspect `archive.json`. Preserve local files and retry the archive. |
+| `ECS-cpu` | CPU used / reserved > 80%, 2 of 3 minutes | The service is near its CPU allocation. | Check loop lag and task CPU. Reduce new arrivals if replies slow down. |
+| `ECS-memory` | Memory used / reserved > 85%, 2 of 3 minutes | The service is near its memory allocation. | Check task memory and close/render bursts. Check for stopped tasks. |
+| `ALB5xx` | ALB 5xx count >= 3 in 5 minutes | The load balancer could not serve a request. | Check target health and ECS service events. |
+| `UnHealthyHostCount` | Maximum > 0 in 1 minute | A target failed health checks. | Check `/health`, task startup logs and storage access. |
+| `HealthyHostCount` | Minimum < 1 in 1 minute; missing data breaches | No healthy target can serve traffic. This covers a stopped task. | Check ECS service events, stopped tasks and target registration. |
+| `VoiceRouteErrors` | Study runner_error + setup_failed count >= 3 in 5 minutes | Voice routes failed in setup or in the runner. | Inspect server setup and runner logs. Compare PipelineVersion. |
+
+The HealthyHostCount alarm treats missing data as breaching.
+Other fault alarms use missing data as non-breaching.
+ECS resource alarms use missing data as missing.
+HealthyHostCount covers a stopped task even when no requests arrive.
+It supplies the availability alarm when ECS resource metrics stop reporting.
+No alarm proves that telemetry is working when metrics are absent.
+Percentile alarms evaluate small samples. Check sample counts before changing capacity.
+All fault alarms include study and internal traffic.
+
+`ActiveSessions` reports registry sessions every 60 seconds in each task.
+The dashboard splits samples by task log stream.
+It does not sum samples into service concurrency.
+`LoopLagP99` and `LoopLagMax` show the Maximum of reported windows.
+A percentile of window p99 values is not the underlying lag percentile.
+Keep `RoomMemberDropped` and `RoomMemberLost` separate.
+One failed member can appear in both counts.
+`VoiceError` uses the bounded `Outcome` kinds `timeout`, `connection`, `audio` and `other`.
+
+The collection view shows study starts, completions and withdrawals per hour.
+A start means session creation. It does not confirm successful voice startup.
+A completion means durable run advancement. Session closure is not completion.
+A withdrawal counts the encounter named in the first withdrawal stamp.
+Copies onto other runs and participant records do not add counts.
+A withdrawal without an encounter ID adds no encounter count.
+`EncounterDurationS` measures session lifetime, including setup.
+Runs with cohort `study` or `unattributed` use `Cohort=study`.
+A run without a cohort field also uses `Cohort=study`.
+An explicit `internal` cohort uses `Cohort=internal`.
+Sessions without a run use `Cohort=internal`.
+
+Playback latency uses the earliest valid ACK for each session and participant speech end.
+A speech end is final at the next speech end of the same session or after 30 seconds.
+Room records within that hold can supply an earlier ACK.
+The shared sweep checks hold expiry each second. Session close flushes the remainder.
+Each latency sample carries the played time as its CloudWatch timestamp.
+Late records after finalization do not add or change a sample.
+`FirstPlayedMissing` counts speech ends with reply timing records but no valid playback ACK.
+It excludes replies interrupted before playback and adds no latency sample.
+A request with no reply uses `ReplyMissing`.
+Process loss can discard buffered playback samples and lifecycle metrics.
+Archive failures arrive after background rendering and upload finish.
+Disabled archiving produces no archive result.
+
+`METRICS_EMF=0` disables metric output.
+Upstream attempts come from `server/upstream_telemetry.py`.
+Errors are `http_error`, `timeout`, `exception` and `closed`.
+`UpstreamCancelled` counts caller cancellations separately on the dashboard.
+Records with `detail=slot_wait` sent no request and do not enter `UpstreamRequests` or error-rate denominators.
+They retain their queue-wait and cancellation samples.
+TTS `UpstreamLatency` measures stream lifetime, from handshake through final audio or attempt end.
+It grows with reply length. The dashboard labels it TTS stream lifetime; it has no latency alarm.
+Each attempt writes one EMF document with all its metric samples.
+Metrics use stdout and the existing ECS log stream. They make no AWS calls.
+EMF delivery can duplicate a sample. Counts support operations; durable records remain authoritative.
+The [EMF specification](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html)
+describes extraction and delivery.
+The [Container Insights metric reference](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Container-Insights-metrics-ECS.html)
+defines the used and reserved resource metrics.
+
+The voice route alarm uses `voice_route_error_threshold` (default 3).
+Its `Cohort=study, ExitCause` series are emitted explicitly.
+It does not alarm on `none`, STT outcomes or gate counts. Those have no baseline.
+
+| Metric | Meaning | Limits | First action |
+|---|---|---|---|
+| `VoiceRouteEnded` | One count after all participant voice route cleanup. `ExitCause` and `CloseOutcome` are separate. | This is server behavior, not the browser's observed close code. Auth failures before a run is known use the internal cohort. | Inspect the exit cause, close outcome and server logs. |
+| `SttResult` | One terminal result per cascade hearing: speech, no_speech, failed or cancelled. `Kind` separates participant, probe, replay and unknown hearings. | A replay is another hearing. A no-speech share detects a shift, not lost speech; that needs audio adjudication. | Compare participant hearings by pipeline version. Review sample audio before calling speech lost. |
+| `UserTurnSuppressed` | One count per emitted gate decision. Reasons include no_speech, implausible_rate, probe_pad, not_english, low_transcriber_confidence and replay_duplicate. | Counts decisions, not unique turns. Fixed echo and ordinary duplicate events map to echo and duplicate. Unknown reasons map to other. | Compare the reason mix by pipeline version and review the source events and audio. |
+| `SuppressedTurnReply` | A server decision about a reply to a suppressed turn: audio_already_sent, later_commit, cancel_unsupported, withdrawn or other. | Audio sent is not proof of playback. A finished reply without a byte count uses other. This includes both reply_to_suppressed_turn and suppressed_turn_reply_cancelled events. | Check whether replies were withdrawn or could not be cancelled on that route. |
+| `Bargein` | One count when a live participant barge-in branch cuts or cancels a reply. | Suppression cleanup also sends assistant_interrupted. It adds no barge-in count. | Review VAD decisions and participant audio for false cuts. |
+
+Voice route exit causes are auth_rejected, setup_failed, completed,
+runner_returned, runner_error, withdrawn, client_disconnected, cancelled and other.
+Close outcomes are sent_1000, sent_1011, sent_other, none, close_failed and client_first.
+A failed or timed-out close send is close_failed.
+Client_first means a client disconnect was received before a successful server close send.
+A setup failure or withdrawal can send 1000. That code alone does not mean completion.
+On this base, a completed runner returns without a close: completed + none.
+After the separate D2 finalizer lands, normal completion should be completed + sent_1000.
+A runner return without completion should then send 1011.
+The route observer remains outside that finalizer and records after cleanup.
+
+STT kind follows the bridge's commit tag. Direct adapter hearings without a tag use unknown.
+The room scribe hears the participant once; cascade members receive text grants.
+STT failure reaches the bridge as transcript_missing and need not produce VoiceError.
+No STT or suppression count alone proves that a participant's speech was lost.
+
+Every EMF document carries Build and PipelineVersion as properties.
+They are not dimensions, so ordinary metric widgets cannot filter them.
+Build is null when the image commit is unknown.
+This Logs Insights query splits participant STT hearing counts by pipeline version:
+
+```text
+fields @timestamp, PipelineVersion, SttResult, Outcome, Kind, Cohort
+| filter ispresent(SttResult) and Cohort = "study" and Kind = "participant"
+| stats sum(SttResult) as Hearings by bin(5m), PipelineVersion, Outcome
+```
+
+These properties add log storage and query-scan cost.
+Set the query time range to the collection window.
+
+`PhantomTurn` remains a simulation metric.
+`EncounterAbandoned` needs a definition before it can be emitted.
+Do not raise the task count without the separate multi-task routing and storage gate.
+
 ## Is the server up?
 
 ```bash

@@ -467,6 +467,8 @@ class SessionStore:
                  self.started_at, _record_dir(self.dir), self.run_id, self.cohort),
             )
         self._write_manifest(status="active")
+        from . import metrics
+        metrics.session_created(self)
 
     def event(self, type_: str, **fields: Any) -> None:
         # Guard against writes after close(): a fire-and-forget steering task or
@@ -482,6 +484,8 @@ class SessionStore:
         }
         rec.update(fields)
         self.events_fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        from . import metrics
+        metrics.session_event(self, type_, fields)
         if type_ == "play_end" and fields.get("interrupted"):
             # The page cut this reply off here; the mix must stop it too.
             at = fields.get("at")
@@ -606,6 +610,8 @@ class SessionStore:
                    WHERE id = ?""",
                 (ended_at, round(duration, 3), n_turns, self.id),
             )
+        from . import metrics
+        metrics.session_closed(self, duration)
         # The analysis copy (Study 1 plan 5.2): everything above goes to the
         # study bucket beside the webcam video, in a thread, best effort.
         #

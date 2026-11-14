@@ -425,6 +425,18 @@ async def _init_storage_on_startup() -> None:
 app.router.on_startup.append(_init_storage_on_startup)
 
 
+from . import metrics as _metrics  # noqa: E402
+
+
+async def _start_metrics_on_startup() -> None:
+    await _metrics.start(registry)
+
+
+# Install the upstream listener before gateway preflight runs.
+app.router.on_startup.append(_start_metrics_on_startup)
+app.router.on_shutdown.append(_metrics.stop)
+
+
 async def _run_preflights_on_startup() -> None:
     """Startup hook: the gateway and bucket checks, once the process is serving.
 
@@ -2278,6 +2290,7 @@ async def _close_capture_socket(session, sid: str) -> None:
     """
     import asyncio
 
+    _metrics.voice_route_fact(getattr(session, "participant_ws", None), cause="withdrawn")
     closer = getattr(session, "close_participant_socket", None)
     if closer is None:
         return
@@ -4088,7 +4101,12 @@ async def _report_encounter_failure(session, kind: str, detail: str, *,
 
 # --- Participant: voice path ---
 
+# Bound the close write independently of the runner's cleanup waits.
+_VOICE_CLOSE_TIMEOUT = 2.0
+
+
 @app.websocket("/ws/participant/voice")
+@_metrics.observe_voice_route
 async def ws_participant_voice(
     ws: WebSocket,
     scenario: str = Query(...),
@@ -4099,14 +4117,17 @@ async def ws_participant_voice(
     run: Optional[str] = Query(None),
 ):
     if PARTICIPANT_KEY_REQUIRED and SESSION_KEY and key != SESSION_KEY:
+        _metrics.voice_route_fact(ws, cause="auth_rejected")
         await ws.close(code=4401)
         return
     # Voice capture needs a participant record that exists and is not
     # withdrawn (_participant_may_capture). Consent is taken in Qualtrics
     # before the participant reaches this app, so it is not asked of here.
     if not _participant_may_capture(participant_id):
+        _metrics.voice_route_fact(ws, cause="auth_rejected")
         await ws.close(code=4403)
         return
+    _metrics.voice_route_fact(ws, cause="setup_failed")
     await ws.accept()
 
     # The model is a study variable: honour only a researcher-authenticated
@@ -4115,9 +4136,11 @@ async def ws_participant_voice(
     effective_model = launch_cfg.get("model") if launch_cfg else None
 
     try:
+        run_context = _run_context(participant_id, run)
+        _metrics.voice_route_fact(ws, context=run_context or {})
         session = registry.create(
             scenario, model=effective_model, participant_id=participant_id,
-            capture_audio=True, run_context=_run_context(participant_id, run),
+            capture_audio=True, run_context=run_context,
         )
         _arm_encounter_event_log(session)
     except FileNotFoundError as e:
@@ -4128,6 +4151,8 @@ async def ws_participant_voice(
     # From here a Session exists in the registry, so everything runs inside the
     # try whose finally drops it, an early disconnect during setup would
     # otherwise leak the session forever.
+    runner = None
+    close_code = None
     try:
         # Researcher-configured launch: apply gear presets before the first turn.
         if launch_cfg:
@@ -4153,10 +4178,14 @@ async def ws_participant_voice(
         # Every scenario runs as consecutive 1:1 conversations on Gemini Live,
         # the cast is played one character at a time, in order.
         runner = RealtimeVoiceSessionRunner(session, ws)
+        _metrics.voice_route_fact(ws, runner=runner)
         await runner.run()
     except WebSocketDisconnect:
+        _metrics.voice_route_fact(ws, cause="client_disconnected")
         pass
     except Exception as e:
+        _metrics.voice_route_fact(ws, cause="runner_error" if runner is not None else "setup_failed")
+        close_code = 1011
         # The credential-disclosure site. RealtimeVoiceSessionRunner.run() has no
         # except of its own, so a failure in the first connect() to the realtime
         # gateway lands here whole — and that is precisely the exception that
@@ -4175,8 +4204,32 @@ async def ws_participant_voice(
             await ws.send_json({"type": "error", "message": safe})
         except Exception:
             pass
+    else:
+        # run() also returns normally after its own fatal gateway exits.
+        close_code = 1000 if runner.completed else 1011
     finally:
-        registry.drop(session.id)
+        _metrics.voice_route_fact(ws, cleanup=True)
+        import asyncio
+
+        # The runner has exited. Claim only this route's socket via
+        # Session's clear-before-await latch, shared with withdrawal. Its
+        # bounded finalizer/console waits can still leave tasks writing after
+        # this route returns; closed-store events are dropped (storage.event).
+        # Closing the socket does not fix that existing teardown gap.
+        # v2.html's close listener ignores codes: 1011 follows the same drop,
+        # reconnect and retry paths as the previous transport close (1006).
+        try:
+            if close_code is not None and (
+                    session.participant_ws is ws or session.participant_ws is None):
+                await asyncio.wait_for(
+                    session.close_participant_socket(code=close_code),
+                    timeout=_VOICE_CLOSE_TIMEOUT,
+                )
+        except Exception as e:  # noqa: BLE001, still drop the session
+            print(f"  WARNING: could not close the voice socket "
+                  f"of session {session.id}: {type(e).__name__}")
+        finally:
+            registry.drop(session.id)
 
 
 # --- Researcher ---

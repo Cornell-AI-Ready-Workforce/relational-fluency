@@ -33,3 +33,11 @@ output "alb_dns_name" {
 output "log_group" {
   value = aws_cloudwatch_log_group.agent.name
 }
+
+output "collection_dashboard_name" {
+  value = aws_cloudwatch_dashboard.collection.dashboard_name
+}
+
+output "collection_alarm_topic_arn" {
+  value = aws_sns_topic.monitoring.arn
+}
