@@ -223,7 +223,11 @@ async def _drain(lines, within_s: float) -> None:
         async for _ in lines:
             pass
     try:
-        await asyncio.wait_for(rest(), within_s)
+        # Keep cancellation in this task when EOF and cancel arrive together.
+        # Python 3.11's wait_for can otherwise return the finished child and
+        # leave the reply waiting for TTS after cancellation was requested.
+        async with asyncio.timeout(within_s):
+            await rest()
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001 - see the docstring

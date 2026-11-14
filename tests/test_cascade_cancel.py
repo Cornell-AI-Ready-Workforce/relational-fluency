@@ -81,6 +81,28 @@ async def test_already_queued_frames_follow_the_cancel_policy(monkeypatch, polic
             await stream.aclose()
 
 
+@in_a_loop
+async def test_body_drain_propagates_cancellation_at_eof():
+    started = asyncio.Event()
+    eof = asyncio.get_running_loop().create_future()
+
+    async def lines():
+        started.set()
+        await eof
+        yield "remaining body"
+
+    task = asyncio.create_task(cascade._drain(lines(), 60))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        eof.set_result(None)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 @asynccontextmanager
 async def pump(runner, rt):
     runner.rt = rt
@@ -134,8 +156,7 @@ async def test_silence_withdraws_an_inaudible_reply_through_the_pump(monkeypatch
             await until(lambda: session.store.of("user_turn_suppressed"))
             tts.finish()
             await until(lambda: sock._reply.done())
-            await until(lambda: session.store.of("cancelled_output_dropped") or played
-                        or session.store.of("first_reply_withheld"))
+            await until(lambda: session.store.of("cancelled_output_dropped"))
             assert not played and runner._turn_audio_bytes == 0
             assert any(f["type"] == "response.cancel" for f in sock.sent)
             (dropped,) = session.store.of("cancelled_output_dropped")
