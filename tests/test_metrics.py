@@ -479,14 +479,23 @@ def test_speech_ends_do_not_create_background_tasks(stores, capsys):
     store = stores()
 
     async def check():
+        def metrics_tasks():
+            # GC can schedule unrelated client cleanup on this same loop.
+            return {task for task in asyncio.all_tasks()
+                    if (code := getattr(task.get_coro(), "cr_code", None)) is not None
+                    and code.co_filename == metrics.__file__}
+
         await metrics.start(types.SimpleNamespace(list_ids=lambda: []))
-        tasks = set(asyncio.all_tasks())
-        for ended in range(1, 101):
-            metrics.speech_end(store, ended)
-            store.event("turn_timing", vad_speech_end=ended, first_audio_played=ended + 1)
-        assert set(asyncio.all_tasks()) == tasks
-        assert not metrics._sweep_task.done()
-        await metrics.stop()
+        try:
+            tasks = metrics_tasks()
+            assert tasks == {metrics._gauge_task, metrics._sweep_task}
+            for ended in range(1, 101):
+                metrics.speech_end(store, ended)
+                store.event("turn_timing", vad_speech_end=ended, first_audio_played=ended + 1)
+            assert metrics_tasks() == tasks
+            assert not metrics._sweep_task.done()
+        finally:
+            await metrics.stop()
 
     asyncio.run(check())
     assert len(samples(documents(capsys), "SpeechEndToFirstPlayed")) == 99
