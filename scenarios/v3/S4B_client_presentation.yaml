@@ -364,12 +364,12 @@ agents:
         order without saying something about it — and the first time you do, it
         comes out of your mouth as yours, hung off something you were already
         saying, carried straight on from, and you genuinely do not notice you
-        have done it. If Chris has not managed to say it out loud yet, you say
-        it anyway as your own; he put it to you before this session. It does
-        not wait for the room to be ready and it does not wait to be relevant,
-        and it does not wait for the end: you get to it EARLY, in the first
-        few exchanges, because the reorder is the other half of what has to
-        be settled and you are settling things now.
+        have done it. It waits for one thing only: Chris has to have said it
+        out loud in this room first, and until he has you do not mention a
+        reorder at all. After that it does not wait for the room to be ready,
+        to be relevant, or for the end: you get to it on the first turn you
+        have once he has said it, because the reorder is the other half of
+        what has to be settled and you are settling things now.
         This is not a thing you do once and then put right. Unless somebody
         says otherwise, out loud, it stays yours for the rest of the session —
         and it stays yours after the room has swung behind it, especially then.
@@ -750,6 +750,20 @@ interactions:
       # nobody visibly being left out of it, so the low end of the scale had
       # nothing in it to score. Skipping Priya out loud is the beat; inviting
       # her is what the probes must never do.
+      # 2026-11-13 (#222), matching S4A: Chris's reorder is a beat of its own,
+      # ahead of the relabel, so Dan cannot claim an idea the participant has
+      # not heard Chris say. No ESCI items: it sets the relabel up.
+      - id: t11_chris_puts_the_reorder_on_the_table
+        agent: chris
+        cue: >-
+          Put the reorder on the table, plainly and once, in whatever words
+          come to you: open on what the client actually came for, and move
+          Dan's background section behind it. If somebody asked you something,
+          answer that first in a few words. Then stop.
+        on_silence: >-
+          that the deck could open on what the client actually came for, with
+          the background section moved behind it.
+        esci: []
       - id: t2_idea_relabelled
         agent: dan
         # The possessive half of the hint pair used to read "like I said
@@ -764,9 +778,7 @@ interactions:
           The reorder Chris put on the table — opening on what the client came
           for, your background behind it — comes back out of your mouth as
           yours: "my earlier point", "what I was saying". You carry straight on
-          into what happens next without a flicker of doubt. If Chris has not
-          managed to say it out loud yet, claim it anyway; he raised it with you
-          before this session. Do not credit him.
+          into what happens next without a flicker of doubt. Do not credit him.
         on_silence: >-
           Say what happens next as though reordering the deck to open on what
           the client came for had been your idea from the start and the room
@@ -832,6 +844,17 @@ interactions:
           the table as agreement, and say you are going from the top, as though
           the running order were already agreed. Leave Priya out of it.
         esci: [encourages_participation, solicits_input]
+    # Matching S4A (#214): what the room does once the beats are spent and the
+    # participant has gone quiet. No ESCI items, and nobody turns to Priya.
+    after_beats:
+      - agent: dan
+        on_silence: "ask them to say out loud which running order they are agreeing to, and wait."
+      - agent: chris
+        on_silence: "read back in a few dry words where you think the running order has got to, and ask if that is right."
+      - agent: priya
+        on_silence: "say quietly, in a few words, that you are fine with whatever the room decides, and stop."
+      - agent: dan
+        on_silence: "say which running order you are rehearsing unless somebody says otherwise, as a flat statement, and leave it standing."
 
   - id: i2
     mode: group
@@ -873,3 +896,10 @@ interactions:
         cue: "While the work is being divided up, wait to see whether anything comes your way. If something does, say in one sentence what you would take and what you would need to do it well: the client priorities section, and ten minutes to walk everyone through it. Do not ask for it."
         on_silence: "that you would take the client priorities section if someone wanted it, and that you would need ten minutes to walk everyone through it."
         esci: [supportive, respectful, encourages_cooperation]
+    after_beats:
+      - agent: dan
+        on_silence: "ask whether anyone wants anything changed in who is presenting what before you lock it, and wait."
+      - agent: chris
+        on_silence: "read your own slice back in a few dry words to check you have it right."
+      - agent: priya
+        on_silence: "say quietly, in a few words, that you can pick up whatever is left over, and stop."

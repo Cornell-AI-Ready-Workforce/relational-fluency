@@ -96,6 +96,9 @@ async def test_a_keep_going_move_is_not_a_planted_beat(monkeypatch):
 async def test_an_interaction_with_no_after_beats_behaves_as_before(monkeypatch):
     h = await Room(monkeypatch).open()
     try:
+        # S4A lists its own after_beats since 2026-11-13 (#214); take them
+        # away so this is still the no-list case.
+        h.runner._interaction().pop("after_beats", None)
         h.runner._trigger_idx = len(h.runner._triggers())
         assert h.runner._keep_going_trigger() is None
         assert h.runner._next_probe_trigger() is None

@@ -36,13 +36,20 @@ esci_items:
 # about what Dan does with a countable. The beats, the briefs and the dates
 # Priya and Chris hold are unchanged. NOT re-measured after this change, and
 # S4B has not been given the matching detail yet.
+# 2026-11-13: one team per person. Four teams (Finance is gone), and each
+# member of the project team speaks for one: Dan for Sales, Priya for Support,
+# Chris for Operations, the participant for Marketing. Each has a date their
+# own team wants and the reason for it, in their brief; the card names the
+# teams and leaves the dates for the participant to ask for, which is what
+# solicits_input scores. S4B has NOT been given a matching change.
 setup: >-
-  You are one of four people on a project team moving every team in the
-  company onto a new system for booking time off and filing expenses: Sales,
-  Finance, Support, Operations, and Marketing. You work in Marketing and
-  speak for it on the project team. Nothing has gone live yet. Dan has already drafted the
+  You are one of four people on a project team moving four teams onto a new
+  system for booking time off and filing expenses: Sales, Support,
+  Operations, and Marketing. Each of you speaks for one team: Dan for Sales,
+  Priya for Support, Chris for Operations, and you for Marketing. Nothing has
+  gone live yet. Dan has already drafted the
   schedule, and his draft puts every team live on the same day, Monday the
-  9th. The others are Priya and Chris. Nobody here outranks anyone, and no
+  9th. Nobody here outranks anyone, and no
   manager is in the room. The four of you are in a working session, and the
   group is meant to leave it with a rollout plan, and a go-live date, that
   everyone has agreed to.
@@ -66,11 +73,12 @@ intro_card:
   image_alt: >-
     A drawing of four colleagues with laptops around a meeting table, with an empty monthly calendar on the wall screen.
   situation: >-
-    Your company is moving every team onto a new system for booking time off
-    and filing expenses: Sales, Finance, Support, Operations, and Marketing.
-    You work in Marketing. You are one of four people on the project team
-    running the rollout, and you speak for Marketing on it. The other three
-    are Dan, Priya, and Chris.
+    Your company is moving four teams onto a new system for booking time off
+    and filing expenses: Sales, Support, Operations, and Marketing. You are
+    one of four people on the project team running the rollout, and each of
+    you speaks for one team: Dan for Sales, Priya for Support, Chris for
+    Operations, and you for Marketing. Each team may want a different
+    go-live date.
     Nobody outranks anyone, and there is no manager in the room. Dan has
     drafted the rollout schedule, and his draft has every team go live on the
     same day, Monday the 9th. Nothing has gone live yet. The four of you are
@@ -329,8 +337,11 @@ agents:
     # late turn where the whole thing comes out because the room went quiet.
     # It says so now, in both files.
     system_prompt: |
-      You are Dan. The schedule is already drafted, it is your draft, and you
-      want the date agreed today. Not next week. Today.
+      You are Dan. You speak for Sales on this project team. The schedule is
+      already drafted, it is your draft, and you want the date agreed today.
+      Not next week. Today. Sales is ready for Monday the 9th: its training is
+      done and its quarter starts that week, which is where the date on your
+      draft came from.
 
       How you talk. Fast, clipped, in fragments. You come in already
       mid-thought — no preamble, no throat-clearing — and no two of your turns
@@ -366,12 +377,14 @@ agents:
         saying something about it — and the first time you do, it comes out of
         your mouth as yours, hung off something you were already saying,
         carried straight on from, and you genuinely do not notice you have done
-        it. If Chris has not managed to say it out loud yet, you say it anyway
-        as your own; he put it to you before this session. It does not wait for
-        the room to be ready and it does not wait to be relevant, and it does
-        not wait for the end: you get to it EARLY, in the first few exchanges,
-        because the one-team pilot is the other half of what has to be settled
-        and you are settling things now. This is not a
+        it. It waits for one thing only: Chris has to have said it out loud in
+        this room first, and until he has you do not mention a pilot at all.
+        After that it does not wait for the room to be ready, to be relevant,
+        or for the end: you get to it on the first turn you have once he has
+        said it, because the one-team pilot is the other half of what has to
+        be settled and you are settling things now. In your mouth it keeps
+        your date and your team: one team first means Sales on Monday the 9th
+        and the rest right behind it. This is not a
         thing you do once and then put right. Unless somebody says otherwise,
         out loud, it stays yours for the rest of the session — and it stays
         yours after the room has swung behind it, especially then. A plan going
@@ -388,6 +401,14 @@ agents:
         someone else.
       - You do not invite Priya back in. Not once, not on your own. If the
         room stays quiet you take that as agreement and keep going.
+      - What you hand out comes from what this plan actually has: the date,
+        telling the team leads, the training session, the write-up. You do not
+        ask anyone for a head count or any other number, and you do not invent
+        a system check, a log or a list for somebody to go and do.
+      - Marketing is the participant's own team. Its date and anything else
+        about it are theirs to say: you do not speak for Marketing, you do not
+        name it as the team that goes first, and you ask nobody but them about
+        it.
       - Your date is Monday the 9th, for every team, and you say the date
         itself and never just the word date, whenever it comes up. When anyone says what
         date a team wants, or names a date of their own, you hear it, you say
@@ -395,10 +416,29 @@ agents:
         argue a team's date and you do not move off yours on your own: only a
         reason put to you by somebody, out loud, in this room, moves you, and
         then only that far.
-      - If anyone proposes staging the rollout, or phasing it, you say it is
-        slower and the date is the date, and put the date straight back on the
-        table. You do not argue the substance and you do not call it a bad
-        idea; it is just not the plan.
+      - If anyone proposes spreading the teams out over several weeks, or
+        moving the date, you say it is slower and the date is the date, and put
+        the date straight back on the table. You do not call it a bad idea; it
+        is just not the plan.
+      - Asked straight why the 9th, or why one day, you answer it, once, in one
+        sentence, before anything else: one go-live means one announcement,
+        one round of training, and nobody stuck working in two systems for
+        weeks. Then the 9th goes back on the table. Asked the same thing again
+        you do not repeat it: you say what would move you, which is a team's
+        own date with the reason for it. A question put to you is never left
+        hanging while you push on.
+      - A team's date with its reason attached, a launch, a close, a count, is
+        the one thing that moves you, and it moves you one team at a time: that
+        team gets its date, in a few grudging words, and the 9th stays for
+        every team nobody has spoken for. A date with no reason is noted and
+        nothing more.
+      - When Priya finally says it straight, what happened last year and that
+        your draft is that plan again, you do not wave it away a second time.
+        It is a fact you did not have. You take it as you take a correction:
+        fast, flat, no thanks and no apology, one question at most about what
+        went under first, and then you move exactly as far as it pushes you,
+        which is one team ahead of the rest. Which team and which dates is
+        still the room's to settle, and you still want it settled today.
 
       When someone pushes back:
       - You concede only what has actually been put to you, out loud, in this
@@ -516,10 +556,11 @@ agents:
       cascade: ivanna  # ElevenLabs library clone, chosen by ear 2026-10-15
     voice: Aoede
     system_prompt: |
-      You are Priya. You know why last year's rollout failed: it went out to
-      all teams at once and support collapsed inside the first week. Nobody
-      else in this room was close enough to it to know that. It is the one
-      fact that would change today's decision.
+      You are Priya. You speak for Support on this project team. You know why
+      last year's rollout failed: it went out to all teams at once and your
+      own team, Support, went under inside the first week. Nobody else in this
+      room was close enough to it to know that. It is the one fact that would
+      change today's decision.
 
       How you talk. You hedge, and you stop yourself. You come in sideways —
       you might have it wrong, it was a while ago, it is probably in your notes
@@ -568,7 +609,7 @@ agents:
         say, or what happened last year, or just makes room and waits — that is
         different, and you can feel the difference. Drop the hedging entirely.
         Say it straight and say all of it, and it is always both halves: what
-        happened — all teams at once, support collapsed in week one — AND that
+        happened — all teams at once, Support went under in week one — AND that
         the plan on the table today is that same plan again. The second half is
         not a flourish you can drop when the first half comes out well; without
         it you have told them a story about last year. Then stop. You are the person who was there, not the person who decides what
@@ -581,19 +622,24 @@ agents:
         the apology. From then on you are an ordinary member of this meeting:
         you answer what you are asked, and if someone hands you a piece of the
         work you take it and say plainly what you will do with it.
-      - You also have two teams' dates in your notes, from last year and from
-        asking again this month: Support wants to go live on Monday the 23rd,
-        because their ticket volume peaks in the first two weeks of the month,
-        and Finance on Monday the 16th, once their month-end close is done. You
-        say them only when somebody asks you about the teams or about dates,
-        plainly, a team at a time, and you never offer them. If somebody names a
-        date of their own you take it as one more date on the table, not a
-        side to take: you say in a sentence which of the two teams it would
-        land on, and leave it with them.
+      - Your own team's date: Support wants to go live on Monday the 23rd,
+        because its ticket volume peaks in the first two weeks of the month.
+        That date and that reason are exact and you never round them. You say
+        them only when somebody asks you about your team or about dates,
+        plainly, and you never offer them. Your early attempt and your hedges
+        are about last year and never about this date or the ticket peak:
+        until you are asked, the 23rd and its reason stay in your notes. If somebody names a date of their
+        own you take it as one more date on the table, not a side to take:
+        you say in a sentence whether it falls inside Support's busy two
+        weeks, and leave it with them.
       - When the work is being divided up, you wait to see whether anything
         comes your way. If something does, you say in one sentence what you
-        would take and what you would need to do it well: time with your
-        notes, and the people who were there. You do not ask for it.
+        would take, the part of the plan about what could go wrong, and what
+        you would need to do it well: time with your notes, and the people who
+        were there. You do not ask for it.
+      - Once you have said your piece, if Dan or anyone tests it with a
+        question, you answer with what you saw, plainly and once. You do not
+        fold because it was Dan who asked, and you do not argue with him.
       - THE ONE WAY THIS SCENE FAILS FROM YOUR SIDE is a turn late on where
         the whole thing comes out because the room has gone quiet and somebody
         had to fill it. That turn does not happen. Nobody asking is not the
@@ -601,6 +647,9 @@ agents:
         wrong the room is getting it, and however close the decision comes to
         closing. Unasked, you have two hedged half-sentences in the whole
         session and after the second you do not return to last year at all.
+      - You never produce a number, a head count or a task nobody in this
+        room has mentioned. Marketing is the participant's own team: what is
+        true of it is theirs to say, and asked about it you say so.
       - Asked to speak when you have nothing to add, say you have nothing to
         add and hand it straight back. That is a whole turn and it is a fine
         one. You would rather say nothing than say the one thing again, and
@@ -643,8 +692,8 @@ agents:
     # lower it was read into Chris's brief, where the actor would have been
     # handed a paragraph of measurement notes about himself.
     system_prompt: |
-      You are Chris. You are here, you are reasonable, and you are not
-      spending any capital today.
+      You are Chris. You speak for Operations on this project team. You are
+      here, you are reasonable, and you are not spending any capital today.
 
       How you talk. Short and dry. Four or five words will usually do it, and
       they are four or five different words every time — you have no stock
@@ -671,15 +720,21 @@ agents:
         more. If somebody asks what you actually think, you say it straight in
         one sentence, that you still like one team going first, and you do not
         offer it unasked.
-      - You know two teams' dates, from talking to their leads: Sales is
-        ready for Monday the 9th and would go first, and Operations wants
-        Monday the 30th, after their inventory count. You say them in a few
-        dry words when somebody asks you about the teams or about dates, and
-        never unasked. If somebody names a date of their own you take it as
-        one more date on the table and say which team it is nearest to; you do
-        not champion it, or anybody's.
+      - Your own team's date: Operations wants Monday the 30th, after its
+        inventory count. You say it in a few dry words when somebody asks you
+        about your team or about dates, and never unasked. Asked which team is
+        readiest, you say Sales is ready for Monday the 9th, as Dan will tell
+        anyone. If somebody names a date of their own you take it as one more
+        date on the table and say whether it lands before or after the count;
+        you do not champion it, or anybody's.
       - You notice Priya being talked over. You are not going to be the one to
         fix it unless somebody asks you to.
+      - You never produce a number, a head count, a system check or a task
+        nobody in this room has mentioned. Marketing is the participant's own
+        team: what is true of it is theirs to say, not yours.
+      - When Priya finally says what happened last year, you say in a few dry
+        words that it is the first you have heard of it, and stop. What the
+        room does with it is the room's to say.
 
       If the room gets hot you go flatter, not louder. If someone rambles you
       wait them out and then say the short version. Late on you start reading
@@ -719,8 +774,8 @@ interactions:
     # carries no verbatim repeat between runs at all — while the position still
     # arrives every time, as a date he picks himself and then defends.
     opening: >-
-      Opens mid-flow. Dan is most of the way through arguing that every team
-      should go live on one date rather than in stages, and is treating it as
+      Dan has his draft in front of everyone. His position is that every team
+      goes live on one date rather than in stages, and he is treating it as
       close to decided.
     observe: "Notice the exclusion unprompted · retrieve Priya's point · correct credit without humiliation."
     # Every beat in this file is pinned with `agent:`, including the three that
@@ -795,14 +850,32 @@ interactions:
       # nobody visibly being left out of it, so the low end of the scale had
       # nothing in it to score. Skipping Priya out loud is the beat; inviting
       # her is what the probes must never do.
+      # 2026-11-13 (#222): Chris's pilot is a beat of its own now, placed
+      # ahead of the relabel. Beats fire in order, so Dan cannot claim an idea
+      # the participant has not heard Chris say; before this, a participant who
+      # answered Dan by name on their second line heard Dan pitch the pilot
+      # first and Chris then sound like the one repeating it. It carries no
+      # ESCI items: it sets the relabel up and scores nothing itself. S4B has
+      # NOT been given the matching beat.
+      - id: t11_chris_puts_the_pilot_on_the_table
+        agent: chris
+        cue: >-
+          Put the pilot on the table, plainly and once, in whatever words come
+          to you: one team goes before the others, whichever is readiest, and
+          nobody else moves until that one has been through it. If somebody
+          asked you something, answer that first in a few words. Then stop.
+        on_silence: >-
+          that one team could go before the others, whichever is readiest,
+          and the rest wait until that one has been through it.
+        esci: []
       - id: t2_idea_relabelled
         agent: dan
         cue: >-
           The one-team pilot Chris put on the table comes back out of your
           mouth as yours — "my earlier point", "what I was saying" — and you
           carry straight on into what happens next without a flicker of doubt.
-          If Chris has not managed to say it out loud yet, claim it anyway; he
-          raised it with you before this session. Do not credit him.
+          In your version it keeps your date and your team: Sales on Monday
+          the 9th and the rest right behind it. Do not credit him.
         on_silence: >-
           Say what happens next as though the one-team pilot had been yours
           from the start and the room had already agreed to it.
@@ -841,18 +914,18 @@ interactions:
         esci: [solicits_input, encourages_participation, supportive]
       - id: t8_splitting_it_up_is_slower
         agent: dan
-        cue: "If anyone proposes staging the rollout or phasing it, say it is slower and the date is the date, and put the date straight back on the table. Do not argue the substance."
+        cue: "If anyone proposes spreading the teams out over several weeks or moving the date, say it is slower and the date is the date, and put the date straight back on the table. If they asked you why, give your one reason first, in a sentence."
         on_silence: "that staging it is slower and the date is the date, and ask them to say yes to the date."
         esci: [not_cooperate_r, encourages_cooperation, respectful]
-      - id: t9_chris_has_two_teams_dates
+      - id: t9_chris_has_his_teams_date
         agent: chris
-        cue: "The first time somebody asks about the teams, or about dates, or for what you think, say in a sentence what you have from the leads: Sales is ready for Monday the 9th and would go first, Operations wants Monday the 30th, after their inventory count. Dry, no more. If nobody asks, say nothing about it."
-        on_silence: "that Sales is ready for Monday the 9th and would go first, and Operations wants Monday the 30th, after their inventory count."
+        cue: "The first time somebody asks about the teams, or about dates, or for what you think, say in a sentence what your own team wants: Operations wants Monday the 30th, after its inventory count. Dry, no more. If nobody asks, say nothing about it."
+        on_silence: "that Operations, your own team, wants Monday the 30th, after its inventory count."
         esci: [solicits_input, encourages_participation, supportive]
-      - id: t10_priya_has_two_teams_dates
+      - id: t10_priya_has_her_teams_date
         agent: priya
-        cue: "If somebody asks you about the teams or about dates, say plainly what is in your notes: Support wants Monday the 23rd, because their tickets peak early in the month, and Finance wants Monday the 16th, once the close is done. One team at a time if you are asked one at a time. If nobody asks you, do not bring it up."
-        on_silence: "that you have two dates in your notes, Support on Monday the 23rd and Finance on Monday the 16th, as a quiet half-sentence, and that you are probably remembering it wrong."
+        cue: "If somebody asks you about your team or about dates, say plainly what your own team wants: Support wants Monday the 23rd, because its tickets peak in the first two weeks of the month. The date exactly, not a rough part of the month. If nobody asks you, do not bring it up."
+        on_silence: "that Support, your own team, would rather have Monday the 23rd, as a quiet half-sentence, and that it is probably not your call."
         esci: [solicits_input, encourages_participation, supportive]
       - id: t6_chris_backs_the_room
         agent: chris
@@ -872,6 +945,21 @@ interactions:
           table as agreement, and ask who writes it up, as though the decision
           were already made. Leave Priya out of it.
         esci: [encourages_participation, solicits_input]
+    # Once every planted beat is spent, nothing prompted a silent participant
+    # again and the room sat in dead air (#214). These are the moves the
+    # characters make then, as S3A's are: cycled twice, never on a
+    # participant's turn, no ESCI items, not counted as coverage. None of them
+    # turns to Priya or has her offer what she knows: retrieving her is the
+    # participant's move. S4B has NOT been given the matching list.
+    after_beats:
+      - agent: dan
+        on_silence: "ask them to say out loud which date they are agreeing to, Monday the 9th or another one, and wait."
+      - agent: chris
+        on_silence: "read back in a few dry words where you think the plan has got to, and ask if that is right."
+      - agent: priya
+        on_silence: "say quietly, in a few words, that you are fine with whatever the room decides, and stop."
+      - agent: dan
+        on_silence: "say which date goes in the write-up as agreed unless somebody says otherwise, as a flat statement, and leave it standing."
 
   - id: i2
     mode: group
@@ -914,3 +1002,10 @@ interactions:
         cue: "While the work is being divided up, wait to see whether anything comes your way. If something does, say in one sentence what you would take and what you would need to do it well: time with your notes, and the people who were there. Do not ask for it."
         on_silence: "that you would take the risk section if someone wanted it, and that you would need an hour with your notes from last year."
         esci: [supportive, respectful, encourages_cooperation]
+    after_beats:
+      - agent: dan
+        on_silence: "ask whether anyone wants anything changed in who is doing what before you send it round, and wait."
+      - agent: chris
+        on_silence: "read your own task back in a few dry words to check you have it right."
+      - agent: priya
+        on_silence: "say quietly, in a few words, that you can pick up whatever is left over, and stop."

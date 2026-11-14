@@ -854,8 +854,8 @@ const START = "You start the conversation. Say hello when you're ready.";
     // 6:40 of conversation (8:40 on the timer): still held.
     p.set('floorStartMs = Date.now() - 400 * 1000; timerStartMs = Date.now() - 520 * 1000; renderTimer();');
     assert($('stopBtn').classList.contains('locked'), 'End unlocked before 7:00 of conversation');
-    // On the timer: the floor began 2:00 in, so End unlocks at 2:00 + 7:00.
-    assert.strictEqual($('gateLabel').textContent, 'End unlocks at 09:00');
+    // Time left on the floor's clock, never a timer time ("at 05:02").
+    assert.strictEqual($('gateLabel').textContent, 'End unlocks in about 1 minute');
     assert($('stopBtn').title.startsWith('End unlocks in about 1 minute.'), $('stopBtn').title);
     // A later participant_opened (a hand-off) does not restart it.
     p.frame({ type: 'participant_opened', reason: 'handoff', first_of_encounter: false });
