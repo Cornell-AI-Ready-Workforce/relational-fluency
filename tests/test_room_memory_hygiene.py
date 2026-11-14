@@ -3070,7 +3070,7 @@ def test_room_memory_is_effective_only_on_an_encounter_with_a_room():
     assert one_to_one._scenario_is_group is False
     assert with_room._scenario_is_group is True
     src = (ROOT / "server" / "realtime_voice_session.py").read_text(encoding="utf-8")
-    assert "**provenance(self.rt.model, room=bool(self._scenario_is_group))" in src
+    assert "**provenance(self.rt.model, room=bool(self._scenario_is_group)," in src
 
 
 

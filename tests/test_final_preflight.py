@@ -63,6 +63,8 @@ LIVE_MODELS = {
         {"id": "nto.gemini-3.7-flash", "mode": None},
         {"id": "nto.gemini-3.8-flash", "mode": None},
         {"id": "nto.gemini-3.5-flash-lite", "mode": None},
+        # Catalog addition confirmed by the orchestrator on 2026-11-12.
+        {"id": "nto.gemini-3.5-transcribe", "mode": None},
         {"id": "nto.gemini-3.1-pro-preview", "mode": None},
         {"id": "nto.gemini-3.1-pro-preview-customtools", "mode": None},
         {"id": "nto.gemini-2.5-pro", "mode": None},
@@ -90,7 +92,7 @@ EXPECTED_ROLES = (
     ("STEERING_MODEL", "nto.gemini-4-argon", "the steering reviewer", True),
     ("REALTIME_MODEL", "nto.gemini-live-2.5-flash-native-audio", "the voice socket", True),
     ("CASCADE_LLM_MODEL", "nto.gemini-4-argon", "the cascade's hearing and reply model", True),
-    ("CASCADE_STT_MODEL", "nto.gemini-3.5-flash-lite", "the cascade's transcriber", True),
+    ("CASCADE_STT_MODEL", "nto.gemini-3.5-transcribe", "the cascade's transcriber", True),
     ("TRANSCRIBE_MODEL", "nto.gemini-4-argon", "the re-transcriber, offline", False),
     ("SPEECH_CHECK_MODEL", "nto.gemini-4-argon", "the participant speech check", False),
 )
@@ -206,6 +208,21 @@ def test_the_configuration_this_study_runs_is_not_flagged(gateway):
     assert "model_problems" not in result
     assert "model_warnings" not in result
     assert "detail" not in result
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_the_cascade_transcriber_must_be_in_the_catalog(gateway, monkeypatch, available):
+    monkeypatch.setenv("REALTIME_MODEL", "cascade-argon-elevenlabs")
+    catalog = {**LIVE_MODELS, "data": [entry for entry in LIVE_MODELS["data"]
+               if available or entry["id"] != "nto.gemini-3.5-transcribe"]}
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: models_response(catalog))
+    result = llm.preflight()
+    assert result["models_checked"] is True
+    assert result["ok"] is available
+    if not available:
+        assert len(result["model_problems"]) == 1
+        assert "CASCADE_STT_MODEL" in result["model_problems"][0]
+        assert "nto.gemini-3.5-transcribe" in result["model_problems"][0]
 
 
 def test_the_live_voice_model_is_accepted_despite_reporting_no_mode(gateway):

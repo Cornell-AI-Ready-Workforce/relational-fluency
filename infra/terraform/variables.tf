@@ -64,7 +64,7 @@ variable "cascade_llm_model" {
 variable "cascade_stt_model" {
   description = "Cascade: writes the participant transcript (LiteLLM alias). A room waits on it before granting the floor."
   type        = string
-  default     = "nto.gemini-3.5-flash-lite"
+  default     = "nto.gemini-3.5-transcribe"
 }
 
 variable "elevenlabs_tts_id" {

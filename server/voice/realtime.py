@@ -208,7 +208,9 @@ COMMIT_AUDIO_TAGS = 4
 GATEWAY_OUTPUT_RATE = int(setting("REALTIME_OUTPUT_RATE", "24000"))
 
 
-from .cascade import VOICE_ROSTER as _CASCADE_VOICES, CascadeSocket
+from ..reply_trace import attach as attach_reply_trace, context as trace_context, observe
+from .cascade import (VOICE_ROSTER as _CASCADE_VOICES, CascadeSocket,
+                      stt_model as cascade_stt_model)
 
 
 class UnknownRealtimeModel(RuntimeError):
@@ -268,6 +270,8 @@ class RealtimeCapabilities:
     # Whether a room should relay a colleague's finished line to this member as
     # TEXT instead of fanning that colleague's audio into its input.
     relay_colleagues_as_text: bool = False
+    # Rooms use a single scribe and deliver accepted participant words.
+    relay_participant_as_text: bool = False
     # Whether give_floor hands this member the floor by injecting a text nudge
     # and asking, instead of padding and committing its audio buffer.
     grant_via_text_prompt: bool = False
@@ -618,6 +622,7 @@ REALTIME_FAMILIES = {
     ),
     "cascade": RealtimeCapabilities(
         family="cascade",
+        relay_participant_as_text=True,
         # Argon hears, Argon thinks, ElevenLabs speaks (server/voice/cascade.py).
         # The roster is ElevenLabs default voice names; a scenario's Gemini
         # names alias onto it below. ELEVENLABS_VOICE_IDS adds cast voices.
@@ -824,7 +829,8 @@ def audio_provenance(model: str) -> dict:
     why it has to be on the record at all.
 
     `input_transcription_model` is None where the family transcribes the
-    participant on its own and nothing is asked for (the gemini rows).
+    participant on its own and nothing is asked for (the gemini rows). On the
+    cascade it names the separate STT request, including CASCADE_STT_MODEL.
     `max_output_tokens` is None where no cap is sent. `resampler` is the
     gateway -> page downsampler; `input_resampler` the page -> gateway one,
     None when the browser's rate goes straight through.
@@ -973,14 +979,18 @@ def transcription_language() -> str:
 
 
 def input_transcription_model_for(caps: Optional[RealtimeCapabilities]) -> str:
-    """The transcriber this family's sessions ask for, or "" where none is.
+    """The transcriber this family uses, or "" where none is asked for.
 
     INPUT_TRANSCRIPTION_MODEL overrides the row, and only on a family whose row
     says the key is needed (the gpt route): the Gemini rows transcribe on their
     own, and sending a key they were never measured with is a risk taken on the
     family whose failure mode is a silent mute. Read per call, not at import,
-    so _session_payload and audio_provenance cannot disagree about it.
+    so _session_payload and audio_provenance cannot disagree about it. The
+    cascade makes its own STT request under CASCADE_STT_MODEL; this names it
+    for provenance without adding a realtime-session transcription field.
     """
+    if caps is not None and caps.family == "cascade":
+        return cascade_stt_model()
     if caps is None or not caps.needs_input_transcription:
         return ""
     return setting("INPUT_TRANSCRIPTION_MODEL", "") or caps.input_transcription_model
@@ -1235,8 +1245,9 @@ def room_has_second_transcriber(model: str) -> bool:
     room's near-duplicate filter runs only where this is True; anywhere else
     two transcripts of one utterance cannot happen and the filter could only
     delete real speech."""
-    return bool(model) and (relays_colleagues_as_text(model)
-                            and not is_openai_realtime(model))
+    caps = capabilities_for(model)
+    return (bool(model) and not (caps and caps.relay_participant_as_text)
+            and relays_colleagues_as_text(model) and not is_openai_realtime(model))
 
 
 def speech_check_family(model: str) -> bool:
@@ -1247,7 +1258,8 @@ def speech_check_family(model: str) -> bool:
     return bool(caps and caps.participant_speech_check)
 
 
-def turn_gate_provenance(model: Optional[str] = None) -> dict:
+def turn_gate_provenance(model: Optional[str] = None, *,
+                         room_text_relay: Optional[bool] = None) -> dict:
     """The knob values above, as this process will apply them. With `model`,
     also whether a room on it runs the near-duplicate filter at all."""
     out = {
@@ -1269,6 +1281,12 @@ def turn_gate_provenance(model: Optional[str] = None) -> dict:
     }
     if model:
         out["room_dedupe_second_source"] = room_has_second_transcriber(model)
+        caps = capabilities_for(model)
+        if caps and caps.relay_participant_as_text:
+            relay = (os.getenv("CASCADE_ROOM_TEXT_RELAY", "1") != "0"
+                     if room_text_relay is None else room_text_relay)
+            out["room_participant_text_relay"] = relay
+            out["room_dedupe_second_source"] = not relay
     if model and speech_check_family(model):
         # Pipeline 2026-09-30a, gpt only: which lines are heard again, on
         # what, within how long. Absent on every other route.
@@ -1286,16 +1304,18 @@ def turn_gate_provenance(model: Optional[str] = None) -> dict:
 # ── bridge correctness (issue #23; pipeline 2026-09-23d) ─────────────────────
 
 def cancelled_output_discard() -> bool:
-    """CANCELLED_OUTPUT_DISCARD, default on. What the gateway still sends for a
-    reply this bridge cancelled (a barge-in, a stale hold, a re-brief) is kept
-    off the participant's speaker and out of the turn, and written instead as
-    a cancelled_output_dropped event with its text and duration. Only on the
-    gpt family, where a cancel was measured to be honoured with a short tail
-    (0.15-0.4 s of audio, diag track3 probe_cancel); on Gemini the cancel is
-    inert and the "tail" is the rest of the reply, which the runner has always
-    treated as a continuation (see _resume_seam), so that route is unchanged.
-    Off ("0") puts back the old relay, the one that re-armed the reply flags
-    and opened a second, phantom turn for the tail."""
+    """CANCELLED_OUTPUT_DISCARD, default on, for the gpt family. A cancel was
+    measured to be honoured there with a short tail (0.15-0.4 s of audio,
+    diag track3 probe_cancel). Its queued audio/text is discarded before
+    reply bookkeeping and recorded as cancelled_output_dropped, so the tail
+    cannot open another turn. Off ("0") restores that old relay behavior.
+
+    Cascade has its own switch, CASCADE_CANCELLED_OUTPUT_DISCARD (11-12b).
+    Both policies apply to default-tail cancels from withdrawal, barge-in,
+    scribe, rebrief and stale holds. Explicit discard_tail=False keeps room
+    holds' queued frames. On native Gemini a cancel is inert and its output
+    remains a continuation (see _resume_seam).
+    """
     return setting("CANCELLED_OUTPUT_DISCARD", "1").strip().lower() not in (
         "0", "false", "no", "off", "")
 
@@ -1303,6 +1323,9 @@ def cancelled_output_discard() -> bool:
 def discards_cancelled_output(model: str) -> bool:
     """True when sessions on `model` drop a cancelled reply's tail; see
     cancelled_output_discard."""
+    if family_of(model) == "cascade":
+        return setting("CASCADE_CANCELLED_OUTPUT_DISCARD", "1").strip().lower() not in (
+            "0", "false", "no", "off", "")
     return is_openai_realtime(model) and cancelled_output_discard()
 
 
@@ -2107,6 +2130,32 @@ class SilenceDetector:
     _floor: list = field(default_factory=list)
     _floor_len: int = 0
 
+    # Observation only: positions refer to samples passed to feed, not wall time.
+    _trace_samples: int = 0
+    _trace_last_voiced: int = 0
+    _trace_end: dict = field(default_factory=dict)
+
+    def _trace_frame(self, samples: int, voiced: bool) -> None:
+        try:
+            self._trace_samples += samples
+            if voiced:
+                self._trace_last_voiced = self._trace_samples
+        except Exception:  # noqa: BLE001 - observation cannot affect VAD
+            pass
+
+    def _trace_detection(self) -> None:
+        try:
+            self._trace_end = {
+                "detected_mono": time.monotonic(),
+                "trailing_silence_samples": self._trace_samples - self._trace_last_voiced,
+                "last_voiced_sample": self._trace_last_voiced,
+                "detected_sample": self._trace_samples,
+                "sample_rate_hz": self.rate,
+                "estimate": "sample_position",
+            }
+        except Exception:  # noqa: BLE001 - observation cannot affect VAD
+            pass
+
     def _note_level(self, rms: int, chunk_ms: float) -> None:
         """Keep the last `floor_window_ms` of levels, for the room's floor."""
         if self.noise_margin <= 0 or chunk_ms <= 0:
@@ -2165,6 +2214,7 @@ class SilenceDetector:
         chunk_ms = len(pcm) / 2 / self.rate * 1000.0
         rms = _rms(pcm)
         bar = self.effective_threshold()
+        self._trace_frame(len(pcm) // 2, rms >= bar)
         if rms >= self.hint_threshold():
             self._hint_ms_run += chunk_ms
             if self._hint_ms_run >= self.hint_ms:
@@ -2196,6 +2246,7 @@ class SilenceDetector:
         if self.speaking:
             self._silence_ms_run += chunk_ms
             if self._silence_ms_run >= self.silence_ms:
+                self._trace_detection()
                 self.speaking = False
                 self._speech_ms = 0.0
                 self._silence_ms_run = 0.0
@@ -2636,6 +2687,7 @@ class RealtimeVoiceSession:
         if self.capabilities.family == "cascade":
             # No socket to dial: the stand-in answers as a realtime server.
             self.ws = CascadeSocket(voice=self.voice, api_key=self.api_key)
+            attach_reply_trace(self)
             await self._send({
                 "type": "session.update", "session": self._session_payload(),
             })
@@ -4156,18 +4208,19 @@ class RealtimeVoiceSession:
         """Cancel the reply in flight before any of it has been played, and
         drop whatever the gateway still sends for it (pipeline 2026-09-24a).
 
-        For a participant turn withdrawn after its commit went out: on this
-        route the commit itself started the reply, and the transcript that
-        showed the turn was invented arrives 0.6-1.6 s later, usually before
-        the reply's first audio (1.9-24.8 s after the commit in the P5 sims).
-        The reply may not have a name yet (its response.created can trail the
-        commit by up to 0.9 s); the gateway handles frames in order, so the
-        next reply it names is this one, and it is marked for discard as a
-        retry's is (see cancel_response). Only where the tail is discarded at
-        all (discards_cancelled_output, the gpt route): elsewhere a cancel is
-        inert and the reply would play anyway. Returns the reply's id where
-        it was known, "" where it was not yet named, None where nothing was
-        done."""
+        On gpt, the commit itself starts a reply; the transcript arrived
+        0.6-1.6 s later in the P5 sims, usually before audio (1.9-24.8 s).
+        Cascade commit_turn explicitly sends response.create. Its adapter
+        emits response.created at the reply task's first step, and the
+        unnamed window ends when events() reads that frame. The adapter
+        joins a cancelled task before accepting the next create.
+
+        The reply can still be unnamed on either route. Frames stay ordered,
+        so the next created names this reply for discard (see cancel_response).
+        Callers must check that it is still unheard and belongs to this
+        commit. Active only when this family's discard switch is on; returns
+        the reply id, "" before it is named, or None when disabled.
+        """
         if not self.discards_cancelled_output:
             return None
         rid = self._response_created_id
@@ -4237,7 +4290,8 @@ class RealtimeVoiceSession:
         self._discard_next_created = False
         self._unnamed_cancel = self._recancel_on_created = False
         self._drop_deferred("new_turn")
-        await self._send({"type": "input_audio_buffer.commit"})
+        with trace_context(self, "silence_probe" if probe else "participant_commit"):
+            await self._send({"type": "input_audio_buffer.commit"})
 
     @property
     def responding(self) -> bool:
@@ -4601,7 +4655,8 @@ class RealtimeVoiceSession:
         self._cancelled_by_us = False
         self._retries_this_turn += 1
         self._retry_in_flight = True
-        await self.prompt_response(nudge or AUDIO_RETRY_NUDGE)
+        with trace_context(self, "retry"):
+            await self.prompt_response(nudge or AUDIO_RETRY_NUDGE)
         return True
 
     async def replay_input(self, pcm16: bytes) -> bool:
@@ -4659,14 +4714,15 @@ class RealtimeVoiceSession:
         # participant turn when the original commit's transcript turns up
         # after all (seen twice in the archive; see the runner's
         # _record_user_turn).
-        self._tag_commit(replay=True)
-        await self._send({"type": "input_audio_buffer.commit"})
-        self._response_active = True
-        self._requested = True
-        self._response_started_at = time.time()
-        self._response_saw_output = False
-        await self._send({"type": "response.create"})
-        return True
+        with trace_context(self, "replay"):
+            self._tag_commit(replay=True)
+            await self._send({"type": "input_audio_buffer.commit"})
+            self._response_active = True
+            self._requested = True
+            self._response_started_at = time.time()
+            self._response_saw_output = False
+            await self._send({"type": "response.create"})
+            return True
 
     async def answer_tool_call(self, call_id: Optional[str], output: str) -> bool:
         """Give the model the result of a function call it made: a
@@ -4723,7 +4779,8 @@ class RealtimeVoiceSession:
         self._request_hold_s = 0.0           # see expect_commit_reply
         self._discard_next_created = False   # see cancel_response
         self._unnamed_cancel = self._recancel_on_created = False
-        await self._send({"type": "response.create"})
+        with trace_context(self, "prompt_response"):
+            await self._send({"type": "response.create"})
 
     def _response_stalled(self) -> bool:
         """True when a reply is nominally in flight but has produced nothing
@@ -4765,7 +4822,8 @@ class RealtimeVoiceSession:
         self._request_hold_s = 0.0           # see expect_commit_reply
         self._discard_next_created = False   # see cancel_response
         self._unnamed_cancel = self._recancel_on_created = False
-        await self._send({"type": "response.create"})
+        with trace_context(self, "request_response"):
+            await self._send({"type": "response.create"})
 
     async def commit_turn(self, *, probe: bool = False) -> bool:
         """Close the participant's turn and ask for a reply. Required, the
@@ -4789,15 +4847,16 @@ class RealtimeVoiceSession:
             # pad with 300 ms of silence if an auto-fire consumed the audio.
             # The pad is CLIENT_RATE PCM, like everything send_audio takes.
             await self.send_audio(b"\x00" * (CLIENT_RATE * 2 * 3 // 10))
-        await self.commit_input(probe=probe)
-        if is_openai_realtime(self.model):
-            # Through the bridge, the commit itself starts the reply on the
-            # OpenAI route; an explicit response.create on top is rejected
-            # (active-response conflict) and can yield a second reply.
-            self.expect_commit_reply()
+        with trace_context(self, "silence_probe" if probe else "participant_commit"):
+            await self.commit_input(probe=probe)
+            if is_openai_realtime(self.model):
+                # Through the bridge, the commit itself starts the reply on the
+                # OpenAI route; an explicit response.create on top is rejected
+                # (active-response conflict) and can yield a second reply.
+                self.expect_commit_reply()
+                return True
+            await self.request_response()
             return True
-        await self.request_response()
-        return True
 
     def expect_commit_reply(self, hold_s: float = 0.0) -> None:
         """Book the reply a commit has just started as one we asked for.
@@ -4829,7 +4888,7 @@ class RealtimeVoiceSession:
 
         `discard_tail`: whatever the gateway still sends for this reply after
         the cancel is dropped in events() and summarised as cancelled_output
-        (see cancelled_output_discard; gpt family only). The room's
+        (see cancelled_output_discard; gpt and cascade families). The room's
         suppression of an unsolicited reply passes False, because there the
         tail is what the hold is made of and a later grant can adopt it.
 
@@ -4944,9 +5003,15 @@ class RealtimeVoiceSession:
                                       self._audio_absent_hold))
                 timeout = min(timeout, 1.0, max(0.25, left + 0.01))
             try:
-                yield await asyncio.wait_for(ws.recv(), timeout)
+                # Python 3.11's wait_for can swallow pump cancellation when
+                # recv finishes in the same loop turn. Keep the read in this
+                # task, and end its deadline before handing a frame upstream.
+                async with asyncio.timeout(timeout):
+                    raw = await ws.recv()
             except asyncio.TimeoutError:
                 yield None
+            else:
+                yield raw
 
     async def events(self) -> AsyncIterator[dict]:
         if not self.ws:
@@ -5520,6 +5585,8 @@ class RealtimeVoiceSession:
                     item_id = ev.get("item_id")
                     tag = self._tag_for(item_id) or {}
                     meta = {"item_id": item_id,
+                            **({"room_sequence": tag["room_sequence"]}
+                               if "room_sequence" in tag else {}),
                             "probe": bool(tag.get("probe")),
                             "replay": bool(tag.get("replay")),
                             "voiced_ms": tag.get("voiced_ms"),
@@ -5557,6 +5624,7 @@ class RealtimeVoiceSession:
                         # (pipeline 2026-09-28b; the runner's
                         # _hold_first_reply). No other pump reads it, and a
                         # room member's skips it (_pump_member).
+                        observe(self, "decision", item_id, "missing", "transcript_empty")
                         yield {"type": "transcript_missing",
                                "why": "transcript_empty", **meta}
 
@@ -5565,7 +5633,10 @@ class RealtimeVoiceSession:
                     # be left to be paired with the next one's. Said as
                     # transcript_missing, as an empty one is.
                     tag = self._tag_for(ev.get("item_id")) or {}
+                    observe(self, "decision", ev.get("item_id"), "failed", "transcript_failed")
                     yield {"type": "transcript_missing", "why": "transcript_failed",
+                           **({"room_sequence": tag["room_sequence"]}
+                              if "room_sequence" in tag else {}),
                            "item_id": ev.get("item_id"),
                            "probe": bool(tag.get("probe")),
                            "committed_at": tag.get("committed_at")}
