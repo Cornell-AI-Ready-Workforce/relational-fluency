@@ -3508,7 +3508,9 @@ class RealtimeVoiceSessionRunner:
 
         In the last interaction the call is held until the ceiling like the
         1:1 one (_hold_to_ceiling), and answered with its output alone: the
-        room's floor decides who speaks next, so no reply is asked for."""
+        room's floor decides who speaks next, so no reply is asked for.
+        Before the last interaction it is held the same way while planted
+        beats are still unfired (_hold_for_unfired_beats, issue #217)."""
         try:
             if await self._hold_to_ceiling("end_conversation"):
                 if agent_id:
@@ -3516,6 +3518,14 @@ class RealtimeVoiceSessionRunner:
                 if rt is not None and ev is not None:
                     await self._answer_held_call(rt, ev, agent_id=agent_id,
                                                  ask_reply=False)
+                return
+            if self._hold_for_unfired_beats(agent_id):
+                if agent_id:
+                    self._held_end_calls.add(agent_id)
+                if rt is not None and ev is not None:
+                    await self._answer_held_call(rt, ev, agent_id=agent_id,
+                                                 ask_reply=False,
+                                                 reason="unfired_beats")
                 return
             if not await self._advance_segment():
                 await self._send({"type": "encounter_complete"})
@@ -3528,6 +3538,40 @@ class RealtimeVoiceSessionRunner:
                 "voice_error", detail=f"advance_from_tool: {exc}",
                 severity="error",
             )
+
+    def _hold_for_unfired_beats(self, agent_id: Optional[str]) -> bool:
+        """True when a room member's end_conversation call must NOT move the
+        room to the next interaction: this is not the last interaction and
+        planted beats here have not fired yet (issue #217).
+
+        One call by any member used to advance the room at once and drop
+        every beat still to come: in S4A on 2026-11-13/14 Chris's call at
+        2:54 dropped three working-session beats, and Priya's and Chris's at
+        2:30 and 2:44 dropped five (t8, t9, t10, t6, t3). The beats are what
+        the encounter is scored on, so a character does not get to skip them.
+        The call is held as the last interaction's is (answered with
+        TOOL_CALL_CONTINUES, the floor decides who speaks) and the room
+        carries on. Once the beats are spent a call advances as before, and
+        so do _maybe_advance, the participant's move-on and the ceiling.
+
+        Written per call as end_conversation_held, with the beats it would
+        have dropped."""
+        if self._is_last_segment():
+            return False
+        unfired = [t.get("id") for t in self._triggers()[self._trigger_idx:]]
+        if not unfired:
+            return False
+        from .storage import encounter_timing
+        elapsed = self._encounter_elapsed()
+        if elapsed >= encounter_timing()["max_seconds"]:
+            return False  # the ceiling's, as everywhere else
+        self.session.store.event(
+            "end_conversation_held", reason="unfired_beats",
+            agent_id=agent_id, interaction=self._interaction_id(),
+            segment=self.segment, unfired_triggers=unfired,
+            elapsed_s=round(elapsed, 1),
+        )
+        return True
 
     async def _held_end_left_floor_silent(self, agent_id: str) -> bool:
         """True when the floor holder's whole reply was an end_conversation
@@ -7903,7 +7947,8 @@ class RealtimeVoiceSessionRunner:
         return False
 
     async def _answer_held_call(self, rt, ev: dict, *, agent_id: Optional[str],
-                                ask_reply: bool) -> None:
+                                ask_reply: bool,
+                                reason: str = "held_to_ceiling") -> None:
         """Answer a held end_conversation call: its function_call_output
         (TOOL_CALL_CONTINUES, "the conversation goes on, do not call it again
         yet"), and on a route that answers an output only when asked
@@ -7930,7 +7975,7 @@ class RealtimeVoiceSessionRunner:
         reply = ask_reply and mode == "request"
         self.session.store.event(
             "tool_call_answered", name=ev.get("name"), call_id=call_id,
-            reason="held_to_ceiling", agent_id=agent_id, segment=self.segment,
+            reason=reason, agent_id=agent_id, segment=self.segment,
             output=output, reply_requested=reply,
         )
         if reply:
