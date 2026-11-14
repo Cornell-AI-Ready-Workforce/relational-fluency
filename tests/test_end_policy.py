@@ -396,7 +396,7 @@ function page(search, runObj) {
     assert(!/more minutes|runs about/.test(early), label + ': counts down to an end: ' + early);
     $('stopBtn').click();
     assert.strictEqual(p.notices().length, 1, label + ': a second press stacked the same reply');
-    assert(/^End unlocks at \d\d:\d\d$/.test($('gateLabel').textContent),
+    assert(/^End unlocks in about \d+ minutes?$/.test($('gateLabel').textContent),
       label + ': ' + $('gateLabel').textContent);
     // The character saying goodbye early: the conversation carries on.
     p.frame({ type: 'floor_held', seconds_left: 180 });
