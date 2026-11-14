@@ -661,3 +661,91 @@ def test_the_versions_move():
     prov = llm.provenance("gpt-realtime-2.1")
     assert prov["pipeline_version"] == llm.PIPELINE_VERSION
     assert prov["room_pacing_version"] == llm.ROOM_PACING_VERSION
+
+
+# --------------------------------------------------------------------------
+# 5. Issue #217: a room member's call before the last interaction is held
+#    while that interaction has unfired planted beats
+# --------------------------------------------------------------------------
+
+def _room_call_in_i1(monkeypatch, *, fired):
+    """S4A in its working session (i1), `fired` beats in (None: all of them),
+    and Chris calls end_conversation. Returns what happened."""
+    async def go():
+        runner, session, ws = harness.make_runner("S4A")
+        assert len(runner.interactions) == 2 and runner.segment == 0
+        beats = [t["id"] for t in runner._triggers()]
+        assert len(beats) >= 3, "S4A's working session carries planted beats"
+        runner._trigger_idx = len(beats) if fired is None else fired
+        runner._encounter_started_at = runner._first_line_at = time.time() - 170
+        advanced = []
+
+        async def advance():
+            advanced.append(1)
+            return True
+        monkeypatch.setattr(runner, "_advance_segment", advance)
+        member = bridge(GPT)
+        await runner._advance_from_tool("chris", member, dict(CALL))
+        await asyncio.sleep(0.1)
+        return runner, session, ws, member, beats, advanced
+
+    return _run(go())
+
+
+def test_a_members_call_in_i1_with_beats_unfired_is_held(monkeypatch):
+    runner, session, ws, member, beats, advanced = _room_call_in_i1(
+        monkeypatch, fired=2)
+    # The room is where it was, and the beats are still to come.
+    assert not advanced and runner.segment == 0
+    assert runner._interaction_id() == "i1"
+    assert runner._trigger_idx == 2
+    assert runner._next_trigger()["id"] == beats[2]
+    # The record says it was held, by whom, why, and what it would have cost.
+    (held,) = session.store.of("end_conversation_held")
+    assert held["reason"] == "unfired_beats" and held["agent_id"] == "chris"
+    assert held["interaction"] == "i1" and held["segment"] == 0
+    assert held["unfired_triggers"] == beats[2:]
+    # The call is answered, so the member's history stays valid, and nobody
+    # is asked to speak: the room's floor decides that.
+    assert [o["call_id"] for o in _outputs(member)] == ["call_E1"]
+    assert "response.create" not in member.ws.types()
+    (ans,) = session.store.of("tool_call_answered")
+    assert ans["reason"] == "unfired_beats" and ans["agent_id"] == "chris"
+    assert ans["reply_requested"] is False
+    # Held like the last interaction's: the turn that drew only the call asks
+    # the member to speak after all (_held_end_left_floor_silent, #181).
+    assert "chris" in runner._held_end_calls
+    assert not session.store.of("auto_end_held"), "that is the last interaction's"
+    assert not ws.frames("encounter_complete")
+
+
+def test_a_second_call_in_i1_is_held_too(monkeypatch):
+    async def go():
+        runner, session, ws = harness.make_runner("S4A")
+        runner._trigger_idx = 1
+
+        async def advance():
+            raise AssertionError("the room must not advance")
+        monkeypatch.setattr(runner, "_advance_segment", advance)
+        for who in ("priya", "chris"):
+            await runner._advance_from_tool(who, bridge(GPT), dict(CALL))
+        return runner, session
+
+    runner, session = _run(go())
+    assert [e["agent_id"] for e in session.store.of("end_conversation_held")] \
+        == ["priya", "chris"]
+    assert not session.store.of("voice_error")
+    assert runner.segment == 0
+
+
+def test_a_members_call_in_i1_with_the_beats_spent_advances_as_before(monkeypatch):
+    runner, session, ws, member, beats, advanced = _room_call_in_i1(
+        monkeypatch, fired=None)
+    assert advanced == [1]
+    assert not session.store.of("end_conversation_held")
+    assert not _outputs(member)
+
+
+def test_the_pipeline_version_records_the_hold():
+    from server import llm
+    assert llm.PIPELINE_VERSION >= "2026-11-14a"
