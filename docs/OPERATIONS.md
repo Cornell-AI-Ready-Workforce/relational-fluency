@@ -1,5 +1,66 @@
 # Operations cheat sheet
 
+## Cascade room hearing
+
+Cascade room members receive each accepted participant line once as a plain
+user text item. The scribe alone receives participant PCM and transcribes it.
+Members also receive colleague lines as context notes. Accepted short lines
+are included even when the director does not use them. Suppressed and failed
+transcripts add no participant item. STT results are released in commit order;
+a terminal failure or the existing `ROUTE_TRANSCRIPT_WAIT` deadline releases
+a missing slot. Members retain no participant PCM. Text history grows with
+accepted lines and colleague replies; idle microphone frames add no member
+history or audio.
+
+A grant waits for local text delivery to that session instance. It adds no
+second STT wait. A named line accepted during briefing can change the first
+speaker at the final routing checkpoint. Once the turn has a grant, a late
+line is context for later requests. It does not route another answer. A line
+accepted after `response.create` cannot enter that request. A missing current
+transcript requests one short clarification instead of answering an earlier
+line. Before the first accepted line, the room keeps waiting for the
+participant. A suppression learned after a grant cannot withdraw that reply:
+rooms have no withdrawal path. It cannot cause another reply for that turn.
+
+Rebuilt members receive durable participant and colleague conversation items,
+then catch up before they are seated and eligible for a grant. The conversation
+remains after the reconnect scene note is spent.
+
+Before the first grant, a newer accepted turn can merge into the turn being
+answered. The merge takes only commits through that newer turn's last accepted
+line. Later commits still being transcribed stay with its waiting task. A
+task whose captured turn is already granted or consumed serves an ungranted,
+unconsumed pending turn with commits, or returns if none exists. This check
+runs after the task takes the floor. A finishing task clears the transcript
+waiting flag only when no other live group-turn task remains; routing still
+clears it when its decision is ready. A turn end while the flag is up is
+withdrawn into the pending turn instead of spawning another task.
+
+A provisional planted beat returned before the grant is recorded as
+`trigger_deferred`, with a `transcript_missing` or `transcript_suppressed`
+reason when the transcript causes the return. Its console notice has `info`
+severity. A directly recorded firing, including a probe, still uses
+`trigger_undelivered` with `error` severity when its grant fails or its member
+is lost. Cancelling a turn clears its provisional firing record.
+
+A failed reconnect seed takes the member-loss path. It records
+`room_member_lost` with `reason="seed_failed"` and closes the replacement
+without seating it. If no members remain, the existing room-loss notice is
+sent. There is no separate `room_member_gone` event.
+
+At room close, completed transcripts held behind unresolved commits are
+accepted in spoken order before their hearing tasks are discarded. The usual
+transcript gates still apply. This drain writes participant history and
+`user_turn` records without captions, broadcasts, opening notices, or grants.
+
+Set `CASCADE_ROOM_TEXT_RELAY=0` to restore the complete old cascade room path
+for newly created rooms: no participant text relay, PCM fan-out to members,
+the old grant nudge, and reconnect history in a brief recap. This restores
+the defect: members answer without the participant's words and retain
+uncommitted PCM. A room freezes its mode when created. Changing the switch
+does not change existing rooms. Native-audio, GPT realtime, and cascade 1:1
+do not use this switch.
+
 Checking the server is healthy and the data is intact. Every command here has
 been run against the live stack.
 
