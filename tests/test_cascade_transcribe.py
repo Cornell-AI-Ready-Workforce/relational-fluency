@@ -422,12 +422,26 @@ async def test_real_text_is_kept_in_the_cascade_context_and_record(monkeypatch, 
             assert turn["language_unknown"]
 
 
+class TextMember(DeadMember):
+    """Accept participant context; fail only when the room grants a reply."""
+
+    def __init__(self, model):
+        super().__init__(model)
+        self.texts = []
+
+    async def inject_text(self, text):
+        self.texts.append(text)
+
+    async def request_response(self):
+        raise ConnectionResetError("gone")
+
+
 def room_runner(rt):
     runner, session, page = runner_for("S4A")
     room = _room(MODEL, runner)
     room.scribe = rt
     for agent in runner._resolve_agents():
-        room.sessions[agent.id] = DeadMember(MODEL)
+        room.sessions[agent.id] = TextMember(MODEL)
     runner.room, runner.director = room, session.director
     session.append_agent("dan", "The date is locked.")
     return runner, session, page, room
@@ -471,11 +485,15 @@ async def test_two_rejected_room_turns_do_not_reconnect_the_scribe(monkeypatch, 
 async def test_a_room_routes_real_input_beside_rejected_input(monkeypatch):
     text = "We need more time to finish the pilot."
     async with bridge(monkeypatch, [Hearing(completed(None)), Hearing(completed(text))]) as (rt, _, _, _):
-        runner, session, _, _ = room_runner(rt)
+        runner, session, _, room = room_runner(rt)
+        members = dict(room.sessions)
         runner._turn_end_arrivals = runner._transcripts_arrived
         runner._turn_end_speech_began = time.time()
         await record(runner, rt)
         await record(runner, rt, ms=2000)
+        await asyncio.gather(*tuple(room.hearing.tasks))
+        assert room.sessions == members
+        assert all(member.texts == [text] for member in members.values())
         await asyncio.wait_for(runner._run_group_turn(), 2)
         assert not session.store.of("group_turn_skipped")
         assert session.director.calls[0][1] == text

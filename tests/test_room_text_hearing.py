@@ -473,6 +473,13 @@ async def test_other_families_frames_are_unchanged_by_relay_switch(monkeypatch, 
         NATIVE: "1cdc68e5f3cfdfa3eabfd26c51d9ecc8c6a66643c04f6abda9cd1d2d47bbbe9d",
         "nto.gemini-live-2.5-flash": "ad4de6f3ad8abf2760dda27b9b51d029a1f36bbcc05bb6b9acb505af357a0b81",
     }
+    if R.audioop is None:
+        # The pure-Python converter starts with one extra PCM sample. These
+        # hashes also come from e949063, using its Python 3.13 fallback.
+        before.update({
+            GPT: "a53ad992a91ce010f86dc93f3927147e9ee71fde46e69b9e7f73612f7a9d1375",
+            NATIVE: "ef1679db4e612fdd2065f60506bfc399068af90fd987555e35bfb4a863649d90",
+        })
     assert hashlib.sha256(snapshots[1].encode()).hexdigest() == before[model]
 
 
@@ -1038,15 +1045,16 @@ async def test_consumed_task_answers_a_line_during_the_merged_reply(monkeypatch)
         assert_heard(chats[0], [WORDS, two])
         assert three not in user_lines(chats[0])
         assert_heard(chats[1], [WORDS, two, three])
-        assert user_lines(chats[1])[-2:] == [three, CASCADE_ROOM_GRANT_NUDGE]
+        assert user_lines(chats[1])[-1] == CASCADE_ROOM_GRANT_NUDGE
     finally:
         resume.set()
         resume_grant.set()
         await h.close()
 
 
+@pytest.mark.parametrize("colleague_before_grant", [False, True])
 @in_a_loop
-async def test_merge_leaves_the_untranscribed_tail_for_its_waiting_task(monkeypatch):
+async def test_merge_leaves_the_untranscribed_tail_for_its_waiting_task(monkeypatch, colleague_before_grant):
     two = "What about the budget for the pilot"
     three = "And who owns the rollout after that"
     gate, in_brief, resume = (asyncio.Event() for _ in range(3))
@@ -1055,6 +1063,17 @@ async def test_merge_leaves_the_untranscribed_tail_for_its_waiting_task(monkeypa
     h = await Room(monkeypatch, model=CASCADE).open()
     original = h.runner._brief_member
     paused = False
+    give_floor = h.room.give_floor
+    grants = 0
+    colleague_line = "The budget estimate is ready."
+
+    async def grant(aid, **kw):
+        nonlocal grants
+        grants += 1
+        if grants == 2 and colleague_before_grant:
+            await h.room.deliver_participant(aid, h.room.session_for(aid))
+            await h.room.tell("Dan", colleague_line)
+        return await give_floor(aid, **kw)
 
     async def brief(aid, **kw):
         nonlocal paused
@@ -1065,6 +1084,7 @@ async def test_merge_leaves_the_untranscribed_tail_for_its_waiting_task(monkeypa
         await original(aid, **kw)
 
     monkeypatch.setattr(h.runner, "_brief_member", brief)
+    monkeypatch.setattr(h.room, "give_floor", grant)
     monkeypatch.setenv("ROUTE_TRANSCRIPT_WAIT", "3")
     try:
         await speak(h)
@@ -1090,7 +1110,12 @@ async def test_merge_leaves_the_untranscribed_tail_for_its_waiting_task(monkeypa
         assert_heard(chats[0], [WORDS, two])
         assert three not in user_lines(chats[0])
         assert_heard(chats[1], [WORDS, two, three])
-        assert user_lines(chats[1])[-2:] == [three, CASCADE_ROOM_GRANT_NUDGE]
+        users = user_lines(chats[1])
+        assert users[-1] == CASCADE_ROOM_GRANT_NUDGE
+        if colleague_before_grant:
+            note = h.room._told_note("Dan", colleague_line)
+            assert users.count(note) == 1
+            assert users.index(three) < users.index(note) < len(users) - 1
         assert not any(e.get("reason") == "transcript_missing" for e in h.of("trigger_deferred"))
     finally:
         gate.set()
@@ -1275,7 +1300,7 @@ async def test_m4_one_turn_served_by_two_tasks(monkeypatch, duplicate_task):
         assert waiting and withdrawn == 1
         assert_heard(chats[0], [WORDS])
         assert_heard(chats[1], [WORDS, two, three])
-        assert user_lines(chats[1])[-2:] == [three, CASCADE_ROOM_GRANT_NUDGE]
+        assert user_lines(chats[1])[-1] == CASCADE_ROOM_GRANT_NUDGE
     finally:
         resume_grant.set()
         gate.set()
