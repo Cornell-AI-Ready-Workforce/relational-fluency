@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import os
 import re
+from contextvars import ContextVar
 from typing import Optional
 
 from anthropic import AsyncAnthropic
 from dotenv import dotenv_values
 
 from .build_info import build_sha
+from .upstream_telemetry import _Attempt
 
 # .env wins over ambient environment for these, deliberately.
 _FILE = dotenv_values()
@@ -312,9 +314,52 @@ def redact_key(text: str) -> str:
         return "<redaction failed; message withheld>"
 
 
+_message_context: ContextVar[tuple[str, str | None] | None] = ContextVar(
+    "upstream_message_context", default=None)
+
+
+class _TelemetryAnthropic(AsyncAnthropic):
+    @property
+    def user_agent(self) -> str:
+        return f"AsyncAnthropic/Python {self._version}"
+
+    async def _attempt_request(self, *args, **kwargs):
+        # anthropic==1.0.0 calls this once per HTTP attempt, before its retry
+        # policy/backoff. with_options() preserves this subclass and pool.
+        context = _message_context.get()
+        if context is None:
+            return await super()._attempt_request(*args, **kwargs)
+        purpose, session_id = context
+        retries_taken = kwargs.get("retries_taken", 0)
+        with _Attempt(upstream="gateway", route="messages", purpose=purpose,
+                      session_id=session_id, attempt=retries_taken + 1) as attempt:
+            response, prepared = await super()._attempt_request(*args, **kwargs)
+            attempt.fields["status"] = response.status_code
+            return response, prepared
+
+
+async def message_create(client, *, purpose: str, session_id: str | None = None,
+                         **kwargs):
+    """Attribute SDK retries to the caller without changing the request."""
+    token = _message_context.set((purpose, session_id))
+    try:
+        if isinstance(client, _TelemetryAnthropic):
+            return await client.messages.create(**kwargs)
+        # Injected clients have no SDK attempt hook (usually test doubles).
+        with _Attempt(upstream="gateway", route="messages", purpose=purpose,
+                      session_id=session_id) as attempt:
+            try:
+                return await client.messages.create(**kwargs)
+            except BaseException as exc:
+                attempt.fields["status"] = getattr(exc, "status_code", None)
+                raise
+    finally:
+        _message_context.reset(token)
+
+
 def text_client() -> AsyncAnthropic:
     """Client for the text models: director and steering."""
-    return AsyncAnthropic(base_url=gateway_base_url(), api_key=gateway_api_key())
+    return _TelemetryAnthropic(base_url=gateway_base_url(), api_key=gateway_api_key())
 
 
 # Stamps for what the live pipeline does to a participant's audio and to the
@@ -982,11 +1027,13 @@ def preflight() -> dict:
         )
         return result
     try:
-        r = httpx.get(
-            f"{gateway_base_url().rstrip('/')}/v1/models",
-            headers={"Authorization": f"Bearer {key}"},
-            timeout=10,
-        )
+        with _Attempt(upstream="gateway", route="models", purpose="preflight") as attempt:
+            r = httpx.get(
+                f"{gateway_base_url().rstrip('/')}/v1/models",
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=10,
+            )
+            attempt.fields["status"] = r.status_code
         result["ok"] = r.status_code == 200
         if r.status_code != 200:
             result["status"] = r.status_code

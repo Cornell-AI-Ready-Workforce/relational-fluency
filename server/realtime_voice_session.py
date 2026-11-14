@@ -1579,6 +1579,7 @@ class RealtimeVoiceSessionRunner:
         rt = RealtimeVoiceSession(
             instructions=instructions, voice=voice, tools=[END_SEGMENT_TOOL],
         )
+        rt.session_id = getattr(self.session, "id", None)
         # From the first frame, not only once its pump starts (see
         # _pump_events): the transcript gate counts voiced audio per commit.
         rt.voiced_bar = self.vad.effective_threshold
@@ -2201,6 +2202,7 @@ class RealtimeVoiceSessionRunner:
             # closed) is rebuilt (pipeline 2026-10-14a); the scribe is not.
             on_lost=self._on_room_channel_lost,
         )
+        room.session_id = getattr(self.session, "id", None)
         try:
             await room.open()
         except Exception as exc:  # noqa: BLE001, re-raised for _enter to contain
