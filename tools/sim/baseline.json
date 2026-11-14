@@ -1,31 +1,32 @@
 {
-  "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
-  "realtime_model": "cascade-argon-elevenlabs",
-  "recorded": {
-    "build": "1469925",
-    "date": "2026-11-06",
-    "pipeline_version": "2026-11-04a",
-    "room_pacing_version": "2026-11-04a"
-  },
-  "scenarios": {},
-  "tolerances": {
-    "answered_rate_drop": 0.2,
-    "error_frames_extra": 0,
-    "heard_rate_drop": 0.15,
-    "latency_p50_ratio": 1.5,
-    "latency_p50_slack_s": 0.5,
-    "latency_p90_ratio": 1.5,
-    "latency_p90_slack_s": 1.0,
-    "phantom_turns_extra": 1,
-    "refused_creates_extra": 3,
-    "reply_missing_extra": 1,
-    "triggers_fired_drop": 1,
-    "voice_error_extra": 0
-  },
-  "pending": {
-    "S1A": "not recorded on pipeline 2026-11-12c / room pacing 2026-11-04a (reply-path instrumentation only since 11-12b; cascade cancelled-output discard, transcriber and silence validation changed after this run; the transcript gates were also not re-recorded): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
-    "S2A": "not recorded on pipeline 2026-11-12c / room pacing 2026-11-04a (reply-path instrumentation only since 11-12b; cascade cancelled-output discard, transcriber and silence validation changed after this run; the transcript gates were also not re-recorded): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
-    "S3A": "not recorded on pipeline 2026-11-12c / room pacing 2026-11-04a (reply-path instrumentation only since 11-12b; cascade cancelled-output discard, transcriber and silence validation changed after this run; the transcript gates were also not re-recorded): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline",
-    "S4A": "not recorded on pipeline 2026-11-12c / room pacing 2026-11-04a (reply-path instrumentation only since 11-12b; cascade cancelled-output discard, transcriber and silence validation changed after this run; the transcript gates were also not re-recorded): the run needs the live gateway and ElevenLabs. The 2026-11-04a / 11-04a values recorded on build 1469925 (2026-11-06) are in tools/sim/reports/1469925.json. Record it with python -m tools.sim.check --write-baseline"
-  }
+ "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
+ "pending": {
+  "S1A": "not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+  "S2A": "not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+  "S3A": "not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+  "S4A": "not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline"
+ },
+ "realtime_model": "cascade-argon-elevenlabs",
+ "recorded": {
+  "build": "ac07319",
+  "date": "2026-11-13",
+  "pipeline_version": "2026-11-06a",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "scenarios": {},
+ "tolerances": {
+  "answered_rate_drop": 0.2,
+  "error_frames_extra": 0,
+  "heard_rate_drop": 0.15,
+  "judge_made_drop": 2,
+  "latency_p50_ratio": 1.5,
+  "latency_p50_slack_s": 0.5,
+  "latency_p90_ratio": 1.5,
+  "latency_p90_slack_s": 1.0,
+  "phantom_turns_extra": 1,
+  "refused_creates_extra": 3,
+  "reply_missing_extra": 1,
+  "triggers_fired_drop": 1,
+  "voice_error_extra": 0
+ }
 }

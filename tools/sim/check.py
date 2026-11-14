@@ -10,9 +10,14 @@ from this checkout (tools/sim/serve.py: production's configuration, archiving
 off, sessions in a temporary directory), plays each scenario's default sequence
 (tools/sim/sequences.py) through the participant protocol (tools/sim/driver.py),
 reads each session's events back through the researcher API, summarizes them
-(tools/sim/analyze.py) and compares them with tools/sim/baseline.json. The
-report is written to tools/sim/reports/<build>.json; tools/deploy.sh warns
-when the build it is about to plan has no passing report there.
+(tools/sim/analyze.py) and compares them with tools/sim/baseline.json. It then
+reads what the characters said (tools/sim/judge.py: one model call per
+scenario, more only when something is flagged): a line that contradicts the
+scenario, breaks the fiction or crosses the bounds fails the scenario, and so
+do fewer planted beats made than the baseline had. --no-judge skips that and
+the report says so. The report is written to
+tools/sim/reports/<build>.json; tools/deploy.sh warns when the build it is
+about to plan has no passing report there.
 
 Which build a report is for. With --build, that. Otherwise, the tag pinned in
 infra/terraform/terraform.tfvars when this checkout's image contents (what the
@@ -48,7 +53,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools import pinned_image  # noqa: E402
-from tools.sim import analyze, driver, sequences, stim  # noqa: E402
+from tools.sim import analyze, driver, judge, sequences, stim  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SIM_DIR = REPO_ROOT / "tools" / "sim"
@@ -229,6 +234,18 @@ def build_report(build: str, why: str, server: str, health: dict,
                         "recorded; re-record it (tools/sim/README.md)"})
         scen[sid] = {"passed": verdict["passed"], "session_id": res["metrics"]["session_id"],
                      "metrics": res["metrics"], "checks": verdict["checks"]}
+        judged = res.get("judge")
+        if judged is not None:
+            # What the characters said (tools/sim/judge.py). Absent from a run
+            # made with --no-judge, which the report names at its top level.
+            tol = {**analyze.DEFAULT_TOLERANCES, **(baseline.get("tolerances") or {}),
+                   **((base or {}).get("tolerances") or {})}
+            why_not = judge.failures(judged, (base or {}).get("judge"),
+                                     tol["judge_made_drop"], baselined=bool(base))
+            scen[sid]["judge"] = judged
+            if why_not:
+                scen[sid]["passed"] = False
+                failures.extend(f"{sid}: {w}" for w in why_not)
         for c in verdict["checks"]:
             if c["ok"]:
                 continue
@@ -266,6 +283,8 @@ def _print_summary(report: dict, out=sys.stdout) -> None:
               f"voice_error {m['voice_error']}  reply_missing {m['reply_missing']}  "
               f"triggers {m['triggers_fired']}  speech_end->played p50 {lat['p50']} "
               f"p90 {lat['p90']} s (n={lat['n']})", file=out)
+        if s.get("judge"):
+            print(f"      judge: {judge.summary(s['judge'])}", file=out)
     for f in report["failures"]:
         print(f"    - {f}", file=out)
     print(f"  {'PASSED' if report['passed'] else 'FAILED'}: build {report['build']}", file=out)
@@ -287,6 +306,9 @@ def main(argv=None) -> int:
     ap.add_argument("--write-baseline", action="store_true",
                     help="record this run as tools/sim/baseline.json (keeps its tolerances)")
     ap.add_argument("--no-report", action="store_true", help="do not write a report file")
+    ap.add_argument("--no-judge", action="store_true",
+                    help="do not read what the characters said (the report says it was "
+                         "skipped)")
     args = ap.parse_args(argv)
 
     scenarios = [s.strip() for s in args.scenarios.split(",") if s.strip()]
@@ -296,6 +318,8 @@ def main(argv=None) -> int:
         ap.error(f"no default sequence for {unknown}; pass --steps SID=...")
     if overrides and args.write_baseline:
         ap.error("--write-baseline records the DEFAULT sequences; it cannot take --steps")
+    if args.no_judge and args.write_baseline:
+        ap.error("--write-baseline records the judge's counts as well; it cannot take --no-judge")
 
     key = _read_key()
     proc, server = None, args.server
@@ -359,6 +383,12 @@ def main(argv=None) -> int:
                 events = fetch_events(server, tl["session_id"], key)
                 results[sid] = {"metrics": analyze.summarize(events, tl),
                                 "sequence_sha256": sequence_fingerprint(steps)}
+                if not args.no_judge:
+                    # After the metrics and never instead of them: judge_events
+                    # does not raise, so a judge that cannot answer costs the
+                    # scenario its verdict, not its numbers.
+                    results[sid]["judge"] = judge.judge_events(
+                        events, session_id=tl["session_id"])
                 if log_path is not None:
                     # Beside the sessions, for whoever has to explain a failure:
                     # what was said when, to line up with events.jsonl.
@@ -370,10 +400,19 @@ def main(argv=None) -> int:
         if overrides:
             report["passed"] = False
             report["failures"].append("sequences were overridden with --steps: not comparable")
+        if args.no_judge:
+            report["judge"] = "skipped (--no-judge): nothing the characters said was read"
         print("", flush=True)
         _print_summary(report)
         if args.write_baseline:
-            ok = {s: r for s, r in results.items() if "metrics" in r}
+            # A scenario the judge gave no verdict on is not recorded: its
+            # entry would have no judge counts, and every later run would be
+            # held to nothing for what its characters said.
+            ok = {s: r for s, r in results.items()
+                  if "metrics" in r and not r["judge"].get("error")}
+            for s in sorted(set(results) - set(ok)):
+                print(f"  no baseline written for {s}: it did not run, or the judge gave "
+                      f"no verdict")
             base = load_baseline()
             base.setdefault("tolerances", dict(analyze.DEFAULT_TOLERANCES))
             base["realtime_model"] = (health.get("gateway") or {}).get("realtime_model")
@@ -389,6 +428,7 @@ def main(argv=None) -> int:
                 base["scenarios"][s] = dict(analyze.baseline_entry(r["metrics"]),
                                             sequence_sha256=r["sequence_sha256"],
                                             recorded=dict(recorded, session_id=r["metrics"]["session_id"]))
+                base["scenarios"][s]["judge"] = judge.baseline_entry(r["judge"])
                 (base.get("pending") or {}).pop(s, None)
             if not base.get("pending"):
                 base.pop("pending", None)
