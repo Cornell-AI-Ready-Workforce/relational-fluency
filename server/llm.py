@@ -756,7 +756,16 @@ def text_client() -> AsyncAnthropic:
 #                probe, so a slow review can hold the hand-off up to 21 s
 #                (was 11 s). Rooms: unchanged timing, the review runs after the
 #                floor is released. STEERING_TIMEOUT_S=10 restores 11-06a.
-PIPELINE_VERSION = "2026-11-13a"
+#   2026-11-14a  a room member's end_conversation call before the last
+#                interaction is held while that interaction has unfired
+#                planted beats (#217): answered like a held call in the last
+#                interaction, written as end_conversation_held with the beats
+#                it would have dropped, and the room stays where it is. One
+#                call used to move S4A/S4B from the working session to the
+#                close and drop every beat still to come (five of them in a
+#                run of 2026-11-14). With the beats spent a call advances as
+#                before; the pacing rules, move-on and ceiling are unchanged.
+PIPELINE_VERSION = "2026-11-14a"
 ROOM_PACING_VERSION = "2026-11-04a"
 
 
