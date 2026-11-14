@@ -695,6 +695,19 @@ def judge_model() -> str:
 
 async def _ask(client, model: str, system: str, user: str, tool: dict, max_tokens: int,
                usage: dict) -> dict:
+    """One call, asked again once if its answer is cut off: a normal answer is
+    a few hundred tokens, and a cut-off one is a model that ran away on that
+    try (S4A on 85c539d, 2026-11-14), not a question too big to answer."""
+    try:
+        return await _ask_once(client, model, system, user, tool, max_tokens, usage)
+    except JudgeError as exc:
+        if "cut off" not in str(exc):
+            raise
+        return await _ask_once(client, model, system, user, tool, max_tokens, usage)
+
+
+async def _ask_once(client, model: str, system: str, user: str, tool: dict, max_tokens: int,
+                    usage: dict) -> dict:
     resp = await client.messages.create(
         # anthropic 1.0.0 (the pinned SDK) has no temperature argument; the
         # gateway still reads the field, so it goes in the body as before.
