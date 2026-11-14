@@ -178,8 +178,11 @@ async def test_hold_release_and_play_end_do_not_own_trace_lifetime(monkeypatch):
 
 
 @pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("same_tick", [False, True])
 @in_a_loop
-async def test_reversed_and_failed_stt_keep_their_commit_identity(monkeypatch, failed):
+async def test_reversed_and_failed_stt_keep_their_commit_identity(monkeypatch, failed, same_tick):
+    clock = [0.0]
+    monkeypatch.setattr(ReplyTrace, "now", lambda self, mono=None: clock[0])
     first = Hearing({"choices": []} if failed else completed("First spoken line."), blocked=True)
     second = Hearing(completed("Second spoken line."), blocked=True)
     async with pipeline(monkeypatch, hearings=[first, second]) as data:
@@ -192,13 +195,18 @@ async def test_reversed_and_failed_stt_keep_their_commit_identity(monkeypatch, f
         await rt.commit_input()
         await second.started.wait()
         b = runner._reply_trace.latest_commit
+        if not same_tick:
+            clock[0] += 1
         second.ready.set()
         await until(lambda: runner._reply_trace.commits[b]["decision"] is not None)
         assert runner._reply_trace.commits[a]["decision"] is None
+        assert "stt_done" not in runner._reply_trace.commits[a]["stages"]
+        if not same_tick:
+            clock[0] += 1
         first.ready.set()
         await until(lambda: runner._reply_trace.commits[a]["decision"] is not None)
         ca, cb = (runner._reply_trace.commits[i] for i in (a, b))
-        assert ca["stages"]["stt_done"] > cb["stages"]["stt_done"]
+        assert ca["stages"]["stt_done"] >= cb["stages"]["stt_done"]
         assert ca["decision"]["outcome"] == ("failed" if failed else "accepted")
         assert cb["decision"]["outcome"] == "accepted"
     assert {e["commit_item_id"] for e in store.of("commit_trace")} == {a, b}
@@ -468,8 +476,11 @@ async def test_transcript_decision_exits_are_commit_linked(monkeypatch, outcome,
         assert runner._reply_trace.commits[iid]["decision"] == {"outcome": outcome, "reason": reason}
 
 
+@pytest.mark.parametrize("same_tick", [False, True])
 @in_a_loop
-async def test_first_content_is_not_overwritten_until_sentence_or_final_flush(monkeypatch):
+async def test_first_content_is_not_overwritten_until_sentence_or_final_flush(monkeypatch, same_tick):
+    clock = [0.0]
+    monkeypatch.setattr(ReplyTrace, "now", lambda self, mono=None: clock[0])
     gate = asyncio.Event()
     async with pipeline(monkeypatch, ("Okay", gate, ", go on. ", "The rest")) as data:
         runner, rt, sock, _, _, _, _, _ = data
@@ -477,11 +488,13 @@ async def test_first_content_is_not_overwritten_until_sentence_or_final_flush(mo
         await until(lambda: "first_content" in record(runner)["stages"])
         first = record(runner)["stages"]["first_content"]
         assert "first_sentence_ready" not in record(runner)["stages"]
+        if not same_tick:
+            clock[0] += 1
         gate.set()
         await until(lambda: sock._reply.done())
         assert record(runner)["stages"]["first_content"] == first
         assert record(runner)["sentence_trigger"] == "punctuation"
-        assert record(runner)["stages"]["first_sentence_ready"] > first
+        assert record(runner)["stages"]["first_sentence_ready"] >= first
 
 
 @in_a_loop
