@@ -19,6 +19,7 @@ The three questions the suite keeps asking:
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
 import json
 import os
@@ -214,7 +215,7 @@ def test_the_webcam_routes_are_not_coroutines():
     assert not asyncio.iscoroutinefunction(appmod.api_video_uploaded)
 
 
-def test_health_never_pays_the_required_env_source_scan_on_the_loop():
+def test_health_never_pays_the_required_env_source_scan_on_the_loop(monkeypatch):
     """/health is `async def`, so anything slow inside it runs ON the loop.
 
     One thing inside it is slow exactly once. storage.missing_required_env() ->
@@ -243,9 +244,24 @@ def test_health_never_pays_the_required_env_source_scan_on_the_loop():
         "source files on the event loop"
     )
 
-    t0 = time.perf_counter()
-    appmod._missing_required_env_for_health()
-    assert time.perf_counter() - t0 < 0.05, "the scan is not actually memoised"
+    scans = []
+    real_scan = storage._scan_required_env
+
+    def scan(directory):
+        scans.append(directory)
+        return real_scan(directory)
+
+    monkeypatch.setattr(storage, "_scan_required_env", scan)
+    # The sys.modules snapshot allocates tracked tuples. Collect the suite's
+    # old objects before timing, and tolerate a pause in one warm sample.
+    gc.collect()
+    elapsed = []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        appmod._missing_required_env_for_health()
+        elapsed.append(time.perf_counter() - t0)
+    assert not scans, "a warm /health must not scan REQUIRED_ENV declarations"
+    assert min(elapsed) < 0.05, "the scan is not actually memoised"
 
 
 def test_a_slow_head_does_not_freeze_the_loop_and_only_happens_once(
