@@ -705,7 +705,19 @@ def text_client() -> AsyncAnthropic:
 #                real one-word line is silenced on the strength of a word
 #                list alone. The word list loads at import, off the live
 #                path. Suppressed lines keep their text in the record.
-PIPELINE_VERSION = "2026-11-06a"
+#   2026-11-12a  cascade transcriber defaults to nto.gemini-3.5-transcribe.
+#                A 2xx, well-formed stop response with text/null content
+#                is a hearing; null/empty/whitespace becomes [no speech], as
+#                flash-lite wrote for silence. A length-capped hearing with
+#                non-empty text keeps that text; otherwise it is stt_failed.
+#                Other invalid responses also fail as stt_failed. The
+#                existing annotation gate suppresses the
+#                marker and rooms skip turns made only of rejected input.
+#                The effective cascade transcriber, including overrides and
+#                rollback, is input_transcription_model in the session event
+#                and record. Cascade cancellation policy is unchanged.
+#                Reply, speech-check and offline transcribers are unchanged.
+PIPELINE_VERSION = "2026-11-12a"
 ROOM_PACING_VERSION = "2026-11-04a"
 
 
@@ -841,7 +853,7 @@ _MODEL_ROLES = (
     # Read only when REALTIME_MODEL is the cascade (server/voice/cascade.py):
     # the model that hears the participant and writes each reply.
     ("CASCADE_LLM_MODEL", "nto.gemini-4-argon", "the cascade's hearing and reply model", True),
-    ("CASCADE_STT_MODEL", "nto.gemini-3.5-flash-lite", "the cascade's transcriber", True),
+    ("CASCADE_STT_MODEL", "nto.gemini-3.5-transcribe", "the cascade's transcriber", True),
     ("TRANSCRIBE_MODEL", "nto.gemini-4-argon", "the re-transcriber, offline", False),
     # Not blocking: a check the gateway refuses keeps the line as it came,
     # which is the behaviour before 2026-09-30a.

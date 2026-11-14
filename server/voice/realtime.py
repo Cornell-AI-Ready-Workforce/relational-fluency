@@ -208,7 +208,8 @@ COMMIT_AUDIO_TAGS = 4
 GATEWAY_OUTPUT_RATE = int(setting("REALTIME_OUTPUT_RATE", "24000"))
 
 
-from .cascade import VOICE_ROSTER as _CASCADE_VOICES, CascadeSocket
+from .cascade import (VOICE_ROSTER as _CASCADE_VOICES, CascadeSocket,
+                      stt_model as cascade_stt_model)
 
 
 class UnknownRealtimeModel(RuntimeError):
@@ -824,7 +825,8 @@ def audio_provenance(model: str) -> dict:
     why it has to be on the record at all.
 
     `input_transcription_model` is None where the family transcribes the
-    participant on its own and nothing is asked for (the gemini rows).
+    participant on its own and nothing is asked for (the gemini rows). On the
+    cascade it names the separate STT request, including CASCADE_STT_MODEL.
     `max_output_tokens` is None where no cap is sent. `resampler` is the
     gateway -> page downsampler; `input_resampler` the page -> gateway one,
     None when the browser's rate goes straight through.
@@ -973,14 +975,18 @@ def transcription_language() -> str:
 
 
 def input_transcription_model_for(caps: Optional[RealtimeCapabilities]) -> str:
-    """The transcriber this family's sessions ask for, or "" where none is.
+    """The transcriber this family uses, or "" where none is asked for.
 
     INPUT_TRANSCRIPTION_MODEL overrides the row, and only on a family whose row
     says the key is needed (the gpt route): the Gemini rows transcribe on their
     own, and sending a key they were never measured with is a risk taken on the
     family whose failure mode is a silent mute. Read per call, not at import,
-    so _session_payload and audio_provenance cannot disagree about it.
+    so _session_payload and audio_provenance cannot disagree about it. The
+    cascade makes its own STT request under CASCADE_STT_MODEL; this names it
+    for provenance without adding a realtime-session transcription field.
     """
+    if caps is not None and caps.family == "cascade":
+        return cascade_stt_model()
     if caps is None or not caps.needs_input_transcription:
         return ""
     return setting("INPUT_TRANSCRIPTION_MODEL", "") or caps.input_transcription_model
@@ -4944,9 +4950,15 @@ class RealtimeVoiceSession:
                                       self._audio_absent_hold))
                 timeout = min(timeout, 1.0, max(0.25, left + 0.01))
             try:
-                yield await asyncio.wait_for(ws.recv(), timeout)
+                # Python 3.11's wait_for can swallow pump cancellation when
+                # recv finishes in the same loop turn. Keep the read in this
+                # task, and end its deadline before handing a frame upstream.
+                async with asyncio.timeout(timeout):
+                    raw = await ws.recv()
             except asyncio.TimeoutError:
                 yield None
+            else:
+                yield raw
 
     async def events(self) -> AsyncIterator[dict]:
         if not self.ws:

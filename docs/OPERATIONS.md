@@ -774,6 +774,36 @@ Caveats for analysis:
   ("Gotcha.", "Welp.") show up as `language_unknown` on the cascade route.
   That flag is a reason to read the line, not to drop it.
 
+## What changed on 2026-11-12, the cascade transcriber (pipeline_version 2026-11-12a)
+
+The cascade's transcript model defaults to `nto.gemini-3.5-transcribe`.
+`CASCADE_STT_MODEL=nto.gemini-3.5-flash-lite` restores the previous model.
+The reply model, `SPEECH_CHECK_MODEL`, and offline `TRANSCRIBE_MODEL` do not
+change. `input_transcription_model` on `realtime_session_started`, in
+`record.json` provenance, and in the analysis loader names the effective
+cascade transcriber, including an override or rollback. Older cascade
+records keep their unknown value.
+
+The gateway probe on 2026-11-12 returned `content:null` and
+`finish_reason:"stop"` for silence and room tone. The adapter maps null,
+empty, and whitespace content to `[no speech]` only after validating the
+2xx response, its choice, message, finish reason, and content type. Invalid
+responses and refusals produce `stt_failed`. The shared speech check and
+offline retranscription keep their own empty-response semantics.
+
+The existing annotation gate suppresses this marker and rooms skip turns
+made only of rejected input. `PARTICIPANT_DROP_ANNOTATIONS=0` disables that
+suppression for both transcribers. This version retains the cascade's
+existing cancellation policy: transcript withdrawal does not cancel its
+reply task. The first reply remains subject to the opening hold.
+
+Transcribe ignores the text prompt, including language and name hints. The
+English gate still keeps and flags uncertain text on cascade. The measured
+speech-request p50 improvement of about 300 ms excludes encoding, slot
+waits, and backoff. This release claims no room-turn latency or capacity
+gain. Live adapter probes and a new simulation baseline require a separate
+run; the load ramp's server image predates this change.
+
 ## The seven-minute floor, and the twelve-minute stop
 
 Every encounter runs **at least 5:00** and **at most 10:00** (7:00 / 12:00 until 2026-10-15; the figures below are from that period). Since `28b` the
