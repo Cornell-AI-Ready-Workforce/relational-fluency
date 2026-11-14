@@ -171,8 +171,9 @@ the 720 s ceiling where 24c ended it about 451 s in, and the count limits
 shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
-check fails for it, saying so, until it is recorded. None is pending as
-committed. All four were recorded on 2026-11-13 from build ac07319, pipeline
+check fails for it, saying so, until it is recorded. All four are pending as
+committed: pipeline 2026-11-13a has not been recorded yet. The last recording
+was on 2026-11-13 from build ac07319, pipeline
 2026-11-06a / room pacing 2026-11-04a (s_1794603648_182505,
 s_1794603870_d09625, s_1794604520_f5de09, s_1794604724_9551d2): the first run
 of 11-06a, and the first to carry the judge's counts (beats made 8 of 8, 9 of
