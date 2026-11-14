@@ -117,22 +117,50 @@ def test_cancelling_tts_connection_wait_never_accepts_socket(monkeypatch):
 
 
 def test_stt_completion_reversal_failure_and_no_speech_keep_commit_ids(isolated_llm):
-    app = fake.create_app(fast_config(stt_plan=[{"delay_ms": 80, "content": "first"},
-        {"delay_ms": 0, "content": "second"}, {"status": 503}, {"content": None}, {"content": ""}]))
+    app = fake.create_app(fast_config(stt_plan=[{"content": "first"},
+        {"content": "second"}, {"status": 503}, {"content": None}, {"content": ""}]))
     app.state.fake.matcher = fake.StimulusMatcher()
     async def exercise():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app)) as http:
+        ready = [asyncio.Event() for _ in range(5)]
+        release = [asyncio.Event() for _ in range(5)]
+
+        class GatedTransport(httpx.ASGITransport):
+            requests = 0
+
+            async def handle_async_request(self, request):
+                index = self.requests
+                self.requests += 1
+                response = await super().handle_async_request(request)
+                ready[index].set()
+                await release[index].wait()
+                return response
+
+        async with httpx.AsyncClient(transport=GatedTransport(app)) as http:
             sock = cascade.CascadeSocket(http=http, api_key="test-only")
             items = [sock._add_item("user", "")["id"] for _ in range(5)]
-            await asyncio.gather(*(sock._transcribe(iid, stim.load("a1")) for iid in items))
+            tasks = []
+            try:
+                for index, iid in enumerate(items):
+                    tasks.append(asyncio.create_task(sock._transcribe(iid, stim.load("a1"))))
+                    # Assign each plan to its commit before starting the next.
+                    await ready[index].wait()
+                # Response order is controlled independently of thread timing.
+                for index in (1, 4, 2, 3, 0):
+                    release[index].set()
+                    await tasks[index]
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
             frames = [json.loads(sock._out.get_nowait()) for _ in range(sock._out.qsize())]
             heard = [f for f in frames if f["type"].endswith("transcription.completed")]
-            assert heard[0]["item_id"] == items[1]
+            assert [f["item_id"] for f in heard] == [items[i] for i in (1, 4, 3, 0)]
+            assert next(f for f in heard if f["item_id"] == items[1])["transcript"] == "second"
             assert next(f for f in heard if f["item_id"] == items[0])["transcript"] == "first"
             assert next(f for f in frames if f["type"].endswith("transcription.failed"))["item_id"] == items[2]
             # fix/stt-transcribe maps empty replies to "[no speech]" on the integrated stack.
             assert all(next(f for f in heard if f["item_id"] == iid)["transcript"] in ("", "[no speech]") for iid in items[3:])
-    asyncio.run(exercise())
+    asyncio.run(asyncio.wait_for(exercise(), 5))
 
 
 def test_late_stt_request_can_be_cancelled(isolated_llm):
