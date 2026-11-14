@@ -3,12 +3,38 @@ import json
 import subprocess
 import sys
 from types import SimpleNamespace
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
 from server.encounter_record import build
 from tools.sim import latency
+
+
+def snapshot_paths(value, *roots):
+    """Normalize native path values before JSON escaping or Markdown rendering."""
+    if isinstance(value, dict):
+        return {key: snapshot_paths(item, *roots) for key, item in value.items()}
+    if isinstance(value, list):
+        return [snapshot_paths(item, *roots) for item in value]
+    if isinstance(value, str):
+        for root, token in roots:
+            prefix = str(root)
+            if value == prefix or value.startswith((prefix + "/", prefix + "\\")):
+                return token + value[len(prefix):].replace("\\", "/")
+    return value
+
+
+@pytest.mark.parametrize("root", [PurePosixPath("/tmp/session"), PureWindowsPath("C:/tmp/session")])
+def test_snapshot_paths_are_normalized_before_json_escaping(root):
+    sources = [str(root / name / "events.jsonl") for name in ("run-b", "run")]
+    report = {"sources": [{"path": path} for path in sources], "text": r"keep \\ literal"}
+    normalized = snapshot_paths(report, (root, "$TMP"))
+    assert json.loads(json.dumps(normalized)) == {
+        "sources": [{"path": "$TMP/run-b/events.jsonl"}, {"path": "$TMP/run/events.jsonl"}],
+        "text": r"keep \\ literal",
+    }
+    assert [source["path"] for source in report["sources"]] == sources
 
 
 @pytest.fixture
@@ -652,8 +678,8 @@ def test_legacy_outputs_equal_complete_038fc3b_snapshots(tmp_path):
     directory = session(tmp_path, [timing(), timing(turn=2, vad_speech_end=21, first_audio_played=None)])
     def check(name, path):
         report = latency.analyze_paths([path])
-        result = json.dumps({"json": report, "markdown": latency.markdown(report)})
-        result = result.replace(str(tmp_path), "$TMP").replace(str(root), "$REPO")
+        normalized = snapshot_paths(report, (tmp_path, "$TMP"), (root, "$REPO"))
+        result = json.dumps({"json": normalized, "markdown": latency.markdown(normalized)})
         assert json.loads(result) == expected[name]
         assert "trace" not in report
     check("events", directory / "events.jsonl")
@@ -933,9 +959,10 @@ def test_n3_nondeduplicated_json_and_markdown_match_038fc3b_path_order(tmp_path)
     expected = json.loads((root / "tests/fixtures/latency/legacy_order_038fc3b.json").read_text(encoding="utf-8"))
     directories = order_legacy_inputs(tmp_path)
     report = latency.analyze_paths(directories)
-    normalized = json.dumps(report, indent=1, sort_keys=True, ensure_ascii=False).replace(str(tmp_path), "$TMP") + "\n"
+    snapshot = snapshot_paths(report, (tmp_path, "$TMP"))
+    normalized = json.dumps(snapshot, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
     assert normalized == expected["json_text"]
-    assert latency.markdown(report).replace(str(tmp_path), "$TMP") == expected["markdown"]
+    assert latency.markdown(snapshot) == expected["markdown"]
     assert [Path(s["path"]).parts[-4] for s in report["sources"]] == ["run", "run-b"]
 
 
