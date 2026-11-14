@@ -696,7 +696,9 @@ def judge_model() -> str:
 async def _ask(client, model: str, system: str, user: str, tool: dict, max_tokens: int,
                usage: dict) -> dict:
     resp = await client.messages.create(
-        model=model, max_tokens=max_tokens, temperature=0, system=system,
+        # anthropic 1.0.0 (the pinned SDK) has no temperature argument; the
+        # gateway still reads the field, so it goes in the body as before.
+        model=model, max_tokens=max_tokens, extra_body={"temperature": 0}, system=system,
         messages=[{"role": "user", "content": user}],
         tools=[tool], tool_choice={"type": "tool", "name": tool["name"]})
     u = getattr(resp, "usage", None)

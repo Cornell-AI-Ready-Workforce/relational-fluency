@@ -386,7 +386,8 @@ def test_one_call_when_there_is_nothing_to_confirm():
     assert r["rubric"] == J.rubric_id() and r["model"] == "m" and r["lines"] == 3
     assert r["spec_changed"] is None
     call = model.calls[0]
-    assert call["temperature"] == 0 and call["tool_choice"] == {"type": "tool", "name": "report"}
+    assert call["extra_body"] == {"temperature": 0} and "temperature" not in call
+    assert call["tool_choice"] == {"type": "tool", "name": "report"}
     shown = call["messages"][0]["content"]
     for part in ("SCENE\n", "FACTS\n- ", "BRIEF dan (Dan", "BRIEF chris (", "CONVERSATION\n0 P: Hey guys.",
                  "3 chris: One team first.", "BEATS\n1 dan: Your next move", "4 dan: Your next move"):
@@ -679,3 +680,17 @@ def test_the_command_refuses_what_it_cannot_judge(argv, why, tmp_path, capsys):
     with pytest.raises(SystemExit) as stop:
         J.main([a.format(tmp=tmp_path) for a in argv], client=Model())
     assert stop.value.code == 2 and why in capsys.readouterr().err
+
+
+def test_the_judge_calls_the_pinned_sdk_with_arguments_it_accepts():
+    """Every argument _ask passes must be one the installed SDK's
+    messages.create takes. anthropic 1.0.0 dropped `temperature`, and a judge
+    that passed it was no verdict on every encounter."""
+    import inspect
+
+    from anthropic import AsyncAnthropic
+
+    accepted = set(inspect.signature(AsyncAnthropic(api_key="x").messages.create).parameters)
+    model = Model(CLEAN)
+    asyncio.run(J.judge_record(ENCOUNTER, client=model, model="m", working_tree=True))
+    assert set(model.calls[0]) <= accepted, set(model.calls[0]) - accepted
