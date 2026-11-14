@@ -28,7 +28,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SID = "S4A"
 SRC = J.source_of(SID)
 RULE_OF_DANS = "You never hand credit over before you are corrected."
-FACT_OF_CHRISS = "Sales is ready for Monday the 9th"
+# Chris speaks for Operations; the Sales date is Dan's.
+FACT_OF_CHRISS = "Operations wants Monday the 30th"
 
 
 def P(text):
@@ -221,7 +222,8 @@ def test_a_keep_going_probe_is_one_of_the_scenarios_own_lines_not_a_changed_scen
     other, _ = J.turns_of(record(C("alex", "x", "keep_going_1", direction="Sing a song."),
                                  scenario="S3A"))
     assert "worded differently" in J.spec_drift(other, s3)
-    assert J.spec_drift(other, SRC) == "keep_going_1 is not in the scenario file"   # S4A lists none
+    # S4A lists after_beats too (#214); S2A lists none.
+    assert J.spec_drift(other, J.source_of("S2A")) == "keep_going_1 is not in the scenario file"
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")

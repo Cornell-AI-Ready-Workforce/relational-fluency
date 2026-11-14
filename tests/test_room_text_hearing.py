@@ -468,17 +468,20 @@ async def test_other_families_frames_are_unchanged_by_relay_switch(monkeypatch, 
             await h.close()
     assert snapshots[0] == snapshots[1]
     # Full wire-frame snapshots taken on e949063, before the hearing fix.
+    # Re-taken 2026-11-14 for the S4A brief changes (teams and dates, the
+    # pilot beat): the room in this test is S4A, so its briefs are in the
+    # frames. Both relay modes still produce identical frames, above.
     before = {
-        GPT: "44b465c9d747856c5c124efdcc3235e979c2e8d12a78483f11550070e146465a",
-        NATIVE: "1cdc68e5f3cfdfa3eabfd26c51d9ecc8c6a66643c04f6abda9cd1d2d47bbbe9d",
-        "nto.gemini-live-2.5-flash": "ad4de6f3ad8abf2760dda27b9b51d029a1f36bbcc05bb6b9acb505af357a0b81",
+        GPT: "0c1fd597ca5f519a4e2a3cfb2ed9dd986ba13bb9234df01e8d5fe96c43a6c3c5",
+        NATIVE: "57574818ea8945d2529a1c916e79cc47288c28a27d335c5c3415201f9c9105b1",
+        "nto.gemini-live-2.5-flash": "e050c9d91d2725eb9d578df3f11585a6726d1815f25b4cbb8270b916145f0b42",
     }
     if R.audioop is None:
         # The pure-Python converter starts with one extra PCM sample. These
-        # hashes also come from e949063, using its Python 3.13 fallback.
+        # hashes are re-taken the same way, with the fallback forced.
         before.update({
-            GPT: "a53ad992a91ce010f86dc93f3927147e9ee71fde46e69b9e7f73612f7a9d1375",
-            NATIVE: "ef1679db4e612fdd2065f60506bfc399068af90fd987555e35bfb4a863649d90",
+            GPT: "03be87f05c31d0ec54e13e13035dee6285418e567a4242a2aaacbd2e3e6ca7af",
+            NATIVE: "efb3b7647a99bf0b6471f5ec43af6192fa118442841cae50796f7c8de876e64a",
         })
     assert hashlib.sha256(snapshots[1].encode()).hexdigest() == before[model]
 

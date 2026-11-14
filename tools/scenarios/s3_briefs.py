@@ -117,8 +117,8 @@ FORMS = {
         "file": "S3A_after_resignations.yaml",
         "cynic": dict(
             key="alex", name="Alex", p="Jordan", pp="he", j="Casey", jp="she",
-            who="Nadia and Tom quit over pay in the last six weeks, and their reviews now sit on the three of you who stayed. You are tired and dry, not angry, and on the facts you are right.",
-            facts="two people gone in six weeks over pay, their reviews on three desks, and leadership will not talk about pay",
+            who="Nadia quit over pay six weeks ago and Tom two weeks ago, and their reviews now sit on the three of you who stayed. You are tired and dry, not angry, and on the facts you are right.",
+            facts="Nadia gone six weeks ago and Tom two weeks ago, both over pay; forty open reviews left on three desks, where ten each is a normal load; and leadership saying in the spring that pay would be looked at next year, with nothing since",
             voice="No sarcasm, no jokes.",
             self_action="that you will write down what this team is carrying and send it up yourself",
             challenge="say that two more of you will go and nothing in this meeting can stop it, leading with that and backing it with the two who left over pay and the silence from above",
@@ -139,8 +139,8 @@ FORMS = {
             ai="treat it as an odd joke and carry on."),
         "junior": dict(
             key="casey", name="Casey",
-            who="You are eighteen months in and the most junior. Nadia's review queue landed on you, and everything in it now goes out under your name. You are out of your depth and have not said so.",
-            facts="the size of Nadia's queue, and that it goes out under your name. You never name a clause, contract or number",
+            who="You are eighteen months in and the most junior. Eighteen of Nadia's reviews landed on you, on top of your own ten, and everything in them now goes out under your name. You are out of your depth and have not said so.",
+            facts="eighteen of Nadia's reviews on top of your own ten, and that they go out under your name. You never name a clause or a contract, or any other number",
             voice="Hesitant, polite and brief.",
             topic="the queue",
             fear1="there is more of Nadia's queue than you can carry",
