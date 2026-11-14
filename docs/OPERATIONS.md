@@ -804,6 +804,65 @@ waits, and backoff. This release claims no room-turn latency or capacity
 gain. Live adapter probes and a new simulation baseline require a separate
 run; the load ramp's server image predates this change.
 
+## What changed on 2026-11-12, cascade cancellation (pipeline_version 2026-11-12b)
+
+Cascade now uses the bridge's cancelled-output discard policy. This is a
+separate change from the transcriber switch in 11-12a. `cancel_unheard_reply`
+can now cancel a cascade reply. Every existing `cancel_response` call with
+`discard_tail=True` also discards the cancelled reply's queued frames for
+a known response ID, or an unnamed reply tracked by the existing cancel
+latch. This affects withdrawal, barge-in, scribe cancellation, interaction
+rebriefs, and stale room holds. Explicit `discard_tail=False` room holds
+retain their queued tail. `CASCADE_CANCELLED_OUTPUT_DISCARD=0` restores only
+the earlier cascade bridge discard policy: `cancel_unheard_reply` returns
+`None`, queued cancelled output is relayed, and the runner's cancelled-audio
+backstop is disabled. Existing unconditional `cancel_response` calls still
+cancel adapter generation. `cancelled_output` in provenance reports the
+effective bridge policy. This switch leaves gpt unchanged.
+`CANCELLED_OUTPUT_DISCARD` controls gpt independently; turning that older
+switch off restores gpt's old tail relay.
+
+The cascade switch is not a full rollback of 11-12b. Create/cancel ordering,
+the join and close bounds, transport abort on interrupted close, and zero-audio
+assistant-item removal stay active. With discard disabled, a cancelled
+zero-audio reply can still relay its queued transcript deltas, but has no
+final transcript event and its `response.done` has an empty output list.
+
+A create following cancellation waits for the old reply's teardown before
+starting the new reply. Old `response.done` precedes new `response.created`.
+The join has a 1 s bound. TTS close has a 0.5 s bound, rather than websockets'
+10 s default. An interrupted or timed-out close explicitly aborts the transport
+before its concurrency slot is released in `finally`. This also applies when
+the outer join bound cancels teardown. The remaining join budget covers the
+HTTP drain (bounded to 0.25 s) and task cleanup. Cancels share the create lock,
+so a cancel received during a join acts on the replacement reply. A create
+while a reply is active and not cancelling is still refused.
+
+The join is awaited inline in the participant pump at turn end. Microphone
+frames queue while it waits, so VAD and barge-in handling can run up to 0.5 s
+late during a slow close, or 1 s late at the join bound. A withdrawal on the
+model pump can also wait behind that join. This repair keeps the bounded wait;
+moving it off the participant pump needs a separate ordered dispatch queue
+and changes to the bridge's request-state timing.
+
+The existing withdrawal guards keep replies whose audio has already been
+sent to the participant and replies to later commits. First-reply holds
+have played nothing. Barge-ins and interaction boundaries retain their
+existing cancellation triggers. The policy adds no cancellation trigger or
+page interruption message. Frames already delivered to the page are under
+the existing playback and interruption rules; the bridge cannot recall
+them. Queued frames discarded at the bridge are counted as cancelled output.
+
+A reply cancelled before its first audio was emitted to the bridge now leaves
+no assistant item in cascade's conversation. This does not establish what the
+participant heard after audio starts: raw TTS PCM carries no sentence alignment
+or timestamps, several generated sentences can be ahead of the audio, and
+the adapter has no page-playback acknowledgements. Generated text is still
+kept after the first audio, even if some of it was unheard or that audio was
+held or discarded by the bridge. Exact trimming then needs alignment and
+playback information across the TTS, bridge and runner; it is not implemented
+by this adapter repair.
+
 ## The seven-minute floor, and the twelve-minute stop
 
 Every encounter runs **at least 5:00** and **at most 10:00** (7:00 / 12:00 until 2026-10-15; the figures below are from that period). Since `28b` the
