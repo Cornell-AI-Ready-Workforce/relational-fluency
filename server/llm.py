@@ -705,7 +705,17 @@ def text_client() -> AsyncAnthropic:
 #                real one-word line is silenced on the strength of a word
 #                list alone. The word list loads at import, off the live
 #                path. Suppressed lines keep their text in the record.
-PIPELINE_VERSION = "2026-11-06a"
+#   2026-11-13a  steering budget 20 s (was 10 s), 10 s an attempt with one
+#                retry (#235). Steering moved to Argon on 2026-10-15 with the
+#                budget sized for flash-lite, and about one review in three
+#                then timed out on both attempts (7 of 21 in a live run of
+#                2026-11-13), so a third of the planned persona adjustments
+#                never reached the character. More of them now arrive, which
+#                changes the stimulus. 1:1: steering runs before the hand-off
+#                probe, so a slow review can hold the hand-off up to 21 s
+#                (was 11 s). Rooms: unchanged timing, the review runs after the
+#                floor is released. STEERING_TIMEOUT_S=10 restores 11-06a.
+PIPELINE_VERSION = "2026-11-13a"
 ROOM_PACING_VERSION = "2026-11-04a"
 
 

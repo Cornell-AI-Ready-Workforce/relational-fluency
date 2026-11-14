@@ -94,21 +94,27 @@ STEERABLE_KNOBS = TONE_KNOBS + INCIVILITY_KNOBS  # cognition is not auto-steered
 
 def _timeout_setting() -> float:
     """Total seconds one steering review gets. Env-tunable."""
-    raw = setting("STEERING_TIMEOUT_S", "10")
+    raw = setting("STEERING_TIMEOUT_S", "20")
     try:
         value = float(raw)
     except ValueError:
         value = 0.0
-    return value if value > 0 else 10.0
+    return value if value > 0 else 20.0
 
 
 # Same reasoning as the director's budget, and the same finding: the SDK's
 # defaults (read timeout 600 s, two automatic retries) are sized for batch work,
 # so one wedged gateway call here could hold the floor lock - and therefore the
 # whole room - silent for the better part of half an hour, with nothing in the
-# record to say why. Ten seconds rather than the director's eight because this
-# call carries a longer prompt and a 500-token answer, and it is still small
-# next to the runner's 45 s per-speaker watchdog. Split the same way: two
+# record to say why. Twenty seconds since pipeline 2026-11-13a (#235): ten
+# was sized for flash-lite (about 0.8 s a call), and on Argon a 2026-11-13
+# benchmark of 360 calls ran p50 5.3 to 6.5 s, so a 5 s attempt dropped about
+# one review in three (7 of 21 in a live run). 10 s an attempt lets 80 to 97%
+# finish, and the retry covers most of the rest. The cost is in 1:1: steering
+# runs before the hand-off probe, which can now wait up to 21 s instead of 11 s;
+# room steering runs after the floor is released (room pacing 2026-09-28a), so
+# nobody waits on it there. Still under the runner's 45 s per-speaker watchdog.
+# STEERING_TIMEOUT_S=10 restores the old budget. Split the same way: two
 # attempts plus the SDK's ~0.5 s first back-off fit inside the total, so a
 # routine 429 or 502 from the shared gateway costs a retry instead of costing
 # the turn's steering. Losing a review is cheap - "no change" is the expected
