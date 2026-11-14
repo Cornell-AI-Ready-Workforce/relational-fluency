@@ -1,5 +1,66 @@
 # Operations cheat sheet
 
+## Cascade room hearing
+
+Cascade room members receive each accepted participant line once as a plain
+user text item. The scribe alone receives participant PCM and transcribes it.
+Members also receive colleague lines as context notes. Accepted short lines
+are included even when the director does not use them. Suppressed and failed
+transcripts add no participant item. STT results are released in commit order;
+a terminal failure or the existing `ROUTE_TRANSCRIPT_WAIT` deadline releases
+a missing slot. Members retain no participant PCM. Text history grows with
+accepted lines and colleague replies; idle microphone frames add no member
+history or audio.
+
+A grant waits for local text delivery to that session instance. It adds no
+second STT wait. A named line accepted during briefing can change the first
+speaker at the final routing checkpoint. Once the turn has a grant, a late
+line is context for later requests. It does not route another answer. A line
+accepted after `response.create` cannot enter that request. A missing current
+transcript requests one short clarification instead of answering an earlier
+line. Before the first accepted line, the room keeps waiting for the
+participant. A suppression learned after a grant cannot withdraw that reply:
+rooms have no withdrawal path. It cannot cause another reply for that turn.
+
+Rebuilt members receive durable participant and colleague conversation items,
+then catch up before they are seated and eligible for a grant. The conversation
+remains after the reconnect scene note is spent.
+
+Before the first grant, a newer accepted turn can merge into the turn being
+answered. The merge takes only commits through that newer turn's last accepted
+line. Later commits still being transcribed stay with its waiting task. A
+task whose captured turn is already granted or consumed serves an ungranted,
+unconsumed pending turn with commits, or returns if none exists. This check
+runs after the task takes the floor. A finishing task clears the transcript
+waiting flag only when no other live group-turn task remains; routing still
+clears it when its decision is ready. A turn end while the flag is up is
+withdrawn into the pending turn instead of spawning another task.
+
+A provisional planted beat returned before the grant is recorded as
+`trigger_deferred`, with a `transcript_missing` or `transcript_suppressed`
+reason when the transcript causes the return. Its console notice has `info`
+severity. A directly recorded firing, including a probe, still uses
+`trigger_undelivered` with `error` severity when its grant fails or its member
+is lost. Cancelling a turn clears its provisional firing record.
+
+A failed reconnect seed takes the member-loss path. It records
+`room_member_lost` with `reason="seed_failed"` and closes the replacement
+without seating it. If no members remain, the existing room-loss notice is
+sent. There is no separate `room_member_gone` event.
+
+At room close, completed transcripts held behind unresolved commits are
+accepted in spoken order before their hearing tasks are discarded. The usual
+transcript gates still apply. This drain writes participant history and
+`user_turn` records without captions, broadcasts, opening notices, or grants.
+
+Set `CASCADE_ROOM_TEXT_RELAY=0` to restore the complete old cascade room path
+for newly created rooms: no participant text relay, PCM fan-out to members,
+the old grant nudge, and reconnect history in a brief recap. This restores
+the defect: members answer without the participant's words and retain
+uncommitted PCM. A room freezes its mode when created. Changing the switch
+does not change existing rooms. Native-audio, GPT realtime, and cascade 1:1
+do not use this switch.
+
 Checking the server is healthy and the data is intact. Every command here has
 been run against the live stack.
 
@@ -773,6 +834,95 @@ Caveats for analysis:
 - Spoken character names, loanwords and interjections the list lacks
   ("Gotcha.", "Welp.") show up as `language_unknown` on the cascade route.
   That flag is a reason to read the line, not to drop it.
+
+## What changed on 2026-11-12, the cascade transcriber (pipeline_version 2026-11-12a)
+
+The cascade's transcript model defaults to `nto.gemini-3.5-transcribe`.
+`CASCADE_STT_MODEL=nto.gemini-3.5-flash-lite` restores the previous model.
+The reply model, `SPEECH_CHECK_MODEL`, and offline `TRANSCRIBE_MODEL` do not
+change. `input_transcription_model` on `realtime_session_started`, in
+`record.json` provenance, and in the analysis loader names the effective
+cascade transcriber, including an override or rollback. Older cascade
+records keep their unknown value.
+
+The gateway probe on 2026-11-12 returned `content:null` and
+`finish_reason:"stop"` for silence and room tone. The adapter maps null,
+empty, and whitespace content to `[no speech]` only after validating the
+2xx response, its choice, message, finish reason, and content type. Invalid
+responses and refusals produce `stt_failed`. The shared speech check and
+offline retranscription keep their own empty-response semantics.
+
+The existing annotation gate suppresses this marker and rooms skip turns
+made only of rejected input. `PARTICIPANT_DROP_ANNOTATIONS=0` disables that
+suppression for both transcribers. This version retains the cascade's
+existing cancellation policy: transcript withdrawal does not cancel its
+reply task. The first reply remains subject to the opening hold.
+
+Transcribe ignores the text prompt, including language and name hints. The
+English gate still keeps and flags uncertain text on cascade. The measured
+speech-request p50 improvement of about 300 ms excludes encoding, slot
+waits, and backoff. This release claims no room-turn latency or capacity
+gain. Live adapter probes and a new simulation baseline require a separate
+run; the load ramp's server image predates this change.
+
+## What changed on 2026-11-12, cascade cancellation (pipeline_version 2026-11-12b)
+
+Cascade now uses the bridge's cancelled-output discard policy. This is a
+separate change from the transcriber switch in 11-12a. `cancel_unheard_reply`
+can now cancel a cascade reply. Every existing `cancel_response` call with
+`discard_tail=True` also discards the cancelled reply's queued frames for
+a known response ID, or an unnamed reply tracked by the existing cancel
+latch. This affects withdrawal, barge-in, scribe cancellation, interaction
+rebriefs, and stale room holds. Explicit `discard_tail=False` room holds
+retain their queued tail. `CASCADE_CANCELLED_OUTPUT_DISCARD=0` restores only
+the earlier cascade bridge discard policy: `cancel_unheard_reply` returns
+`None`, queued cancelled output is relayed, and the runner's cancelled-audio
+backstop is disabled. Existing unconditional `cancel_response` calls still
+cancel adapter generation. `cancelled_output` in provenance reports the
+effective bridge policy. This switch leaves gpt unchanged.
+`CANCELLED_OUTPUT_DISCARD` controls gpt independently; turning that older
+switch off restores gpt's old tail relay.
+
+The cascade switch is not a full rollback of 11-12b. Create/cancel ordering,
+the join and close bounds, transport abort on interrupted close, and zero-audio
+assistant-item removal stay active. With discard disabled, a cancelled
+zero-audio reply can still relay its queued transcript deltas, but has no
+final transcript event and its `response.done` has an empty output list.
+
+A create following cancellation waits for the old reply's teardown before
+starting the new reply. Old `response.done` precedes new `response.created`.
+The join has a 1 s bound. TTS close has a 0.5 s bound, rather than websockets'
+10 s default. An interrupted or timed-out close explicitly aborts the transport
+before its concurrency slot is released in `finally`. This also applies when
+the outer join bound cancels teardown. The remaining join budget covers the
+HTTP drain (bounded to 0.25 s) and task cleanup. Cancels share the create lock,
+so a cancel received during a join acts on the replacement reply. A create
+while a reply is active and not cancelling is still refused.
+
+The join is awaited inline in the participant pump at turn end. Microphone
+frames queue while it waits, so VAD and barge-in handling can run up to 0.5 s
+late during a slow close, or 1 s late at the join bound. A withdrawal on the
+model pump can also wait behind that join. This repair keeps the bounded wait;
+moving it off the participant pump needs a separate ordered dispatch queue
+and changes to the bridge's request-state timing.
+
+The existing withdrawal guards keep replies whose audio has already been
+sent to the participant and replies to later commits. First-reply holds
+have played nothing. Barge-ins and interaction boundaries retain their
+existing cancellation triggers. The policy adds no cancellation trigger or
+page interruption message. Frames already delivered to the page are under
+the existing playback and interruption rules; the bridge cannot recall
+them. Queued frames discarded at the bridge are counted as cancelled output.
+
+A reply cancelled before its first audio was emitted to the bridge now leaves
+no assistant item in cascade's conversation. This does not establish what the
+participant heard after audio starts: raw TTS PCM carries no sentence alignment
+or timestamps, several generated sentences can be ahead of the audio, and
+the adapter has no page-playback acknowledgements. Generated text is still
+kept after the first audio, even if some of it was unheard or that audio was
+held or discarded by the bridge. Exact trimming then needs alignment and
+playback information across the TTS, bridge and runner; it is not implemented
+by this adapter repair.
 
 ## The seven-minute floor, and the twelve-minute stop
 
@@ -1833,3 +1983,109 @@ avoids the prompt.
 3. Remove the address when they leave the project.
 
 Never hand out `rf_admin`; it exists to run the two SQL files above.
+
+### 1:1 cascade reply-path trace (pipeline 2026-11-12c)
+
+`reply_trace` and `commit_trace` are separate from `turn_timing`. Each carries
+`schema_version: 1`, `clock: "encounter_s"`, `units: "seconds"` and
+`finalized_at: "encounter_teardown"`. They are buffered observations, written
+once after socket-close attempts in the encounter's teardown. They survive a page
+`play_end` that removes its legacy playback row before generation ends. A
+process crash before teardown can lose these buffered traces. Event-level `t`
+and `wall` are storage/teardown times; use the stage stamps for observations.
+The trace flush runs in a finally even if another cancellation interrupts a
+close await. A close interrupted before adapter closure keeps partial state;
+it does not invent a `socket_closed` observation.
+
+The clock starts with wall elapsed time from `store.started_at` at attachment,
+then advances with `time.monotonic()`. Stamps have six decimal places; that is
+representation precision, not a latency accuracy guarantee. No stamp maps a
+browser clock or proves hearing. Legacy `turn_timing` wall-clock seconds, ACK
+receipt minus `lag_s`, and all `cascade` millisecond values keep their meanings.
+In particular, `llm_first_token_ms` retains its historical sentence-dependent
+behaviour. New strings and seconds never enter that numeric dictionary or
+`TurnTimer.done()`'s numeric filter. Old pages need no new ACK fields; extra ACK
+fields are tolerated and ignored until the browser-clock work defines them.
+
+A `reply_trace` has `response_id`, `commit_item_ids`, `participant_turn_id`,
+`origin`, `page_turn`, `status` and `stages`. Only a commit-turn or replay call
+can link its own actual commit item id to its create, once. This trace-only
+identity travels in task-local context; it never changes a gateway frame.
+There is no latest-commit fallback. Openers, retries, held-call/tool replies,
+standalone requests, and raw creates have empty links even if an earlier
+commit was never answered. `origin` records the initiating API or intent:
+`participant_commit`, `silence_probe`, `replay`, `retry`, `prompt_response`,
+`request_response`, `held_call`, or `uncommitted` (a raw create). An opener
+requested through request_response has that origin and empty links.
+Participant identity is the local VAD-end sequence; null means no VAD end
+belongs to this commit/create. A page turn is assigned only when the
+runner opens/relays that reply; replies cancelled before relay can have null.
+Provider completion sets status `done`, `cancelled` or `failed` and `reply_done`;
+a refused active create has `refused_active_response`. Closing the socket marks
+unfinished creates/replies `socket_closed`. Status and partial stamps remain
+available until teardown, independently of whether a page turn ever existed.
+
+Reply `stages` (all seconds on `encounter_s`, absent means unobserved):
+
+| Field | Boundary |
+| --- | --- |
+| `create_entered` | Adapter response.create entry, before the create lock. |
+| `create_released` | After the lock and any D4 cancellation join, before spawning the reply. |
+| `request_started` | Before the HTTP stream call; dispatch includes client preparation, not a measured socket send. |
+| `first_content` | First nonempty content delta, independent of sentence state. |
+| `first_sentence_ready` | First nonempty splitter result, before awaiting TTS; `sentence_trigger` is `punctuation` (with following whitespace and length floor) or `final_flush`. |
+| `tts_slot_wait_start`, `tts_slot_acquired` | Before and after semaphore acquisition. |
+| `tts_connected` | TTS connection returned, before voice registration. |
+| `first_text_sent` | First inputs send dispatch, after sentence release and connection; registration and keep-alives excluded. |
+| `tts_first_audio` | First provider audio message arrival, before decoding. |
+| `first_output_emitted` | First PCM delta enqueue in the adapter, before bridge/page handling. |
+| `first_output_hold_started` | First audio frame held by the runner pending the participant's opening transcript; preceding text deltas do not stamp it. |
+| `first_output_hold_released` | Before yielding the first retained held frame; `release_commit_item_id` names the accepted transcript that unblocks it. |
+| `first_output_withheld` | Held frames dropped after rejection or superseded by a later commit at acceptance/release. No release is invented for cancelled/abandoned holds. |
+| `reply_done` | Adapter completion or observed socket closure. |
+
+A `commit_trace` has `commit_item_id`, `participant_turn_id`, `origin`, `stages`,
+`participant`, `stt_outcome` and `decision`. Stages are `commit_dispatched`
+(the adapter commit operation), `stt_started`, `stt_done`, and
+`transcript_decided`. STT outcomes are `completed`, `no_speech`, `failed`,
+`cancelled` or `socket_closed`; socket closure has its own stage and does not
+invent `stt_done` for an unfinished task. That terminal outcome survives late
+STT finalizers; they cannot add `stt_done` after `socket_closed`. Other STT
+outcomes are also first-wins. Unfinished decisions remain null. Decision is
+`{outcome, reason}`: `accepted`, `suppressed` with the gate reason, `duplicate`
+with `exact`, `overlap` or `replay_duplicate`, `echo` with `character_playback`,
+`missing` with `transcript_empty`/`empty_content`, or `failed` with
+`transcript_failed`. Decisions attach only by commit item id. They do not use
+legacy `transcript_arrived`'s oldest-unmatched association. They precede the
+separate hold-release observation.
+
+`participant` snapshots `vad_detected`, `last_voiced_estimate`,
+`vad_sample_position`, `briefing_entered` and `briefing_completed` where known.
+Each commit consumes its pending VAD identity and snapshot once. Only a
+participant commit retains them. Probe pads and audio replays have null
+participant ids and empty snapshots,
+even if a VAD end is pending. A later commit without a new VAD end cannot reuse
+the preceding participant's data.
+VAD detection is captured inside `feed`, before forwarding awaits or resetting
+silence counters. `vad_sample_position` contains `estimate: "sample_position"`,
+`sample_rate_hz`, cumulative `last_voiced_sample`, `detected_sample` and
+`trailing_silence_samples`, using the existing RMS decision. The estimate is
+`vad_detected - trailing_silence_samples / sample_rate_hz`: an audio-position
+estimate anchored to detection receipt, not a measured microphone wall time.
+Briefing stamps surround the 1:1 briefing that precedes commit. `commit_sent`
+remains the later legacy stamp after commit_turn returns.
+
+VAD instrumentation costs a helper call and try block, a sample-counter
+addition, another comparison with the existing RMS/bar, and a conditional
+last-voiced assignment per frame. It is more than one assignment. The round-1
+review probe on 07fca6c measured feed at 2.462 → 2.536 microseconds/frame
+(best of seven, about +0.07 microseconds or +3%); the helper alone measured
+0.050 microseconds. These are local microbenchmark observations, not a
+production latency guarantee. The repair leaves that VAD implementation intact.
+
+Only causal edges are additive: request → content → sentence; slot wait →
+acquired → connected; sentence and connected → text send → provider audio →
+output. Connection and generation overlap in either order. STT also overlaps
+both; its decision and output hold/release expose a separate possible wait.
+Do not subtract these intervals as sequential costs. A1 consumes this schema
+in its own lane. Rooms and browser-clock instrumentation remain separate work.

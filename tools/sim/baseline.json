@@ -1,5 +1,11 @@
 {
  "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
+ "pending": {
+  "S1A": "not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+  "S2A": "not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+  "S3A": "not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline",
+  "S4A": "not recorded on pipeline 2026-11-13a / room pacing 2026-11-04a: the last baseline (build ac07319, pipeline 2026-11-06a, 2026-11-13, with the judge's counts) is in tools/sim/reports/ac07319.json, and since then the transcriber (11-12a), cascade cancellation (11-12b), room hearing (11-12d) and the steering budget (11-13a) changed. Record it with python -m tools.sim.check --write-baseline"
+ },
  "realtime_model": "cascade-argon-elevenlabs",
  "recorded": {
   "build": "ac07319",
@@ -7,128 +13,7 @@
   "pipeline_version": "2026-11-06a",
   "room_pacing_version": "2026-11-04a"
  },
- "scenarios": {
-  "S1A": {
-   "error_frames": 0,
-   "judge": {
-    "beats_judged": 8,
-    "beats_made": 8,
-    "model": "nto.gemini-4-argon",
-    "rubric": "97e0ab8d"
-   },
-   "lines_answered": 8,
-   "lines_heard": 8,
-   "lines_said": 8,
-   "phantom_turns": 0,
-   "recorded": {
-    "build": "ac07319",
-    "date": "2026-11-13",
-    "pipeline_version": "2026-11-06a",
-    "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794603648_182505"
-   },
-   "refused_creates": 0,
-   "reply_missing": 0,
-   "sequence_sha256": "a4b2d90dd4da7ac2",
-   "speech_end_to_first_played_s": {
-    "n": 8,
-    "p50": 1.901,
-    "p90": 2.65
-   },
-   "triggers_fired": 7,
-   "voice_error": 0
-  },
-  "S2A": {
-   "error_frames": 0,
-   "judge": {
-    "beats_judged": 9,
-    "beats_made": 9,
-    "model": "nto.gemini-4-argon",
-    "rubric": "97e0ab8d"
-   },
-   "lines_answered": 26,
-   "lines_heard": 27,
-   "lines_said": 27,
-   "phantom_turns": 0,
-   "recorded": {
-    "build": "ac07319",
-    "date": "2026-11-13",
-    "pipeline_version": "2026-11-06a",
-    "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794603870_d09625"
-   },
-   "refused_creates": 0,
-   "reply_missing": 0,
-   "sequence_sha256": "4ae8133b9c6e2fef",
-   "speech_end_to_first_played_s": {
-    "n": 26,
-    "p50": 1.898,
-    "p90": 2.716
-   },
-   "triggers_fired": 9,
-   "voice_error": 0
-  },
-  "S3A": {
-   "error_frames": 0,
-   "judge": {
-    "beats_judged": 7,
-    "beats_made": 7,
-    "model": "nto.gemini-4-argon",
-    "rubric": "97e0ab8d"
-   },
-   "lines_answered": 8,
-   "lines_heard": 9,
-   "lines_said": 9,
-   "phantom_turns": 0,
-   "recorded": {
-    "build": "ac07319",
-    "date": "2026-11-13",
-    "pipeline_version": "2026-11-06a",
-    "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794604520_f5de09"
-   },
-   "refused_creates": 0,
-   "reply_missing": 0,
-   "sequence_sha256": "b839d60a54bb1537",
-   "speech_end_to_first_played_s": {
-    "n": 9,
-    "p50": 2.752,
-    "p90": 3.346
-   },
-   "triggers_fired": 7,
-   "voice_error": 0
-  },
-  "S4A": {
-   "error_frames": 0,
-   "judge": {
-    "beats_judged": 10,
-    "beats_made": 9,
-    "model": "nto.gemini-4-argon",
-    "rubric": "97e0ab8d"
-   },
-   "lines_answered": 30,
-   "lines_heard": 34,
-   "lines_said": 34,
-   "phantom_turns": 0,
-   "recorded": {
-    "build": "ac07319",
-    "date": "2026-11-13",
-    "pipeline_version": "2026-11-06a",
-    "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794604724_9551d2"
-   },
-   "refused_creates": 0,
-   "reply_missing": 0,
-   "sequence_sha256": "8efdc0004450ad17",
-   "speech_end_to_first_played_s": {
-    "n": 34,
-    "p50": 2.532,
-    "p90": 3.115
-   },
-   "triggers_fired": 10,
-   "voice_error": 0
-  }
- },
+ "scenarios": {},
  "tolerances": {
   "answered_rate_drop": 0.2,
   "error_frames_extra": 0,
