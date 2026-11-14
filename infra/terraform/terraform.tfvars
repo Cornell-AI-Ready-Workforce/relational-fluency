@@ -60,6 +60,14 @@ director_route = "0"
 # 2.5-3 s). Argon stays on steering and the director.
 cascade_llm_model = "nto.gemini-3.5-flash-lite"
 
+# The participant transcriber: flash-lite, not the nto.gemini-3.5-transcribe
+# default (#246). In the release sim of 85c539d (2026-11-14), S2A's manager
+# answered a repeated participant line almost word for word 5 of 16 times with
+# the new transcriber and 0 of 15 with this one, and made all 9 beats against 7.
+# Why is not yet understood. Rooms wait on this transcript, so they give back
+# about 0.4 s of the new transcriber's speed.
+cascade_stt_model = "nto.gemini-3.5-flash-lite"
+
 # Retention: study_data_retention_days defaults to 0 = no expiration rule
 # (PI decision, 2026-09-17: recordings are kept until deleted by hand). To
 # expire recordings instead, set a positive number of days here, in a commit:
