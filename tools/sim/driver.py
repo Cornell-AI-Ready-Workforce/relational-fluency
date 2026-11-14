@@ -90,9 +90,16 @@ async def run(server: str, scenario: str, steps: str, *, key: str = "",
               tester: str = "sim", log: Callable[[str], None] = print) -> dict:
     """Drive one encounter through `steps`; return its timeline."""
     plan = sequences.parse(steps)
-    for name in sequences.lines_used(steps):
-        stim.load(name)          # fail before the session opens, not halfway in
-    door = open_test_door(server, key, tester)
+    def preload():
+        # Decode and read transcripts before opening the session. Both touch
+        # disk; neither belongs on a shared generator's event loop.
+        clips = {name: (stim.load(name), stim.text(name))
+                 for name in sequences.lines_used(steps)}
+        stim.room_tone(0)  # warm the generated tone loop off the event loop
+        return clips
+
+    clips = await asyncio.to_thread(preload)
+    door = await asyncio.to_thread(open_test_door, server, key, tester)
 
     tl: dict = {"scenario": scenario, "steps": steps, "participant_id": door["participant_id"],
                 "session_id": None, "started": None, "ended": None, "completed": False,
@@ -197,8 +204,8 @@ async def run(server: str, scenario: str, steps: str, *, key: str = "",
 
         async def say(name: str) -> None:
             start = time.time()
-            await send(stim.load(name))
-            tl["lines"].append({"name": name, "text": stim.text(name),
+            await send(clips[name][0])
+            tl["lines"].append({"name": name, "text": clips[name][1],
                                 "start": round(start, 3), "end": round(time.time(), 3)})
 
         async def quiet(sec: float) -> None:
@@ -225,13 +232,13 @@ async def run(server: str, scenario: str, steps: str, *, key: str = "",
             for kind, arg in plan:
                 log(f"  {at()} >> {kind}:{arg}")
                 if kind == "tone":
-                    await send(stim.room_tone(float(arg)))
+                    await send(await asyncio.to_thread(stim.room_tone, float(arg)))
                 elif kind == "zeros":
                     await quiet(float(arg))
                 elif kind == "until":
                     left = float(arg) - since_start()
                     if left > 0:
-                        await send(stim.room_tone(left))
+                        await send(await asyncio.to_thread(stim.room_tone, left))
                 elif kind == "say":
                     await say(arg)
                     await settle()
@@ -276,7 +283,7 @@ async def run(server: str, scenario: str, steps: str, *, key: str = "",
                         await settle()
                         if i % 4 == 0 and not tl["completed"]:
                             log(f"  {at()} >> tone:14")
-                            await send(stim.room_tone(14))
+                            await send(await asyncio.to_thread(stim.room_tone, 14))
 
         try:
             await _steps(plan)

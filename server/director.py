@@ -46,7 +46,7 @@ from typing import Any, Callable, List, Optional
 
 from anthropic import APITimeoutError, AsyncAnthropic
 
-from .llm import redact_key, setting, text_client
+from .llm import message_create, redact_key, setting, text_client
 
 from .scenarios import Agent, Scenario
 
@@ -414,6 +414,7 @@ class Director:
         client: Optional[AsyncAnthropic] = None,
         model: Optional[str] = None,
         on_event: Optional[Callable[..., Any]] = None,
+        session_id: Optional[str] = None,
     ):
         self.scenario = scenario
         self.client = _bounded(client or text_client())
@@ -423,6 +424,7 @@ class Director:
         # own record instead of only in the server log; unwired, routing still
         # works exactly as before. See _fallback() for why this matters.
         self._on_event = on_event
+        self.session_id = session_id
         self._cast_block = _format_cast(scenario.cast)
         self._valid_ids = {a.id for a in scenario.cast}
         self._name_lookup = {a.id: a.name for a in scenario.cast}
@@ -691,7 +693,7 @@ Who speaks, and what are they going for?"""
             # rather than a bare TimeoutError. It is also the only thing bounding
             # a Retry-After header, which the SDK will honor up to 60 s.
             response = await asyncio.wait_for(
-                self.client.messages.create(
+                message_create(self.client, purpose="director", session_id=self.session_id,
                     model=self.model,
                     max_tokens=DIRECTOR_MAX_TOKENS,
                     system=system,
