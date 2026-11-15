@@ -3,6 +3,19 @@
 Working plan for the first data-collection study. This file is the source the
 GitHub issues are cut from; when an issue changes scope, change it here too.
 
+> **Phase 1 as built (#276).** The survey is neither the two-survey chain in
+> §1 and the "Return to Qualtrics" row below, nor the embedded design in
+> `docs/qualtrics-embed.md` (kept there for later). It is one survey,
+> SV_bClj80jCRO4Dmdw: page 7 has one link that opens the app in a new tab,
+> `/start?pid=…&qid=<ResponseID>`, then a required box where the participant
+> types the completion code the app shows at the end, then the closing
+> questions. There is no Survey 2 and no return link (`survey_return_url` is
+> left empty in `infra/terraform/terraform.tfvars`). The run stores the
+> ResponseID as `qualtrics_id`, and `python -m server.qualtrics join` (with
+> `QUALTRICS_SURVEY2_ID` unset) joins each response to its run on it, falling
+> back to `pid`; the typed code can be checked against the run's
+> `completion_code` in the joined rows.
+
 Decisions recorded 2026-09-17 (JL):
 
 | Topic | Decision |

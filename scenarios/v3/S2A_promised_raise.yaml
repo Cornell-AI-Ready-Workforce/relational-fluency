@@ -27,7 +27,7 @@
 #
 # ── Why no beat in S2 is a verbatim line ──────────────────────────────────
 # Quoted cue lines come back word for word: the shipped ladder produced "Fair,
-# Alex did get one" verbatim in every gateway sample, steered and unsteered
+# Jamie did get one" verbatim in every gateway sample, steered and unsteered
 # alike, and a manager a rater can hear reciting is a manager who has stopped
 # being a person. Every beat in S2 is an OBSTACLE — a proposition that has to
 # be raised and has to be true — not an utterance whose wording carries the
@@ -84,12 +84,12 @@ intro_card:
   situation: >-
     You are a {role} at {org}. You were promised a raise that never came, and
     your workload has grown since. You now have a written job offer from another
-    company at higher pay. Last quarter, your peer Alex was given an off-cycle
-    raise to keep Alex from leaving. You are meeting your manager, Morgan, to
+    company at higher pay. Last quarter, your peer Jamie was given an off-cycle
+    raise to keep Jamie from leaving. You are meeting your manager, Morgan, to
     talk about your pay.
   assets:
     - "A written job offer from another company, at noticeably higher pay."
-    - "Alex's off-cycle raise last quarter, which you can point to as a precedent."
+    - "Jamie's off-cycle raise last quarter, which you can point to as a precedent."
   parts:
     - "Morgan is your manager. The two of you meet one-on-one."
   howto:
@@ -111,7 +111,7 @@ intro_card:
 # participant and doubles as the shared scene every actor's system prompt opens
 # with, so anything left in it is briefed to Morgan. These two are the
 # participant's leverage — the whole construct is whether they choose when to
-# play it — and Morgan's own brief says in as many words that Alex's name does
+# play it — and Morgan's own brief says in as many words that Jamie's name does
 # not come out of his mouth first. An actor who has already been told the offer
 # exists cannot be persuaded of it.
 #
@@ -137,7 +137,7 @@ private_setup:
 # precedent, the scenario is winnable, but only by using it.
 assets:
   - "A written competing offer at meaningfully higher pay"
-  - "Alex's off-cycle adjustment last quarter, as precedent"
+  - "Jamie's off-cycle adjustment last quarter, as precedent"
 
 # Casting, per model family. `realtime_voice` is a MAP from model family to the
 # voice that family speaks this character with, and server/scenarios_v3.py
@@ -384,7 +384,7 @@ agents:
         signature. Not a bluff, not a negotiating position.
       - An exception is possible. It takes a written case to the director, and
         cases like that have gone through before.
-      - Alex got an off-cycle adjustment last quarter. You know exactly how
+      - Jamie got an off-cycle adjustment last quarter. You know exactly how
         that was done and who signed it, and it is the last thing in this room
         you would put into words. It is not an example, it is not a hint, and
         it is not something you reach for when you are cornered.
@@ -490,7 +490,7 @@ agents:
         behind it: the director, and whoever signs off on the numbers. Say who
         and what each of them would need when it comes up, and let them offer
         to help line that up; do not line it up for them.
-      - If they put Alex's adjustment in front of you, at any point, you
+      - If they put Jamie's adjustment in front of you, at any point, you
         concede it, plainly, half a beat late, a little caught out.
         Conceding is not agreeing. It turns the conversation toward what would
         get a case past the director, not toward a yes. A precedent on its own
@@ -533,7 +533,7 @@ agents:
         down, you are their manager and an instruction from you lands as a
         different kind of scene than this one is. If they still go, you let
         them.
-      - Alex's name does not come out of your mouth first. Not as a hint, not
+      - Jamie's name does not come out of your mouth first. Not as a hint, not
         as an example, not to be kind when they are struggling, not to keep
         them in the room. If they never find it, they never find it, and this
         ends without it.
@@ -613,7 +613,7 @@ interactions:
     # word for word (see the note at the top of this file). The on_silence
     # lines ARE speakable lines, in Morgan's register, because a probe is a
     # sentence said out loud now (realtime_voice_session._trigger_instruction).
-    # None of them mentions Alex, and none may: Morgan never volunteers that
+    # None of them mentions Jamie, and none may: Morgan never volunteers that
     # precedent, and a probe must not either.
     triggers:
       - id: t2_the_money_is_not_there
