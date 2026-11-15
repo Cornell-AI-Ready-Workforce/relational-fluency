@@ -1,0 +1,304 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "be83994",
+   "date": "2026-11-15",
+   "pipeline_version": "2026-11-14a",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "prelaunch-baf9161",
+ "build_from": "--build",
+ "failures": [
+  "S2A: the baseline was recorded on pipeline_version 2026-11-14a; the server runs 2026-11-15a: a different experiment, so re-record it (tools/sim/README.md)"
+ ],
+ "generated_at": "2026-11-15T03:01:50Z",
+ "health": {
+  "build": null,
+  "pipeline_version": "2026-11-15a",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S2A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0.96,
+     "limit": 0.76,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 1
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 9,
+     "limit": 8,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 9
+    },
+    {
+     "baseline": 2.599,
+     "limit": 4.399,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 1.833
+    },
+    {
+     "baseline": 3.058,
+     "limit": 5.587,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.081
+    },
+    {
+     "baseline": {
+      "pipeline_version": "2026-11-14a"
+     },
+     "metric": "versions",
+     "note": "the baseline was recorded on pipeline_version 2026-11-14a; the server runs 2026-11-15a: a different experiment, so re-record it (tools/sim/README.md)",
+     "ok": false,
+     "value": {
+      "pipeline_version": "2026-11-15a"
+     }
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 2,
+     "p": 0,
+     "x": 0,
+     "y": 7
+    },
+    "build": null,
+    "chances": {
+     "met": 4,
+     "of": 5,
+     "per_item": {
+      "anticipates": 6,
+      "behind_scenes": 2,
+      "multiple_approaches": 4,
+      "self_interest": 4,
+      "through_discussion": 4
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 1,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 2,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "morgan",
+      "at": 42,
+      "c": "LOOP",
+      "i": 42,
+      "line": "Thursday still work for that list?",
+      "q": "turn 24",
+      "source": null
+     }
+    ],
+    "lines": 28,
+    "missed": [
+     {
+      "agent": "morgan",
+      "at": 17,
+      "i": 17,
+      "line": "Let's aim for Thursday afternoon, once you have those numbers together. Can you have the…",
+      "trigger": "t2_the_money_is_not_there"
+     },
+     {
+      "agent": "morgan",
+      "at": 24,
+      "i": 24,
+      "line": "Thursday still work for that list?",
+      "trigger": "t6_who_else_has_to_back_it"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S2A",
+    "session_id": "s_1794711071_dee9ca",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 7775,
+     "out": 1788
+    },
+    "verdicts": [
+     {
+      "agent": "morgan",
+      "at": 1,
+      "i": 1,
+      "trigger": "t1_the_opening",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 17,
+      "i": 17,
+      "trigger": "t2_the_money_is_not_there",
+      "v": "n"
+     },
+     {
+      "agent": "morgan",
+      "at": 19,
+      "i": 19,
+      "trigger": "t3_the_argument_lands_flat",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 21,
+      "i": 21,
+      "trigger": "t4_everyone_is_stretched",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 22,
+      "i": 22,
+      "trigger": "t5_the_door",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 24,
+      "i": 24,
+      "trigger": "t6_who_else_has_to_back_it",
+      "v": "n"
+     },
+     {
+      "agent": "morgan",
+      "at": 26,
+      "i": 26,
+      "trigger": "t7_what_goes_in_writing",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 28,
+      "i": 28,
+      "trigger": "t8_what_do_i_tell_the_others",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 30,
+      "i": 30,
+      "trigger": "t9_settling",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 28,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 27,
+    "lines_heard": 27,
+    "lines_said": 27,
+    "participant_turns": 27,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": null,
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-15a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 1,
+    "session_id": "s_1794711071_dee9ca",
+    "speech_end_to_first_played_s": {
+     "n": 27,
+     "p50": 1.833,
+     "p90": 2.081
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_the_opening",
+     "t2_the_money_is_not_there",
+     "t3_the_argument_lands_flat",
+     "t4_everyone_is_stretched",
+     "t5_the_door",
+     "t6_who_else_has_to_back_it",
+     "t7_what_goes_in_writing",
+     "t8_what_do_i_tell_the_others",
+     "t9_settling"
+    ],
+    "triggers_fired": 9,
+    "turns_suppressed": {
+     "probe_pad": 1
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 2,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794711071_dee9ca"
+  }
+ },
+ "server": "http://127.0.0.1:63928"
+}
