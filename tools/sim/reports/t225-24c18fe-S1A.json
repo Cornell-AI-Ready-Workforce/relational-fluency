@@ -1,0 +1,304 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "ben-rem-fff6e50",
+   "date": "2026-11-15",
+   "pipeline_version": "2026-11-15c",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "t225-24c18fe",
+ "build_from": "--build",
+ "failures": [
+  "S1A: the baseline was recorded on pipeline_version 2026-11-15c; the server runs 2026-11-15d: a different experiment, so re-record it (tools/sim/README.md)"
+ ],
+ "generated_at": "2026-11-15T08:39:03Z",
+ "health": {
+  "build": null,
+  "pipeline_version": "2026-11-15d",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S1A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 1.0,
+     "limit": 0.8,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 7,
+     "limit": 6,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 7
+    },
+    {
+     "baseline": 1.727,
+     "limit": 3.091,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 1.743
+    },
+    {
+     "baseline": 2.311,
+     "limit": 4.466,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.661
+    },
+    {
+     "baseline": {
+      "pipeline_version": "2026-11-15c"
+     },
+     "metric": "versions",
+     "note": "the baseline was recorded on pipeline_version 2026-11-15c; the server runs 2026-11-15d: a different experiment, so re-record it (tools/sim/README.md)",
+     "ok": false,
+     "value": {
+      "pipeline_version": "2026-11-15d"
+     }
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 2,
+     "p": 1,
+     "x": 0,
+     "y": 5
+    },
+    "build": null,
+    "chances": {
+     "met": 3,
+     "of": 5,
+     "per_item": {
+      "bring_into_open": 3,
+      "de_escalate": 2,
+      "fester_r": 3,
+      "resolve_not_fester": 3,
+      "talk_openly": 2
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 0,
+     "ROLE": 0,
+     "RULE": 2,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 0,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "riley",
+      "at": 3,
+      "c": "RULE",
+      "i": 3,
+      "line": "Oh, right, you were on the 9:00 call. He just walked through your whole deck like it was…",
+      "q": "You finish on a question, except on your first turn",
+      "source": "You finish on a question, except on your first turn, where you say your piece and stop."
+     },
+     {
+      "agent": "sam",
+      "at": 12,
+      "c": "RULE",
+      "i": 11,
+      "line": "I'm not sure what you mean by that, but we have the deck due this afternoon and I need to…",
+      "q": "Do not invent other projects, deliverables or deadlines to keep a turn going.",
+      "source": "Do not invent other projects, deliverables or deadlines to keep a turn going."
+     }
+    ],
+    "lines": 10,
+    "missed": [
+     {
+      "agent": "sam",
+      "at": 14,
+      "i": 13,
+      "line": "People say I in those rooms all the time, and the framing for those numbers was entirely…",
+      "trigger": "t5_brush_it_off"
+     },
+     {
+      "agent": "sam",
+      "at": 16,
+      "i": 15,
+      "line": "That can wait until we have the time to sit down properly.",
+      "trigger": "t6_how_it_works"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S1A",
+    "session_id": "s_1794731704_b11acf",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 7746,
+     "out": 281
+    },
+    "verdicts": [
+     {
+      "agent": "riley",
+      "at": 1,
+      "i": 1,
+      "trigger": "t1_retaliation_fork",
+      "v": "y"
+     },
+     {
+      "agent": "riley",
+      "at": 8,
+      "i": 7,
+      "trigger": null,
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 10,
+      "i": 9,
+      "trigger": "t2_the_opening",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 12,
+      "i": 11,
+      "trigger": "t3_defensiveness",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 14,
+      "i": 13,
+      "trigger": "t5_brush_it_off",
+      "v": "n"
+     },
+     {
+      "agent": "sam",
+      "at": 16,
+      "i": 15,
+      "trigger": "t6_how_it_works",
+      "v": "n"
+     },
+     {
+      "agent": "sam",
+      "at": 17,
+      "i": 16,
+      "trigger": "t4_half_concession",
+      "v": "p"
+     },
+     {
+      "agent": "sam",
+      "at": 19,
+      "i": 18,
+      "trigger": "t7_time_runs_out",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 11,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 8,
+    "lines_said": 8,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": null,
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-15d",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794731704_b11acf",
+    "speech_end_to_first_played_s": {
+     "n": 8,
+     "p50": 1.743,
+     "p90": 2.661
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_retaliation_fork",
+     "t2_the_opening",
+     "t3_defensiveness",
+     "t5_brush_it_off",
+     "t6_how_it_works",
+     "t4_half_concession",
+     "t7_time_runs_out"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {
+     "probe_pad": 2
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794731704_b11acf"
+  }
+ },
+ "server": "http://127.0.0.1:60548"
+}

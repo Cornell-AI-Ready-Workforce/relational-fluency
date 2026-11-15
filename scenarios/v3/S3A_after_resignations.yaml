@@ -268,14 +268,14 @@ pre_reading:
 #
 # ── The one thing a cue may do that an on_silence may NOT ─────────────────
 #
-# A cue and a probe do not reach the actor through the same sentence, and that
-# decides how a probe has to be written. _trigger_instruction wraps a cue as
-# "Your next move, as <name>, now, in your own words: <cue>" — a move to make,
-# which is why a cue can be a described move. It wraps a probe as "They have
-# gone quiet. As <name>, say this now in your own words, then stop and let them
-# answer: <on_silence>", and "say this" takes the on_silence as its OBJECT. So a
-# probe written as a described move becomes an instruction to speak the
-# description. The three probes here used to read, in full:
+# A cue and a probe used to reach the actor through different sentences, and
+# that decided how a probe has to be written. _trigger_instruction wraps a cue
+# as "Your next move, as <name>, now, in your own words: <cue>" — a move to
+# make, which is why a cue can be a described move. It used to wrap a probe as
+# "They have gone quiet. As <name>, say this now in your own words, then stop
+# and let them answer: <on_silence>", and "say this" took the on_silence as its
+# OBJECT, so a probe written as a described move became an instruction to speak
+# the description. The three probes here used to read, in full:
 #
 #   say this now in your own words ...: They have not answered. Let the pause
 #   sit a second, then point out that the silence is itself the answer ...
@@ -284,16 +284,20 @@ pre_reading:
 # direction about a pause, and to refer to the other person in the third person
 # — the three things the rest of this file spends its length forbidding. It was
 # latent on nto.gemini-live-2.5-flash, which translates it anyway, and live on
-# gpt-realtime. The wrapper lives in server/realtime_voice_session.py and is not
-# this file's to rewrite, so the probes are written to fit it.
+# gpt-realtime. The wrapper lives in server/realtime_voice_session.py
+# (_trigger_instruction) and now reads "They have gone quiet. Your next move, as
+# <name>, now, in your own words, then stop and let them answer: <on_silence>",
+# the cue's framing; the probes here were fixed from this side as well, and
+# both fixes stand.
 #
 # The rule that came out of it: an on_silence is the SUBSTANCE of what gets
-# said, phrased so that it completes "say this now in your own words: …" and
-# cannot be spoken as it stands. A "that …" clause does both — "that their not
-# answering is itself the answer" is unsayable as a sentence, so the actor has
-# to translate it, and it contains no narration for the actor to read out. It is
-# not a quoted line and does not reintroduce one; S1's probes are quoted lines
-# on purpose and say why in their own header.
+# said, phrased so that it completes the wrapper's "...in your own words, then
+# stop and let them answer: …" and cannot be spoken as it stands. A "that …"
+# clause does both — "that their not answering is itself the answer" is
+# unsayable as a sentence, so the actor has to translate it, and it contains no
+# narration for the actor to read out. It is not a quoted line and does not
+# reintroduce one; S1's probes are quoted lines on purpose and say why in their
+# own header.
 #
 # Casey's probe is why this is not cosmetic. It used to end "raise it anyway,
 # both halves of it" — a referring phrase whose referent was in the CUE, and the
@@ -621,6 +625,10 @@ agents:
     name: Jordan
     role: disengaged high performer
     display_role: team member
+    # The shared "about half your turns end on a question" and "do not accept
+    # a brief answer" rules are off for this character (#225): the brief says
+    # how often they ask and that an answer, or none, is final.
+    reticent: true
     realtime_voice:
       gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
       gpt-realtime: cedar  # 129 Hz measured 2026-10-01 (ash until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
@@ -662,6 +670,10 @@ agents:
     name: Casey
     role: anxious junior
     display_role: junior team member
+    # The shared "about half your turns end on a question" and "do not accept
+    # a brief answer" rules are off for this character (#225): the brief says
+    # how often they ask and that an answer, or none, is final.
+    reticent: true
     realtime_voice:
       gemini-live: Leda    # ~224 Hz earlier; 181 Hz re-measured 2026-09-12
       gpt-realtime: sage   # 187 Hz measured 2026-10-01 (marin until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
@@ -709,7 +721,7 @@ interactions:
     opening: >-
       The meeting is already convened. The bad news, no resources, comp off the
       table, is common knowledge.
-    observe: "Honest vs spin · meet the challenge or deflect · credible pride vs cheerleading · probe beneath Jordan's 'fine' · steady Casey · few specific commitments, owned."
+    observe: "Honest vs spin · meet the challenge or deflect · credible pride vs cheerleading · re-engage Jordan with something real · steady Casey · few specific commitments, owned."
     triggers:
       # Specified by intent, not wording: the beat has landed when the claim
       # "nobody above you will stop this happening again" has been said out
@@ -726,8 +738,9 @@ interactions:
         agent: alex
         cue: "When they ask how things stand, tell them in front of Jordan and Casey that two more of you will go and this meeting cannot stop it: the prediction first, then the two who left over pay and the silence from above. If you have said it already, ask instead what in anything they have said would keep the next person from going."
         # Substance, not a described move: this completes the probe wrapper's
-        # "say this now in your own words: …". See the header block on cues and
-        # probes for what the described-move version was making the actor say.
+        # "...in your own words, then stop and let them answer: …". See the
+        # header block on cues and probes for what the described-move version
+        # was making the actor say.
         on_silence: "that two more of you are going to go and that nothing in this meeting is going to stop it, and that their saying nothing is part of why."
         esci: [compelling_vision, builds_pride, not_inspire_r]
       # Bound to Jordan and performed IN THE MEETING (2026-09-23; it used to

@@ -87,6 +87,6 @@ def test_the_generator_writes_the_committed_s3_files():
 
 
 def test_the_pipeline_version_names_this_change():
-    assert llm.PIPELINE_VERSION == "2026-11-15c"
+    assert llm.PIPELINE_VERSION >= "2026-11-15c"
     src = (ROOT / "server" / "llm.py").read_text(encoding="utf-8")
     assert "#   2026-11-15c  S3 rooms (#218, #219)." in src

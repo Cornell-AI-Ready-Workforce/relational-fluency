@@ -508,6 +508,10 @@ agents:
     name: Lee
     role: quietly disengaged top performer
     display_role: senior seller
+    # The shared "about half your turns end on a question" and "do not accept
+    # a brief answer" rules are off for this character (#225): the brief says
+    # how often they ask and that an answer, or none, is final.
+    reticent: true
     realtime_voice:
       gemini-live: Charon  # ~91 Hz earlier; 100 Hz re-measured 2026-09-12
       gpt-realtime: cedar  # 129 Hz measured 2026-10-01 (ash until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
@@ -548,6 +552,10 @@ agents:
     name: Ari
     role: anxious junior
     display_role: junior seller
+    # The shared "about half your turns end on a question" and "do not accept
+    # a brief answer" rules are off for this character (#225): the brief says
+    # how often they ask and that an answer, or none, is final.
+    reticent: true
     realtime_voice:
       gemini-live: Leda    # ~224 Hz earlier; 181 Hz re-measured 2026-09-12
       gpt-realtime: sage   # 187 Hz measured 2026-10-01 (marin until 2026-10-14; docs/OPERATIONS.md, 2026-10-14)
@@ -611,8 +619,9 @@ interactions:
         agent: toni
         cue: "When they ask how things stand, accuse them in front of Lee and Ari of having been sent down to sell this team its own pay cut: the accusation first, flat, as a statement, then that corporate took the money and their job is to make that sound reasonable. If you have said it already, ask instead what in anything they have said is more than the pitch they were sent with."
         # Substance, not a described move: this completes the probe wrapper's
-        # "say this now in your own words: …". See the header, and S3A's longer
-        # note, for what the described-move version was making the actor say.
+        # "...in your own words, then stop and let them answer: …". See the
+        # header, and S3A's longer note, for what the described-move version
+        # was making the actor say.
         on_silence: "that they were sent down here to sell this team its own pay cut, and that their saying nothing is no answer to it."
         esci: [compelling_vision, builds_pride, not_inspire_r]
       # Bound to Lee and performed IN THE MEETING (2026-09-23; it used to open a

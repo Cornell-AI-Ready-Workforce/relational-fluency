@@ -1,0 +1,290 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "ben-rem-fff6e50",
+   "date": "2026-11-15",
+   "pipeline_version": "2026-11-15c",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "t225-24c18fe",
+ "build_from": "--build",
+ "failures": [
+  "S2A: the baseline was recorded on pipeline_version 2026-11-15c; the server runs 2026-11-15d: a different experiment, so re-record it (tools/sim/README.md)"
+ ],
+ "generated_at": "2026-11-15T08:45:36Z",
+ "health": {
+  "build": null,
+  "pipeline_version": "2026-11-15d",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S2A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 1.0,
+     "limit": 0.8,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 0.963
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 1
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 9,
+     "limit": 8,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 9
+    },
+    {
+     "baseline": 1.794,
+     "limit": 3.191,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 1.698
+    },
+    {
+     "baseline": 2.223,
+     "limit": 4.335,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.151
+    },
+    {
+     "baseline": {
+      "pipeline_version": "2026-11-15c"
+     },
+     "metric": "versions",
+     "note": "the baseline was recorded on pipeline_version 2026-11-15c; the server runs 2026-11-15d: a different experiment, so re-record it (tools/sim/README.md)",
+     "ok": false,
+     "value": {
+      "pipeline_version": "2026-11-15d"
+     }
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 1,
+     "p": 1,
+     "x": 1,
+     "y": 6
+    },
+    "build": null,
+    "chances": {
+     "met": 5,
+     "of": 5,
+     "per_item": {
+      "anticipates": 6,
+      "behind_scenes": 3,
+      "multiple_approaches": 4,
+      "self_interest": 4,
+      "through_discussion": 4
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 1,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 1,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "morgan",
+      "at": 53,
+      "c": "LOOP",
+      "i": 53,
+      "line": "Let us meet again on Monday once you have those numbers written down. What else do you ne…",
+      "q": "turn 35",
+      "source": null
+     }
+    ],
+    "lines": 27,
+    "missed": [
+     {
+      "agent": "morgan",
+      "at": 17,
+      "i": 17,
+      "line": "Let us look at it again on Monday once you have those numbers together.",
+      "trigger": "t2_the_money_is_not_there"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S2A",
+    "session_id": "s_1794731704_b2d40c",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 7066,
+     "out": 1373
+    },
+    "verdicts": [
+     {
+      "agent": "morgan",
+      "at": 1,
+      "i": 1,
+      "trigger": "t1_the_opening",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 17,
+      "i": 17,
+      "trigger": "t2_the_money_is_not_there",
+      "v": "n"
+     },
+     {
+      "agent": "morgan",
+      "at": 20,
+      "i": 20,
+      "trigger": "t4_everyone_is_stretched",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 21,
+      "i": 21,
+      "trigger": "t5_the_door",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 23,
+      "i": 23,
+      "trigger": "t6_who_else_has_to_back_it",
+      "v": "p"
+     },
+     {
+      "agent": "morgan",
+      "at": 25,
+      "i": 25,
+      "trigger": "t7_what_goes_in_writing",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 27,
+      "i": 27,
+      "trigger": "t8_what_do_i_tell_the_others",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 29,
+      "i": 29,
+      "trigger": "t9_settling",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 27,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 26,
+    "lines_heard": 27,
+    "lines_said": 27,
+    "participant_turns": 27,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": null,
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-15d",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 1,
+    "session_id": "s_1794731704_b2d40c",
+    "speech_end_to_first_played_s": {
+     "n": 26,
+     "p50": 1.698,
+     "p90": 2.151
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_the_opening",
+     "t2_the_money_is_not_there",
+     "t3_the_argument_lands_flat",
+     "t4_everyone_is_stretched",
+     "t5_the_door",
+     "t6_who_else_has_to_back_it",
+     "t7_what_goes_in_writing",
+     "t8_what_do_i_tell_the_others",
+     "t9_settling"
+    ],
+    "triggers_fired": 9,
+    "turns_suppressed": {
+     "probe_pad": 1
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 1,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794731704_b2d40c"
+  }
+ },
+ "server": "http://127.0.0.1:60549"
+}
