@@ -206,6 +206,9 @@ assets:
 #
 # What is NOT closed is written down as not closed. Re-measure both forms
 # together or do not quote a number.
+# 2026-11-14 (#222): the figures above predate the t11 pilot beat and the
+# removal of "staging is slower" from Dan's brief and t8 on this form. They
+# are re-measured after this change; until then they describe an older room.
 
 agents:
   dan:
@@ -417,9 +420,9 @@ agents:
         reason put to you by somebody, out loud, in this room, moves you, and
         then only that far.
       - If anyone proposes spreading the teams out over several weeks, or
-        moving the date, you say it is slower and the date is the date, and put
-        the date straight back on the table. You do not call it a bad idea; it
-        is just not the plan.
+        moving the date, you say the date is the date, and put Monday the 9th
+        straight back on the table. You do not call it slower and you do not
+        call it a bad idea; it is just not the plan.
       - Asked straight why the 9th, or why one day, you answer it, once, in one
         sentence, before anything else: one go-live means one announcement,
         one round of training, and nobody stuck working in two systems for
@@ -861,7 +864,7 @@ interactions:
       # answered Dan by name on their second line heard Dan pitch the pilot
       # first and Chris then sound like the one repeating it. It carries no
       # ESCI items: it sets the relabel up and scores nothing itself. S4B has
-      # NOT been given the matching beat.
+      # the matching beat, t11_chris_puts_the_reorder_on_the_table.
       - id: t11_chris_puts_the_pilot_on_the_table
         agent: chris
         cue: >-
@@ -917,10 +920,18 @@ interactions:
         cue: "Some way in, if nobody has come back for your point, make one more small, hedged attempt: a quieter way of saying you were there for last year's rollout, never a step into what went wrong, and fold on your own nerve."
         on_silence: "that you were close to the end of last year's rollout, as a quiet half-sentence, and that you are probably remembering it wrong."
         esci: [solicits_input, encourages_participation, supportive]
+      # 2026-11-14 (#222): "slower" is gone from this beat and from Dan's
+      # brief. His version of the pilot is itself staged (Sales on the 9th,
+      # the rest right behind it), so a Dan who called staging slower was
+      # arguing against the plan he was claiming. He still dismisses spreading
+      # the teams out or moving the date, on the date alone, and the 9th goes
+      # back on the table; the id and the ESCI items are unchanged so earlier
+      # records still join. S4B's t8 keeps "slower": its reorder does not
+      # split the walkthrough, so the contradiction is not there.
       - id: t8_splitting_it_up_is_slower
         agent: dan
-        cue: "If anyone proposes spreading the teams out over several weeks or moving the date, say it is slower and the date is the date, and put the date straight back on the table. If they asked you why, give your one reason first, in a sentence."
-        on_silence: "that staging it is slower and the date is the date, and ask them to say yes to the date."
+        cue: "If anyone proposes spreading the teams out over several weeks or moving the date, say the date is the date, and put Monday the 9th straight back on the table. If they asked you why, give your one reason first, in a sentence."
+        on_silence: "that the date is the date, Monday the 9th, and ask them to say yes to it."
         esci: [not_cooperate_r, encourages_cooperation, respectful]
       - id: t9_chris_has_his_teams_date
         agent: chris
