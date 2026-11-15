@@ -595,7 +595,9 @@ async def test_lost_scribe_without_a_commit_requests_clarification(monkeypatch):
 
 @pytest.mark.parametrize("clarified", [False, True])
 @in_a_loop
-async def test_probe_grant_keeps_old_nudge_after_any_participant_turn(monkeypatch, clarified):
+async def test_probe_grant_uses_the_probe_nudge_after_any_participant_turn(monkeypatch, clarified):
+    # Until pipeline 2026-11-15b the probe kept _TEXT_GRANT_NUDGE ("waiting
+    # for you to answer what they just said"); see tests/test_room_probe_nudge.py.
     scripts = [Transcript()] + ([Transcript("", fail=True)] if clarified else [])
     chats, _ = wire(monkeypatch, scripts)
     h = await Room(monkeypatch, model=CASCADE).open()
@@ -610,7 +612,7 @@ async def test_probe_grant_keeps_old_nudge_after_any_participant_turn(monkeypatc
         assert pending and pending.get("on_silence")
         await h.runner._probe_room()
         await until(lambda: len(chats) == len(scripts) + 1)
-        assert user_lines(chats[-1])[-1] == gr._TEXT_GRANT_NUDGE
+        assert user_lines(chats[-1])[-1] == gr._PROBE_GRANT_NUDGE
         assert "gone quiet" in chats[-1]["messages"][0]["content"]
         assert h.of("trigger_fired")[-1]["probing"]
         assert turn.clarification is clarified
