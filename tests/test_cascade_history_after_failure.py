@@ -78,21 +78,39 @@ def _audio_parts(messages):
                for p in m["content"] if p.get("type") == "input_audio")
 
 
+def _unanswered_audio(messages):
+    """Audio-only user turns no assistant turn follows: the request's own
+    turn may be one, a stale clip must not be."""
+    return sum(1 for n, m in enumerate(messages)
+               if isinstance(m.get("content"), list)
+               and (n + 1 == len(messages) or messages[n + 1]["role"] != "assistant"))
+
+
+def _no_repeated_assistant(messages):
+    roles = [m["role"] for m in messages]
+    return all(not (a == b == "assistant") for a, b in zip(roles, roles[1:]))
+
+
+def _fake_tts(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cascade, "eleven_key", lambda: "k")
+
+    async def opener():
+        return FakeTTS(seen)
+    monkeypatch.setattr(cascade, "open_tts", opener)
+
+
 def test_failed_turns_leave_no_stale_audio_and_roles_stay_in_order(monkeypatch):
     async def go():
-        seen = {}
-        monkeypatch.setattr(cascade, "eleven_key", lambda: "k")
-
-        async def opener():
-            return FakeTTS(seen)
-        monkeypatch.setattr(cascade, "open_tts", opener)
+        _fake_tts(monkeypatch)
         last_gate = asyncio.Event()
+        fifth_gate = asyncio.Event()
         script = {
             "stt": [("Hi Morgan, I wanted to talk about my pay.", None),
                     httpx.ReadError("read"),            # turn 2: STT fails
                     httpx.ConnectTimeout("connect"),    # turn 3: STT fails
                     ("What would you need from me?", last_gate),
-                    ("Thanks.", None)],
+                    ("Thanks.", fifth_gate)],
             "reply": ["I hear you. What did you want to ask?",
                       httpx.ReadError("read"),          # turn 2: reply fails
                       httpx.ConnectTimeout("connect"),  # turn 3: reply fails
@@ -124,7 +142,9 @@ def test_failed_turns_leave_no_stale_audio_and_roles_stay_in_order(monkeypatch):
             assert msgs[3]["content"][0]["type"] == "input_audio"
             assert _audio_parts(msgs) == 1
 
-            for t in await _turn(sock, 5):
+            pending = await _turn(sock, 5)
+            fifth_gate.set()
+            for t in pending:
                 await t
             msgs = chats[4]["messages"]
             assert [m["role"] for m in msgs] == [
@@ -135,6 +155,91 @@ def test_failed_turns_leave_no_stale_audio_and_roles_stay_in_order(monkeypatch):
             # participant's words.
             said = {"I hear you. What did you want to ask?", "A written case by Friday."}
             assert {m["content"] for m in msgs if m["role"] == "assistant"} == said
-            assert _audio_parts(msgs) <= 1        # at most turn 5's own audio
+            # Turn 5's own audio, its hearing still out, is the one audio.
+            assert msgs[5]["content"][0]["type"] == "input_audio"
+            assert _audio_parts(msgs) == 1
+            await sock.close()
+    asyncio.run(go())
+
+
+def test_failed_hearing_whose_reply_was_spoken_keeps_its_audio(monkeypatch):
+    """STT fails, the reply succeeds: the turn's audio stays before the
+    reply, so the conversation never has two assistant turns in a row."""
+    async def go():
+        _fake_tts(monkeypatch)
+        gate = asyncio.Event()
+        script = {
+            "stt": [("Hi Morgan, I wanted to talk about my pay.", None),
+                    httpx.ReadError("read"),            # turn 2: STT fails
+                    ("What would you need from me?", gate)],
+            "reply": ["I hear you. What did you want to ask?",
+                      "Tell me more about the numbers.",  # turn 2: reply ok
+                      "A written case by Friday."],
+        }
+        handle, chats = _gateway(script)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            sock = Wire(api_key="k", http=client)
+            sock.instructions = "You are Morgan."
+            for n in (1, 2):
+                for t in await _turn(sock, n):
+                    await t
+            assert not [f for f in sock.frames if f["type"] == "error"]
+            assert sum(1 for f in sock.frames if f["type"].endswith(
+                "input_audio_transcription.failed")) == 1
+            # Turn 2's reply heard turn 2's audio.
+            msgs = chats[1]["messages"]
+            assert [m["role"] for m in msgs] == ["system", "user", "assistant", "user"]
+            assert msgs[3]["content"][0]["type"] == "input_audio"
+
+            pending = await _turn(sock, 3)
+            gate.set()
+            for t in pending:
+                await t
+            msgs = chats[2]["messages"]
+            assert [m["role"] for m in msgs] == [
+                "system", "user", "assistant", "user", "assistant", "user"]
+            assert msgs[3]["content"][0]["type"] == "input_audio"   # turn 2, answered
+            assert msgs[4]["content"] == "Tell me more about the numbers."
+            assert msgs[5]["content"][0]["type"] == "input_audio"   # turn 3, its own
+            assert _unanswered_audio(msgs) == 1
+            assert _no_repeated_assistant(msgs)
+            await sock.close()
+    asyncio.run(go())
+
+
+def test_heard_turn_whose_reply_failed_stays_as_text(monkeypatch):
+    """STT succeeds, the reply fails: the turn stays as its transcript with
+    no audio, and no empty assistant turn is sent."""
+    async def go():
+        _fake_tts(monkeypatch)
+        gate = asyncio.Event()
+        script = {
+            "stt": [("Hi Morgan, I wanted to talk about my pay.", None),
+                    ("I think I am underpaid.", None),
+                    ("What would you need from me?", gate)],
+            "reply": ["I hear you. What did you want to ask?",
+                      httpx.ConnectTimeout("connect"),  # turn 2: reply fails
+                      "A written case by Friday."],
+        }
+        handle, chats = _gateway(script)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            sock = Wire(api_key="k", http=client)
+            sock.instructions = "You are Morgan."
+            for n in (1, 2):
+                for t in await _turn(sock, n):
+                    await t
+            errors = [f["error"]["code"] for f in sock.frames if f["type"] == "error"]
+            assert errors == ["cascade_failed"]
+
+            pending = await _turn(sock, 3)
+            gate.set()
+            for t in pending:
+                await t
+            msgs = chats[2]["messages"]
+            assert [m["role"] for m in msgs] == [
+                "system", "user", "assistant", "user", "user"]
+            assert msgs[3]["content"] == "I think I am underpaid."
+            assert msgs[4]["content"][0]["type"] == "input_audio"   # turn 3, its own
+            assert _audio_parts(msgs) == 1
             await sock.close()
     asyncio.run(go())

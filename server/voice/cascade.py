@@ -566,14 +566,13 @@ class CascadeSocket:
             raise
         except Exception as exc:  # noqa: BLE001 - a failed hearing is an event
             outcome = "failed"
-            # No transcript is coming, so the turn's audio must not stay in
-            # the conversation: every later reply would carry it (a reply
-            # already asked has its messages). Stale audio-only user turns
-            # made flash-lite speak the participant's next line
+            # No transcript is coming. _messages keeps the audio only while
+            # the turn is current or a reply answered it; stale audio-only
+            # user turns made flash-lite speak the participant's next line
             # (S2A 2026-11-14: 10/12 replays, 0/12 without them).
             for it in self.items:
                 if it["id"] == iid:
-                    it.pop("audio", None)
+                    it["stt_failed"] = True
             self._emit({"type": "conversation.item.input_audio_transcription.failed",
                         "item_id": iid, "error": {
                             "type": "server_error", "code": "stt_failed",
@@ -643,7 +642,17 @@ class CascadeSocket:
 
     def _messages(self) -> list:
         msgs = [{"role": "system", "content": self.instructions or "You are a helpful voice assistant."}]
-        for it in self.items:
+        for n, it in enumerate(self.items):
+            if it.get("stt_failed") and it.get("audio"):
+                # A failed hearing's audio is kept only when the turn is
+                # still current (nothing after it but the reply in flight) or
+                # an assistant item follows it (its reply was spoken).
+                # Otherwise it would be a stale audio-only user turn, and
+                # dropping it after a spoken reply would leave two
+                # assistant turns in a row.
+                nxt = self.items[n + 1] if n + 1 < len(self.items) else None
+                if nxt is not None and nxt["role"] != "assistant":
+                    continue
             if it["type"] == "function_call_output":
                 msgs.append({"role": "tool", "tool_call_id": it.get("call_id") or "",
                              "content": it["text"]})
