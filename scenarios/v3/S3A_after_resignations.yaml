@@ -761,8 +761,8 @@ interactions:
         esci: [compelling_vision, inspires, not_inspire_r]
       - id: t5_a_fact_left_on_the_table
         agent: jordan
-        cue: "State in one flat sentence what breaks if nobody does the second pass, then stop. It is not an opening."
-        on_silence: "what breaks if nobody does the second pass on the reviews, in one flat sentence."
+        cue: "State in one flat sentence what nobody doing the second pass means, from your own facts only and with no contract, clause, day or number: reviews go out with nobody reading behind them, and one that comes back wrong comes back on the name on it, then stop. It is not an opening."
+        on_silence: "that with nobody doing the second pass, reviews go out with nobody reading behind them and one that comes back wrong comes back on the name on it, in one flat sentence, with no contract, clause, day or number."
         esci: [brings_out_best, inspires, builds_pride]
       - id: t6_one_clarifying_question
         agent: casey

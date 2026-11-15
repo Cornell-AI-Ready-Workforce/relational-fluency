@@ -1407,7 +1407,21 @@ class RealtimeVoiceSessionRunner:
         caps = _realtime.capabilities_for(model or realtime_model())
         return caps is not None and not caps.honours_session_update
 
-    def _first_room_reply_note(self, opening: str) -> str:
+    def _lead_opens_on_a_hello(self, agent) -> bool:
+        """True when the room's first beat is the lead's and is a greeting
+        that scores nothing (S3A/S3B `t0_hello`, `esci: []`): its cue says a
+        hello-only first line gets only a hello back, so the FIRST REPLY note
+        must not also tell the lead to make an opening move in that reply
+        (#218). S4A/S4B open on a scored beat and keep the opening move."""
+        triggers = self._triggers()
+        if not triggers:
+            return False
+        first = triggers[0]
+        return (self._trigger_agent(first) == getattr(agent, "id", None)
+                and not first.get("esci"))
+
+    def _first_room_reply_note(self, opening: str,
+                               hello_only: bool = False) -> str:
         """A room lead's framing, as a standing note for its FIRST reply.
 
         Until pipeline 2026-09-28b this was the direction that made the lead
@@ -1421,11 +1435,24 @@ class RealtimeVoiceSessionRunner:
         A FIRST REPLY header like the 1:1 note's, not a DIRECTOR NOTE, so a
         beat briefed for the same reply (_brief_member) stays the only
         director note in the brief. No sentence count: SPEECH_RULES sets it.
+
+        `hello_only` (_lead_opens_on_a_hello): the lead's first beat is a
+        greeting that stops after the hello when that is all they said, so
+        the note says the same instead of "make your opening move" (#218).
         """
+        if hello_only:
+            move = (
+                "Begin with a greeting of one short sentence, the kind two people who work together actually exchange. Never introduce yourself or recap the situation to someone who already knows it. "
+                "If all they have said is hello, that greeting is the whole of this reply: say hello back and stop. If they have already asked something, the greeting fronts your answer to it. "
+            )
+        else:
+            move = (
+                "Begin with a greeting of one short sentence, the kind two people who work together actually exchange: a hello and a how-are-you. Never introduce yourself or recap the situation to someone who already knows it; say only what they could not know, in plain words, if there is such a thing. Then, in the same reply, make your opening move. "
+            )
         return (
             "\n\nFIRST REPLY, for you alone — never say any of this out loud:\n"
             "The participant speaks first. "
-            "Begin with a greeting of one short sentence, the kind two people who work together actually exchange: a hello and a how-are-you. Never introduce yourself or recap the situation to someone who already knows it; say only what they could not know, in plain words, if there is such a thing. Then, in the same reply, make your opening move. "
+            + move +
             "Your FIRST "
             "reply in this meeting, whatever they opened with, is where the "
             f"scene is found: «{opening}». If that quotes a line of dialogue, "
@@ -1552,7 +1579,8 @@ class RealtimeVoiceSessionRunner:
         model = realtime_model()
         folded = group or self._steering_is_inert(model)
         if folded:
-            self._opening_note = (self._first_room_reply_note(opening)
+            self._opening_note = (self._first_room_reply_note(
+                                      opening, self._lead_opens_on_a_hello(agent))
                                   if group else self._first_reply_note(
                                       opening, getattr(agent, "name", "") or ""))
             self._opening_agent = agent.id
