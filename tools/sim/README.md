@@ -178,10 +178,14 @@ participant is waiting for you to answer"), build label probe-nudge-005de7d,
 the four run in parallel, one checkout each
 (reports/probe-nudge-005de7d-S1A.json ... -S4A.json). The judge passed all
 four with no FACT, ROLE or SAFE (beats made 8 of 8, 8 of 9, 7 of 7, 10 of 13);
-no voice_error; p90 2.3, 2.0, 2.6 and 2.5 s. Two extra S4A runs the same
+the check counted no voice_error (S2A and S4A log three
+response_cancel_not_active at the interaction boundary, as on 15a); p90 2.3, 2.0, 2.6 and 2.5 s. Two extra S4A runs the same
 night also had FACT 0 (beats made 10 of 14 and 6 of 13), so all three S4A runs
 were FACT 0, each with the t5 probe and two or three keep-going grants, where
-on 15a two live runs and the S4A fact fix had a FACT in a t5 probe. Before
+on 15a two live runs and the S4A fact fix had a FACT in a t5 probe. The t5
+probe still missed its move in one of the three (S4A extra run 6 of 13, t=107:
+Priya restated Support's date, correctly, instead of last year's rollout), so
+watch t5 on later runs; three runs is a small sample. Before
 that, all four were
 re-recorded on 2026-11-15 on pipeline 2026-11-15a (#279: a room member's
 spent director note leaves its brief; room wording names the participant),
