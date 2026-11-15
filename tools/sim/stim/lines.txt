@@ -53,7 +53,7 @@ b12|Daniel|Okay, let's wrap up. Thanks, everyone.
 # line in the same place with the story swapped (d1 for s4, d2 for b2, d5 for
 # b5, d10 for b10, d11 for b11); the moves that name no story (b3, b4, b6-b9,
 # b12) are S4A's own clips, so both forms hear the same audio there.
-d1|Daniel|Priya, I'm not sure the running order works for the client or for Chris.
+d1|Daniel|Priya, I'm not sure the running order works for Dan's section or for Chris.
 d2|Daniel|Dan, can you walk me through the whole deck, slide by slide, from the first section all the way to the training part?
 d5|Daniel|the timing for Chris's section?
 d10|Daniel|Dan, who is going to send the final deck to the client?
