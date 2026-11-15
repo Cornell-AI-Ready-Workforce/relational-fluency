@@ -1057,6 +1057,10 @@ class RealtimeVoiceSessionRunner:
         # Taken with the unrouted texts, so it never outlives the turn that
         # reads it.
         self._unreliable_arrivals: List[dict] = []
+        # The floor holder's reply a barge-in cut before any of it reached
+        # the page, until the onset that cut it has a verdict
+        # (_rerequest_unheard_cut, pipeline 2026-11-14a).
+        self._unheard_cut: Optional[dict] = None
         # Participant lines being heard again right now (_speech_check): a
         # transcript that has arrived and is not written yet, which a room's
         # routing waits for as it waits for one still owed by the scribe.
@@ -3493,6 +3497,12 @@ class RealtimeVoiceSessionRunner:
                     reason="empty_response",
                 )
                 self._pending_direction = None
+                # The note is still in the member's prompt: if this reply is
+                # asked for again, that row names the beat it may perform
+                # (_rerequest_unheard_cut).
+                cut = getattr(self, "_unheard_cut", None)
+                if cut and cut.get("agent_id") == agent.id:
+                    cut["trigger_id"] = pending.get("trigger_id")
             if self.room is None or self.room.speaking == agent.id:
                 self._response_done.set()
             return
@@ -6729,6 +6739,13 @@ class RealtimeVoiceSessionRunner:
                         holder_heard_s = (self._heard_seconds(cut_st, now=cut_now)
                                           if holder_playing else 0.0)
                         if entry is not None and agent is not None:
+                            # Nothing of this reply was heard: if the onset
+                            # that cut it turns out to be no speech, the
+                            # member is asked again (_rerequest_unheard_cut).
+                            self._unheard_cut = None if holder_heard else {
+                                "agent_id": speaking_id, "room": self.room,
+                                "onset": self._speech_started_at,
+                                "turns": self._turn_index, "at": cut_now}
                             buf, state = entry
                             announced_now = state["announced"]
                             # Cleared BEFORE spawning, and latched, for the
@@ -9262,6 +9279,55 @@ class RealtimeVoiceSessionRunner:
                 await _memory_forget(self, aid, hold_rid,
                                      why="participant_speaking", text=hold_text)
 
+    async def _rerequest_unheard_cut(self, room, arrivals: list,
+                                     began: float) -> None:
+        """Ask the floor holder again when a barge-in cut its reply before any
+        of it was heard and the onset that cut it was no speech (pipeline
+        2026-11-14a).
+
+        The barge-in bar (VAD_BARGE_RMS for VAD_BARGE_MS) is loudness and
+        duration, and a cough or a knock clears it; the transcript's verdict
+        comes ~2 s later. S4A s_1794589855_4e0480 at 345.9 s and 354.8 s:
+        Chris granted, cut 0.6-0.9 s later with nothing played
+        (empty_response), the onset suppressed as [no speech], and the turn
+        skipped; the participant had to ask twice and the second time a
+        different member answered. Once, for the turn whose onset made the
+        cut, only when every arrival is no_speech, nothing has been written or
+        granted since, and the room is idle. A heard reply is not re-asked
+        (it would repeat a line); real speech routes as before."""
+        cut, self._unheard_cut = getattr(self, "_unheard_cut", None), None
+        if not cut or cut.get("room") is not room or self.room is not room:
+            return
+        if (cut["onset"] < began or cut["turns"] != self._turn_index
+                or not arrivals
+                or any(a.get("reason") != "no_speech" for a in arrivals)):
+            return
+        aid = cut["agent_id"]
+        if (room.speaking is not None or aid not in room.sessions
+                or self._closed or getattr(self, "_advancing", False)
+                or getattr(self, "_transitioning", False)):
+            return
+        self._response_done.clear()
+        granted = await self._grant(aid)
+        # trigger_id: the beat empty_response wrote stage_direction_unperformed
+        # for, whose note the member still has, so the re-asked reply may
+        # perform it; None when the cut reply carried no beat.
+        self.session.store.event(
+            "cut_reply_rerequested", agent_id=aid,
+            requested=granted is not None, trigger_id=cut.get("trigger_id"),
+            segment=self.segment,
+            interaction=self._interaction_id(),
+            since_cut_s=round(time.time() - cut["at"], 3))
+        if granted is not None:
+            try:
+                await asyncio.wait_for(self._response_done.wait(), timeout=45)
+            except asyncio.TimeoutError:
+                self.session.store.event("group_turn_timeout", agent_id=aid,
+                                         granted=True)
+                granted.clear_response_state()
+        if self.room is room and room.speaking == aid:
+            room.speaking = None
+
     def _split_turn_continues(self) -> bool:
         """True when a barge-in is the participant resuming their own turn
         rather than interrupting a character: in a room, with the floor held
@@ -9296,6 +9362,8 @@ class RealtimeVoiceSessionRunner:
         """
         if self.room is None:
             return None
+        # Any grant answers the room after the cut (_rerequest_unheard_cut).
+        self._unheard_cut = None
         _timer(self).grant_sent(agent_id)
         self.room.speaking = agent_id
         # Nothing of this grant's reply has reached the page yet (_send).
@@ -9581,6 +9649,7 @@ class RealtimeVoiceSessionRunner:
                     arrivals=unreliable, segment=self.segment,
                     interaction=self._interaction_id(),
                 )
+                await self._rerequest_unheard_cut(room, unreliable, began)
                 return
             if not fresh and self._awaiting_participant and not (
                     text_turn is not None and hearing.accepted(text_turn)):
