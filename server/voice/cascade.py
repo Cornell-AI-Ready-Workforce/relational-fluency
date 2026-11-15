@@ -566,6 +566,14 @@ class CascadeSocket:
             raise
         except Exception as exc:  # noqa: BLE001 - a failed hearing is an event
             outcome = "failed"
+            # No transcript is coming, so the turn's audio must not stay in
+            # the conversation: every later reply would carry it (a reply
+            # already asked has its messages). Stale audio-only user turns
+            # made flash-lite speak the participant's next line
+            # (S2A 2026-11-14: 10/12 replays, 0/12 without them).
+            for it in self.items:
+                if it["id"] == iid:
+                    it.pop("audio", None)
             self._emit({"type": "conversation.item.input_audio_transcription.failed",
                         "item_id": iid, "error": {
                             "type": "server_error", "code": "stt_failed",

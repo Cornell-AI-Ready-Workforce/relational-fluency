@@ -765,6 +765,11 @@ def text_client() -> AsyncAnthropic:
 #                close and drop every beat still to come (five of them in a
 #                run of 2026-11-14). With the beats spent a call advances as
 #                before; the pacing rules, move-on and ceiling are unchanged.
+#   2026-11-14a  (also) cascade: a turn whose transcription failed no longer
+#                keeps its audio in the conversation. Every later reply carried
+#                it, and after two failed turns in S2A flash-lite spoke the
+#                participant's next scripted line for the rest of the
+#                encounter (replayed: 10/12 with the stale audio, 0/12 without).
 PIPELINE_VERSION = "2026-11-14a"
 ROOM_PACING_VERSION = "2026-11-04a"
 
