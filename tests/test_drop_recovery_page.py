@@ -508,6 +508,29 @@ async function connected(position, total, opts) {
     assert.strictEqual(card(b).reconnect, 'Reconnect', card(b).text);
   }
 
+  // ---- 8b. #272: a stopped microphone and paused audio each say one thing,
+  //          about what stopped, with the same Reconnect (never "could not
+  //          continue", even after a stated error)
+  for (const [reason, lineRe, pill, lead] of [
+    ['mic', /^Your microphone stopped\. Plug it back in, then press Reconnect\. This conversation starts again from the beginning\.$/,
+     'Microphone stopped', /^Your microphone stopped\. Plug it back in, then press Reconnect to carry on: this conversation will start again/],
+    ['audio', /^Your browser paused this page’s audio, so nothing was being heard or recorded\. Press Reconnect to start this conversation again from the beginning\.$/,
+     'Audio paused', /^Your browser paused this page’s audio\. Nothing was being heard or recorded\. Press Reconnect to carry on: /],
+  ]) {
+    const b = await connected(2, 4);
+    frame(b, { type: 'error', message: 'x' });
+    set(b, 'started = true;');
+    const before = b.dom.$('transcript').children.length;
+    b.ctx.onConnectionDropped(reason);
+    const lines = b.dom.$('transcript').children.slice(before).map(x => x.textContent);
+    assert.strictEqual(lines.length, 1, reason + ': not one line: ' + JSON.stringify(lines));
+    assert(lineRe.test(lines[0]), reason + ': ' + lines[0]);
+    assert.strictEqual(b.dom.$('turnState').textContent, pill, reason);
+    const c = card(b);
+    assert(lead.test(c.text) && !/Connection lost|could not continue/.test(c.text), reason + ': ' + c.text);
+    assert.strictEqual(c.reconnect, 'Reconnect', reason);
+  }
+
   // ---- 8. A finished encounter clears the drop count for the next one
   {
     const b = await connected(1, 4);
@@ -550,6 +573,11 @@ def test_every_reconnect_instruction_says_what_reconnect_does():
     assert "Click Reconnect" not in src
     assert "this part of the conversation again" not in src
     said = "Press Reconnect to start this conversation again from the beginning."
-    assert src.count(said) == 2, "the transcript line and the paused-audio notice differ"
+    assert src.count(said) == 2, "the transcript line and the paused-audio line differ"
+    # #272: the paused-audio line is onConnectionDropped's own, written once,
+    # not a notice of its own followed by the connection line.
     pause = src[src.index("function watchAudioContextState("):src.index("function watchMediaTracks(")]
-    assert said in pause.replace("' +\n                     '", "")
+    assert "onConnectionDropped('audio')" in pause and "appendNotice(" not in pause, pause
+    reasons = src[src.index("const DROP_REASONS = {"):src.index("function onConnectionDropped(")]
+    audio = reasons[reasons.index("audio: {"):]
+    assert said in audio, audio

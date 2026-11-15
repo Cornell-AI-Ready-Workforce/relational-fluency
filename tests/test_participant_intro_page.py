@@ -160,9 +160,23 @@ WORDING = r"""
   // The blocked-microphone help, as the audio check shows it, and the room's:
   // one instruction, each ending on its own button (FLOW-08).
   const room = vm.runInContext('CAPTURE_MESSAGES.denied', b.ctx);
-  assert.strictEqual(room, 'Your browser has blocked the microphone for this page. Click the mic or '
-    + 'camera icon at the end of the address bar, choose Allow, then reload this page and press '
-    + 'Start conversation again.');
+  // #268: the icon is at the left in Chrome 131+ and Firefox, and neither has
+  // an Allow button in its panel.
+  assert.strictEqual(room, 'Your browser has blocked the microphone for this page. Click the '
+    + 'microphone or camera icon at the left of the address bar. In Chrome, switch Microphone and '
+    + 'Camera on. In Firefox, click the X beside Blocked. Then reload this page, choose Allow if the '
+    + 'browser asks, and press Start conversation again.');
+  // A blocked camera gets the same steps, reload included.
+  const cam = vm.runInContext('CAPTURE_MESSAGES.camera', b.ctx);
+  assert(cam.endsWith('camera icon at the left of the address bar. In Chrome, switch Microphone and '
+    + 'Camera on. In Firefox, click the X beside Blocked. Then reload this page, choose Allow if the '
+    + 'browser asks, and press Start conversation again.'), cam);
+  assert(/close any other app that is using the camera/i.test(cam), cam);
+  for (const k of ['unanswered']) {
+    for (const t of [vm.runInContext('CAPTURE_MESSAGES.' + k, b.ctx), vm.runInContext('MIC_CHECK_HELP.' + k, b.ctx)]) {
+      assert(/left of the address bar/.test(t) && !/end of the address bar/.test(t), t);
+    }
+  }
   const denied = vm.runInContext('MIC_CHECK_HELP.denied', b.ctx);
   assert.strictEqual(denied, room.replace(' and press Start conversation again.', ' and try again.'));
   assert(/Your browser has blocked the microphone for this page\./.test(denied), denied);
@@ -830,6 +844,25 @@ PLACED = RUN_VIEW + A11Y_DOM + r"""
   b.fire('resize');
   assert.strictEqual(drop.style.top, '166px');
   assert.strictEqual(drop.style.maxHeight, '197px', 'the card kept the old screen\'s height');
+
+  // #269: from 641 px wide the header and #statusGroup are display: contents
+  // (they measure 0) and the button row (#actionGroup) is under the tiles at
+  // the bottom of the window. Measuring it put the card at 848px with 40px
+  // to show it in. There the card goes under the banner.
+  b.sandbox.innerWidth = 1440;
+  b.sandbox.innerHeight = 900;
+  headerBottom = 0;
+  b.dom.$('statusGroup').getBoundingClientRect = () => ({ bottom: 0 });
+  b.dom.$('actionGroup').getBoundingClientRect = () => ({ bottom: 840 });
+  b.fire('resize');
+  assert.strictEqual(drop.style.top, '35px', 'the card was placed under the button row: ' + drop.style.top);
+  assert.strictEqual(drop.style.maxHeight, '853px', 'the card was cut to one line: ' + drop.style.maxHeight);
+  // A phone keeps today's rule: there the button row sits above the room.
+  b.sandbox.innerWidth = 390;
+  b.sandbox.innerHeight = 844;
+  b.dom.$('actionGroup').getBoundingClientRect = () => ({ bottom: 180 });
+  b.fire('resize');
+  assert.strictEqual(drop.style.top, '188px', 'the phone lost its rule: ' + drop.style.top);
 """
 
 

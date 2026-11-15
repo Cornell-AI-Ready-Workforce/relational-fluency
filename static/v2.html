@@ -2915,10 +2915,16 @@
   // study". Never above the banner, which stays when the header scrolls away.
   // On a phone the header has no box of its own (only its status row is
   // pinned there), so its rows are measured instead.
+  // From 641 px the header and #statusGroup are display: contents (they
+  // measure 0) and the button row sits under the tiles at the bottom of the
+  // room card (.controls order: 2), so measuring #actionGroup put the note at
+  // the bottom of the window, one cut line with Reconnect out of view (#269).
+  // There the note goes under the banner.
   function placeNote(n) {
     const bottom = (el) => (el ? el.getBoundingClientRect().bottom || 0 : 0);
+    const ids = window.innerWidth > 640 ? ['aiBanner'] : ['aiBanner', 'statusGroup', 'actionGroup'];
     const top = Math.round(Math.max(bottom(document.querySelector('header')),
-      ...['aiBanner', 'statusGroup', 'actionGroup'].map(id => bottom($(id))))) + 8;
+      ...ids.map(id => bottom($(id))))) + 8;
     n.style.top = top + 'px';
     if (window.innerHeight) n.style.maxHeight = (window.innerHeight - top - 12) + 'px';
   }
@@ -3341,12 +3347,18 @@
   // A blocked microphone gets one instruction, in the room and in the audio
   // check (FLOW-08). The room's was "Please allow microphone access and try
   // again", with no how-to and no reload, beside the check's full one.
-  const MIC_BLOCKED_HOWTO = 'Your browser has blocked the microphone for this page. Click the mic '
-    + 'or camera icon at the end of the address bar, choose Allow, then reload this page';
+  // The icon is at the LEFT of the address bar in Chrome 131+ and Firefox, and
+  // neither panel has an Allow button: Chrome has on/off switches, Firefox an X
+  // that removes the block (#268). No full stop: the caller ends the sentence.
+  const BLOCKED_HOWTO_STEPS = 'In Chrome, switch Microphone and Camera on. In Firefox, click the X '
+    + 'beside Blocked. Then reload this page, choose Allow if the browser asks,';
+  const MIC_BLOCKED_HOWTO = 'Your browser has blocked the microphone for this page. Click the '
+    + 'microphone or camera icon at the left of the address bar. ' + BLOCKED_HOWTO_STEPS;
   const CAPTURE_MESSAGES = {
     camera: 'This study records video, so your camera needs to be on for every conversation. ' +
-            'Please allow camera access (look for the camera icon in the address bar), close any ' +
-            'other app that is using the camera, then press Start conversation again.',
+            'Close any other app that is using the camera. If your browser blocked the camera, ' +
+            'click the camera icon at the left of the address bar. ' + BLOCKED_HOWTO_STEPS +
+            ' and press Start conversation again.',
     denied: MIC_BLOCKED_HOWTO + ' and press Start conversation again.',
     missing: 'We couldn’t find a working microphone. Check that one is plugged in and that no other ' +
              'app (a video call, a recorder) is using it, then try again.',
@@ -3356,7 +3368,7 @@
                  'an up-to-date Google Chrome and try again.',
     unanswered: 'Your browser asked whether this page may use your microphone, and is still waiting ' +
                 'for an answer. Look for the permission bar at the top of the browser window (or the ' +
-                'camera icon at the end of the address bar), choose Allow, then press Start ' +
+                'camera icon at the left of the address bar), choose Allow, then press Start ' +
                 'conversation again.',
   };
 
@@ -3381,7 +3393,7 @@
     denied: MIC_BLOCKED_HOWTO + ' and try again.',
     unanswered: 'Your browser has asked whether this page may use your microphone and is still '
               + 'waiting for an answer. Look for the permission bar at the top of the window, or the '
-              + 'icon at the end of the address bar, choose Allow, then press Test my microphone again.',
+              + 'icon at the left of the address bar, choose Allow, then press Test my microphone again.',
     // The one that has to say the hard thing. The conversations ARE the study,
     // and they are spoken — there is no typing path and no silent path, so a
     // computer with no microphone cannot take part. Saying that here is kinder
@@ -3664,9 +3676,8 @@
       ctxWatchdog = setTimeout(() => {
         ctxWatchdog = null;
         if (!started || ctx !== audioCtx || ctx.state === 'running') return;
-        appendNotice('Your browser paused this page’s audio, so nothing was being heard or recorded. ' +
-                     'Press Reconnect to start this conversation again from the beginning.');
-        onConnectionDropped();
+        // The card, the pill and the one transcript line say why (#272).
+        onConnectionDropped('audio');
       }, 2000);
     });
   }
@@ -3692,9 +3703,9 @@
         } else {
           // Without a microphone there is no encounter left to have: the
           // participant would keep talking into a dead channel while the
-          // characters wait.
-          appendNotice('Your microphone stopped working, so this conversation cannot continue.');
-          onConnectionDropped();
+          // characters wait. One message, about the microphone, not the
+          // connection, with the same Reconnect (#272).
+          onConnectionDropped('mic');
         }
       });
     });
@@ -5189,7 +5200,12 @@
       // a dead socket with everything after the drop lost from the transcript.
       // onConnectionDropped() ends the session and offers Reconnect, which
       // resumes the same encounter rather than restarting the study.
-      setMicVisual(''); setTurnState('', ''); $('gate').classList.remove('show');
+      // A drop the page already reported (a stopped microphone, paused audio)
+      // closes the socket after its card is up: keep that card's pill (#272).
+      // (cardOpeners holds a card from showOverlay until hideOverlay.)
+      setMicVisual('');
+      if (!cardOpeners.has($('dropNote'))) setTurnState('', '');
+      $('gate').classList.remove('show');
       if (started && !intentionalClose) onConnectionDropped();
     });
   }
@@ -5198,7 +5214,29 @@
   // encounter (a deploy rollout retiring the task, a network drop). Say so
   // plainly and offer to reconnect: the run is unchanged, so Reconnect lands
   // them back in the same encounter rather than at the start of the study.
-  function onConnectionDropped() {
+  // `reason` is set when the page itself stopped the conversation: 'mic' (the
+  // microphone track ended) or 'audio' (the browser paused the page's audio).
+  // Those got their own line and then this function's connection wording, so
+  // the transcript said "cannot continue" and "Press Reconnect" in a row and
+  // the card sent the participant to their wifi (#272). Same Reconnect, but
+  // one message, pill and card about what actually stopped.
+  const DROP_REASONS = {
+    mic: {
+      line: 'Your microphone stopped. Plug it back in, then press Reconnect. '
+          + 'This conversation starts again from the beginning.',
+      pill: 'Microphone stopped',
+      lead: '<b>Your microphone stopped.</b> Plug it back in, then press Reconnect to carry on: ',
+    },
+    audio: {
+      line: 'Your browser paused this page’s audio, so nothing was being heard or recorded. '
+          + 'Press Reconnect to start this conversation again from the beginning.',
+      pill: 'Audio paused',
+      lead: '<b>Your browser paused this page’s audio.</b> Nothing was being heard or recorded. '
+          + 'Press Reconnect to carry on: ',
+    },
+  };
+  function onConnectionDropped(reason) {
+    const why = DROP_REASONS[reason] || null;
     // Two different events wearing one message, until now.
     //
     // A drop with no stated reason is what this card was written for: a deploy
@@ -5225,7 +5263,9 @@
     // ran is a conversation that can run again; the condition that will repeat
     // is the one that stopped the encounter before anybody spoke.
     const conversationRan = agentTurns > 0 || userTurns > 0;
-    const fatal = serverStatedFailure && !conversationRan;
+    // A microphone or paused audio is the participant's side, not a stated
+    // failure of ours, whatever the server said before it.
+    const fatal = serverStatedFailure && !conversationRan && !why;
     // One retry, then stop asking. The card used to say "you can try once
     // more" and then offer the button again every time, so the same condition
     // produced the same card forever: the text promised a limit the code did
@@ -5254,11 +5294,12 @@
     line.className = 'scene';
     line.textContent = fatal
       ? 'This conversation could not continue. It is not something you did.'
+      : why ? why.line
       : 'The connection dropped. Press Reconnect to start this conversation again from the beginning.';
     $('transcript').appendChild(line);
     $('transcript').scrollTop = $('transcript').scrollHeight;
     endSession();
-    setTurnState(fatal ? 'Conversation stopped' : 'Connection lost', '');
+    setTurnState(fatal ? 'Conversation stopped' : why ? why.pill : 'Connection lost', '');
     // Every branch writes the card, so no state is left wearing another's
     // wording. Static strings only: nothing the server sent reaches innerHTML.
     // Each card says which door it is offering and why, because a participant
@@ -5328,8 +5369,10 @@
       // but somebody whose conversation keeps dropping is told they may go on
       // without it rather than being handed the same button a fourth time.
       $('dropText').innerHTML =
-        '<b>Connection lost.</b> Your conversation was interrupted. Press Reconnect '
-        + 'to carry on: this conversation will start again from the beginning, and you '
+        (why ? why.lead
+             : '<b>Connection lost.</b> Your conversation was interrupted. Press Reconnect '
+               + 'to carry on: ')
+        + 'this conversation will start again from the beginning, and you '
         + 'speak first. Its timer starts again at 00:00, and End unlocks again '
         + minutesText(MIN_S) + ' after you start. You have not lost your place in the study or '
         + 'anything you have already finished.'
