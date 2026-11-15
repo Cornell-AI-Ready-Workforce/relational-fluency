@@ -771,6 +771,9 @@ def text_client() -> AsyncAnthropic:
 #                S2A flash-lite spoke the participant's next scripted line for
 #                the rest of the encounter (replayed: 10/12 with the stale
 #                audio, 0/12 without).
+#   2026-11-14a  (also) rooms: a floor holder whose reply a barge-in cut before
+#                any of it was heard is granted again, once, when the onset
+#                is suppressed as no_speech (cut_reply_rerequested).
 PIPELINE_VERSION = "2026-11-14a"
 ROOM_PACING_VERSION = "2026-11-04a"
 
