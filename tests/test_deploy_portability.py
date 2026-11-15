@@ -556,7 +556,10 @@ def test_a_fresh_checkout_matches_what_the_attributes_promise():
     tmp = tempfile.mkdtemp(prefix="rf-fresh-checkout-")
     try:
         index_copy = Path(tmp) / "index-copy"
-        shutil.copyfile(REPO_ROOT / ".git" / "index", index_copy)
+        index_path = subprocess.check_output(
+            ["git", "rev-parse", "--git-path", "index"], cwd=REPO_ROOT, text=True,
+        ).strip()
+        shutil.copyfile(REPO_ROOT / index_path, index_copy)
         out = Path(tmp) / "tree"
         out.mkdir()
         env = dict(os.environ, GIT_INDEX_FILE=str(index_copy))

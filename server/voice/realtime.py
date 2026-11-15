@@ -2314,6 +2314,7 @@ class RealtimeVoiceSession:
         self.voice = voice_for_model(voice, model)
         self.tools = tools or []
         self.api_key = api_key or gateway_api_key()
+        self.session_id: Optional[str] = None
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
         # The connect-time `turn_detection` dict to send, where the family's
         # row does not already force `null`. Left UNSET the payload carries no
@@ -2686,7 +2687,8 @@ class RealtimeVoiceSession:
         # allow >=12, so pick the kwarg the installed version actually accepts.
         if self.capabilities.family == "cascade":
             # No socket to dial: the stand-in answers as a realtime server.
-            self.ws = CascadeSocket(voice=self.voice, api_key=self.api_key)
+            self.ws = CascadeSocket(voice=self.voice, api_key=self.api_key,
+                                    session_id=self.session_id)
             attach_reply_trace(self)
             await self._send({
                 "type": "session.update", "session": self._session_payload(),
