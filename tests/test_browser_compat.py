@@ -918,6 +918,8 @@ async function attempt(cfg) {
 (async () => {
   const denied = await attempt({ micError: 'NotAllowedError' });
   assert(/blocked the microphone.*choose Allow/i.test(denied), 'a real denial lost its wording: ' + denied);
+  // #268: the icon is at the left of the address bar in Chrome 131+ and Firefox.
+  assert(/left of the address bar/.test(denied) && !/end of the address bar/.test(denied), denied);
 
   const busy = await attempt({ micError: 'NotReadableError' });
   assert(/no other app|using it/i.test(busy),
@@ -946,6 +948,50 @@ async function attempt(cfg) {
     'a missing navigator.mediaDevices was reported as a denial: ' + noDevices);
 
   console.log('MESSAGES OK');
+})().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
+"""
+
+
+MIC_STOP_HARNESS = r"""/* #272: a microphone that stops mid-conversation. The page wrote "cannot
+   continue" and then the connection card's "Press Reconnect", and the socket's
+   close listener emptied the pill straight after. Driven through the page's own
+   startSession, the track's ended event and the socket's close listener. */
+'use strict';
+const assert = require('assert');
+const { bootPage } = require('./stub.js');
+
+const PAGE = process.argv[2];
+
+(async () => {
+  const b = bootPage(PAGE, {}, {
+    location: { search: '?run=r_1', href: 'http://t/v2?run=r_1', reload() {}, replace() {} },
+  });
+  b.net.route([{ match: '/api/run/', fn: () => b.net.res(503, {}) }]);
+  b.run("participantId = 'p_test'; consentPending = false;");
+  await b.ctx.startSession();
+  await b.clock.advance(10);
+  const sock = b.run('ws');
+  assert(sock && b.run('started'), 'the conversation did not start');
+  const mic = b.run('mediaStream').getAudioTracks()[0];
+  assert(mic, 'no microphone track');
+
+  mic.endIt();
+  // endSession closed the socket; its close event arrives after.
+  (sock.listeners.close || []).forEach(f => f({}));
+
+  const lines = b.dom.document.getElementById('transcript').children.map(c => c.textContent);
+  const said = lines.join(' | ');
+  assert(!/cannot continue/.test(said), 'the transcript still says the conversation cannot continue: ' + said);
+  assert(!/connection dropped/i.test(said), 'a stopped microphone is still called a dropped connection: ' + said);
+  assert.strictEqual(lines.filter(l => /microphone/i.test(l)).length, 1, 'not one line about the microphone: ' + said);
+  assert(/Your microphone stopped\. Plug it back in, then press Reconnect\./.test(said), said);
+  const pill = b.dom.document.getElementById('turnState');
+  assert.strictEqual(pill.textContent, 'Microphone stopped', 'the pill was emptied by the socket close');
+  const card = b.dom.document.getElementById('dropText').innerHTML;
+  assert(/^<b>Your microphone stopped\.<\/b>/.test(card) && !/Connection lost/.test(card), card);
+  assert(/start again from the beginning/.test(card), card);
+  assert.strictEqual(b.dom.document.getElementById('dropReconnect').textContent, 'Reconnect');
+  console.log('MIC STOP OK');
 })().catch(e => { console.error('FAIL: ' + ((e && e.stack) || e)); process.exit(1); });
 """
 
@@ -1196,6 +1242,12 @@ def test_a_capture_failure_says_which_failure_it_was(tmp_path):
     """Finding 7: one sentence for every failure, and it was the wrong sentence
     for most of them."""
     assert "MESSAGES OK" in _run(tmp_path, FAILURE_MESSAGE_HARNESS, V2)
+
+
+def test_a_stopped_microphone_says_one_thing_about_the_microphone(tmp_path):
+    """#272: one transcript line, pill and card about the microphone, not the
+    connection, and the pill survives the socket's close."""
+    assert "MIC STOP OK" in _run(tmp_path, MIC_STOP_HARNESS, V2)
 
 
 def test_the_live_researcher_socket_keeps_itself_alive(tmp_path):
