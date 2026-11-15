@@ -774,7 +774,24 @@ def text_client() -> AsyncAnthropic:
 #   2026-11-14a  (also) rooms: a floor holder whose reply a barge-in cut before
 #                any of it was heard is granted again, once, when the onset
 #                is suppressed as no_speech (cut_reply_rerequested).
-PIPELINE_VERSION = "2026-11-14a"
+#   2026-11-15a  rooms: a member's DIRECTOR NOTE (planted beat, silence probe
+#                or director intent) leaves its brief once the line it was for
+#                is finalized (#216). The member is re-briefed with its plain
+#                instructions between turns, off the floor and not awaited, and
+#                any later brief or grant to it waits for that first
+#                (brief_reset; brief_reset_awaited when one had to wait). A
+#                note used to stay until the member's next beat, so it could
+#                play the beat again (S3A t5-t7 for the rest of the meeting,
+#                S4A t4 through the close) while the record logged those lines
+#                with no direction; on the cascade the last brief is every
+#                later reply's system prompt. A line that drew no speech keeps
+#                its note for cut_reply_rerequested, as before; no frame on a
+#                family that honours no mid-session update, or to a member
+#                with a reply in flight (skipped). Also (#221): the room rule
+#                and the lead's first-reply note say "the participant" instead
+#                of "the person running the meeting" / "the person you are all
+#                meeting with", which made S4A's peer read as its leader.
+PIPELINE_VERSION = "2026-11-15a"
 ROOM_PACING_VERSION = "2026-11-04a"
 
 
