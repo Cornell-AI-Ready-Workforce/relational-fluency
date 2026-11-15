@@ -2,9 +2,9 @@
  "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
  "realtime_model": "cascade-argon-elevenlabs",
  "recorded": {
-  "build": "be83994",
+  "build": "prelaunch-baf9161",
   "date": "2026-11-15",
-  "pipeline_version": "2026-11-14a",
+  "pipeline_version": "2026-11-15a",
   "room_pacing_version": "2026-11-04a"
  },
  "scenarios": {
@@ -12,7 +12,7 @@
    "error_frames": 0,
    "judge": {
     "beats_judged": 8,
-    "beats_made": 6,
+    "beats_made": 7,
     "model": "nto.gemini-4-argon",
     "rubric": "97e0ab8d"
    },
@@ -21,19 +21,19 @@
    "lines_said": 8,
    "phantom_turns": 0,
    "recorded": {
-    "build": "e500d62",
-    "date": "2026-11-14",
-    "pipeline_version": "2026-11-14a",
+    "build": "prelaunch-baf9161",
+    "date": "2026-11-15",
+    "pipeline_version": "2026-11-15a",
     "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794694084_3ed6d9"
+    "session_id": "s_1794711071_dd1202"
    },
    "refused_creates": 0,
    "reply_missing": 0,
    "sequence_sha256": "a4b2d90dd4da7ac2",
    "speech_end_to_first_played_s": {
-    "n": 9,
-    "p50": 2.978,
-    "p90": 4.0
+    "n": 8,
+    "p50": 1.955,
+    "p90": 2.567
    },
    "triggers_fired": 7,
    "voice_error": 0
@@ -46,24 +46,24 @@
     "model": "nto.gemini-4-argon",
     "rubric": "97e0ab8d"
    },
-   "lines_answered": 24,
-   "lines_heard": 25,
-   "lines_said": 25,
+   "lines_answered": 27,
+   "lines_heard": 27,
+   "lines_said": 27,
    "phantom_turns": 0,
    "recorded": {
-    "build": "e500d62",
-    "date": "2026-11-14",
-    "pipeline_version": "2026-11-14a",
+    "build": "prelaunch-baf9161",
+    "date": "2026-11-15",
+    "pipeline_version": "2026-11-15a",
     "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794694314_851628"
+    "session_id": "s_1794711071_dee9ca"
    },
    "refused_creates": 0,
-   "reply_missing": 0,
+   "reply_missing": 1,
    "sequence_sha256": "4ae8133b9c6e2fef",
    "speech_end_to_first_played_s": {
-    "n": 24,
-    "p50": 2.599,
-    "p90": 3.058
+    "n": 27,
+    "p50": 1.833,
+    "p90": 2.081
    },
    "triggers_fired": 9,
    "voice_error": 0
@@ -81,19 +81,19 @@
    "lines_said": 9,
    "phantom_turns": 0,
    "recorded": {
-    "build": "e500d62",
-    "date": "2026-11-14",
-    "pipeline_version": "2026-11-14a",
+    "build": "prelaunch-baf9161",
+    "date": "2026-11-15",
+    "pipeline_version": "2026-11-15a",
     "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794694946_1c137d"
+    "session_id": "s_1794711071_5ac3f6"
    },
    "refused_creates": 0,
    "reply_missing": 0,
    "sequence_sha256": "b839d60a54bb1537",
    "speech_end_to_first_played_s": {
     "n": 8,
-    "p50": 2.87,
-    "p90": 3.088
+    "p50": 2.366,
+    "p90": 3.277
    },
    "triggers_fired": 7,
    "voice_error": 0
@@ -101,8 +101,8 @@
   "S4A": {
    "error_frames": 0,
    "judge": {
-    "beats_judged": 13,
-    "beats_made": 9,
+    "beats_judged": 12,
+    "beats_made": 6,
     "model": "nto.gemini-4-argon",
     "rubric": "97e0ab8d"
    },
@@ -111,19 +111,19 @@
    "lines_said": 34,
    "phantom_turns": 0,
    "recorded": {
-    "build": "be83994",
+    "build": "prelaunch-baf9161",
     "date": "2026-11-15",
-    "pipeline_version": "2026-11-14a",
+    "pipeline_version": "2026-11-15a",
     "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794707703_4eed61"
+    "session_id": "s_1794711071_40618a"
    },
    "refused_creates": 0,
    "reply_missing": 0,
    "sequence_sha256": "8efdc0004450ad17",
    "speech_end_to_first_played_s": {
     "n": 34,
-    "p50": 2.29,
-    "p90": 2.674
+    "p50": 2.223,
+    "p90": 4.098
    },
    "triggers_fired": 11,
    "voice_error": 0

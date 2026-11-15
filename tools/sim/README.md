@@ -171,7 +171,19 @@ the 720 s ceiling where 24c ended it about 451 s in, and the count limits
 shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
-check fails for it, saying so, until it is recorded. S1A, S2A and S3A were
+check fails for it, saying so, until it is recorded. All four were
+re-recorded on 2026-11-15 on pipeline 2026-11-15a (#279: a room member's
+spent director note leaves its brief; room wording names the participant),
+from main with #278, #279 and #280 merged (build label prelaunch-baf9161), the
+four scenarios run in parallel, one checkout each
+(reports/prelaunch-baf9161-S1A.json ... -S4A.json). The judge passed all four
+with no FACT, ROLE or SAFE (beats made 7 of 8, 7 of 9, 7 of 7, 6 of 12); no
+voice_error; p90 2.6, 2.1, 3.3 and 4.1 s. S4A's 6 of 12 is low against 9 of 13
+on 14a, but an A/B the same night (S4A twice with and twice without #279) made
+8 and 9 with it and 6 and 7 without, so it is the scenario's spread, not the
+change; and 4 of that night's 6 S4A runs, on both builds, had a FACT (a
+character misstating its own date or history), which is open. Before that,
+S1A, S2A and S3A were
 re-recorded on 2026-11-14 from build e500d62, pipeline 2026-11-14a (#217: a
 room member's end_conversation before the last interaction is held while
 beats are unfired; reports/e500d62.json). Each passed every check against the

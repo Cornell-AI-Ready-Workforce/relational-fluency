@@ -1306,6 +1306,9 @@ class RealtimeVoiceSessionRunner:
         # the steering trail then records a stage direction that was withdrawn
         # before it could govern anything.
         self._brief_lock = asyncio.Lock()
+        # A room member's reset to its plain brief after a directed line, per
+        # member, while it is going out (_spawn_brief_reset; #216).
+        self._brief_resets: Dict[str, asyncio.Task] = {}
         self._watch_store_for_swallowed_failures()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -1367,7 +1370,7 @@ class RealtimeVoiceSessionRunner:
             # that parrots the note anyway.
             room_rule = (
                 "\n\nThe other people in this room are audible to you. A voice "
-                "that is not the person running the meeting is one of them, not "
+                "that is not the participant is one of them, not "
                 "something you must answer. Never say that you did not understand "
                 "or did not catch something, never ask anyone to clarify what they "
                 "mean, and never apologise for mishearing: answer the last thing "
@@ -1421,7 +1424,7 @@ class RealtimeVoiceSessionRunner:
         """
         return (
             "\n\nFIRST REPLY, for you alone — never say any of this out loud:\n"
-            "The person you are all meeting with speaks first. "
+            "The participant speaks first. "
             "Begin with a greeting of one short sentence, the kind two people who work together actually exchange: a hello and a how-are-you. Never introduce yourself or recap the situation to someone who already knows it; say only what they could not know, in plain words, if there is such a thing. Then, in the same reply, make your opening move. "
             "Your FIRST "
             "reply in this meeting, whatever they opened with, is where the "
@@ -2472,6 +2475,10 @@ class RealtimeVoiceSessionRunner:
         # (_enter); a review needs no room, and those let it finish.
         if self._closed:
             self._cancel_room_steers("teardown")
+        # So does a brief reset still going out to one of its members (#216).
+        for task in list((getattr(self, "_brief_resets", None) or {}).values()):
+            if not task.done():
+                task.cancel()
         # A member being rebuilt belongs to the room going away: its rebuild
         # closes whatever it opened as it is cancelled (_rebuild_member).
         for task in list((getattr(self, "_member_rebuilds", None) or {}).values()):
@@ -4855,6 +4862,10 @@ class RealtimeVoiceSessionRunner:
         # belonging to a character who has not spoken yet keeps waiting for them.
         if direction is not None and direction is self._pending_direction:
             self._pending_direction = None
+        # The direction is spent with this line: the member goes back to its
+        # plain brief before it speaks again (#216; pipeline 2026-11-15a).
+        if direction is not None and direction.get("stage_direction"):
+            RealtimeVoiceSessionRunner._spawn_brief_reset(self, agent, direction)
         # The playback clock's idea of what is currently in the participant's
         # ears. Written here because this is where the whole line is finally
         # known; the cursor itself was advanced chunk by chunk as it was sent.
@@ -8733,6 +8744,10 @@ class RealtimeVoiceSessionRunner:
         reintroduces the double fire."""
         if self.room is None:
             return
+        await RealtimeVoiceSessionRunner._settle_brief_reset(
+            self, agent_id, by="brief_member")
+        if self.room is None:
+            return
         rt = self.room.session_for(agent_id)
         agent = next((a for a in self._resolve_agents() if a.id == agent_id), None)
         if rt is None or agent is None:
@@ -8830,6 +8845,10 @@ class RealtimeVoiceSessionRunner:
         room = self.room
         if room is None or not intent:
             return None
+        await RealtimeVoiceSessionRunner._settle_brief_reset(
+            self, agent_id, by="direct_member")
+        if self.room is not room:
+            return None
         rt = room.session_for(agent_id)
         agent = next(
             (a for a in self._resolve_agents() if a.id == agent_id), None
@@ -8910,6 +8929,117 @@ class RealtimeVoiceSessionRunner:
             segment=self.segment, interaction=self._interaction_id(),
             intent=pending.get("stage_direction"), reason=reason,
         )
+
+    # ── a spent direction leaves the member's brief (pipeline 2026-11-15a) ──
+    def _spawn_brief_reset(self, agent, direction: dict) -> None:
+        """Re-brief a room member with its plain instructions once the line
+        a direction was for has been finalized (#216).
+
+        A brief is a whole-session session.update, so a beat's, a probe's or
+        a director intent's DIRECTOR NOTE stayed in the member's live brief
+        after the line was spoken, until its next beat replaced it, and on
+        the cascade the last session.update is the system prompt of every
+        later reply. S3A's Jordan, Casey and Alex kept their t5-t7 notes for
+        the rest of the meeting, S4A's Dan his t4 through the close, and the
+        record logged those later lines with direction=None.
+
+        Off the floor and off the critical path: spawned here, at finalize,
+        while the floor holder's turn is still being closed, and not awaited.
+        Every later brief or grant to the same member waits for it first
+        (_settle_brief_reset), so it cannot land after, and replace, a newer
+        direction, and cannot race a grant. Not for a line that produced no
+        speech (empty_response never reaches finalize): that note stays for
+        _rerequest_unheard_cut, as before."""
+        room = getattr(self, "room", None)
+        if room is None or getattr(self, "_closed", False):
+            return
+        rt = room.session_for(agent.id)
+        if rt is None or agent.id in (getattr(self, "_member_rebuilds", None)
+                                      or {}):
+            # Gone, or being rebuilt: the new session is opened on the plain
+            # brief (_rebuild_member), and a pending direction is redelivered
+            # by _regrant_after_drop.
+            return
+        resets = getattr(self, "_brief_resets", None)
+        if resets is None:
+            resets = self._brief_resets = {}
+        prior = resets.get(agent.id)
+        task = asyncio.ensure_future(RealtimeVoiceSessionRunner._reset_member_brief(
+            self, room, agent, rt, direction, prior))
+        resets[agent.id] = task
+
+        def done(t, aid=agent.id):
+            if resets.get(aid) is t:
+                resets.pop(aid, None)
+            if not t.cancelled() and t.exception() is not None:
+                self.session.store.event(
+                    "brief_reset_failed", agent_id=aid, segment=self.segment,
+                    reason="line_finalized",
+                    message=redact_key(str(t.exception())))
+        task.add_done_callback(done)
+
+    async def _reset_member_brief(self, room, agent, rt, direction: dict,
+                                  prior=None) -> None:
+        """The reset itself; see _spawn_brief_reset. Written as brief_reset,
+        with `delivered` (whether a frame went out) and `acked` as every
+        brief carries them, and `skipped` naming why no frame went out."""
+        if prior is not None and not prior.done():
+            await asyncio.wait({prior})
+        if (getattr(self, "_closed", False) or self.room is not room
+                or room.session_for(agent.id) is not rt):
+            return
+        common = dict(
+            agent_id=agent.id, agent_name=agent.name,
+            trigger_id=direction.get("trigger_id"),
+            source=direction.get("source"),
+            probing=bool(direction.get("probing")),
+            reason="line_finalized", turn=self._turn_index,
+            segment=self.segment, interaction=self._interaction_id(),
+        )
+        pending = getattr(self, "_pending_direction", None) or {}
+        skipped = None
+        if pending.get("agent_id") == agent.id:
+            # A newer direction is already this member's brief.
+            skipped = "newer_direction"
+        elif not getattr(room, "steering_is_real", True):
+            # The family honours no mid-session update: the beat's brief did
+            # not land either, and a frame here could land mid-reply.
+            skipped = "steering_inert"
+        elif getattr(rt, "responding", False):
+            # Never a session.update to a member mid-response (it mutes the
+            # member); its next brief replaces the note.
+            skipped = "response_in_flight"
+        if skipped is not None:
+            self.session.store.event("brief_reset", acked=False,
+                                     delivered=False, skipped=skipped,
+                                     **common)
+            return
+        instructions = self._instructions_for(agent)
+        try:
+            acked = await self._deliver_brief(rt, instructions)
+        except Exception as exc:  # noqa: BLE001 - a dead member must not kill a turn
+            self.session.store.event("brief_reset_failed",
+                                     message=redact_key(str(exc)), **common)
+            return
+        self.session.store.event(
+            "brief_reset", acked=acked, delivered=True, skipped=None,
+            instructions_sha256=hashlib.sha256(
+                instructions.encode()).hexdigest()[:16],
+            **common)
+
+    async def _settle_brief_reset(self, agent_id: str, *, by: str) -> None:
+        """Wait for a member's outstanding brief reset before anything else is
+        sent to it or it is given the floor. Normally long done: it was
+        spawned when its line was generated, seconds before that line has
+        finished playing. A wait is written down (brief_reset_awaited)."""
+        task = (getattr(self, "_brief_resets", None) or {}).get(agent_id)
+        if task is None or task.done() or task is asyncio.current_task():
+            return
+        t0 = time.time()
+        await asyncio.wait({task})
+        self.session.store.event(
+            "brief_reset_awaited", agent_id=agent_id, by=by,
+            waited_s=round(time.time() - t0, 3), segment=self.segment)
 
     async def _silence_watchdog(self) -> None:
         """If the participant says nothing for a while, prompt the actor to
@@ -9360,6 +9490,12 @@ class RealtimeVoiceSessionRunner:
         one, waits briefly for one to begin if not, and only then asks the
         bridge for a fresh reply (the old commit + create path).
         """
+        if self.room is None:
+            return None
+        # A spent direction's reset goes out before the member is asked to
+        # speak again (#216); normally long done by now.
+        await RealtimeVoiceSessionRunner._settle_brief_reset(
+            self, agent_id, by="grant")
         if self.room is None:
             return None
         # Any grant answers the room after the cut (_rerequest_unheard_cut).
