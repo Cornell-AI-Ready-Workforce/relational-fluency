@@ -679,15 +679,13 @@ interactions:
     # say that line ...; where it describes the situation instead, answer them
     # from inside that situation"), and the quoted version meant every
     # participant assigned this form heard the identical first sentence of
-    # Dan's, word for word, delivered as a recitation. "Opens mid-flow. Dan has
-    # just said ..." described a line nobody had heard (#225); it is a position
-    # now, as S4A's is. The note carries
+    # Dan's, word for word, delivered as a recitation. The note carries
     # the position, not just the mood, so the model is not left inventing what
     # Dan is arguing for.
     opening: >-
-      Dan built the deck last night. His position is that the cleanest thing
-      is for him to run it solo tomorrow, and he is treating it as close to
-      decided.
+      Opens mid-flow. Dan has just said he built the deck last night and that
+      the cleanest thing is for him to run it solo tomorrow, and is treating
+      it as close to decided.
     observe: "Same three retrievals, exclusion · interrupted insight · idea laundering."
     # Every beat in this file is pinned with `agent:`, and it has to be pinned
     # in the same places as S4A's or the two forms stop routing alike.
@@ -709,20 +707,13 @@ interactions:
       # it as a beat. Her half now lives in her own brief.
       - id: t1_priya_interrupted
         agent: dan
-        # Two branches since 2026-11-15 (#225, pipeline 2026-11-15d), as S4A's
-        # t1: briefed onto Dan's first reply before Priya has said a word, the
-        # old cue had him cut off a Priya who had not spoken. See S4A's note.
         cue: >-
-          Put polishing and rehearsing the deck on the table as the thing to
-          do. If Priya has started on the last client call, get in front of
-          her before she reaches her point — you are sure you already know it
-          and sure the deck covers it — use her name, so the room hears who
-          just got cut off, and name what you are waving away. If she has not
-          said anything yet, never talk as though she had and do not mention
-          the call: put the plan to her by name as already settled and carry
-          straight on before she can answer, so the room hears her passed
-          over. Do not ask her what she was going to say, and do not come back
-          to her later.
+          Get in front of Priya before she reaches her point about the last
+          client call — you are sure you already know it and sure the deck
+          covers it. Use her name, so the room hears who just got cut off, name
+          what you are waving away, and put polishing and rehearsing the deck
+          straight back on the table as the thing to do. Do not ask her what
+          she was going to say, and do not come back to her later.
         # EVERY on_silence in this file names what Dan SAYS, not what he does,
         # and S4A's four are written the same way for the same reason. The
         # runner renders the line inside "They have gone quiet. Your next

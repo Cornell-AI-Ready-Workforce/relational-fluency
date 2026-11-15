@@ -812,28 +812,15 @@ interactions:
       # briefed with it as a beat. Her half now lives in her own brief, where
       # she can actually perform it; Dan's half is written as Dan's intent.
       #
-      # 2026-11-15 (#225, pipeline 2026-11-15d): two branches. When the
-      # participant's first line names nobody, the floor goes to Dan as the
-      # lead (_run_group_turn) and this beat is briefed onto that same first
-      # reply (_brief_member), before Priya has said a word; the old cue ("Get
-      # in front of Priya before she reaches her point ... so the room hears
-      # who just got cut off") then had him cut off a Priya who had not spoken,
-      # the 2/2 failure above by another road. The not-yet branch is his
-      # brief's own unconditional move (put something to her by name and carry
-      # on over the start of her answer), so the exclusion still lands on the
-      # first reply and the beat stays where it is scored.
       - id: t1_priya_interrupted
         agent: dan
         cue: >-
-          Put the single go-live date on the table as the thing to agree. If
-          Priya has started on last year's rollout, get in front of her before
-          she reaches her point — you are sure you already know it and sure it
-          does not apply — use her name, so the room hears who just got cut
-          off, and name what you are waving away. If she has not said anything
-          yet, never talk as though she had and do not mention last year: put
-          the date to her by name as already settled and carry straight on
-          before she can answer, so the room hears her passed over. Do not ask
-          her what she was going to say, and do not come back to her later.
+          Get in front of Priya before she reaches her point about last year's
+          rollout — you are sure you already know it and sure it does not
+          apply. Use her name, so the room hears who just got cut off, name
+          what you are waving away, and put the single go-live date straight
+          back on the table as the thing to agree. Do not ask her what she was
+          going to say, and do not come back to her later.
         # EVERY on_silence in this file names what Dan SAYS, not what he does.
         # The runner renders it inside "They have gone quiet. Your next move,
         # as <name>, now, in your own words, then stop and let them answer:

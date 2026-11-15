@@ -5,11 +5,11 @@
   Casey and S3B Lee and Ari do, and the two forms stay parallel.
 - S3A's observe line no longer asks the rater to "probe beneath Jordan's
   'fine'": the beat is what he stopped doing.
-- S4A/S4B t1 is briefed onto Dan's first reply when the participant's first
-  line names nobody, so its cue must not have him cut off a Priya who has not
-  spoken. S4B's opening is a position, not "Opens mid-flow. Dan has just said".
+- S4A's opening is Dan's position, not a line nobody heard. (Ben's t1 point,
+  Dan cutting off a Priya who has not spoken when t1 rides on his first reply,
+  is left open: a branched t1 cue was tried and the sims got worse, #225.)
 - S4A names the risk section in Priya's brief and t7 cue, not only in the
-  observe line and probe; Dan's brief has no "close" since Finance went.
+  observe line and probe; Dan's example reason is a month-end close.
 """
 from __future__ import annotations
 
@@ -86,23 +86,7 @@ def test_s3a_observe_names_the_withdrawal_not_a_fine():
     assert "re-engage Jordan with something real" in meeting["observe"]
 
 
-@pytest.mark.parametrize("sid", ["S4A", "S4B"])
-def test_t1_does_not_cut_off_a_priya_who_has_not_spoken(sid):
-    cue = _norm(_beat(sid, "t1_priya_interrupted")["cue"])
-    assert not cue.startswith("Get in front of Priya")
-    assert "If Priya has started on" in cue
-    assert ("If she has not said anything yet, never talk as though she had"
-            in cue)
-    # The cut-off clause sits only in the has-started branch.
-    started, not_yet = cue.split("If she has not said anything yet", 1)
-    assert "who just got cut off" in started and "cut off" not in not_yet
-    assert "by name" in not_yet and "Do not ask her what she was going to say" in not_yet
-
-
-def test_s4b_opens_on_a_position_not_a_line_nobody_heard():
-    opening = _norm(v3.load_spec("S4B")["interactions"][0]["opening"])
-    assert "mid-flow" not in opening and "has just said" not in opening
-    assert opening.startswith("Dan built the deck last night. His position is")
+def test_s4a_opens_on_a_position_not_a_line_nobody_heard():
     a = _norm(v3.load_spec("S4A")["interactions"][0]["opening"])
     assert "mid-flow" not in a and "His position is" in a
 
