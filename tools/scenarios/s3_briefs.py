@@ -158,7 +158,7 @@ FORMS = {
             job="the team",
             # Only Jordan's own facts (#219): "what breaks if nobody does the
             # second pass" had him invent a day and a clause type to answer it.
-            fact="what nobody doing the second pass means, from your own facts only and with no contract, clause, day or number: reviews go out with nobody reading behind them, and one that comes back wrong comes back on the name on it",
+            fact="what nobody doing the second pass means, from your own facts only and with no contract, clause, day or number: reviews go out with nobody reading behind them",
             question="whose name goes on a review that comes back wrong, or by when the first piece comes off your plate"),
     },
     "S3B": {

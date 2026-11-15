@@ -69,7 +69,9 @@ def test_jordans_t5_gives_him_his_own_facts_and_invites_no_new_ones():
     for text in (t5["cue"], t5["on_silence"]):
         assert "what breaks" not in text
         assert "nobody reading behind them" in text
-        assert "comes back on the name on it" in text
+        # Whose name is on a returned review is Casey's fear; Jordan ties to
+        # it only if the lead connects the two (#219 review).
+        assert "name on it" not in text
         assert "no contract, clause, day or number" in text
     # Both facts are Jordan's own (his brief's "Your facts, and no others").
     brief = " ".join(doc["agents"]["jordan"]["system_prompt"].split())
