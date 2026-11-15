@@ -791,7 +791,18 @@ def text_client() -> AsyncAnthropic:
 #                and the lead's first-reply note say "the participant" instead
 #                of "the person running the meeting" / "the person you are all
 #                meeting with", which made S4A's peer read as its leader.
-PIPELINE_VERSION = "2026-11-15a"
+#   2026-11-15b  cascade rooms: a silence probe's grant (a keep-going move
+#                included) ends with its own cue, "the participant has gone
+#                quiet. Make your next move now" (_PROBE_GRANT_NUDGE), instead
+#                of _TEXT_GRANT_NUDGE, "the participant is waiting for you to
+#                answer what they just said", which contradicted the probe's
+#                brief and pulled the reply toward the newest line: S4A
+#                2026-11-15, three t5 probes judged FACT, Priya answering Dan's
+#                date question or guessing Marketing's date instead of the
+#                probe move. A grant answering a participant line, the
+#                CASCADE_ROOM_TEXT_RELAY=0 rollback and every other family are
+#                unchanged.
+PIPELINE_VERSION = "2026-11-15b"
 ROOM_PACING_VERSION = "2026-11-04a"
 
 

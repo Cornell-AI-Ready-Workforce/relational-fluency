@@ -114,6 +114,19 @@ _TEXT_GRANT_NUDGE = (
     "Reply now, in character, one or two sentences.)"
 )
 
+# The grant cue for a silence probe (and a keep-going move, which is one) on
+# the cascade room route (pipeline 2026-11-15b). _TEXT_GRANT_NUDGE says the
+# participant is waiting for an answer to what they just said, which
+# contradicts the probe's own brief ("They have gone quiet") and pulled the
+# reply toward the newest line in the history: S4A 2026-11-15, three t5 probes
+# where Priya answered Dan's date question or guessed Marketing's date instead
+# of making the probe move. A cascade request still ends with a user line, so
+# the cue stays, saying only "now, you", and points at no line at all.
+_PROBE_GRANT_NUDGE = (
+    "(For you alone, never say this out loud: the participant has gone quiet. "
+    "Make your next move now, in character, one or two sentences.)"
+)
+
 # How long an auto-fired reply is presumed to still be in flight. The same
 # window, and the same reason, as RealtimeVoiceSession.commit_turn: while the
 # gateway is already answering this turn, asking it for a second answer gets a
@@ -1382,7 +1395,9 @@ class GroupRoom:
                 if rt.responding and not self._reply_evidently_started(rt):
                     rt.clear_response_state()
                 nudge = _TEXT_GRANT_NUDGE
-                if self.hearing is not None and not probing:
+                if self.hearing is not None and probing:
+                    nudge = _PROBE_GRANT_NUDGE
+                elif self.hearing is not None:
                     turn = self.hearing.active_turn
                     nudge = (CASCADE_ROOM_UNHEARD_NUDGE
                              if turn is not None and turn.clarification

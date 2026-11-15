@@ -1,0 +1,289 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "s4afacts-3bdeca8",
+   "date": "2026-11-15",
+   "pipeline_version": "2026-11-15a",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "probe-nudge-005de7d",
+ "build_from": "--build",
+ "failures": [
+  "S1A: the baseline was recorded on pipeline_version 2026-11-15a; the server runs 2026-11-15b: a different experiment, so re-record it (tools/sim/README.md)"
+ ],
+ "generated_at": "2026-11-15T04:32:52Z",
+ "health": {
+  "build": null,
+  "pipeline_version": "2026-11-15b",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S1A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 1.0,
+     "limit": 0.8,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 7,
+     "limit": 6,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 7
+    },
+    {
+     "baseline": 1.955,
+     "limit": 3.433,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 1.863
+    },
+    {
+     "baseline": 2.567,
+     "limit": 4.851,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.299
+    },
+    {
+     "baseline": {
+      "pipeline_version": "2026-11-15a"
+     },
+     "metric": "versions",
+     "note": "the baseline was recorded on pipeline_version 2026-11-15a; the server runs 2026-11-15b: a different experiment, so re-record it (tools/sim/README.md)",
+     "ok": false,
+     "value": {
+      "pipeline_version": "2026-11-15b"
+     }
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 0,
+     "p": 2,
+     "x": 0,
+     "y": 6
+    },
+    "build": null,
+    "chances": {
+     "met": 5,
+     "of": 5,
+     "per_item": {
+      "bring_into_open": 4,
+      "de_escalate": 3,
+      "fester_r": 4,
+      "resolve_not_fester": 4,
+      "talk_openly": 4
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 0,
+     "ROLE": 0,
+     "RULE": 2,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 0,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "riley",
+      "at": 3,
+      "c": "RULE",
+      "i": 3,
+      "line": "I mean the churn analysis you finished on Tuesday. He walked right through your slides li…",
+      "q": "You finish on a question, except on your first turn",
+      "source": "You finish on a question, except on your first turn, where you say your piece and stop."
+     },
+     {
+      "agent": "riley",
+      "at": 7,
+      "c": "RULE",
+      "i": 6,
+      "line": "You weren't even in the room because you were working from home, but he was standing righ…",
+      "q": "You finish on a question, except on your first turn",
+      "source": "You finish on a question, except on your first turn, where you say your piece and stop."
+     }
+    ],
+    "lines": 10,
+    "missed": [],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S1A",
+    "session_id": "s_1794716934_434d26",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 7278,
+     "out": 255
+    },
+    "verdicts": [
+     {
+      "agent": "riley",
+      "at": 1,
+      "i": 1,
+      "trigger": "t1_retaliation_fork",
+      "v": "y"
+     },
+     {
+      "agent": "riley",
+      "at": 8,
+      "i": 7,
+      "trigger": null,
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 10,
+      "i": 9,
+      "trigger": "t2_the_opening",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 12,
+      "i": 11,
+      "trigger": "t3_defensiveness",
+      "v": "p"
+     },
+     {
+      "agent": "sam",
+      "at": 14,
+      "i": 13,
+      "trigger": "t5_brush_it_off",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 16,
+      "i": 15,
+      "trigger": "t6_how_it_works",
+      "v": "p"
+     },
+     {
+      "agent": "sam",
+      "at": 17,
+      "i": 16,
+      "trigger": "t4_half_concession",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 19,
+      "i": 18,
+      "trigger": "t7_time_runs_out",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 11,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 8,
+    "lines_said": 8,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": null,
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-15b",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794716934_434d26",
+    "speech_end_to_first_played_s": {
+     "n": 8,
+     "p50": 1.863,
+     "p90": 2.299
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_retaliation_fork",
+     "t2_the_opening",
+     "t3_defensiveness",
+     "t5_brush_it_off",
+     "t6_how_it_works",
+     "t4_half_concession",
+     "t7_time_runs_out"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {
+     "probe_pad": 2
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794716934_434d26"
+  }
+ },
+ "server": "http://127.0.0.1:52943"
+}
