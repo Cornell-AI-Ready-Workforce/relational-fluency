@@ -94,6 +94,7 @@ DEFAULT_MODEL = "nto.gemini-4-argon"
 # for a prompt that carries three briefs.
 TIMEOUT_S = 90.0
 MAX_RETRIES = 2
+RECONNECT_PAUSE_S = 20.0
 FIND_MAX_TOKENS = 2000
 CONFIRM_MAX_TOKENS = 800
 
@@ -699,10 +700,24 @@ async def _ask(client, model: str, system: str, user: str, tool: dict, max_token
     a few hundred tokens, and a cut-off one is a model that ran away on that
     try (S4A on 85c539d, 2026-11-14), not a question too big to answer."""
     try:
-        return await _ask_once(client, model, system, user, tool, max_tokens, usage)
+        return await _ask_reconnecting(client, model, system, user, tool, max_tokens, usage)
     except JudgeError as exc:
         if "cut off" not in str(exc):
             raise
+        return await _ask_reconnecting(client, model, system, user, tool, max_tokens, usage)
+
+
+async def _ask_reconnecting(client, model: str, system: str, user: str, tool: dict,
+                            max_tokens: int, usage: dict) -> dict:
+    """One call, made once more after RECONNECT_PAUSE_S if the connection
+    dropped. The SDK's own retries back off for seconds; the gateway has gone
+    away for about a minute (885a862, 2026-11-14: S4A had no verdict)."""
+    from anthropic import APIConnectionError  # APITimeoutError is a subclass
+
+    try:
+        return await _ask_once(client, model, system, user, tool, max_tokens, usage)
+    except APIConnectionError:
+        await asyncio.sleep(RECONNECT_PAUSE_S)
         return await _ask_once(client, model, system, user, tool, max_tokens, usage)
 
 
