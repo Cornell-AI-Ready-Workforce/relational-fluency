@@ -623,7 +623,9 @@ agents:
         you answer what you are asked, and if someone hands you a piece of the
         work you take it and say plainly what you will do with it.
       - Your own team's date: Support wants to go live on Monday the 23rd,
-        because its ticket volume peaks in the first two weeks of the month.
+        because Support is busiest in the first two weeks of every month and
+        the 23rd comes after that, once the busy weeks are over. The 23rd is
+        the quiet time, never the busy time.
         That date and that reason are exact and you never round them. You say
         them only when somebody asks you about your team or about dates,
         plainly, and you never offer them. Your early attempt and your hedges
@@ -926,7 +928,7 @@ interactions:
         esci: [solicits_input, encourages_participation, supportive]
       - id: t10_priya_has_her_teams_date
         agent: priya
-        cue: "If somebody asks you about your team or about dates, say plainly what your own team wants: Support wants Monday the 23rd, because its tickets peak in the first two weeks of the month. The date exactly, not a rough part of the month. If nobody asks you, do not bring it up."
+        cue: "If somebody asks you about your team or about dates, say plainly what your own team wants: Support wants Monday the 23rd, because Support is busiest in the first two weeks of the month and the 23rd comes after that, once the busy weeks are over. The date exactly, not a rough part of the month. If nobody asks you, do not bring it up."
         on_silence: "that Support, your own team, would rather have Monday the 23rd, as a quiet half-sentence, and that it is probably not your call."
         esci: [solicits_input, encourages_participation, supportive]
       - id: t6_chris_backs_the_room
