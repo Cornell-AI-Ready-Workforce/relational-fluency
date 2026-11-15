@@ -2,9 +2,9 @@
  "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
  "realtime_model": "cascade-argon-elevenlabs",
  "recorded": {
-  "build": "ben-rem-fff6e50",
+  "build": "t225-bad145d",
   "date": "2026-11-15",
-  "pipeline_version": "2026-11-15c",
+  "pipeline_version": "2026-11-15d",
   "room_pacing_version": "2026-11-04a"
  },
  "scenarios": {
@@ -21,19 +21,19 @@
    "lines_said": 8,
    "phantom_turns": 0,
    "recorded": {
-    "build": "ben-rem-fff6e50",
+    "build": "t225-24c18fe",
     "date": "2026-11-15",
-    "pipeline_version": "2026-11-15c",
+    "pipeline_version": "2026-11-15d",
     "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794721787_65b046"
+    "session_id": "s_1794731704_b11acf"
    },
    "refused_creates": 0,
    "reply_missing": 0,
    "sequence_sha256": "a4b2d90dd4da7ac2",
    "speech_end_to_first_played_s": {
     "n": 8,
-    "p50": 1.727,
-    "p90": 2.311
+    "p50": 1.743,
+    "p90": 2.661
    },
    "triggers_fired": 7,
    "voice_error": 0
@@ -41,29 +41,29 @@
   "S2A": {
    "error_frames": 0,
    "judge": {
-    "beats_judged": 9,
-    "beats_made": 6,
+    "beats_judged": 8,
+    "beats_made": 7,
     "model": "nto.gemini-4-argon",
     "rubric": "97e0ab8d"
    },
-   "lines_answered": 25,
-   "lines_heard": 25,
-   "lines_said": 25,
+   "lines_answered": 26,
+   "lines_heard": 27,
+   "lines_said": 27,
    "phantom_turns": 0,
    "recorded": {
-    "build": "ben-rem-fff6e50",
+    "build": "t225-24c18fe",
     "date": "2026-11-15",
-    "pipeline_version": "2026-11-15c",
+    "pipeline_version": "2026-11-15d",
     "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794721787_e32bc6"
+    "session_id": "s_1794731704_b2d40c"
    },
    "refused_creates": 0,
-   "reply_missing": 0,
+   "reply_missing": 1,
    "sequence_sha256": "4ae8133b9c6e2fef",
    "speech_end_to_first_played_s": {
-    "n": 25,
-    "p50": 1.794,
-    "p90": 2.223
+    "n": 26,
+    "p50": 1.698,
+    "p90": 2.151
    },
    "triggers_fired": 9,
    "voice_error": 0
@@ -72,7 +72,7 @@
    "error_frames": 0,
    "judge": {
     "beats_judged": 7,
-    "beats_made": 7,
+    "beats_made": 6,
     "model": "nto.gemini-4-argon",
     "rubric": "97e0ab8d"
    },
@@ -81,19 +81,19 @@
    "lines_said": 9,
    "phantom_turns": 0,
    "recorded": {
-    "build": "ben-rem-fff6e50",
+    "build": "t225-24c18fe",
     "date": "2026-11-15",
-    "pipeline_version": "2026-11-15c",
+    "pipeline_version": "2026-11-15d",
     "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794721787_9caad8"
+    "session_id": "s_1794732424_f9fdbd"
    },
    "refused_creates": 0,
    "reply_missing": 0,
    "sequence_sha256": "b839d60a54bb1537",
    "speech_end_to_first_played_s": {
     "n": 9,
-    "p50": 2.065,
-    "p90": 2.582
+    "p50": 2.048,
+    "p90": 2.614
    },
    "triggers_fired": 7,
    "voice_error": 0
@@ -101,29 +101,29 @@
   "S4A": {
    "error_frames": 0,
    "judge": {
-    "beats_judged": 13,
-    "beats_made": 8,
+    "beats_judged": 12,
+    "beats_made": 9,
     "model": "nto.gemini-4-argon",
     "rubric": "97e0ab8d"
    },
-   "lines_answered": 29,
-   "lines_heard": 34,
-   "lines_said": 34,
+   "lines_answered": 28,
+   "lines_heard": 33,
+   "lines_said": 33,
    "phantom_turns": 0,
    "recorded": {
-    "build": "ben-rem-fff6e50",
+    "build": "t225-bad145d",
     "date": "2026-11-15",
-    "pipeline_version": "2026-11-15c",
+    "pipeline_version": "2026-11-15d",
     "room_pacing_version": "2026-11-04a",
-    "session_id": "s_1794721787_7183e7"
+    "session_id": "s_1794733157_cb015f"
    },
    "refused_creates": 0,
    "reply_missing": 0,
    "sequence_sha256": "8efdc0004450ad17",
    "speech_end_to_first_played_s": {
-    "n": 34,
-    "p50": 2.0,
-    "p90": 2.693
+    "n": 33,
+    "p50": 2.086,
+    "p90": 2.972
    },
    "triggers_fired": 11,
    "voice_error": 0
