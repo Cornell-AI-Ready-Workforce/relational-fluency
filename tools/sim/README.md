@@ -172,6 +172,17 @@ shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
 check fails for it, saying so, until it is recorded. All four were
+re-recorded on 2026-11-15 on pipeline 2026-11-15c (#218: a room lead whose
+first beat is a bare hello answers a hello-only opener with a hello; #219:
+S3A Jordan's t5 uses only his own facts; #222: S4A Dan argues the one date,
+not speed), from main with the three fixes merged (build label
+ben-rem-fff6e50), run in parallel (reports/ben-rem-fff6e50-S1A.json ...
+-S4A.json). The judge passed all four with no FACT, ROLE or SAFE (beats made
+6 of 8, 6 of 9, 7 of 7, 8 of 13); p90 2.3, 2.2, 2.6 and 2.7 s. Two extra S4A
+runs also passed, FACT 0, beats 9 of 13 each; Dan said "slower" in none of
+the three S4A runs. Alex's S3A opening said the prediction with the hello
+(as on 15a; on 15b he said only hello): the sim's opener is not a bare
+hello, so both fit t0. Before that, all four were
 re-recorded on 2026-11-15 on pipeline 2026-11-15b (a cascade room's silence
 probe and keep-going grants end with their own "has gone quiet" cue, not "the
 participant is waiting for you to answer"), build label probe-nudge-005de7d,

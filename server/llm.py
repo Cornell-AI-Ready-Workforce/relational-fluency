@@ -802,7 +802,18 @@ def text_client() -> AsyncAnthropic:
 #                probe move. A grant answering a participant line, the
 #                CASCADE_ROOM_TEXT_RELAY=0 rollback and every other family are
 #                unchanged.
-PIPELINE_VERSION = "2026-11-15b"
+#   2026-11-15c  S3 rooms (#218, #219). A room lead whose first beat is a
+#                greeting that scores nothing (S3A/S3B t0_hello) gets a
+#                FIRST REPLY note that says a hello-only first line gets only
+#                a hello back, instead of "Then, in the same reply, make your
+#                opening move", which contradicted the t0 cue and the brief
+#                (_lead_opens_on_a_hello). S4A/S4B leads, whose first beat is
+#                scored, and the 1:1 notes are unchanged. S3A t5 (Jordan): the
+#                cue and probe no longer ask "what breaks if nobody does the
+#                second pass", which had him invent a day and clause type
+#                (sim s_1794711071_5ac3f6); they give him his own two facts
+#                and forbid a contract, clause, day or number. S3B unchanged.
+PIPELINE_VERSION = "2026-11-15c"
 ROOM_PACING_VERSION = "2026-11-04a"
 
 

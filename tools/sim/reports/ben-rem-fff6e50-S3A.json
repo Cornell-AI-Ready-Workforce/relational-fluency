@@ -1,0 +1,261 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "probe-nudge-005de7d",
+   "date": "2026-11-15",
+   "pipeline_version": "2026-11-15b",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "ben-rem-fff6e50",
+ "build_from": "--build",
+ "failures": [
+  "S3A: the baseline was recorded on pipeline_version 2026-11-15b; the server runs 2026-11-15c: a different experiment, so re-record it (tools/sim/README.md)"
+ ],
+ "generated_at": "2026-11-15T05:52:50Z",
+ "health": {
+  "build": null,
+  "pipeline_version": "2026-11-15c",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S3A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0.778,
+     "limit": 0.578,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 0.889
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 7,
+     "limit": 6,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 7
+    },
+    {
+     "baseline": 2.087,
+     "limit": 3.631,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 2.065
+    },
+    {
+     "baseline": 2.567,
+     "limit": 4.851,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.582
+    },
+    {
+     "baseline": {
+      "pipeline_version": "2026-11-15b"
+     },
+     "metric": "versions",
+     "note": "the baseline was recorded on pipeline_version 2026-11-15b; the server runs 2026-11-15c: a different experiment, so re-record it (tools/sim/README.md)",
+     "ok": false,
+     "value": {
+      "pipeline_version": "2026-11-15c"
+     }
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 0,
+     "p": 0,
+     "x": 0,
+     "y": 7
+    },
+    "build": null,
+    "chances": {
+     "met": 3,
+     "of": 5,
+     "per_item": {
+      "brings_out_best": 4,
+      "builds_pride": 4,
+      "compelling_vision": 2,
+      "inspires": 3,
+      "not_inspire_r": 2
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 0,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 0,
+     "ungrounded": 0
+    },
+    "flags": [],
+    "lines": 10,
+    "missed": [],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S3A",
+    "session_id": "s_1794721787_9caad8",
+    "spec_changed": null,
+    "usage": {
+     "calls": 1,
+     "in": 3494,
+     "out": 94
+    },
+    "verdicts": [
+     {
+      "agent": "alex",
+      "at": 1,
+      "i": 1,
+      "trigger": "t0_hello",
+      "v": "y"
+     },
+     {
+      "agent": "alex",
+      "at": 3,
+      "i": 3,
+      "trigger": "t1_public_challenge",
+      "v": "y"
+     },
+     {
+      "agent": "jordan",
+      "at": 9,
+      "i": 9,
+      "trigger": "t2_jordans_flat_fine",
+      "v": "y"
+     },
+     {
+      "agent": "casey",
+      "at": 10,
+      "i": 10,
+      "trigger": "t3_caseys_overload",
+      "v": "y"
+     },
+     {
+      "agent": "alex",
+      "at": 15,
+      "i": 15,
+      "trigger": "t4_what_the_team_is_for",
+      "v": "y"
+     },
+     {
+      "agent": "jordan",
+      "at": 16,
+      "i": 16,
+      "trigger": "t5_a_fact_left_on_the_table",
+      "v": "y"
+     },
+     {
+      "agent": "casey",
+      "at": 18,
+      "i": 18,
+      "trigger": "t6_one_clarifying_question",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 10,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 9,
+    "lines_said": 9,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": null,
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-15c",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794721787_9caad8",
+    "speech_end_to_first_played_s": {
+     "n": 9,
+     "p50": 2.065,
+     "p90": 2.582
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t0_hello",
+     "t1_public_challenge",
+     "t2_jordans_flat_fine",
+     "t3_caseys_overload",
+     "t4_what_the_team_is_for",
+     "t5_a_fact_left_on_the_table",
+     "t6_one_clarifying_question"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794721787_9caad8"
+  }
+ },
+ "server": "http://127.0.0.1:55790"
+}

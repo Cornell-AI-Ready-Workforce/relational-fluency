@@ -591,9 +591,12 @@ record's `opening` block (`first_participant_line_s`, per conversation
 `waited_s`) and provenance `opening` say which rule an encounter ran under.
 Since `28b` the `on_silence` line of a conversation's opening beat (S1
 `t1_retaliation_fork` and `t2_the_opening`, S2 `t1_the_opening`, a room's
-`t1` unless the first line names somebody else) is never spoken: nothing
-probes before the first line, and that line's reply spends the beat on its
-cue. A participant who never opens produces an empty encounter until the
+first beat unless the first line names somebody else: S3 `t0_hello`, S4
+`t1_priya_interrupted`) is never spoken: nothing probes before the first
+line, and that line's reply spends the beat on its cue. S3's `t1` is not an
+opening beat: since `t0_hello` was put in front of it (#132) its probe can
+come after the lead's hello, and when it does it is spoken and carries the
+prediction (S3A) or the accusation (S3B) itself (#218). A participant who never opens produces an empty encounter until the
 12:00 stop: no `trigger_fired`, no `assistant_turn`, a silent assistant WAV.
 
 ## What changed on 2026-09-29, the follow-up gap (room_pacing_version 2026-09-29a, 29b)
