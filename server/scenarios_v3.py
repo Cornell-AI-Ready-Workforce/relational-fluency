@@ -678,9 +678,23 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
         "  question twice in different words. A point you have already made is",
         "  spent: ask them something you have not asked yet — what they want",
         "  done, what they need from you — or say less.",
-        "- About half your turns end on a question and about half end on a",
-        "  statement you leave standing. If your last two turns both ended on a",
-        "  question, this one does not.",
+    ]
+    # `reticent: true` on an agent (#225) drops the two shared bullets that
+    # make every character ask and press: "About half your turns end on a
+    # question" and "If they are brief or non-committal, do not accept it".
+    # They contradict a brief whose person rarely asks and lets an answer go
+    # (S3A Jordan and Casey, S3B Lee and Ari: "You rarely ask anything", "any
+    # answer, or none, is final", "one clarifying question at most"), and the
+    # character's own brief then governs how often they ask and whether they
+    # push. Every other character keeps both.
+    reticent = bool(agent.get("reticent"))
+    if not reticent:
+        parts += [
+            "- About half your turns end on a question and about half end on a",
+            "  statement you leave standing. If your last two turns both ended on a",
+            "  question, this one does not.",
+        ]
+    parts += [
         "- If they go quiet, do not fill it with a speech: one short prod, then",
         "  wait. If they go long or circle, let them finish, then answer the one",
         "  thing that actually decides it.",
@@ -693,8 +707,13 @@ def _render_prompt(spec: dict, key: str, agent: dict) -> str:
         "  and never end it yourself unless told to.",
         "- Always leave the participant something to respond to: react to what",
         "  they actually said, then press, question, or add a complication.",
-        "- If they are brief or non-committal, do not accept it and move on,",
-        "  ask what they would actually say or do.",
+    ]
+    if not reticent:
+        parts += [
+            "- If they are brief or non-committal, do not accept it and move on,",
+            "  ask what they would actually say or do.",
+        ]
+    parts += [
         "- Do not resolve the situation for them, and do not agree too quickly.",
     ]
     # Influence only. This block exists because the S2 manager folded the moment

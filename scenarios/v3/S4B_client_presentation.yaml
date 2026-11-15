@@ -673,11 +673,13 @@ interactions:
     guide: "Negotiate the running order for tomorrow."
     kind: planted_triggers
     # A stage note rather than the quoted line this used to open on, matching
-    # S4A. _open_group_scene handles both ("if that quotes a line of dialogue,
-    # say that line; otherwise begin from that situation in your own words"),
-    # and the quoted version meant every participant assigned this form heard
-    # the identical first sentence of the encounter, word for word, delivered
-    # as a recitation before anyone had said anything to them. The note carries
+    # S4A. The participant speaks first (pipeline 2026-09-28b), so this is
+    # Dan's starting position, not something already said: it rides on his
+    # FIRST reply (_first_room_reply_note: "if that quotes a line of dialogue,
+    # say that line ...; where it describes the situation instead, answer them
+    # from inside that situation"), and the quoted version meant every
+    # participant assigned this form heard the identical first sentence of
+    # Dan's, word for word, delivered as a recitation. The note carries
     # the position, not just the mood, so the model is not left inventing what
     # Dan is arguing for.
     opening: >-
@@ -714,10 +716,11 @@ interactions:
           she was going to say, and do not come back to her later.
         # EVERY on_silence in this file names what Dan SAYS, not what he does,
         # and S4A's four are written the same way for the same reason. The
-        # runner renders the line inside "As <name>, say this now in your own
-        # words, then stop and let them answer: <on_silence>"
-        # (realtime_voice_session._trigger_instruction), so "this" needs a
-        # speech referent. The previous wording here — "step over Priya's
+        # runner renders the line inside "They have gone quiet. Your next
+        # move, as <name>, now, in your own words, then stop and let them
+        # answer: <on_silence>" (realtime_voice_session._trigger_instruction);
+        # it used to say "As <name>, say this now", so "this" needed a speech
+        # referent. The previous wording here — "step over Priya's
         # half-raised hand to do it" — asks the actor to SAY a half-raised
         # hand, and an actor resolving that literally narrates the stage
         # direction on the one turn the silence watchdog exists to record.

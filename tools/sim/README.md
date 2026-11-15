@@ -172,6 +172,15 @@ shorter run.
 
 A scenario listed under `pending` has no baseline yet, with the reason; the
 check fails for it, saying so, until it is recorded. All four were
+re-recorded on 2026-11-15 on pipeline 2026-11-15d (#225: S3 Jordan, Casey,
+Lee and Ari opt out of the shared ask-and-press rules; S4A names the risk
+section for Priya). S1A and S2A from t225-24c18fe, S3A from its re-run (the
+first S3A run lost one line's transcript), S4A from t225-bad145d, after the
+t1 branch and S4B opening were taken back out (with them, Dan's first line
+drew a FACT in one S4A run and S4B made 6 of 13): judge pass, FACT, ROLE and
+SAFE 0 on all four (beats 6 of 8, 7 of 8, 6 of 7, 9 of 12); p90 2.7, 2.2,
+2.6, 3.0 s (reports/t225-*-S1A.json ... -S4A.json). A second S4A run also
+passed (6 of 12, FACT 0). Before that, all four were
 re-recorded on 2026-11-15 on pipeline 2026-11-15c (#218: a room lead whose
 first beat is a bare hello answers a hello-only opener with a hello; #219:
 S3A Jordan's t5 uses only his own facts; #222: S4A Dan argues the one date,
@@ -304,7 +313,10 @@ each, which is what heard and phantom are measured against. No participant's
 voice is in this directory, and none may be: this repository is public.
 
 `python -m tools.sim.make_stim <name>` regenerates a line (macOS only). Only
-lines a default sequence uses are committed, and a test keeps it that way.
+lines a default sequence or one in `sequences.EXTRA_SEQUENCES` uses are
+committed, and a test keeps it that way. `EXTRA_SEQUENCES["S4B"]` is S4A's
+sequence on the parallel form (#222); it has no baseline and runs only with
+`--steps` (the command is in `sequences.py`).
 Room tone is generated in code (`stim.room_tone`), not recorded.
 
 ## Against another server

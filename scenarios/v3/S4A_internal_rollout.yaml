@@ -430,7 +430,7 @@ agents:
         you do not repeat it: you say what would move you, which is a team's
         own date with the reason for it. A question put to you is never left
         hanging while you push on.
-      - A team's date with its reason attached, a launch, a close, a count, is
+      - A team's date with its reason attached, a launch, a month-end close, a count, is
         the one thing that moves you, and it moves you one team at a time: that
         team gets its date, in a few grudging words, and the 9th stays for
         every team nobody has spoken for. A date with no reason is noted and
@@ -589,7 +589,7 @@ agents:
         half-sentence and stop. That half-sentence names only WHERE YOU WERE —
         last year's rollout, the end of it you were close to — and then folds
         before it reaches a single word about the shape of that rollout or
-        about what went wrong with it. All at once, all the teams, support,
+        about what went wrong with it. All at once, all the teams, Support,
         the first week: none of those reach the air until somebody has asked
         you, however naturally the sentence wants to finish. Nor does the
         outline of them. That it did not go well, that it was rougher than
@@ -640,9 +640,9 @@ agents:
         team.
       - When the work is being divided up, you wait to see whether anything
         comes your way. If something does, you say in one sentence what you
-        would take, the part of the plan about what could go wrong, and what
-        you would need to do it well: time with your notes, and the people who
-        were there. You do not ask for it.
+        would take and what you would need to do it well: the risk section,
+        the part of the plan about what could go wrong, and time with your
+        notes and the people who were there. You do not ask for it.
       - Once you have said your piece, if Dan or anyone tests it with a
         question, you answer with what you saw, plainly and once. You do not
         fold because it was Dan who asked, and you do not argue with him.
@@ -758,11 +758,13 @@ interactions:
     guide: "Negotiate the rollout plan and the go-live date."
     kind: planted_triggers
     # A stage note, not a quoted line, and the same kind of note S4B opens on.
-    # _open_group_scene handles both ("if that quotes a line of dialogue, say
-    # that line; otherwise begin from that situation in your own words"), and a
-    # quoted opening means every participant in the study hears the identical
-    # first sentence of the encounter, delivered as a recitation, before anyone
-    # has said anything to them. The note has to carry the position, though, not
+    # The participant speaks first (pipeline 2026-09-28b), so this is Dan's
+    # starting position, not something already said: it rides on his FIRST
+    # reply (_first_room_reply_note: "if that quotes a line of dialogue, say
+    # that line ...; where it describes the situation instead, answer them from
+    # inside that situation"), and a quoted opening would mean every
+    # participant in the study hears the identical first sentence of Dan's,
+    # delivered as a recitation. The note has to carry the position, though, not
     # just the mood: "Dan pitching" left the model to invent what he was
     # pitching, and it invented a different plan each run.
     # The countables are gone from this note ON PURPOSE, and S4B's opening has
@@ -796,8 +798,9 @@ interactions:
     # prevent, arriving through the back door. Pin them all and the cue is free
     # to be written as a direction to an actor.
     triggers:
-      # The cue below is what the actor is handed, verbatim, inside "Bring about
-      # this beat now, in your own words: ...". It used to read
+      # The cue below is what the actor is handed, verbatim, inside "Your next
+      # move, as Dan, now, in your own words: ..."
+      # (realtime_voice_session._trigger_instruction). It used to read
       #   "Dan talks over Priya, ', hold that thought.' Priya fades: 'It's
       #    just... last year's rollout, never mind.'"
       # — a malformed fragment plus a second character's dialogue, appended to
@@ -808,6 +811,7 @@ interactions:
       # scored on noticing — was never spoken by anyone, because she was never
       # briefed with it as a beat. Her half now lives in her own brief, where
       # she can actually perform it; Dan's half is written as Dan's intent.
+      #
       - id: t1_priya_interrupted
         agent: dan
         cue: >-
@@ -818,10 +822,11 @@ interactions:
           back on the table as the thing to agree. Do not ask her what she was
           going to say, and do not come back to her later.
         # EVERY on_silence in this file names what Dan SAYS, not what he does.
-        # The runner renders it inside "As <name>, say this now in your own
-        # words, then stop and let them answer: <on_silence>"
-        # (realtime_voice_session._trigger_instruction), so "this" has to have a
-        # speech referent. A probe written as a described move — the previous
+        # The runner renders it inside "They have gone quiet. Your next move,
+        # as <name>, now, in your own words, then stop and let them answer:
+        # <on_silence>" (realtime_voice_session._trigger_instruction); it used
+        # to say "As <name>, say this now", so "this" had to have a speech
+        # referent. A probe written as a described move — the previous
         # wording here was "step over Priya's half-raised hand to do it" — asks
         # the actor to SAY a half-raised hand, and an actor that resolves that
         # literally narrates the stage direction on the one turn the silence
@@ -1015,7 +1020,7 @@ interactions:
         esci: [supportive, respectful, encourages_cooperation, not_cooperate_r]
       - id: t7_priya_waits_to_be_handed_work
         agent: priya
-        cue: "While the work is being divided up, wait to see whether anything comes your way. If something does, say in one sentence what you would take and what you would need to do it well: time with your notes, and the people who were there. Do not ask for it."
+        cue: "While the work is being divided up, wait to see whether anything comes your way. If something does, say in one sentence what you would take and what you would need to do it well: the risk section, the part of the plan about what could go wrong, and time with your notes and the people who were there. Do not ask for it."
         on_silence: "that you would take the risk section if someone wanted it, and that you would need an hour with your notes from last year."
         esci: [supportive, respectful, encourages_cooperation]
     after_beats:

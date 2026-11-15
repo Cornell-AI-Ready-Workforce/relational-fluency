@@ -365,7 +365,7 @@ def test_the_committed_baseline_covers_every_default_sequence():
 
 def test_every_default_sequence_parses_and_says_only_committed_lines():
     known = stim.lines()
-    for sid, steps in sequences.DEFAULT_SEQUENCES.items():
+    for sid, steps in {**sequences.DEFAULT_SEQUENCES, **sequences.EXTRA_SEQUENCES}.items():
         sequences.parse(steps)
         for name in sequences.lines_used(steps):
             assert name in known, f"{sid} says {name}, which lines.txt does not describe"
@@ -374,7 +374,8 @@ def test_every_default_sequence_parses_and_says_only_committed_lines():
 
 def test_nothing_is_committed_that_no_sequence_says():
     """The stimulus is binary in git history for good: keep it to what is used."""
-    used = {n for steps in sequences.DEFAULT_SEQUENCES.values() for n in sequences.lines_used(steps)}
+    every = list(sequences.DEFAULT_SEQUENCES.values()) + list(sequences.EXTRA_SEQUENCES.values())
+    used = {n for steps in every for n in sequences.lines_used(steps)}
     files = {p.stem for p in stim.STIM_DIR.glob(f"*{stim.EXT}")}
     assert files == used, {"unused": sorted(files - used), "missing": sorted(used - files)}
     assert set(stim.lines()) == used
