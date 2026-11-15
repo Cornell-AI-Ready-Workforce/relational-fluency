@@ -27,7 +27,10 @@ for p in (ROOT, ROOT / "tests"):
 from server.voice import cascade  # noqa: E402
 from server.voice import realtime as R  # noqa: E402
 from cascade_room_harness import CASCADE, QUIET, WORDS, speak  # noqa: E402
-from test_bridge_correctness import LOUD, settle  # noqa: E402
+from test_bridge_correctness import (  # noqa: E402
+    LOUD, adelta, item_added, settle, tdelta,
+)
+from test_room_memory_hygiene import done_out  # noqa: E402
 from test_cascade_voice import FakeTTS, _sse  # noqa: E402
 from test_room_member_reconnect import (  # noqa: E402
     Room, created, in_a_loop, quick, reply, until,  # noqa: F401
@@ -133,6 +136,80 @@ async def test_a_reply_cut_after_it_was_heard_is_not_asked_again(monkeypatch):
         assert _asks(mem_ws) + len(commits) == before
     finally:
         await h.close()
+    assert h.of("group_turn_skipped")
+    assert not h.of("cut_reply_rerequested")
+
+
+@in_a_loop
+async def test_the_re_ask_names_the_beat_written_unperformed(monkeypatch):
+    """empty_response wrote stage_direction_unperformed for the cut reply's
+    beat while its note stayed in the member's prompt; the re-ask names that
+    beat, so the record ties the re-asked reply to it."""
+    h = await Room(monkeypatch).open()
+    try:
+        commits = _counting_commits(h)
+        await h.participant(LINE)
+        turn = asyncio.ensure_future(h.runner._run_group_turn())
+        await until(lambda: commits)
+        await until(lambda: (h.room.last_grant or {}).get("via") == "commit")
+        aid = h.room.speaking
+        h.runner._pending_direction = {
+            "agent_id": aid, "trigger_id": "t9_probe",
+            "interaction": h.runner._interaction_id()}
+        h.page._frames = [LOUD] * 25
+        await h.runner._client_to_model()
+        await asyncio.wait_for(turn, 10)
+        await settle(h.runner)
+        mem_ws = h.rt(aid).ws
+        turn = await _onset_verdict(h, "[no speech]", 300)
+        await until(lambda: h.of("cut_reply_rerequested"))
+        mem_ws.feed(reply(f"R{len(commits)}", "He just walked in, actually."))
+        await asyncio.wait_for(turn, 10)
+    finally:
+        await h.close()
+    (unperformed,) = h.of("stage_direction_unperformed")
+    assert unperformed["trigger_id"] == "t9_probe"
+    assert unperformed["reason"] == "empty_response"
+    (asked,) = h.of("cut_reply_rerequested")
+    assert asked["trigger_id"] == "t9_probe" and asked["agent_id"] == aid
+
+
+@in_a_loop
+async def test_a_reply_playing_when_the_barge_in_fired_is_not_asked_again(
+        monkeypatch):
+    """The real holder_heard path: the reply was announced and playing when
+    the onset cut it, so no unheard cut is noted and a no_speech verdict
+    re-asks nobody."""
+    h = await Room(monkeypatch).open()
+    try:
+        commits = _counting_commits(h)
+        await h.participant(LINE)
+        turn = asyncio.ensure_future(h.runner._run_group_turn())
+        await until(lambda: commits)
+        await until(lambda: (h.room.last_grant or {}).get("via") == "commit")
+        aid = h.room.speaking
+        mem_ws = h.rt(aid).ws
+        mem_ws.feed([item_added("R1", "R1_i1"), adelta("R1", "R1_i1"),
+                     adelta("R1", "R1_i1"),
+                     tdelta("R1", "R1_i1", "Chris is just")])
+        await until(lambda: [f for f in h.page.json
+                             if f.get("type") == "assistant_started"])
+        h.page._frames = [LOUD] * 25
+        await h.runner._client_to_model()
+        mem_ws.feed([done_out("R1", ["R1_i1"], "cancelled")])
+        await asyncio.wait_for(turn, 10)
+        await settle(h.runner)
+        assert h.runner._unheard_cut is None
+        before = _asks(mem_ws) + len(commits)
+        turn = await _onset_verdict(h, "[no speech]", 300)
+        await asyncio.wait_for(turn, 10)
+        await settle(h.runner)
+        assert _asks(mem_ws) + len(commits) == before
+    finally:
+        await h.close()
+    assert not h.of("empty_response")
+    (said,) = h.of("assistant_turn")
+    assert said["agent_id"] == aid and said["interrupted"] is True
     assert h.of("group_turn_skipped")
     assert not h.of("cut_reply_rerequested")
 

@@ -3497,6 +3497,12 @@ class RealtimeVoiceSessionRunner:
                     reason="empty_response",
                 )
                 self._pending_direction = None
+                # The note is still in the member's prompt: if this reply is
+                # asked for again, that row names the beat it may perform
+                # (_rerequest_unheard_cut).
+                cut = getattr(self, "_unheard_cut", None)
+                if cut and cut.get("agent_id") == agent.id:
+                    cut["trigger_id"] = pending.get("trigger_id")
             if self.room is None or self.room.speaking == agent.id:
                 self._response_done.set()
             return
@@ -9303,9 +9309,13 @@ class RealtimeVoiceSessionRunner:
             return
         self._response_done.clear()
         granted = await self._grant(aid)
+        # trigger_id: the beat empty_response wrote stage_direction_unperformed
+        # for, whose note the member still has, so the re-asked reply may
+        # perform it; None when the cut reply carried no beat.
         self.session.store.event(
             "cut_reply_rerequested", agent_id=aid,
-            requested=granted is not None, segment=self.segment,
+            requested=granted is not None, trigger_id=cut.get("trigger_id"),
+            segment=self.segment,
             interaction=self._interaction_id(),
             since_cut_s=round(time.time() - cut["at"], 3))
         if granted is not None:
