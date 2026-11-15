@@ -1,5 +1,24 @@
 # The study inside one Qualtrics survey
 
+> **Phase 1 does not use this design (#276).** The Phase 1 survey
+> (SV_bClj80jCRO4Dmdw) is one survey that links out. Page 7 has one link that
+> opens the app in a new tab, `/start?pid=…&qid=<ResponseID>`, and a required
+> box for the completion code the app shows at the end; the closing questions
+> follow in the same survey. Nothing is framed, the survey's Next is never
+> hidden, and no `rf_` embedded data reaches the response, so walkthrough
+> checks for a conversation inside the survey page or for `rf_*` fields do not
+> apply to Phase 1.
+>
+> The join: `/start` stores the ResponseID on the run as `qualtrics_id`
+> (`/api/run/<id>` shows it), and `python -m server.qualtrics join`, with
+> `QUALTRICS_SURVEY2_ID` unset, matches each response to its run on it,
+> falling back to the participant key (`pid`). Each joined row carries the
+> run's `completion_code` beside the response's own values, so the typed code
+> can be checked against it.
+>
+> Everything below is the embedded design, kept for later. Before switching to
+> it, clear the problems listed in #276.
+
 The four conversations run inside a single Qualtrics survey. Each conversation
 is a block of its own, with the app framed on the page and the survey's own
 **Next** button to move on. Questions can go before, between and after the

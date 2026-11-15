@@ -31,7 +31,8 @@ esci_items:
 setup: >-
   You are a {role} at {org}. Over the past two months your colleague
   Sam has twice presented your analysis in leadership meetings as his own
-  work. You asked him privately to credit you; it happened again last week.
+  work. You asked him privately to credit you; this morning he did it again
+  in a leadership meeting.
 
 # What the participant is told they are there to do. Shown on the situation
 # card and kept on screen under the header for the whole conversation. It is
@@ -55,10 +56,10 @@ intro_card:
   image_alt: >-
     Two drawings side by side. Left: a colleague leans over your desk and tells you about a meeting where a man presented a chart to three people. Right: you face that man in a corridor by the elevators.
   situation: >-
-    You are a {role} at {org}. Over the past few months, your colleague Sam has
+    You are a {role} at {org}. Over the past two months, your colleague Sam has
     twice presented your analysis in leadership meetings as his own work. You
-    asked him privately to credit you, but yesterday he once again failed to
-    give you credit.
+    asked him privately to credit you, but this morning he did it again in a
+    leadership meeting.
   parts:
     - "She is on your team and saw what happened."
     - "He took credit for your work. You meet him in the hallway."
