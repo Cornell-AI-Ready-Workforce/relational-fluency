@@ -698,6 +698,24 @@ def test_the_judge_calls_the_pinned_sdk_with_arguments_it_accepts():
     assert set(model.calls[0]) <= accepted, set(model.calls[0]) - accepted
 
 
+def _dropped():
+    import httpx
+    from anthropic import APIConnectionError
+    return APIConnectionError(request=httpx.Request("POST", "https://gateway.test/v1/messages"))
+
+
+def test_a_dropped_connection_is_asked_again_after_a_pause(monkeypatch):
+    monkeypatch.setattr(J, "RECONNECT_PAUSE_S", 0)
+    r, model = run(ENCOUNTER, _dropped(), CLEAN)
+    assert r["passed"] and len(model.calls) == 2 and r["usage"]["calls"] == 1
+
+
+def test_a_connection_that_stays_down_is_no_verdict_not_a_pass(monkeypatch):
+    monkeypatch.setattr(J, "RECONNECT_PAUSE_S", 0)
+    r, model = run(ENCOUNTER, _dropped(), _dropped())
+    assert not r["passed"] and r.get("error") and len(model.calls) == 2
+
+
 def test_an_answer_cut_off_once_is_asked_again():
     r, model = run(ENCOUNTER, {"beats": [], "flags": [], "stop": "max_tokens"}, CLEAN)
     assert r["passed"] and len(model.calls) == 2 and r["usage"]["calls"] == 2
