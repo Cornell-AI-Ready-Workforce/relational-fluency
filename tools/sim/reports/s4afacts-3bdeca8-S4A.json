@@ -1,0 +1,348 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "prelaunch-baf9161",
+   "date": "2026-11-15",
+   "pipeline_version": "2026-11-15a",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "s4afacts-3bdeca8",
+ "build_from": "--build",
+ "failures": [],
+ "generated_at": "2026-11-15T04:01:52Z",
+ "health": {
+  "build": null,
+  "pipeline_version": "2026-11-15a",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "passed": true,
+ "scenarios": {
+  "S4A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0.853,
+     "limit": 0.653,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 0.857
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 11,
+     "limit": 10,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 11
+    },
+    {
+     "baseline": 2.223,
+     "limit": 3.834,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 2.037
+    },
+    {
+     "baseline": 4.098,
+     "limit": 7.147,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.389
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 6,
+     "p": 0,
+     "x": 1,
+     "y": 7
+    },
+    "build": null,
+    "chances": {
+     "met": 3,
+     "of": 6,
+     "per_item": {
+      "encourages_cooperation": 4,
+      "encourages_participation": 2,
+      "not_cooperate_r": 3,
+      "respectful": 3,
+      "solicits_input": 2,
+      "supportive": 1
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 1,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 0,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "priya",
+      "at": 53,
+      "c": "LOOP",
+      "i": 53,
+      "line": "I have nothing to add to that.",
+      "q": "turn 20",
+      "source": null
+     }
+    ],
+    "lines": 40,
+    "missed": [
+     {
+      "agent": "chris",
+      "at": 9,
+      "i": 9,
+      "line": "Operations goes live Monday the 30th.",
+      "trigger": "t11_chris_puts_the_pilot_on_the_table"
+     },
+     {
+      "agent": "priya",
+      "at": 14,
+      "i": 14,
+      "line": "Support needs to go live on Monday the 23rd, after our peak volume weeks.",
+      "trigger": "t5_a_smaller_second_try"
+     },
+     {
+      "agent": "chris",
+      "at": 36,
+      "i": 36,
+      "line": "Support needs the twenty-third.",
+      "trigger": "t9_chris_has_his_teams_date"
+     },
+     {
+      "agent": "priya",
+      "at": 37,
+      "i": 37,
+      "line": "That date is after our volume peak, which is why we need it.",
+      "trigger": "t10_priya_has_her_teams_date"
+     },
+     {
+      "agent": "priya",
+      "at": 47,
+      "i": 47,
+      "line": "Dan just said he would take it.",
+      "trigger": "t7_priya_waits_to_be_handed_work"
+     },
+     {
+      "agent": "chris",
+      "at": 63,
+      "i": 63,
+      "line": "Sales ninth, Support twenty-third, Operations thirtieth.",
+      "trigger": "keep_going_2"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S4A",
+    "session_id": "s_1794714690_2405a8",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 10656,
+     "out": 642
+    },
+    "verdicts": [
+     {
+      "agent": "dan",
+      "at": 3,
+      "i": 3,
+      "trigger": "t1_priya_interrupted",
+      "v": "y"
+     },
+     {
+      "agent": "chris",
+      "at": 9,
+      "i": 9,
+      "trigger": "t11_chris_puts_the_pilot_on_the_table",
+      "v": "n"
+     },
+     {
+      "agent": "dan",
+      "at": 13,
+      "i": 13,
+      "trigger": "t2_idea_relabelled",
+      "v": "y"
+     },
+     {
+      "agent": "priya",
+      "at": 14,
+      "i": 14,
+      "trigger": "t5_a_smaller_second_try",
+      "v": "n"
+     },
+     {
+      "agent": "dan",
+      "at": 28,
+      "i": 28,
+      "trigger": "t8_splitting_it_up_is_slower",
+      "v": "y"
+     },
+     {
+      "agent": "chris",
+      "at": 36,
+      "i": 36,
+      "trigger": "t9_chris_has_his_teams_date",
+      "v": "n"
+     },
+     {
+      "agent": "priya",
+      "at": 37,
+      "i": 37,
+      "trigger": "t10_priya_has_her_teams_date",
+      "v": "n"
+     },
+     {
+      "agent": "chris",
+      "at": 41,
+      "i": 41,
+      "trigger": "t6_chris_backs_the_room",
+      "v": "y"
+     },
+     {
+      "agent": "dan",
+      "at": 45,
+      "i": 45,
+      "trigger": "t4_dan_claims_the_writeup",
+      "v": "y"
+     },
+     {
+      "agent": "priya",
+      "at": 47,
+      "i": 47,
+      "trigger": "t7_priya_waits_to_be_handed_work",
+      "v": "n"
+     },
+     {
+      "agent": "dan",
+      "at": 54,
+      "i": 54,
+      "trigger": "keep_going_1",
+      "v": "y"
+     },
+     {
+      "agent": "chris",
+      "at": 63,
+      "i": 63,
+      "trigger": "keep_going_2",
+      "v": "n"
+     },
+     {
+      "agent": "priya",
+      "at": 72,
+      "i": 72,
+      "trigger": "keep_going_3",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 40,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 30,
+    "lines_heard": 35,
+    "lines_said": 35,
+    "participant_turns": 35,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": null,
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-15a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794714690_2405a8",
+    "speech_end_to_first_played_s": {
+     "n": 35,
+     "p50": 2.037,
+     "p90": 2.389
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_priya_interrupted",
+     "t11_chris_puts_the_pilot_on_the_table",
+     "t2_idea_relabelled",
+     "t5_a_smaller_second_try",
+     "t8_splitting_it_up_is_slower",
+     "t9_chris_has_his_teams_date",
+     "t10_priya_has_her_teams_date",
+     "t6_chris_backs_the_room",
+     "t3_decisions_close_with_priya_silent",
+     "t4_dan_claims_the_writeup",
+     "t7_priya_waits_to_be_handed_work"
+    ],
+    "triggers_fired": 11,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 2,
+    "voice_error_messages": []
+   },
+   "passed": true,
+   "session_id": "s_1794714690_2405a8"
+  }
+ },
+ "server": "http://127.0.0.1:51949"
+}

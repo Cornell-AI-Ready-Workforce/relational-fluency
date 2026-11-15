@@ -182,7 +182,12 @@ voice_error; p90 2.6, 2.1, 3.3 and 4.1 s. S4A's 6 of 12 is low against 9 of 13
 on 14a, but an A/B the same night (S4A twice with and twice without #279) made
 8 and 9 with it and 6 and 7 without, so it is the scenario's spread, not the
 change; and 4 of that night's 6 S4A runs, on both builds, had a FACT (a
-character misstating its own date or history), which is open. Before that,
+character misstating its own date or history). S4A was then re-recorded on
+the S4A fact fix (Chris's and Priya's team dates said as go-live dates with
+the reason in its own sentence; Priya does not judge other teams' dates):
+s_1794714690_2405a8, judge pass, FACT 0, beats made 7 of 13, p90 2.4 s; with
+the fix, 5 of 6 S4A runs had no FACT (the one left: Priya guessing
+Marketing's date in a silence probe). Before that,
 S1A, S2A and S3A were
 re-recorded on 2026-11-14 from build e500d62, pipeline 2026-11-14a (#217: a
 room member's end_conversation before the last interaction is held while

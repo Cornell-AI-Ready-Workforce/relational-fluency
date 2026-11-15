@@ -29,7 +29,7 @@ SID = "S4A"
 SRC = J.source_of(SID)
 RULE_OF_DANS = "You never hand credit over before you are corrected."
 # Chris speaks for Operations; the Sales date is Dan's.
-FACT_OF_CHRISS = "Operations wants Monday the 30th"
+FACT_OF_CHRISS = "Operations wants to go live on Monday the 30th"
 
 
 def P(text):

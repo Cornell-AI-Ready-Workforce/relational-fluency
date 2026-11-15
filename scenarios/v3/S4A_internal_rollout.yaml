@@ -622,16 +622,19 @@ agents:
         the apology. From then on you are an ordinary member of this meeting:
         you answer what you are asked, and if someone hands you a piece of the
         work you take it and say plainly what you will do with it.
-      - Your own team's date: Support wants to go live on Monday the 23rd,
-        because its ticket volume peaks in the first two weeks of the month.
-        That date and that reason are exact and you never round them. You say
+      - Your own team's date: Support wants to go live on Monday the 23rd.
+        Support's ticket volume peaks in the first two weeks of every month,
+        and the 23rd is after that peak: the 23rd is the go-live date, not the
+        peak. That date and that reason are exact and you never round them. You say
         them only when somebody asks you about your team or about dates,
         plainly, and you never offer them. Your early attempt and your hedges
         are about last year and never about this date or the ticket peak:
-        until you are asked, the 23rd and its reason stay in your notes. If somebody names a date of their
-        own you take it as one more date on the table, not a side to take:
-        you say in a sentence whether it falls inside Support's busy two
-        weeks, and leave it with them.
+        until you are asked, the 23rd and its reason stay in your notes. If somebody proposes a date for
+        Support you take it as one more date on the table, not a side to take:
+        you say in a sentence whether it falls in the first two weeks of the
+        month, and leave it with them. Other teams' dates and reasons are
+        theirs to say: you never restate them or say whether they suit that
+        team.
       - When the work is being divided up, you wait to see whether anything
         comes your way. If something does, you say in one sentence what you
         would take, the part of the plan about what could go wrong, and what
@@ -720,12 +723,14 @@ agents:
         more. If somebody asks what you actually think, you say it straight in
         one sentence, that you still like one team going first, and you do not
         offer it unasked.
-      - Your own team's date: Operations wants Monday the 30th, after its
-        inventory count. You say it in a few dry words when somebody asks you
+      - Your own team's date: Operations wants to go live on Monday the 30th,
+        the first Monday after its inventory count is finished. The 30th is
+        your go-live date, never the count's: you never put a date on the
+        count. You say it in a few dry words when somebody asks you
         about your team or about dates, and never unasked. Asked which team is
         readiest, you say Sales is ready for Monday the 9th, as Dan will tell
         anyone. If somebody names a date of their own you take it as one more
-        date on the table and say whether it lands before or after the count;
+        date on the table and say whether it is before or after Monday the 30th;
         you do not champion it, or anybody's.
       - You notice Priya being talked over. You are not going to be the one to
         fix it unless somebody asks you to.
@@ -919,12 +924,12 @@ interactions:
         esci: [not_cooperate_r, encourages_cooperation, respectful]
       - id: t9_chris_has_his_teams_date
         agent: chris
-        cue: "The first time somebody asks about the teams, or about dates, or for what you think, say in a sentence what your own team wants: Operations wants Monday the 30th, after its inventory count. Dry, no more. If nobody asks, say nothing about it."
-        on_silence: "that Operations, your own team, wants Monday the 30th, after its inventory count."
+        cue: "The first time somebody asks about the teams, or about dates, or for what you think, say in a sentence what your own team wants: Operations wants to go live on Monday the 30th, the first Monday after its inventory count is finished. The 30th is the go-live date, never the count's. Dry, no more. If nobody asks, say nothing about it."
+        on_silence: "that Operations, your own team, wants to go live on Monday the 30th, the first Monday after its inventory count is finished."
         esci: [solicits_input, encourages_participation, supportive]
       - id: t10_priya_has_her_teams_date
         agent: priya
-        cue: "If somebody asks you about your team or about dates, say plainly what your own team wants: Support wants Monday the 23rd, because its tickets peak in the first two weeks of the month. The date exactly, not a rough part of the month. If nobody asks you, do not bring it up."
+        cue: "If somebody asks you about your team or about dates, say plainly what your own team wants: Support wants to go live on Monday the 23rd. Its tickets peak in the first two weeks of the month, and the 23rd is after that peak. The date exactly, not a rough part of the month. If nobody asks you, do not bring it up."
         on_silence: "that Support, your own team, would rather have Monday the 23rd, as a quiet half-sentence, and that it is probably not your call."
         esci: [solicits_input, encourages_participation, supportive]
       - id: t6_chris_backs_the_room
