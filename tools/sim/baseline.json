@@ -1,12 +1,9 @@
 {
  "about": "Accepted per-scenario values for python -m tools.sim.check; see tools/sim/README.md. Only regressions beyond `tolerances` fail. Re-record with --write-baseline.",
- "pending": {
-  "S4A": "not recorded on pipeline 2026-11-14a: the run with the #217 fix (reports/e500d62.json, s_1794695132_757255, 2026-11-14) is not a baseline, because the judge failed it on a FACT: Priya said the 30th falls in the middle of Support's first two weeks, against her brief (ticket volume peaks in the first two weeks of the month, which is why Support wants the 23rd). The hold itself worked there: Priya's and Chris's end_conversation calls at 246 s and 262 s were held (end_conversation_held), all 9 working-session beats fired, and Dan's call at 329 s, with the beats spent, moved the room to the close; 11 of 12 beats fired, the judge made 7 of 12. Record it from a run the judge passes, with python -m tools.sim.check --scenarios S4A --write-baseline"
- },
  "realtime_model": "cascade-argon-elevenlabs",
  "recorded": {
-  "build": "e500d62",
-  "date": "2026-11-14",
+  "build": "be83994",
+  "date": "2026-11-15",
   "pipeline_version": "2026-11-14a",
   "room_pacing_version": "2026-11-04a"
  },
@@ -99,6 +96,36 @@
     "p90": 3.088
    },
    "triggers_fired": 7,
+   "voice_error": 0
+  },
+  "S4A": {
+   "error_frames": 0,
+   "judge": {
+    "beats_judged": 13,
+    "beats_made": 9,
+    "model": "nto.gemini-4-argon",
+    "rubric": "97e0ab8d"
+   },
+   "lines_answered": 29,
+   "lines_heard": 34,
+   "lines_said": 34,
+   "phantom_turns": 0,
+   "recorded": {
+    "build": "be83994",
+    "date": "2026-11-15",
+    "pipeline_version": "2026-11-14a",
+    "room_pacing_version": "2026-11-04a",
+    "session_id": "s_1794707703_4eed61"
+   },
+   "refused_creates": 0,
+   "reply_missing": 0,
+   "sequence_sha256": "8efdc0004450ad17",
+   "speech_end_to_first_played_s": {
+    "n": 34,
+    "p50": 2.29,
+    "p90": 2.674
+   },
+   "triggers_fired": 11,
    "voice_error": 0
   }
  },
