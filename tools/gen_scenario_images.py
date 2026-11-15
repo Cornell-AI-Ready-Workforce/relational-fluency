@@ -75,7 +75,8 @@ SCENES = {
            "from behind. Facing the lead sit two men and one woman, visibly worn "
            "down and unhappy, shown through posture only: one man leans back "
            "with arms folded, the other man slumps with head propped on a hand, "
-           "and the woman hunches forward over the table. In front of each of them is a tall, uneven "
+           "and the woman hunches forward over the table. In front of each of "
+           "them is a tall, uneven "
            "pile of contract folders and loose papers, far more than one person "
            "can handle, crowding their laptops. Two further chairs at the table "
            "are empty, with bare table in front of them.",
