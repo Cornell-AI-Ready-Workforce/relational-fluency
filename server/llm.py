@@ -813,7 +813,25 @@ def text_client() -> AsyncAnthropic:
 #                second pass", which had him invent a day and clause type
 #                (sim s_1794711071_5ac3f6); they give him his own two facts
 #                and forbid a contract, clause, day or number. S3B unchanged.
-PIPELINE_VERSION = "2026-11-15c"
+#   2026-11-15d  S3 and S4 briefs (#225). A brief can opt out of the two
+#                shared rules that make every character ask and press
+#                (`reticent: true`, server/scenarios_v3._render_prompt): "About
+#                half your turns end on a question" and "If they are brief or
+#                non-committal, do not accept it" are dropped for S3A Jordan
+#                and Casey and S3B Lee and Ari, whose briefs say they rarely
+#                ask and take any answer as final. S4A/S4B t1: the cue had
+#                Dan cut Priya off "before she reaches her point", and when
+#                the participant's first line names nobody it is briefed onto
+#                Dan's first reply, before she has spoken; it now branches on
+#                whether she has started, the not-yet branch being his brief's
+#                own move (put something to her by name, carry on over her
+#                answer). S4B's opening is a position ("Dan built the deck
+#                last night. His position is ..."), not "Opens mid-flow. Dan
+#                has just said ...". S4A: Priya's brief and t7 cue name the
+#                risk section, as S4B names its piece; Dan's "a close" (no
+#                team here has one since #256) is "a ticket peak". Beat ids,
+#                agents and ESCI items unchanged.
+PIPELINE_VERSION = "2026-11-15d"
 ROOM_PACING_VERSION = "2026-11-04a"
 
 
