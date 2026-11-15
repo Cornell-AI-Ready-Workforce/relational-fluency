@@ -304,7 +304,10 @@ each, which is what heard and phantom are measured against. No participant's
 voice is in this directory, and none may be: this repository is public.
 
 `python -m tools.sim.make_stim <name>` regenerates a line (macOS only). Only
-lines a default sequence uses are committed, and a test keeps it that way.
+lines a default sequence or one in `sequences.EXTRA_SEQUENCES` uses are
+committed, and a test keeps it that way. `EXTRA_SEQUENCES["S4B"]` is S4A's
+sequence on the parallel form (#222); it has no baseline and runs only with
+`--steps` (the command is in `sequences.py`).
 Room tone is generated in code (`stim.room_tone`), not recorded.
 
 ## Against another server

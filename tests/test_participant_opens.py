@@ -739,7 +739,7 @@ def test_every_sim_sequence_begins_with_room_tone_before_the_first_line():
     """Review of 28b: the stretch before the participant's first line is
     where no character may speak, and the sim check's only look at it
     (analyze's spoke_first counts a reply played there)."""
-    for sid, steps in sequences.DEFAULT_SEQUENCES.items():
+    for sid, steps in {**sequences.DEFAULT_SEQUENCES, **sequences.EXTRA_SEQUENCES}.items():
         kind, _ = sequences.parse(steps)[0]
         assert kind == "tone", (sid, steps[:30])
 

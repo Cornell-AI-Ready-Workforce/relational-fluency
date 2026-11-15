@@ -64,6 +64,22 @@ DEFAULT_SEQUENCES: Dict[str, str] = {
             "cycle:b9|b10|b11|s4|b8|b2|b12:780,tone:3"),
 }
 
+# Sequences the check does not run by default and no baseline covers. They are
+# run by passing the string with --steps, which also keeps the report from
+# passing or being written as a baseline:
+#
+#   python -m tools.sim.check --scenarios S4B --no-report \
+#       --steps "S4B=$(python -c 'from tools.sim import sequences as s; print(s.EXTRA_SEQUENCES["S4B"])')"
+EXTRA_SEQUENCES: Dict[str, str] = {
+    # S4A's sequence move for move on the parallel form (#222: re-measure the
+    # relabel on both forms with the same participant): the same steps, timing
+    # and names, with d1/d2/d5/d10/d11 telling the client-presentation story
+    # where S4A's s4/b2/b5/b10/b11 tell the rollout one (tools/sim/stim/lines.txt).
+    "S4B": ("tone:8,say:d1,bargeplay:d2+b3:2.0,resume:b4+d5:1.0,burst:b6,say:b7,"
+            "tone:14,say:b8,bargeplay:d2+b3:2.0,resume:b4+d5:0.95,burst:b6,say:b7,"
+            "cycle:b9|d10|d11|d1|b8|d2|b12:780,tone:3"),
+}
+
 KINDS = {"tone", "zeros", "until", "say", "bargeplay", "resume", "burst", "cycle"}
 
 
