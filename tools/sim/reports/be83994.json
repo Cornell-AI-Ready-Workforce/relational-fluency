@@ -1,0 +1,1154 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "e500d62",
+   "date": "2026-11-14",
+   "pipeline_version": "2026-11-14a",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "be83994",
+ "build_from": "--build",
+ "failures": [
+  "S4A: no baseline yet: not recorded on pipeline 2026-11-14a: the run with the #217 fix (reports/e500d62.json, s_1794695132_757255, 2026-11-14) is not a baseline, because the judge failed it on a FACT: Priya said the 30th falls in the middle of Support's first two weeks, against her brief (ticket volume peaks in the first two weeks of the month, which is why Support wants the 23rd). The hold itself worked there: Priya's and Chris's end_conversation calls at 246 s and 262 s were held (end_conversation_held), all 9 working-session beats fired, and Dan's call at 329 s, with the beats spent, moved the room to the close; 11 of 12 beats fired, the judge made 7 of 12. Record it from a run the judge passes, with python -m tools.sim.check --scenarios S4A --write-baseline"
+ ],
+ "generated_at": "2026-11-15T01:42:40Z",
+ "health": {
+  "build": "be83994",
+  "pipeline_version": "2026-11-14a",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S1A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 1.0,
+     "limit": 0.8,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 7,
+     "limit": 6,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 7
+    },
+    {
+     "baseline": 2.978,
+     "limit": 4.967,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 2.004
+    },
+    {
+     "baseline": 4.0,
+     "limit": 7.0,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.76
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 1,
+     "p": 0,
+     "x": 0,
+     "y": 7
+    },
+    "build": "be83994",
+    "chances": {
+     "met": 4,
+     "of": 5,
+     "per_item": {
+      "bring_into_open": 3,
+      "de_escalate": 2,
+      "fester_r": 4,
+      "resolve_not_fester": 4,
+      "talk_openly": 3
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 1,
+     "ROLE": 0,
+     "RULE": 2,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [
+     {
+      "agent": "sam",
+      "at": 14,
+      "c": "RULE",
+      "i": 13,
+      "line": "We've got the portfolio review coming up Thursday, so let's just make sure the slide deck…",
+      "q": "Do not invent other projects, deliverables or deadlines to keep a turn going.",
+      "source": "Do not invent other projects, deliverables or deadlines to keep a turn going."
+     }
+    ],
+    "dropped": {
+     "unconfirmed": 1,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "riley",
+      "at": 3,
+      "c": "RULE",
+      "i": 3,
+      "line": "He stood right up there and walked through every chart from your folder like he spent all…",
+      "q": "You finish on a question, except on your first turn",
+      "source": "You finish on a question, except on your first turn, where you say your piece and stop."
+     },
+     {
+      "agent": "riley",
+      "at": 7,
+      "c": "RULE",
+      "i": 6,
+      "line": "He had your exact slides up on the screen, right down to the color scheme you used, and h…",
+      "q": "You finish on a question, except on your first turn",
+      "source": "You finish on a question, except on your first turn, where you say your piece and stop."
+     },
+     {
+      "agent": "sam",
+      "at": 16,
+      "c": "LOOP",
+      "i": 15,
+      "line": "Hey, what is up, morning has been dragging on forever so far. Have you got new results re…",
+      "q": "turn 9",
+      "source": null
+     }
+    ],
+    "lines": 10,
+    "missed": [
+     {
+      "agent": "sam",
+      "at": 16,
+      "i": 15,
+      "line": "Hey, what is up, morning has been dragging on forever so far. Have you got new results re…",
+      "trigger": "t6_how_it_works"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S1A",
+    "session_id": "s_1794705199_af9294",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 8209,
+     "out": 350
+    },
+    "verdicts": [
+     {
+      "agent": "riley",
+      "at": 1,
+      "i": 1,
+      "trigger": "t1_retaliation_fork",
+      "v": "y"
+     },
+     {
+      "agent": "riley",
+      "at": 8,
+      "i": 7,
+      "trigger": null,
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 10,
+      "i": 9,
+      "trigger": "t2_the_opening",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 12,
+      "i": 11,
+      "trigger": "t3_defensiveness",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 14,
+      "i": 13,
+      "trigger": "t5_brush_it_off",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 16,
+      "i": 15,
+      "trigger": "t6_how_it_works",
+      "v": "n"
+     },
+     {
+      "agent": "sam",
+      "at": 17,
+      "i": 16,
+      "trigger": "t4_half_concession",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 19,
+      "i": 18,
+      "trigger": "t7_time_runs_out",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 11,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 8,
+    "lines_said": 8,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "be83994",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-14a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794705199_af9294",
+    "speech_end_to_first_played_s": {
+     "n": 8,
+     "p50": 2.004,
+     "p90": 2.76
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_retaliation_fork",
+     "t2_the_opening",
+     "t3_defensiveness",
+     "t5_brush_it_off",
+     "t6_how_it_works",
+     "t4_half_concession",
+     "t7_time_runs_out"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {
+     "probe_pad": 2
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": true,
+   "session_id": "s_1794705199_af9294"
+  },
+  "S2A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0.96,
+     "limit": 0.76,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 0.96
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 9,
+     "limit": 8,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 9
+    },
+    {
+     "baseline": 2.599,
+     "limit": 4.399,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 1.857
+    },
+    {
+     "baseline": 3.058,
+     "limit": 5.587,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.084
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 4,
+     "p": 0,
+     "x": 0,
+     "y": 5
+    },
+    "build": "be83994",
+    "chances": {
+     "met": 3,
+     "of": 5,
+     "per_item": {
+      "anticipates": 4,
+      "behind_scenes": 2,
+      "multiple_approaches": 2,
+      "self_interest": 3,
+      "through_discussion": 3
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 7,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 10,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "morgan",
+      "at": 32,
+      "c": "LOOP",
+      "i": 32,
+      "line": "Managing those two people changed the scope of your role entirely, and I know I haven't k…",
+      "q": "turn 12",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 40,
+      "c": "LOOP",
+      "i": 40,
+      "line": "I remember that, and I meant it. The cycle froze right after, and I haven't been able to…",
+      "q": "turn 3",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 42,
+      "c": "LOOP",
+      "i": 42,
+      "line": "Monday works for me, I will have it ready then.",
+      "q": "turn 19",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 44,
+      "c": "LOOP",
+      "i": 44,
+      "line": "You have put in incredible hours this year, and you have carried more than anyone else on…",
+      "q": "turn 26",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 46,
+      "c": "LOOP",
+      "i": 46,
+      "line": "Ten percent is a clean number, and the data you pulled together was thorough. How are you…",
+      "q": "turn 28",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 48,
+      "c": "LOOP",
+      "i": 48,
+      "line": "I need the exact percentage, the two team members you took on, and the two months early o…",
+      "q": "turn 30",
+      "source": null
+     },
+     {
+      "agent": "morgan",
+      "at": 50,
+      "c": "LOOP",
+      "i": 50,
+      "line": "Managing those two people changed the scope of your role entirely, and I know I haven't k…",
+      "q": "turn 12",
+      "source": null
+     }
+    ],
+    "lines": 26,
+    "missed": [
+     {
+      "agent": "morgan",
+      "at": 12,
+      "i": 12,
+      "line": "Managing those two people changed the scope of your role entirely, and I know I haven't k…",
+      "trigger": "t2_the_money_is_not_there"
+     },
+     {
+      "agent": "morgan",
+      "at": 17,
+      "i": 17,
+      "line": "I can have the case ready by Friday for you to review. What does Monday look like for che…",
+      "trigger": "t5_the_door"
+     },
+     {
+      "agent": "morgan",
+      "at": 19,
+      "i": 19,
+      "line": "Monday works for me, I will have it ready then.",
+      "trigger": "t6_who_else_has_to_back_it"
+     },
+     {
+      "agent": "morgan",
+      "at": 21,
+      "i": 21,
+      "line": "That migration went smoothly because of you, and I meant it. The cycle froze right after,…",
+      "trigger": "t7_what_goes_in_writing"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S2A",
+    "session_id": "s_1794705432_899932",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 10846,
+     "out": 1900
+    },
+    "verdicts": [
+     {
+      "agent": "morgan",
+      "at": 1,
+      "i": 1,
+      "trigger": "t1_the_opening",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 12,
+      "i": 12,
+      "trigger": "t2_the_money_is_not_there",
+      "v": "n"
+     },
+     {
+      "agent": "morgan",
+      "at": 13,
+      "i": 13,
+      "trigger": "t3_the_argument_lands_flat",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 15,
+      "i": 15,
+      "trigger": "t4_everyone_is_stretched",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 17,
+      "i": 17,
+      "trigger": "t5_the_door",
+      "v": "n"
+     },
+     {
+      "agent": "morgan",
+      "at": 19,
+      "i": 19,
+      "trigger": "t6_who_else_has_to_back_it",
+      "v": "n"
+     },
+     {
+      "agent": "morgan",
+      "at": 21,
+      "i": 21,
+      "trigger": "t7_what_goes_in_writing",
+      "v": "n"
+     },
+     {
+      "agent": "morgan",
+      "at": 22,
+      "i": 22,
+      "trigger": "t8_what_do_i_tell_the_others",
+      "v": "y"
+     },
+     {
+      "agent": "morgan",
+      "at": 24,
+      "i": 24,
+      "trigger": "t9_settling",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 26,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 24,
+    "lines_heard": 25,
+    "lines_said": 25,
+    "participant_turns": 25,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "be83994",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-14a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794705432_899932",
+    "speech_end_to_first_played_s": {
+     "n": 24,
+     "p50": 1.857,
+     "p90": 2.084
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_the_opening",
+     "t2_the_money_is_not_there",
+     "t3_the_argument_lands_flat",
+     "t4_everyone_is_stretched",
+     "t5_the_door",
+     "t6_who_else_has_to_back_it",
+     "t7_what_goes_in_writing",
+     "t8_what_do_i_tell_the_others",
+     "t9_settling"
+    ],
+    "triggers_fired": 9,
+    "turns_suppressed": {
+     "probe_pad": 2
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": true,
+   "session_id": "s_1794705432_899932"
+  },
+  "S3A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0.778,
+     "limit": 0.578,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 0.889
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 7,
+     "limit": 6,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 7
+    },
+    {
+     "baseline": 2.87,
+     "limit": 4.805,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 2.196
+    },
+    {
+     "baseline": 3.088,
+     "limit": 5.632,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.945
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 0,
+     "p": 0,
+     "x": 0,
+     "y": 7
+    },
+    "build": "be83994",
+    "chances": {
+     "met": 3,
+     "of": 5,
+     "per_item": {
+      "brings_out_best": 4,
+      "builds_pride": 4,
+      "compelling_vision": 2,
+      "inspires": 3,
+      "not_inspire_r": 2
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 0,
+     "ROLE": 0,
+     "RULE": 3,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 0,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "alex",
+      "at": 5,
+      "c": "RULE",
+      "i": 5,
+      "line": "Forty open reviews sit on three desks where ten is a normal load. What did leadership say…",
+      "q": "never end two turns in a row on a question",
+      "source": "Mix statements and questions, and never end two turns in a row on a question."
+     },
+     {
+      "agent": "casey",
+      "at": 12,
+      "c": "RULE",
+      "i": 12,
+      "line": "Could five of them go to someone else by tomorrow morning?",
+      "q": "You never name a clause or a contract, or any other number.",
+      "source": "You never name a clause or a contract, or any other number."
+     },
+     {
+      "agent": "jordan",
+      "at": 16,
+      "c": "RULE",
+      "i": 16,
+      "line": "Without a second pass, a missed liability clause goes straight to the client under whatev…",
+      "q": "You never invent a contract, clause, check or number.",
+      "source": "You never invent a contract, clause, check or number."
+     }
+    ],
+    "lines": 10,
+    "missed": [],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S3A",
+    "session_id": "s_1794706065_79ab14",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 5250,
+     "out": 899
+    },
+    "verdicts": [
+     {
+      "agent": "alex",
+      "at": 1,
+      "i": 1,
+      "trigger": "t0_hello",
+      "v": "y"
+     },
+     {
+      "agent": "alex",
+      "at": 3,
+      "i": 3,
+      "trigger": "t1_public_challenge",
+      "v": "y"
+     },
+     {
+      "agent": "jordan",
+      "at": 9,
+      "i": 9,
+      "trigger": "t2_jordans_flat_fine",
+      "v": "y"
+     },
+     {
+      "agent": "casey",
+      "at": 10,
+      "i": 10,
+      "trigger": "t3_caseys_overload",
+      "v": "y"
+     },
+     {
+      "agent": "alex",
+      "at": 15,
+      "i": 15,
+      "trigger": "t4_what_the_team_is_for",
+      "v": "y"
+     },
+     {
+      "agent": "jordan",
+      "at": 16,
+      "i": 16,
+      "trigger": "t5_a_fact_left_on_the_table",
+      "v": "y"
+     },
+     {
+      "agent": "casey",
+      "at": 18,
+      "i": 18,
+      "trigger": "t6_one_clarifying_question",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 10,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 9,
+    "lines_said": 9,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "be83994",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-14a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794706065_79ab14",
+    "speech_end_to_first_played_s": {
+     "n": 9,
+     "p50": 2.196,
+     "p90": 2.945
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t0_hello",
+     "t1_public_challenge",
+     "t2_jordans_flat_fine",
+     "t3_caseys_overload",
+     "t4_what_the_team_is_for",
+     "t5_a_fact_left_on_the_table",
+     "t6_one_clarifying_question"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": true,
+   "session_id": "s_1794706065_79ab14"
+  },
+  "S4A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-14a: the run with the #217 fix (reports/e500d62.json, s_1794695132_757255, 2026-11-14) is not a baseline, because the judge failed it on a FACT: Priya said the 30th falls in the middle of Support's first two weeks, against her brief (ticket volume peaks in the first two weeks of the month, which is why Support wants the 23rd). The hold itself worked there: Priya's and Chris's end_conversation calls at 246 s and 262 s were held (end_conversation_held), all 9 working-session beats fired, and Dan's call at 329 s, with the beats spent, moved the room to the close; 11 of 12 beats fired, the judge made 7 of 12. Record it from a run the judge passes, with python -m tools.sim.check --scenarios S4A --write-baseline",
+     "ok": false
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 4,
+     "p": 3,
+     "x": 1,
+     "y": 6
+    },
+    "build": "be83994",
+    "chances": {
+     "met": 6,
+     "of": 6,
+     "per_item": {
+      "encourages_cooperation": 3,
+      "encourages_participation": 3,
+      "not_cooperate_r": 3,
+      "respectful": 3,
+      "solicits_input": 3,
+      "supportive": 3
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 3,
+     "ROLE": 0,
+     "RULE": 1,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 1,
+     "ungrounded": 1
+    },
+    "flags": [
+     {
+      "agent": "priya",
+      "at": 23,
+      "c": "LOOP",
+      "i": 23,
+      "line": "I have nothing to add to that.",
+      "q": "turn 20",
+      "source": null
+     },
+     {
+      "agent": "priya",
+      "at": 39,
+      "c": "RULE",
+      "i": 39,
+      "line": "Support would rather have Monday the twenty-third, but it's probably not my call.",
+      "q": "Once you have been asked and have said your piece, the hedging is gone",
+      "source": "Once you have been asked and have said your piece, the hedging is gone and it does not come back."
+     },
+     {
+      "agent": "chris",
+      "at": 63,
+      "c": "LOOP",
+      "i": 63,
+      "line": "Sales on the ninth, Support on the twenty-third, Operations on the thirtieth, and Marketi…",
+      "q": "turn 41",
+      "source": null
+     },
+     {
+      "agent": "chris",
+      "at": 71,
+      "c": "LOOP",
+      "i": 71,
+      "line": "Sales on the ninth, Support on the twenty-third, Operations on the thirtieth.",
+      "q": "turn 41",
+      "source": null
+     }
+    ],
+    "lines": 39,
+    "missed": [
+     {
+      "agent": "chris",
+      "at": 9,
+      "i": 9,
+      "line": "Operations wants Monday the 30th after inventory.",
+      "trigger": "t11_chris_puts_the_pilot_on_the_table"
+     },
+     {
+      "agent": "priya",
+      "at": 14,
+      "i": 14,
+      "line": "Chris's date is after inventory, so that's the thirtieth.",
+      "trigger": "t5_a_smaller_second_try"
+     },
+     {
+      "agent": "chris",
+      "at": 41,
+      "i": 41,
+      "line": "Sales on the ninth, Support on the twenty-third, Operations on the thirtieth.",
+      "trigger": "t6_chris_backs_the_room"
+     },
+     {
+      "agent": "priya",
+      "at": 47,
+      "i": 47,
+      "line": "Dan said he would do it.",
+      "trigger": "t7_priya_waits_to_be_handed_work"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S4A",
+    "session_id": "s_1794706279_fe91c8",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 10611,
+     "out": 760
+    },
+    "verdicts": [
+     {
+      "agent": "dan",
+      "at": 3,
+      "i": 3,
+      "trigger": "t1_priya_interrupted",
+      "v": "y"
+     },
+     {
+      "agent": "chris",
+      "at": 9,
+      "i": 9,
+      "trigger": "t11_chris_puts_the_pilot_on_the_table",
+      "v": "n"
+     },
+     {
+      "agent": "dan",
+      "at": 13,
+      "i": 13,
+      "trigger": "t2_idea_relabelled",
+      "v": "y"
+     },
+     {
+      "agent": "priya",
+      "at": 14,
+      "i": 14,
+      "trigger": "t5_a_smaller_second_try",
+      "v": "n"
+     },
+     {
+      "agent": "dan",
+      "at": 28,
+      "i": 28,
+      "trigger": "t8_splitting_it_up_is_slower",
+      "v": "y"
+     },
+     {
+      "agent": "chris",
+      "at": 36,
+      "i": 36,
+      "trigger": "t9_chris_has_his_teams_date",
+      "v": "p"
+     },
+     {
+      "agent": "priya",
+      "at": 37,
+      "i": 37,
+      "trigger": "t10_priya_has_her_teams_date",
+      "v": "p"
+     },
+     {
+      "agent": "chris",
+      "at": 41,
+      "i": 41,
+      "trigger": "t6_chris_backs_the_room",
+      "v": "n"
+     },
+     {
+      "agent": "dan",
+      "at": 45,
+      "i": 45,
+      "trigger": "t4_dan_claims_the_writeup",
+      "v": "y"
+     },
+     {
+      "agent": "priya",
+      "at": 47,
+      "i": 47,
+      "trigger": "t7_priya_waits_to_be_handed_work",
+      "v": "n"
+     },
+     {
+      "agent": "dan",
+      "at": 54,
+      "i": 54,
+      "trigger": "keep_going_1",
+      "v": "y"
+     },
+     {
+      "agent": "chris",
+      "at": 63,
+      "i": 63,
+      "trigger": "keep_going_2",
+      "v": "p"
+     },
+     {
+      "agent": "priya",
+      "at": 72,
+      "i": 72,
+      "trigger": "keep_going_3",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 39,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 29,
+    "lines_heard": 34,
+    "lines_said": 34,
+    "participant_turns": 34,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "be83994",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-14a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794706279_fe91c8",
+    "speech_end_to_first_played_s": {
+     "n": 34,
+     "p50": 2.23,
+     "p90": 3.044
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_priya_interrupted",
+     "t11_chris_puts_the_pilot_on_the_table",
+     "t2_idea_relabelled",
+     "t5_a_smaller_second_try",
+     "t8_splitting_it_up_is_slower",
+     "t9_chris_has_his_teams_date",
+     "t10_priya_has_her_teams_date",
+     "t6_chris_backs_the_room",
+     "t3_decisions_close_with_priya_silent",
+     "t4_dan_claims_the_writeup",
+     "t7_priya_waits_to_be_handed_work"
+    ],
+    "triggers_fired": 11,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 2,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794706279_fe91c8"
+  }
+ },
+ "server": "http://127.0.0.1:59850"
+}
