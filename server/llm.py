@@ -791,6 +791,14 @@ def text_client() -> AsyncAnthropic:
 #                and the lead's first-reply note say "the participant" instead
 #                of "the person running the meeting" / "the person you are all
 #                meeting with", which made S4A's peer read as its leader.
+#   2026-11-15a  (also) S4A briefs and cues t9/t10: Chris's and Priya's team
+#                dates are said as go-live dates with the reason in its own
+#                sentence after them ("the 30th, the first Monday after its
+#                inventory count is finished"; "the 23rd is after that peak"),
+#                and Priya no longer judges other teams' dates. "the 30th,
+#                after its inventory count" read as a count dated the 30th
+#                (Chris "thirty-first", "our count is thirtieth"), and "the
+#                23rd, because its volume peaks" as "the 23rd is the peak".
 PIPELINE_VERSION = "2026-11-15a"
 ROOM_PACING_VERSION = "2026-11-04a"
 
