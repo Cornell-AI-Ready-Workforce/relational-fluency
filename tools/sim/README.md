@@ -178,9 +178,12 @@ beats are unfired; reports/e500d62.json). Each passed every check against the
 11-13a values but the version one; replies came about 0.6 to 1.1 s later at
 p50 than in that recording (3.0, 2.6 and 2.9 s against 1.9, 1.8 and 2.2 s),
 in scenarios the change does not reach, so read that as the gateway on the
-day, and note that it loosens the latency limits. S4A stays pending: in that
-run the hold worked (two calls held, all 9 working-session beats fired) but
-the judge failed it on a FACT; see its `pending` entry. Before that, S1A, S2A
+day, and note that it loosens the latency limits. S4A was not recorded from
+that run: the hold worked (two calls held, all 9 working-session beats fired)
+but the judge failed it on a FACT. It was recorded on 2026-11-15 from the live
+build be83994 (s_1794707703_4eed61, reports/be83994-S4A-baseline.json): the
+judge passed it (FACT 0, ROLE 0, SAFE 0; beats made 9 of 13), 34 of 34 lines
+heard, 29 answered, 11 triggers, p50 / p90 2.3 / 2.7 s. Before that, S1A, S2A
 and S3A were
 recorded on 2026-11-14 from build 85c539d, pipeline 2026-11-13a, with the new
 transcriber (reports/85c539d.json). S2A's manager there answers a line the

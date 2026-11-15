@@ -1,0 +1,274 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "e500d62",
+   "date": "2026-11-14",
+   "pipeline_version": "2026-11-14a",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "be83994",
+ "build_from": "--build",
+ "failures": [
+  "S4A: no baseline yet: not recorded on pipeline 2026-11-14a: the run with the #217 fix (reports/e500d62.json, s_1794695132_757255, 2026-11-14) is not a baseline, because the judge failed it on a FACT: Priya said the 30th falls in the middle of Support's first two weeks, against her brief (ticket volume peaks in the first two weeks of the month, which is why Support wants the 23rd). The hold itself worked there: Priya's and Chris's end_conversation calls at 246 s and 262 s were held (end_conversation_held), all 9 working-session beats fired, and Dan's call at 329 s, with the beats spent, moved the room to the close; 11 of 12 beats fired, the judge made 7 of 12. Record it from a run the judge passes, with python -m tools.sim.check --scenarios S4A --write-baseline"
+ ],
+ "generated_at": "2026-11-15T02:05:34Z",
+ "health": {
+  "build": "be83994",
+  "pipeline_version": "2026-11-14a",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-04a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S4A": {
+   "checks": [
+    {
+     "metric": "baseline",
+     "note": "no baseline yet: not recorded on pipeline 2026-11-14a: the run with the #217 fix (reports/e500d62.json, s_1794695132_757255, 2026-11-14) is not a baseline, because the judge failed it on a FACT: Priya said the 30th falls in the middle of Support's first two weeks, against her brief (ticket volume peaks in the first two weeks of the month, which is why Support wants the 23rd). The hold itself worked there: Priya's and Chris's end_conversation calls at 246 s and 262 s were held (end_conversation_held), all 9 working-session beats fired, and Dan's call at 329 s, with the beats spent, moved the room to the close; 11 of 12 beats fired, the judge made 7 of 12. Record it from a run the judge passes, with python -m tools.sim.check --scenarios S4A --write-baseline",
+     "ok": false
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 4,
+     "p": 2,
+     "x": 1,
+     "y": 7
+    },
+    "build": "be83994",
+    "chances": {
+     "met": 4,
+     "of": 6,
+     "per_item": {
+      "encourages_cooperation": 4,
+      "encourages_participation": 2,
+      "not_cooperate_r": 3,
+      "respectful": 4,
+      "solicits_input": 2,
+      "supportive": 3
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 1,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [
+     {
+      "agent": "priya",
+      "at": 14,
+      "c": "RULE",
+      "i": 14,
+      "line": "Marketing isn't my team to call, but it's close to the end of the month.",
+      "q": "what is true of it is theirs to say, and asked about it you say so",
+      "source": "Marketing is the participant's own team: what is true of it is theirs to say, and asked about it you say so."
+     }
+    ],
+    "dropped": {
+     "unconfirmed": 4,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "chris",
+      "at": 71,
+      "c": "LOOP",
+      "i": 71,
+      "line": "Sales on the ninth, Support on the twenty-third, us on the thirtieth.",
+      "q": "turn 41",
+      "source": null
+     }
+    ],
+    "lines": 39,
+    "missed": [
+     {
+      "agent": "chris",
+      "at": 9,
+      "i": 9,
+      "line": "Monday the 30th works best for us, right after inventory.",
+      "trigger": "t11_chris_puts_the_pilot_on_the_table"
+     },
+     {
+      "agent": "priya",
+      "at": 14,
+      "i": 14,
+      "line": "Marketing isn't my team to call, but it's close to the end of the month.",
+      "trigger": "t5_a_smaller_second_try"
+     },
+     {
+      "agent": "chris",
+      "at": 36,
+      "i": 36,
+      "line": "That is the first I have heard of last year.",
+      "trigger": "t9_chris_has_his_teams_date"
+     },
+     {
+      "agent": "chris",
+      "at": 41,
+      "i": 41,
+      "line": "Sales on the ninth, Support on the twenty-third, us on the thirtieth.",
+      "trigger": "t6_chris_backs_the_room"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S4A",
+    "session_id": "s_1794707703_4eed61",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 12035,
+     "out": 1055
+    },
+    "verdicts": [
+     {
+      "agent": "dan",
+      "at": 3,
+      "i": 3,
+      "trigger": "t1_priya_interrupted",
+      "v": "y"
+     },
+     {
+      "agent": "chris",
+      "at": 9,
+      "i": 9,
+      "trigger": "t11_chris_puts_the_pilot_on_the_table",
+      "v": "n"
+     },
+     {
+      "agent": "dan",
+      "at": 13,
+      "i": 13,
+      "trigger": "t2_idea_relabelled",
+      "v": "y"
+     },
+     {
+      "agent": "priya",
+      "at": 14,
+      "i": 14,
+      "trigger": "t5_a_smaller_second_try",
+      "v": "n"
+     },
+     {
+      "agent": "dan",
+      "at": 28,
+      "i": 28,
+      "trigger": "t8_splitting_it_up_is_slower",
+      "v": "p"
+     },
+     {
+      "agent": "chris",
+      "at": 36,
+      "i": 36,
+      "trigger": "t9_chris_has_his_teams_date",
+      "v": "n"
+     },
+     {
+      "agent": "priya",
+      "at": 37,
+      "i": 37,
+      "trigger": "t10_priya_has_her_teams_date",
+      "v": "y"
+     },
+     {
+      "agent": "chris",
+      "at": 41,
+      "i": 41,
+      "trigger": "t6_chris_backs_the_room",
+      "v": "n"
+     },
+     {
+      "agent": "dan",
+      "at": 45,
+      "i": 45,
+      "trigger": "t4_dan_claims_the_writeup",
+      "v": "y"
+     },
+     {
+      "agent": "priya",
+      "at": 47,
+      "i": 47,
+      "trigger": "t7_priya_waits_to_be_handed_work",
+      "v": "p"
+     },
+     {
+      "agent": "dan",
+      "at": 54,
+      "i": 54,
+      "trigger": "keep_going_1",
+      "v": "y"
+     },
+     {
+      "agent": "chris",
+      "at": 63,
+      "i": 63,
+      "trigger": "keep_going_2",
+      "v": "y"
+     },
+     {
+      "agent": "priya",
+      "at": 72,
+      "i": 72,
+      "trigger": "keep_going_3",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 39,
+    "completed": true,
+    "error_frames": 0,
+    "lines_answered": 29,
+    "lines_heard": 34,
+    "lines_said": 34,
+    "participant_turns": 34,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": "be83994",
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-14a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-04a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794707703_4eed61",
+    "speech_end_to_first_played_s": {
+     "n": 34,
+     "p50": 2.29,
+     "p90": 2.674
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_priya_interrupted",
+     "t11_chris_puts_the_pilot_on_the_table",
+     "t2_idea_relabelled",
+     "t5_a_smaller_second_try",
+     "t8_splitting_it_up_is_slower",
+     "t9_chris_has_his_teams_date",
+     "t10_priya_has_her_teams_date",
+     "t6_chris_backs_the_room",
+     "t3_decisions_close_with_priya_silent",
+     "t4_dan_claims_the_writeup",
+     "t7_priya_waits_to_be_handed_work"
+    ],
+    "triggers_fired": 11,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 2,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794707703_4eed61"
+  }
+ },
+ "server": "http://127.0.0.1:60929"
+}
