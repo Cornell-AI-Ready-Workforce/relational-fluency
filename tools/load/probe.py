@@ -17,6 +17,7 @@ def probe(base, certificate, keepalive_s, *, idle_s=6):
         raise ValueError('fake keep-alive must exceed server GATEWAY_KEEPALIVE_S')
     url = urlparse(base)
     context = ssl.create_default_context(cafile=str(certificate))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     with socket.create_connection((url.hostname, url.port or 443), timeout=10) as raw:
         with context.wrap_socket(raw, server_hostname=url.hostname) as stream:
             for index in range(2):

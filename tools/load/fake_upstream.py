@@ -240,7 +240,9 @@ class FakeState:
 
     def error(self, path, detail, status=422):
         self.log("protocol_error", path=path, detail=detail)
-        return JSONResponse({"error": {"type": "invalid_request_error", "message": detail}},
+        # The detail goes to fake-log.jsonl only; a caller gets a fixed message.
+        return JSONResponse({"error": {"type": "invalid_request_error",
+                                       "message": "rejected by the fake upstream; see protocol_error in its log"}},
                             status_code=status)
 
 
