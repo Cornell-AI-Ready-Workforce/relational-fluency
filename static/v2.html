@@ -983,7 +983,7 @@
       <div class="check-row">
         <div class="what"><b>3. Your camera</b><span>Every conversation is recorded on video. Turn the camera on and check you can see yourself.</span>
           <video id="camPreview" autoplay muted playsinline style="display:none;width:160px;height:120px;border-radius:8px;background:#000;margin-top:8px"></video>
-          <div class="check-help" id="camHelp">We couldn't start your camera. Check that your browser allowed it (the camera icon in the address bar), that no other app is using it, and try again.</div>
+          <div class="check-help" id="camHelp">We couldn’t start your camera. Check that no other app is using it, that it is plugged in, and try again.</div>
         </div>
         <button id="camTestBtn" aria-describedby="camStatus">Turn on my camera</button>
         <div class="status" id="camStatus" role="status">Not tested</div>
@@ -3352,6 +3352,8 @@
   // that removes the block (#268). No full stop: the caller ends the sentence.
   const BLOCKED_HOWTO_STEPS = 'In Chrome, switch Microphone and Camera on. In Firefox, click the X '
     + 'beside Blocked. Then reload this page, choose Allow if the browser asks,';
+  const CAM_HELP_DEFAULT = 'We couldn’t start your camera. Check that no other app is using it, '
+    + 'that it is plugged in, and try again.';
   const MIC_BLOCKED_HOWTO = 'Your browser has blocked the microphone for this page. Click the '
     + 'microphone or camera icon at the left of the address bar. ' + BLOCKED_HOWTO_STEPS;
   const CAPTURE_MESSAGES = {
@@ -5919,6 +5921,12 @@
           const kind = captureKindFor(e);
           $('camStatus').textContent = kind === 'denied' ? 'Camera blocked'
             : kind === 'unanswered' ? 'Still waiting for your permission' : 'No camera found';
+          // A blocked camera stays blocked until the page reloads in Firefox,
+          // so "try again" alone keeps failing (#268).
+          $('camHelp').textContent = kind === 'denied'
+            ? 'Your browser has blocked the camera for this page. Click the camera icon at the '
+              + 'left of the address bar. ' + BLOCKED_HOWTO_STEPS + ' and try again.'
+            : CAM_HELP_DEFAULT;
           $('camHelp').classList.add('show');
         }
       };

@@ -189,6 +189,21 @@ WORDING = r"""
   b.dom.$('micTestBtn').click();
   await b.clock.advance(100);
   assert.strictEqual(b.dom.$('micHelp').textContent, denied);
+
+  // #268: the device check's blocked camera gets the same steps, reload
+  // included, and a missing camera keeps the plain help.
+  b.dom.$('camTestBtn').click();
+  await b.clock.advance(100);
+  const camHelp = b.dom.$('camHelp').textContent;
+  assert(camHelp.startsWith('Your browser has blocked the camera for this page. Click the camera '
+    + 'icon at the left of the address bar. In Chrome, switch Microphone and Camera on.'), camHelp);
+  assert(camHelp.endsWith('choose Allow if the browser asks, and try again.'), camHelp);
+  b.sandbox.navigator.mediaDevices = {
+    getUserMedia: () => Promise.reject(Object.assign(new Error('no'), { name: 'NotFoundError' })),
+  };
+  b.dom.$('camTestBtn').click();
+  await b.clock.advance(100);
+  assert.strictEqual(b.dom.$('camHelp').textContent, vm.runInContext('CAM_HELP_DEFAULT', b.ctx));
 """
 
 
