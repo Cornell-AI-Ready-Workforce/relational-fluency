@@ -293,3 +293,15 @@ def test_actor_sse_has_terminal_stop_before_done(with_tool):
     assert all(choice["finish_reason"] is None for choice in choices[:-1])
     assert any("content" in choice["delta"] for choice in choices)
     assert any("tool_calls" in choice["delta"] for choice in choices) == with_tool
+
+
+def test_matcher_keeps_the_clip_with_more_anchors_when_two_share_audio():
+    """s4 and d1 open with the same words in the same voice, so an anchor of
+    one sits inside the other; each must still transcribe as itself."""
+    matcher = StimulusMatcher()
+    for name in ("s4", "d1"):
+        if name not in stim.lines():
+            pytest.skip(f"{name} is not a committed clip")
+        assert matcher.transcribe(cascade.wav_bytes(stim.load(name), 16000)) == stim.text(name)
+    joined = stim.load("s4") + b"\0" * 32000 + stim.load("d1")
+    assert matcher.transcribe(cascade.wav_bytes(joined, 16000)) == stim.text("s4") + " " + stim.text("d1")

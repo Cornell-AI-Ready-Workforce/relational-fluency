@@ -160,6 +160,7 @@ class StimulusMatcher:
     def __init__(self):
         self.unmatched_fragments = 0
         self.templates = []
+        self.lengths = {}
         for name, (_, text) in stim.lines().items():
             pcm = stim.load(name)
             anchors = []
@@ -170,6 +171,7 @@ class StimulusMatcher:
                     anchors.append((offset, anchor))
             if anchors:
                 self.templates.append((name, text, anchors))
+                self.lengths[name] = len(pcm)
 
     def transcribe(self, wav):
         with wave.open(io.BytesIO(wav), "rb") as reader:
@@ -189,7 +191,7 @@ class StimulusMatcher:
                     at = pcm.find(anchor, at + 2)
             for origin, count in origins.items():
                 if count >= 1:
-                    hits.append((origin, name, text))
+                    hits.append((origin, name, text, count, self.lengths[name]))
         if not hits:
             self.unmatched_fragments += 1
             # VAD can cut any valid clip between anchors. Preserve approximate
@@ -197,7 +199,16 @@ class StimulusMatcher:
             count = max(1, round(len(pcm) / 32000 * 160 / 60))
             words = "I would like us to agree on a practical next step".split()
             return " ".join((words * (count // len(words) + 1))[:count])
-        return " ".join(text for _, _, text in sorted(hits))
+        # Two clips can share a stretch of identical audio (the same opening
+        # words from the same voice), so one clip's anchor can sit inside
+        # another. Where two hits cover the same audio, the one with more
+        # anchors found is the clip that was played.
+        kept = []
+        for hit in sorted(hits, key=lambda h: (-h[3], h[0], h[1])):
+            start, end = hit[0], hit[0] + hit[4]
+            if all(min(end, k[0] + k[4]) - max(start, k[0]) <= 0 for k in kept):
+                kept.append(hit)
+        return " ".join(hit[2] for hit in sorted(kept))
 
 
 REPLY = ("I hear what you are saying, and I want to understand the specific concern. "
