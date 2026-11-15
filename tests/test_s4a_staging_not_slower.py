@@ -24,7 +24,10 @@ def test_s4a_dan_does_not_argue_that_staging_is_slower():
     brief = spec["agents"]["dan"]["system_prompt"]
     t8 = _triggers(spec)["t8_splitting_it_up_is_slower"]
     for text in (brief, t8["cue"], t8["on_silence"]):
-        assert "it is slower" not in text and "staging it" not in text, text
+        assert "slower" not in text and "staging it" not in text, text
+    # The argument is the one date, not speed: "speed" against a spread-out
+    # plan is what produced "slower" (#222 review).
+    assert "Speed is the argument" not in brief and "One date is the argument" in brief
 
 
 def test_s4a_t8_still_dismisses_spreading_out_and_puts_the_9th_back():
