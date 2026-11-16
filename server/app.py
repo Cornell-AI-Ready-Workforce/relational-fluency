@@ -2713,6 +2713,15 @@ def _camera_absence_reason(no_camera: Optional[str],
     return None
 
 
+def _refresh_archived_record(sdir: Path) -> None:
+    """Copy the rebuilt record to the study bucket, off this request's thread."""
+    try:
+        from . import archive
+        archive.refresh_record_later(sdir)
+    except Exception:  # noqa: BLE001, never fail a confirmation on the archive
+        pass
+
+
 @app.post("/api/sessions/{session_id}/video-uploaded")
 def api_video_uploaded(session_id: str, participant_id: Optional[str] = None,
                        key: Optional[str] = None,
@@ -2829,6 +2838,8 @@ def api_video_uploaded(session_id: str, participant_id: Optional[str] = None,
         _write_record(sdir)
     except Exception:  # noqa: BLE001, never fail the upload confirmation on this
         pass
+    # The archived copy was taken at close, before this event existed.
+    _refresh_archived_record(sdir)
     body = {"ok": ok, "bytes": size, "key": video.video_key(session_id),
             "status": event["status"]}
     if not ok:
@@ -2973,6 +2984,8 @@ def _record_local_video(sdir: Path, session_id: str, written: int) -> dict:
         _write_record(sdir)
     except Exception:  # noqa: BLE001, never fail a stored recording on this
         pass
+    # The archived copy was taken at close, before this event existed.
+    _refresh_archived_record(sdir)
     return event
 
 
