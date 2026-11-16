@@ -314,6 +314,10 @@ def storage_preflight(client=None) -> dict:
     """
     result = {"ok": False, "bucket": BUCKET, "region": REGION,
               "credentials": False, "readable": False, "writable": False}
+    if setting("STORAGE_PREFLIGHT") == "0":
+        print("  Storage preflight skipped (STORAGE_PREFLIGHT=0).")
+        return {**result, "ok": None, "skipped": True,
+                "detail": "STORAGE_PREFLIGHT=0"}
     try:
         if client is None:
             # Tighter than the request path's: this one runs before the port is

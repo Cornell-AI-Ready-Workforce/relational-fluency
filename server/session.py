@@ -97,13 +97,15 @@ class Session:
             # lands in the encounter's own events.jsonl, where a later analysis
             # pass can find it. _store_event defers the lookup because the store
             # is built a few lines below this.
-            Director(self.scenario, client=client, on_event=self._store_event)
+            Director(self.scenario, client=client, on_event=self._store_event,
+                     session_id=self.id)
             if self.is_group else None
         )
         # Auto steering: on by default (see AUTO_STEERING_DEFAULT); researcher
         # can toggle it live. When on, the controller reviews each completed
         # turn and may shift persona gears, every shift logged with a reason.
-        self.steering = SteeringController(self.scenario, client=client)
+        self.steering = SteeringController(self.scenario, client=client,
+                                           session_id=self.id)
         self.auto_steering: bool = AUTO_STEERING_DEFAULT
 
         self.shared_history: List[dict] = []  # [{speaker: 'user'|agent_id, text, t}]
