@@ -28,7 +28,8 @@ reported back was orphaned and no offline tool could tell internal test traffic
 from study data. A null cohort means the encounter did not come through a run
 at all (ad-hoc landing-page or researcher-launch traffic); it is not study data.
 
-The WavAppender writes incrementally so a crash mid-session still leaves a
+The WavAppender writes incrementally, on its own writer thread, so a crash
+mid-session still leaves a
 valid WAV, we patch the header on every flush.
 """
 from __future__ import annotations
@@ -38,6 +39,7 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import re
 import sqlite3
 import struct
@@ -310,20 +312,70 @@ def spec_fingerprint(scenario_id: Optional[str]) -> Optional[Dict[str, Any]]:
 
 # ---------- WAV appender ----------
 
+# How long close() and drain() wait for the writer thread. A disk that takes
+# longer than this is an outage; the caller must not wait on it forever.
+WAV_DRAIN_TIMEOUT_S = 30.0
+
+
+class _WavWriter:
+    """The one thread that touches the session WAV files after they are opened.
+
+    append() is called for every microphone frame and every frame of a
+    character's voice, on the event loop. A write, header patch and flush there
+    stops every participant on the server for as long as the disk takes (205
+    and 374 ms measured with one participant, 2026-11-15). Jobs run here in the
+    order they were submitted, so each file's frames stay in order.
+    """
+
+    def __init__(self) -> None:
+        self._jobs: "queue.SimpleQueue" = queue.SimpleQueue()
+        self._thread: Optional[threading.Thread] = None
+        self._start = threading.Lock()
+
+    def submit(self, job) -> None:
+        thread = self._thread
+        if thread is None or not thread.is_alive():
+            with self._start:
+                thread = self._thread
+                if thread is None or not thread.is_alive():
+                    self._thread = threading.Thread(
+                        target=self._run, name="wav-writer", daemon=True)
+                    self._thread.start()
+        self._jobs.put(job)
+
+    def _run(self) -> None:
+        while True:
+            job = self._jobs.get()
+            try:
+                job()
+            except Exception:  # noqa: BLE001, one file's failure must not stop the others
+                log.exception("WAV writer job failed")
+
+
+_WAV_WRITER = _WavWriter()
+
+
 class WavAppender:
     """Append-safe WAV writer for 16-bit PCM mono.
 
     We write a placeholder header at open, then patch the size fields after
     each batch of frames. If the process crashes, the file still plays back
     up to the last patched header.
+
+    append() does not touch the disk: it hands the frames to the writer thread
+    and returns. close() and drain() wait until this file's frames are written.
+    A crash can lose the frames still queued, normally a few milliseconds.
     """
 
     def __init__(self, path: Path, sample_rate: int = SAMPLE_RATE):
         self.path = Path(path)
         self.sample_rate = sample_rate
-        self._lock = threading.Lock()
-        self._fh = None
-        self._data_bytes = 0
+        self._lock = threading.Lock()       # accepted bytes and the closing flag
+        self._fh = None                     # writer thread only, after _open
+        self._data_bytes = 0                # bytes on disk; writer thread only
+        self._accepted_bytes = 0            # bytes handed to append()
+        self._closing: Optional[threading.Event] = None
+        self._failed = False
         self._open()
 
     def _open(self) -> None:
@@ -350,27 +402,60 @@ class WavAppender:
         if not pcm_bytes:
             return
         with self._lock:
-            if self._fh is None:
+            if self._closing is not None:
                 return
+            self._accepted_bytes += len(pcm_bytes)
+            # Submitted under the lock, so two threads' frames cannot swap.
+            _WAV_WRITER.submit(lambda: self._write(pcm_bytes))
+
+    def _write(self, pcm_bytes: bytes) -> None:
+        if self._fh is None:
+            return
+        try:
             self._fh.seek(44 + self._data_bytes)
             self._fh.write(pcm_bytes)
             self._data_bytes += len(pcm_bytes)
             # Patch header so partial files remain valid.
             self._write_header(self._data_bytes)
             self._fh.flush()
+        except Exception:  # noqa: BLE001, say it once; the encounter goes on
+            if not self._failed:
+                self._failed = True
+                log.exception("could not write audio to %s", self.path)
+
+    def _finish(self, done: threading.Event) -> None:
+        try:
+            if self._fh is not None:
+                self._write_header(self._data_bytes)
+                self._fh.flush()
+                self._fh.close()
+        except Exception:  # noqa: BLE001
+            log.exception("could not close %s", self.path)
+        finally:
+            self._fh = None
+            done.set()
 
     def close(self) -> None:
+        """Write what is queued for this file, then close it."""
         with self._lock:
-            if self._fh is None:
-                return
-            self._write_header(self._data_bytes)
-            self._fh.flush()
-            self._fh.close()
-            self._fh = None
+            done, first = self._closing, self._closing is None
+            if first:
+                done = self._closing = threading.Event()
+                _WAV_WRITER.submit(lambda: self._finish(done))
+        if not done.wait(WAV_DRAIN_TIMEOUT_S):
+            log.error("audio file %s was not closed within %.0f s",
+                      self.path, WAV_DRAIN_TIMEOUT_S)
+
+    def drain(self) -> bool:
+        """Wait until every frame appended so far is on disk (for a reader of
+        the file while it is still open). False if that took too long."""
+        done = threading.Event()
+        _WAV_WRITER.submit(done.set)
+        return done.wait(WAV_DRAIN_TIMEOUT_S)
 
     @property
     def duration_s(self) -> float:
-        return self._data_bytes / (self.sample_rate * SAMPLE_WIDTH * CHANNELS)
+        return self._accepted_bytes / (self.sample_rate * SAMPLE_WIDTH * CHANNELS)
 
 
 # ---------- Session storage ----------
