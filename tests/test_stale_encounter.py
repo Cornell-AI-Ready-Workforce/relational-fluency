@@ -193,3 +193,17 @@ def test_the_page_rechecks_the_run_and_answers_the_refusal():
     assert "${pidParam}${runParam}" in src
     assert "m.code === 'stale_encounter'" in src
     assert "/does not match current encounter/.test(detail)" in src
+
+
+def test_the_operator_exemption_is_off_when_every_page_carries_the_key(
+        client, store, runs_mod, created, monkeypatch):
+    """Under PARTICIPANT_KEY_REQUIRED every participant page sends SESSION_KEY,
+    so an operator exemption there would switch the guard off for everyone."""
+    run, pid = _arrival(store, runs_mod, key="RF_296_REQ")
+    run["index"] = 1
+    runs_mod.save(run)
+    monkeypatch.setattr(appmod, "SESSION_KEY", "op-key", raising=False)
+    monkeypatch.setattr(appmod, "PARTICIPANT_KEY_REQUIRED", True, raising=False)
+    msg = _refused(client, _ids(run)[0], pid, key="op-key")
+    assert msg["code"] == "stale_encounter"
+    assert created == []

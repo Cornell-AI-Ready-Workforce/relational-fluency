@@ -172,9 +172,13 @@ def test_the_voice_socket_closes_on_a_withdrawn_participant(client, store,
     monkeypatch.setattr(appmod.registry, "create", no_such_scenario)
     # Positive control: before the withdrawal this socket opens, so a 4403
     # below is the withdrawal being honoured and not a broken fixture.
+    # The run's current scenario, so the control reaches the stubbed
+    # registry.create rather than the stale-encounter refusal (#296).
+    current = run["scenarios"][run.get("index") or 0]["id"]
     with client.websocket_connect(
-            f"/ws/participant/voice?scenario=conflict&participant_id={pid}") as ws:
-        assert ws.receive_json()["type"] == "error"
+            f"/ws/participant/voice?scenario={current}&participant_id={pid}") as ws:
+        frame = ws.receive_json()
+        assert frame["type"] == "error" and frame.get("code") != "stale_encounter"
 
     runs_mod.withdraw(run["run_id"])
 

@@ -4167,7 +4167,10 @@ async def ws_participant_voice(
     # Refused before registry.create, so no session, recording or webcam upload
     # exists for it. The page reloads on this code and lands on the run's real
     # next step; a page from before this fix shows its "reload this page" notice.
-    stale = None if (launch_cfg or _is_operator(key)) else \
+    # The operator exemption is off under PARTICIPANT_KEY_REQUIRED: there every
+    # participant page carries SESSION_KEY, so it would exempt everybody.
+    operator = _is_operator(key) and not PARTICIPANT_KEY_REQUIRED
+    stale = None if (launch_cfg or operator) else \
         _stale_encounter(participant_id, run, scenario)
     if stale:
         print(f"  NOTE: refusing voice socket for run {stale['run_id']}: page asked "

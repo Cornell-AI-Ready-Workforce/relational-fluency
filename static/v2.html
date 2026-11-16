@@ -5106,7 +5106,9 @@
         // (#296). Nothing was recorded; the socket closes next, and that close
         // is ours, not a drop. Reload onto the run's real next step.
         intentionalClose = true;
-        reloadIntoRun();
+        if (runId) reloadIntoRun();
+        else appendNotice('This link cannot start this conversation for your study record. ' +
+                          'Please go back to the link the survey gave you.');
       } else if (m.type === 'error') {
         // Not a turn: this is the runner reporting a segment boundary it
         // could not cross or a transcription channel it lost. Rendered as a
@@ -5144,7 +5146,9 @@
     if (!runId) return false;
     let now = null;
     try {
-      const r = await fetch(`/api/run/${encodeURIComponent(runId)}` + keyParamFirst);
+      // Bounded: Start must not wait long on the network before the capture
+      // calls, which some browsers tie to the click. A timeout is "not moved".
+      const r = await fetchWithDeadline(`/api/run/${encodeURIComponent(runId)}` + keyParamFirst, {}, 2000);
       if (r.ok) now = await r.json();
     } catch {}
     if (!now) return false;
