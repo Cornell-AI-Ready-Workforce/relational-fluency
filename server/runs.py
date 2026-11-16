@@ -1179,6 +1179,30 @@ def is_joinable_survey_response(qid: Optional[str]) -> bool:
     return bool(_SURVEY_RESPONSE_RE.fullmatch(q))
 
 
+def find_for_survey_response(qid: Optional[str]) -> Optional[dict]:
+    """The latest run created for this survey response (its ?qid=), or None.
+
+    For the Phase 1 survey's page after the code box, which asks which scenario
+    each of the participant's four conversations was (the order is
+    counterbalanced, so "conversation 1" is not always S1). Template text and
+    anything else is_joinable_survey_response refuses matches nothing.
+    """
+    if not is_joinable_survey_response(qid) or not RUNS_DIR.exists():
+        return None
+    wanted = (qid or "").strip()
+    best = None
+    for f in RUNS_DIR.glob("*.json"):
+        try:
+            run = json.loads(f.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        if str(run.get("qualtrics_id") or "").strip() != wanted:
+            continue
+        if best is None or run.get("created_at", 0) > best.get("created_at", 0):
+            best = run
+    return best
+
+
 def find_unattributed_for_survey_response(
         qid: Optional[str], arm: Optional[str] = None) -> Optional[dict]:
     """The run an earlier arrival already created for this survey response when

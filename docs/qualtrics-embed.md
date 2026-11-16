@@ -14,7 +14,9 @@
 > `QUALTRICS_SURVEY2_ID` unset, matches each response to its run on it,
 > falling back to the participant key (`pid`). Each joined row carries the
 > run's `completion_code` beside the response's own values, so the typed code
-> can be checked against it.
+> can be checked against it. To put the four scenarios' order into the
+> response as `rf_scenario_1`…`4`, see
+> [qualtrics-phase1-scenarios.md](qualtrics-phase1-scenarios.md).
 >
 > Everything below is the embedded design, kept for later. Before switching to
 > it, clear the problems listed in #276.
