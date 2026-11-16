@@ -1524,6 +1524,32 @@
         showOverlay($('nextOverlay'));
         return;
       }
+      // The run moved on in another window while this one was in a
+      // conversation (#296), so this conversation cannot be counted, but the
+      // run is fine: offer its real next step instead of the exit with no
+      // code that every other 409 gets.
+      if (r && r.status === 409 && /does not match current encounter/.test(detail)) {
+        $('nextTitle').textContent = 'Your study moved on in another window';
+        $('nextBody').innerHTML =
+          '<p>This conversation was not counted, because your study had already moved on ' +
+          'in another tab or browser. Please keep to one window from here.</p>';
+        $('nextBtn').textContent = 'Continue';
+        $('nextBtn').style.display = 'inline-block';
+        // Reloading kills a recording upload still in flight, and this
+        // conversation's recording is still data even though it was not
+        // counted: give it the same bounded wait the success path gives.
+        $('nextBtn').onclick = async () => {
+          $('nextBtn').disabled = true;
+          if (videoUpload) {
+            $('nextBtn').textContent = 'Saving your recording…';
+            await Promise.race([videoUpload.catch(() => null), wait(VIDEO_UPLOAD_WAIT_MS)]);
+          }
+          reloadIntoRun();
+        };
+        offerExit('I can’t continue, finish here');
+        showOverlay($('nextOverlay'));
+        return;
+      }
       // The encounter is recorded to the run ONLY on a successful advance. Never
       // discard a finished conversation silently: show the overlay, with a Retry
       // when a retry could plausibly work, and a way out either way.
@@ -5075,6 +5101,12 @@
           setActiveSpeaker(null);
           // The rebuilt session is quiet; the server's turn_open says so.
         }
+      } else if (m.type === 'error' && m.code === 'stale_encounter') {
+        // The server refused this conversation because the run has moved on
+        // (#296). Nothing was recorded; the socket closes next, and that close
+        // is ours, not a drop. Reload onto the run's real next step.
+        intentionalClose = true;
+        reloadIntoRun();
       } else if (m.type === 'error') {
         // Not a turn: this is the runner reporting a segment boundary it
         // could not cross or a transcription channel it lost. Rendered as a
@@ -5101,8 +5133,31 @@
     }
   }
 
+  // #296: this page took its scenario from the run when it loaded, and the run
+  // may have moved on since in another tab or browser (Ben had one run open in
+  // Firefox and Chrome; Chrome's Start replayed conversation 1 as conversation
+  // 2). Ask the run again before opening the microphone. If it has moved on,
+  // finished or been stopped, reload: the boot path paints the right card for
+  // every one of those, embedded steps included. A failed fetch carries on,
+  // because the socket makes the same check on the server (stale_encounter).
+  async function runMovedOn() {
+    if (!runId) return false;
+    let now = null;
+    try {
+      const r = await fetch(`/api/run/${encodeURIComponent(runId)}` + keyParamFirst);
+      if (r.ok) now = await r.json();
+    } catch {}
+    if (!now) return false;
+    return !!(now.withdrawn || now.done || !now.current || now.current.id !== scenario);
+  }
+  function reloadIntoRun() {
+    setTurnState('Loading your next conversation…', '');
+    location.reload();
+  }
+
   async function startSession() {
     $('startBtn').disabled = true;
+    if (await runMovedOn()) { reloadIntoRun(); return; }
     partStartsS.length = 0;
     curPart = -1; spokeSpan = {};
     lastScenePeople = null;   // a fresh conversation: the first one-to-one opens without a divider
@@ -5173,7 +5228,10 @@
     // launch may still pin one explicitly via ?model=.
     const urlModelVal = params.get('model');
     const modelParam = urlModelVal ? `&model=${encodeURIComponent(urlModelVal)}` : '';
-    const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/participant/voice?scenario=${encodeURIComponent(scenario)}${pidParam}${modelParam}${launchParam}${keyParam}`;
+    // The run rides along so the server checks the scenario against this run
+    // (it only honours a run that is this participant's own; see _run_context).
+    const runParam = runId ? `&run=${encodeURIComponent(runId)}` : '';
+    const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/participant/voice?scenario=${encodeURIComponent(scenario)}${pidParam}${runParam}${modelParam}${launchParam}${keyParam}`;
     ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
     ws.addEventListener('open', () => setMicMuted(false));

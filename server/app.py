@@ -3938,6 +3938,62 @@ async def api_sessions(key: Optional[str] = None, cohort: Optional[str] = None,
     return out
 
 
+def _resolve_run(participant_id: str, run_id: Optional[str] = None):
+    """(participant record, run) for a voice socket, in _run_context's order.
+
+    The record's own run first, then a ?run= hint only when it names this same
+    participant's run, then the newest run pointing at the record. One lookup
+    shared by _run_context and _stale_encounter, so the run an encounter is
+    stamped with and the run its scenario is checked against are always the
+    same run. Raises on storage errors; both callers decide what that means.
+    """
+    from . import runs
+
+    rec = get_participant(participant_id) or {}
+    run = runs.get(run_id) if run_id else None
+    if run is None or run.get("participant_record_id") != participant_id:
+        run = runs.get(rec.get("run_id")) if rec.get("run_id") else None
+    if run is None:
+        run = runs.find_by_participant_record(participant_id)
+    return rec, run
+
+
+def _stale_encounter(participant_id: Optional[str], run_id: Optional[str],
+                     scenario: str) -> Optional[dict]:
+    """Why a run's voice socket may not open `scenario`, or None if it may.
+
+    #296: a page loaded while the run was on encounter k, left open while the
+    run moved on in another window (Ben had the same run in Firefox and in
+    Chrome), opened encounter k again on Start. The socket took the scenario
+    from the query and never asked the run, so a whole conversation was
+    recorded as encounter k+1 under the wrong scenario, and /advance then
+    refused it with a 409 the page could only answer with an exit and no code.
+
+    The run is the authority on which conversation comes next, so a socket
+    whose participant is on a run may open only the run's current scenario,
+    and none once the run is done. Exempt, because they choose their scenario
+    on purpose: internal runs (/test, which tools/sim and tools/load drive with
+    any scenario), the operator key and researcher launches (the caller checks
+    those two). A participant with no run, or a lookup that fails, is allowed:
+    this guard must never be what stops a legitimate encounter.
+    """
+    if not participant_id:
+        return None
+    try:
+        _rec, run = _resolve_run(participant_id, run_id)
+    except Exception:  # noqa: BLE001, never block an encounter on this
+        return None
+    if run is None or run.get("cohort", "study") == "internal":
+        return None
+    scenarios = run.get("scenarios") or []
+    idx = run.get("index") or 0
+    current = scenarios[idx].get("id") if idx < len(scenarios) else None
+    if current is not None and current == scenario:
+        return None
+    return {"run_id": run.get("run_id"), "requested": scenario,
+            "current": current, "done": current is None}
+
+
 def _run_context(participant_id: Optional[str], run_id: Optional[str] = None) -> Optional[dict]:
     """Resolve the run this encounter belongs to, server-side.
 
@@ -3970,14 +4026,7 @@ def _run_context(participant_id: Optional[str], run_id: Optional[str] = None) ->
     if not participant_id:
         return None
     try:
-        from . import runs
-
-        rec = get_participant(participant_id) or {}
-        run = runs.get(run_id) if run_id else None
-        if run is None or run.get("participant_record_id") != participant_id:
-            run = runs.get(rec.get("run_id")) if rec.get("run_id") else None
-        if run is None:
-            run = runs.find_by_participant_record(participant_id)
+        rec, run = _resolve_run(participant_id, run_id)
         if run is None:
             return None
         return {
@@ -4113,6 +4162,24 @@ async def ws_participant_voice(
     # launch override, never a participant-supplied ?model=.
     launch_cfg = LAUNCHES.get(launch) if launch else None
     effective_model = launch_cfg.get("model") if launch_cfg else None
+
+    # A stale page must not open a conversation the run has moved past (#296).
+    # Refused before registry.create, so no session, recording or webcam upload
+    # exists for it. The page reloads on this code and lands on the run's real
+    # next step; a page from before this fix shows its "reload this page" notice.
+    stale = None if (launch_cfg or _is_operator(key)) else \
+        _stale_encounter(participant_id, run, scenario)
+    if stale:
+        print(f"  NOTE: refusing voice socket for run {stale['run_id']}: page asked "
+              f"for {stale['requested']}, the run is "
+              f"{'done' if stale['done'] else 'on ' + str(stale['current'])}.")
+        await ws.send_json({
+            "type": "error", "code": "stale_encounter",
+            "message": "This conversation is no longer the next one in your run.",
+            "current": stale["current"], "done": stale["done"],
+        })
+        await ws.close(code=4409)
+        return
 
     try:
         session = registry.create(
