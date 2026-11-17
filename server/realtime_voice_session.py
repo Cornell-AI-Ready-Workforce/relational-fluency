@@ -10721,6 +10721,13 @@ class RealtimeVoiceSessionRunner:
         # alone is wrong: a raw substring test made 'Dan' fire on 'abundant',
         # and first-match routed "Sorry Alex, but Jordan, how are you?" to Alex
         # when people address the target LAST.
+        #
+        # A possessive is not an address (#297, #299): "Priya, what about the
+        # timeline for Chris's team?" is to Priya. _norm_speech turns "Chris's"
+        # (and "Chris’s") into "chris s", so a name followed by a lone "s" is
+        # skipped. That mattered more once the resume hold (#299) joined a
+        # paused sentence's halves into one line: last-position-wins then saw
+        # "Chris's" in the second half and gave Chris a line meant for Priya.
         tokens = _norm_speech(text).split()
         best_at, best_id = -1, None
         for a in self._resolve_agents():
@@ -10729,8 +10736,11 @@ class RealtimeVoiceSessionRunner:
                 continue
             n = len(name_tokens)
             for i in range(len(tokens) - n + 1):
-                if tokens[i:i + n] == name_tokens and i > best_at:
-                    best_at, best_id = i, a.id
+                if tokens[i:i + n] != name_tokens or i <= best_at:
+                    continue
+                if i + n < len(tokens) and tokens[i + n] == "s":
+                    continue
+                best_at, best_id = i, a.id
         return best_id
 
     # ── director ───────────────────────────────────────────────────────────
