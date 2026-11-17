@@ -159,6 +159,12 @@ live service.
   `trigger_deferred` and `trigger_undelivered` (which cancels a fired row by
   `index`) each become a `trigger_firing` row with its `outcome`; coverage
   against the plan is a query (`v_encounter_summary`), not a column.
+  `trigger_deferred` reasons are `beat_belongs_to_another_character`,
+  `transcript_missing`, `transcript_suppressed`, `late_address` and, from pipeline
+  2026-11-16b, `filler_turn` (a cascade-room turn that was only a filler, so
+  the beat waited; `agent_id` is the beat's character, `routed_to` who
+  answered). A deferral is not a firing: the beat's later `trigger_fired`
+  row carries the same `index`.
 - **Recovered encounters are first-class rows.** The 46 sessions rebuilt from
   webcam video after the 2026-09-17 data loss load as `encounter.status =
   'recovered'` with the diarised transcript in `transcript_version`; 13 of

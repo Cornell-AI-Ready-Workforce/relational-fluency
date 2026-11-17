@@ -605,6 +605,13 @@ def text_client() -> AsyncAnthropic:
 #                while the participant is still talking, closing their next
 #                turn or owed its transcript (ROOM_RESUME_HOLD_S, 8 s max),
 #                so a second half joins the turn and one character answers.
+#   2026-11-16b  beats on fillers (#297): in a cascade room a planted beat is
+#                not spent on a participant turn that is only a filler or
+#                hesitation (is_beat_filler: "Um", "I think", "So"); the
+#                character answers it as usual and the beat fires on the next
+#                turn with words, or on the same turn if the resume hold
+#                merges words into it. At most ROOM_BEAT_FILLER_DEFER (3)
+#                such turns in a row; 0 turns it off.
 #
 # PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
@@ -880,8 +887,18 @@ def text_client() -> AsyncAnthropic:
 #                answers it, instead of a second character queued right
 #                behind the first. No wait when they have stopped.
 #                participant_resume_held records each hold.
-PIPELINE_VERSION = "2026-11-16a"
-ROOM_PACING_VERSION = "2026-11-16a"
+#   2026-11-16b  Rooms (#297): a planted beat is not spent on a participant
+#                turn that is only a filler or hesitation (is_beat_filler:
+#                "Um", "I think", "Uh, what", "Okay, um.", "So"). It is held
+#                for up to ROOM_BEAT_FILLER_DEFER (default 3; 0 turns it off)
+#                consecutive such turns, the character answers the filler
+#                normally, and the beat fires on the next turn that carries
+#                words, or on the same turn if the resume hold merges words
+#                into it. Cascade rooms only; silence probes, keep-going
+#                moves, gpt/native rooms and 1:1 are unchanged. Events:
+#                trigger_deferred{reason=filler_turn}, trigger_filler_rearmed.
+PIPELINE_VERSION = "2026-11-16b"
+ROOM_PACING_VERSION = "2026-11-16b"
 
 
 def _voice_style_provenance():

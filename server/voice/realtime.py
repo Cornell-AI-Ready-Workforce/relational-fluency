@@ -1428,6 +1428,17 @@ def room_resume_hold_s() -> float:
     return max(0.0, _float_setting("ROOM_RESUME_HOLD_S", 8.0))
 
 
+def room_beat_filler_defers() -> int:
+    """ROOM_BEAT_FILLER_DEFER, default 3 (#297). The most consecutive
+    participant turns that are only a filler or hesitation ("Um", "I think",
+    "Okay, um.", "So": is_beat_filler) one planted beat may be held over in a
+    cascade room. Ben's two S3A sessions spent 6 of 15 beats on such a turn,
+    three of them on three fillers in a row, so a cap of 2 would still have
+    fired one on "So". The character answers the filler as usual; the beat
+    fires on the next turn that carries words. 0 turns the guard off."""
+    return max(0, _int_setting("ROOM_BEAT_FILLER_DEFER", 3))
+
+
 def probe_after_seconds() -> float:
     """PROBE_AFTER_SECONDS, default 12, read the way the watchdog always has
     (the process environment), so this is the value the probe fires on."""
@@ -1657,6 +1668,7 @@ def pacing_provenance() -> dict:
         "room_split_turn_s": room_split_turn_s(),
         "followup_gap_s": followup_gap_s(),
         "room_resume_hold_s": room_resume_hold_s(),
+        "room_beat_filler_defer": room_beat_filler_defers(),
         "room_play_clock": "per_turn",
         "probe_after_s": probe_after_seconds(),
         "probe_tick_s": probe_tick_s(),
@@ -1741,6 +1753,37 @@ def is_filler_only(text: str) -> bool:
     "." / "..." / "Um..." / "Mhm." / "Hmm, uh."."""
     words = re.findall(r"[^\W_]+", (text or "").lower())
     return all(w in _FILLERS for w in words)
+
+
+# #297: what a participant says while they are still finding their words, on
+# top of _FILLERS. Lexical only: voiced_ms does not separate the cases ("Um"
+# 600 ms, "clear desk" 600 ms, "Okay, we will." 700 ms in Ben's S3A sessions).
+# Greetings and answer words ("hi", "hello", "yes", "no", "fine", "sure",
+# "good") are deliberately absent, so t0_hello still fires on "Hi." and a real
+# decision still gets the beat.
+_BEAT_MARKERS = frozenset((
+    "so", "well", "okay", "ok", "yeah", "yep", "yup", "right", "alright",
+    "like", "and", "but", "or", "what", "huh", "wait", "sorry", "oh", "then",
+    "just", "now", "actually",
+))
+_BEAT_PHRASES = ("i think", "i mean", "you know", "all right", "i guess",
+                 "let me see", "let me think")
+
+
+def is_beat_filler(text: str) -> bool:
+    """True for a short participant turn that holds no answer yet: "Um",
+    "I think", "Uh, what", "Okay, um.", "So", "Wait, what?" (#297). At most
+    four words, every one a filler or marker once the hesitation phrases are
+    taken out. A phrase followed by "so" is an answer and stays ("I think
+    so", "I guess so"). Empty text is False: a missing or suppressed
+    transcript has its own clarification and suppression paths."""
+    words = re.findall(r"[^\W_]+", (text or "").lower())
+    if not words or len(words) > 4:
+        return False
+    rest = " ".join(words)
+    for phrase in _BEAT_PHRASES:
+        rest = re.sub(r"\b%s\b(?! so\b)" % phrase, " ", rest)
+    return all(w in _FILLERS or w in _BEAT_MARKERS for w in rest.split())
 
 
 def drop_annotations() -> bool:

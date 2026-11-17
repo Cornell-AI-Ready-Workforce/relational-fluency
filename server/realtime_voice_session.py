@@ -1102,6 +1102,9 @@ class RealtimeVoiceSessionRunner:
         # are the measurement: each maps to ESCI items, and the participant's
         # response to it is what a rater scores.
         self._trigger_idx = 0
+        # Consecutive filler-only participant turns the next planted beat has
+        # been held over in a cascade room (#297, ROOM_BEAT_FILLER_DEFER).
+        self._filler_defer_n = 0
         # The keep-going fallback's own counter (see _keep_going_trigger): it
         # never touches _trigger_idx or _fired, which are the measurement.
         self._after_idx = 0
@@ -1926,6 +1929,9 @@ class RealtimeVoiceSessionRunner:
                 index=self._after_idx)
             self._after_idx += 1
             return self._trigger_instruction(trigger, probing=True)
+        # A beat that fires, probe included, starts the next one's filler
+        # count from nothing (#297).
+        self._filler_defer_n = 0
         self._fired.append(trigger["id"])
         fields = dict(
             trigger_id=trigger["id"],
@@ -2041,7 +2047,8 @@ class RealtimeVoiceSessionRunner:
         # _maybe_advance simply retries the advance.
         before = (self.segment, self._series_idx, self._trigger_idx,
                   self._turns_this_interaction, self._interaction_started_at,
-                  self._handoff_briefed, self._handoff_probed)
+                  self._handoff_briefed, self._handoff_probed,
+                  self._filler_defer_n)
         try:
             agents = self._resolve_agents()
 
@@ -2057,7 +2064,7 @@ class RealtimeVoiceSessionRunner:
                     (self.segment, self._series_idx, self._trigger_idx,
                      self._turns_this_interaction,
                      self._interaction_started_at, self._handoff_briefed,
-                     self._handoff_probed) = before
+                     self._handoff_probed, self._filler_defer_n) = before
                 return True
 
             if self.segment + 1 >= len(self.interactions):
@@ -2067,6 +2074,7 @@ class RealtimeVoiceSessionRunner:
             self._series_idx = 0
             self._trigger_idx = 0
             self._after_idx = 0
+            self._filler_defer_n = 0
             self._turns_this_interaction = 0
             self._handoff_briefed = False
             self._handoff_probed = False
@@ -2076,7 +2084,7 @@ class RealtimeVoiceSessionRunner:
                 (self.segment, self._series_idx, self._trigger_idx,
                  self._turns_this_interaction,
                  self._interaction_started_at, self._handoff_briefed,
-                 self._handoff_probed) = before
+                 self._handoff_probed, self._filler_defer_n) = before
             return True
         finally:
             self._advancing = False
@@ -10023,6 +10031,23 @@ class RealtimeVoiceSessionRunner:
             # task and left the room's floor held, so nobody could answer the
             # participant for the rest of the interaction.
             spent_idx, spent_fired = self._trigger_idx, len(self._fired)
+            # #297: nor on a turn that holds no answer yet. Ben (S3A, cascade)
+            # spent 6 of 15 beats on "Um", "I think", "Uh, what", "So": the
+            # character performed its next scripted move over a participant
+            # still finding their words. A filler-only turn is answered as
+            # usual and the beat waits for the next turn with words in it, up
+            # to ROOM_BEAT_FILLER_DEFER such turns in a row. Cascade rooms
+            # only (text_turn is the cascade text relay): the evidence is
+            # cascade, and gpt/native keep their briefs; widening this is its
+            # own version bump. Any other turn the fold sees resets the count,
+            # an ownership deferral included, so the cap counts consecutive
+            # fillers and not a per-beat total.
+            filler_turn = (pending is not None and text_turn is not None
+                           and _realtime.room_beat_filler_defers() > 0
+                           and _realtime.is_beat_filler(fresh))
+            filler_held = False
+            if pending is not None and not filler_turn:
+                self._filler_defer_n = 0
             if pending is not None and owner is not None and owner != first:
                 self.session.store.event(
                     "trigger_deferred",
@@ -10042,6 +10067,26 @@ class RealtimeVoiceSessionRunner:
                     "trigger_deferred", agent_id=owner,
                     detail=f"beat {pending['id']} belongs to {owner}; "
                            f"this turn routed to {first}",
+                )
+            elif (filler_turn and self._filler_defer_n
+                  < _realtime.room_beat_filler_defers()):
+                # Not briefed, so not spent: _trigger_idx stays at spent_idx
+                # and the director's own intent (below) is delivered instead.
+                # No console notice: fillers are ordinary, the row is enough.
+                self._filler_defer_n += 1
+                filler_held = True
+                self.session.store.event(
+                    "trigger_deferred",
+                    trigger_id=pending["id"],
+                    interaction=self._interaction_id(),
+                    segment=self.segment,
+                    index=self._trigger_idx,
+                    agent_id=owner,
+                    routed_to=first,
+                    reason="filler_turn",
+                    text=fresh[:80],
+                    defers=self._filler_defer_n,
+                    cap=_realtime.room_beat_filler_defers(),
                 )
             else:
                 # _brief_member SPENDS the beat: it writes trigger_fired,
@@ -10126,12 +10171,37 @@ class RealtimeVoiceSessionRunner:
                     first, first_intent = late_named, None
                     routed_seq, routed_intents = None, []
                     lead_first = False
+                    # A line with a name in it is never a filler (#297).
+                    filler_held = False
+                    self._filler_defer_n = 0
                     pending = self._next_trigger()
                     owner = self._trigger_agent(pending) if pending else None
                     if owner is None or owner == first:
                         await self._brief_member(first)
                     continue
                 fresh = hearing.text(text_turn)
+                if (filler_held and not hearing.missing(text_turn)
+                        and not _realtime.is_beat_filler(fresh)):
+                    # #297: the resume hold merged words into the filler the
+                    # beat was held over ("Um" + the rest of the sentence), so
+                    # the turn has its answer after all and the beat is spent
+                    # here. Its brief replaces the director intent delivered
+                    # at the fold, so that intent is retracted first; the
+                    # firing is stored on the ungranted turn and written by
+                    # the branch below, or given back if it clarifies.
+                    self._drop_undelivered_intent(first, "planted_beat_briefed")
+                    await self._brief_member(first)
+                    filler_held = False
+                    self._filler_defer_n = 0
+                    self.session.store.event(
+                        "trigger_filler_rearmed",
+                        trigger_id=pending["id"] if pending else None,
+                        interaction=self._interaction_id(),
+                        segment=self.segment,
+                        index=spent_idx,
+                        agent_id=first,
+                        text=fresh[:80],
+                    )
                 text_turn.route_text = fresh
                 text_turn.clarification = hearing.missing(text_turn)
                 if text_turn.clarification:

@@ -39,7 +39,17 @@ withdrawn into the pending turn instead of spawning another task.
 A provisional planted beat returned before the grant is recorded as
 `trigger_deferred`, with a `transcript_missing` or `transcript_suppressed`
 reason when the transcript causes the return. Its console notice has `info`
-severity. A directly recorded firing, including a probe, still uses
+severity.
+
+`trigger_deferred` reasons: `beat_belongs_to_another_character` (the turn was
+routed to someone other than the beat's character), the provisional
+give-backs above (`transcript_missing`, `transcript_suppressed`,
+`late_address`), and `filler_turn` (#297, cascade rooms: the turn was
+only a filler or hesitation such as "Um" or "I think", so the character
+answers it and the beat waits; `defers` counts consecutive filler turns, at
+most `ROOM_BEAT_FILLER_DEFER`, default 3, 0 off). When the resume hold merges
+words into such a turn before its grant, `trigger_filler_rearmed` is written
+and the beat fires on that turn after all. A directly recorded firing, including a probe, still uses
 `trigger_undelivered` with `error` severity when its grant fails or its member
 is lost. Cancelling a turn clears its provisional firing record.
 
