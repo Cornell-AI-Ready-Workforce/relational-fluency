@@ -358,3 +358,62 @@ async def test_unanswered_at_cap_filler_keeps_the_count(monkeypatch):
         assert h.runner._trigger_idx == index + 1
     finally:
         await h.close()
+
+
+# A turn whose member is lost before its reply (member_lost) is unanswered
+# too: it gives its filler count back like floor_grant_failed (#297 review).
+def _lose(monkeypatch, h):
+    class G:  # a grant whose session drops before any reply reaches the page
+        pass
+
+    async def grant(first, *a, **kw):
+        g = G()
+        h.runner._dropped_unanswered[first] = g
+        h.runner._response_done.set()
+        return g
+
+    async def no_regrant(*a, **kw):
+        return None
+    monkeypatch.setattr(h.runner, "_grant", grant)
+    monkeypatch.setattr(h.runner, "_regrant_after_drop", no_regrant)
+
+
+@in_a_loop
+async def test_an_at_cap_filler_lost_with_its_member_keeps_the_count(monkeypatch):
+    h, chats, pending, _ = await _room_after_first_turn(
+        monkeypatch, ["I think", "So", "Um"], defer="1")
+    try:
+        index = h.runner._trigger_idx
+        await _turn(h, chats, 2)
+        assert h.runner._filler_defer_n == 1
+        real = h.runner._grant, h.runner._regrant_after_drop
+        _lose(monkeypatch, h)
+        h.runner._last_group_speaker = None
+        await speak(h)
+        await until(lambda: [e for e in h.of("trigger_undelivered") if e.get("reason") == "member_lost"])
+        await finished(h)
+        assert h.runner._trigger_idx == index
+        monkeypatch.setattr(h.runner, "_grant", real[0])
+        monkeypatch.setattr(h.runner, "_regrant_after_drop", real[1])
+        await _turn(h, chats, 3)
+        assert len(_fillers(h)) == 1, "second answered filler held past cap=1"
+    finally:
+        await h.close()
+
+
+@in_a_loop
+async def test_a_held_filler_lost_with_its_member_gives_its_count_back(monkeypatch):
+    h, chats, pending, _ = await _room_after_first_turn(
+        monkeypatch, ["I think", "So"])
+    try:
+        await _turn(h, chats, 2)
+        assert h.runner._filler_defer_n == 1
+        _lose(monkeypatch, h)
+        h.runner._last_group_speaker = None
+        await speak(h)
+        await until(lambda: h.of("director_intent_undelivered") or len(_fillers(h)) == 2)
+        await asyncio.sleep(0.5)
+        await finished(h)
+        assert h.runner._filler_defer_n == 1
+    finally:
+        await h.close()

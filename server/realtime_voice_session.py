@@ -1090,6 +1090,9 @@ class RealtimeVoiceSessionRunner:
         # were said. Not by just any line of that member's (a probe's, a late
         # older reply), which is not the kept turn's reply.
         self._kept_owed: Optional[str] = None
+        # Set when the kept member finalizes a said line after this turn's
+        # grant; reset before each grant.
+        self._kept_said: Optional[str] = None
         self._last_line_cut: Optional[dict] = None
         self._turn_index = 0
         self._pending_direction: Optional[dict] = None
@@ -4864,6 +4867,10 @@ class RealtimeVoiceSessionRunner:
                 "type": "transcript", "role": "assistant",
                 "agent_id": agent.id, "text": text,
             })
+        if text and agent.id == self._kept_owed:
+            # A said line from the member a kept turn went to; the turn's own
+            # wait checks it, so an empty reply never pays the keep.
+            self._kept_said = agent.id
         if agent.id != self._last_group_speaker:
             self._kept_streak = 0
         self._last_group_speaker = agent.id
@@ -10397,6 +10404,7 @@ class RealtimeVoiceSessionRunner:
                     text_turn.trigger_fired = None
                 self._take_unrouted()
                 break
+            self._kept_said = None
             granted = await self._grant(first)
             if granted is None:
                 # Its session went while it was being granted the floor: once
@@ -10498,8 +10506,10 @@ class RealtimeVoiceSessionRunner:
                 if self._dropped_unanswered.get(first) is not granted:
                     # Nothing dropped, or a session this grant never went to.
                     self._dropped_unanswered.pop(first, None)
-                    if self._kept_owed == first:
-                        # The kept turn's own reply was said: it counts.
+                    if self._kept_owed == first and self._kept_said == first:
+                        # The kept turn's own reply was said: it counts. An
+                        # empty reply, a timeout or a reply never retried
+                        # leaves it owed, for the next route to take back.
                         self._kept_owed = None
                     break
                 # Its session went before any of its reply reached the page
@@ -10520,6 +10530,8 @@ class RealtimeVoiceSessionRunner:
                             first, spent_idx, spent_fired, probing=False,
                             reason="member_lost")
                     self._drop_undelivered_intent(first, "member_lost")
+                    if filler_turn:
+                        self._filler_defer_n = filler_n_before
                     return
                 granted, regranted = again, True
 

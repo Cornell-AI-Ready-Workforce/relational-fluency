@@ -477,3 +477,55 @@ async def test_late_keep_to_another_non_owner_writes_one_deferral(monkeypatch):
         owed.set()
         resume.set()
         await h.close()
+
+
+# A kept turn whose floor came back with nothing said (empty response,
+# reply_missing not retried) has not used its keep (#297 review).
+@pytest.mark.parametrize("how", ["reply_missing", "empty_response"])
+def test_released_without_a_reply_does_not_pay_the_keep(monkeypatch, how):
+    """The kept turn's grant went out, but the floor came back with nothing
+    said (reply_missing not retried / an empty response: both only set
+    _response_done). The keep must be taken back."""
+    runner, session, room, grants = _room(monkeypatch)
+    real = room.give_floor
+    n = []
+
+    async def give_floor(agent_id):
+        n.append(agent_id)
+        if len(n) == 1:
+            rt = await type(room).give_floor(room, agent_id)
+            runner._floor_reply_began = True
+            runner._response_done.set()   # what reply_missing / empty does
+            return rt
+        return await real(agent_id)
+
+    monkeypatch.setattr(room, "give_floor", give_floor)
+    _turn(runner, FOLLOW_UP)
+    assert n == ["dan"]
+    assert not [t for t in session.store.of("assistant_turn")
+                if t.get("agent_id") == "dan"]
+    _turn(runner, "What is in your queue right now?")
+    route = _route(session)
+    assert route["first_by"] == "kept_last_speaker" and route["kept_streak"] == 1
+
+
+def test_real_empty_response_does_not_pay_the_keep(monkeypatch):
+    runner, session, room, grants = _room(monkeypatch)
+    real = room.give_floor
+    n = []
+    agents = {a.id: a for a in runner._resolve_agents()}
+
+    async def give_floor(agent_id):
+        n.append(agent_id)
+        if len(n) == 1:
+            rt = await type(room).give_floor(room, agent_id)
+            await runner._finalize_member_async(agents[agent_id], [], False)
+            return rt
+        return await real(agent_id)
+
+    monkeypatch.setattr(room, "give_floor", give_floor)
+    _turn(runner, FOLLOW_UP)
+    assert session.store.of("empty_response")[-1]["agent_id"] == "dan"
+    _turn(runner, "What is in your queue right now?")
+    route = _route(session)
+    assert route["first_by"] == "kept_last_speaker" and route["kept_streak"] == 1
