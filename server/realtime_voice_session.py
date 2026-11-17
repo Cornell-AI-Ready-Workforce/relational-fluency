@@ -1083,6 +1083,11 @@ class RealtimeVoiceSessionRunner:
         # character line was cut or never heard whole (_keeps_last_speaker
         # does not count a "?" the participant never heard as one to answer).
         self._kept_streak = 0
+        # The member a kept turn counted in _kept_streak before its line was
+        # said; cleared when that member's line finalizes, and taken back by
+        # the next route if it never did (suppressed, grant failed,
+        # cancelled), so the streak counts kept lines that were said.
+        self._kept_owed: Optional[str] = None
         self._last_line_cut: Optional[dict] = None
         self._turn_index = 0
         self._pending_direction: Optional[dict] = None
@@ -4859,6 +4864,8 @@ class RealtimeVoiceSessionRunner:
             })
         if agent.id != self._last_group_speaker:
             self._kept_streak = 0
+        if agent.id == self._kept_owed:
+            self._kept_owed = None
         self._last_group_speaker = agent.id
         if not text:
             self.session.store.event(
@@ -9889,6 +9896,10 @@ class RealtimeVoiceSessionRunner:
                     await self._await_member_rebuilds(room)) and (
                     self._closed or self.room is not room):
                 return
+            if self._kept_owed is not None:
+                # The last kept turn's line was never said: it does not count.
+                self._kept_streak = max(0, self._kept_streak - 1)
+                self._kept_owed = None
             first = named_early
             # What used to be the lead's unprompted opener is its answer to
             # the participant now (_first_room_reply_note): an unnamed turn
@@ -9905,6 +9916,12 @@ class RealtimeVoiceSessionRunner:
             keep_reason: Optional[str] = None
             skipped_last: Optional[str] = None
             rotated_from: Optional[str] = None
+            # The no-signal route's last speaker and keep, which the late keep
+            # re-check below re-decides against (not whoever has spoken since),
+            # and whether `first` was reassigned off an absent member.
+            route_last: Optional[str] = None
+            route_kept = False
+            reassigned = False
             # The director may return an ORDERED multi-speaker sequence (e.g.
             # [A, B, A]); capture it so the follow-up beats play it in order
             # instead of being re-decided by a second route() call. None when the
@@ -9987,6 +10004,7 @@ class RealtimeVoiceSessionRunner:
                         first = candidates[0]
                         first_by, keep_reason = "kept_last_speaker", keep
                         self._kept_streak += 1
+                        self._kept_owed = first
                     else:
                         first = next(
                             (c for c in candidates if c != self._last_group_speaker), None,
@@ -10028,12 +10046,15 @@ class RealtimeVoiceSessionRunner:
                 # falling back to the cast's first-listed character. This is
                 # the path prod runs (DIRECTOR_ROUTE=0). An answer or a
                 # follow-up to whoever just spoke stays with them (#297).
-                keep = self._keeps_last_speaker(fresh)
+                route_last = self._last_group_speaker
+                keep = self._keeps_last_speaker(fresh, last=route_last)
                 first_by = "rotation"
-                if keep and self._last_group_speaker in room.sessions:
-                    first = self._last_group_speaker
+                if keep and route_last in room.sessions:
+                    first = route_last
                     first_by, keep_reason = "kept_last_speaker", keep
+                    route_kept = True
                     self._kept_streak += 1
+                    self._kept_owed = first
                 elif self._last_group_speaker in order and len(order) > 1:
                     nxt = (order.index(self._last_group_speaker) + 1) % len(order)
                     first = order[nxt]
@@ -10055,6 +10076,7 @@ class RealtimeVoiceSessionRunner:
                     )
                     return
                 wanted_speaker = first
+                reassigned = True
                 first = next(
                     (a for a in live if a != self._last_group_speaker), live[0]
                 )
@@ -10125,7 +10147,11 @@ class RealtimeVoiceSessionRunner:
             filler_n_before = self._filler_defer_n
             if pending is not None and not filler_turn:
                 self._filler_defer_n = 0
+            # The ownership deferral is written once per turn: a late re-route
+            # to another non-owner does not write a second row for the beat.
+            owner_deferred = False
             if pending is not None and owner is not None and owner != first:
+                owner_deferred = True
                 self.session.store.event(
                     "trigger_deferred",
                     trigger_id=pending["id"],
@@ -10263,16 +10289,23 @@ class RealtimeVoiceSessionRunner:
                 # name is above. Since #299 Ben's split turns ("Um" [pause]
                 # "what's in your queue?") are joined here, after the speaker
                 # was chosen on the first half; only for a route nobody
-                # decided (no name, no director, not the lead).
+                # decided (no name, no director, not the lead, not reassigned
+                # off an absent member), against the route's own last
+                # speaker, and only when the keep itself changes.
                 if (late_fresh != fresh and late_named is None and not routed_seq
+                        and not reassigned and route_last is not None
+                        and _realtime.room_keep_addressee() > 0
                         and first_by in ("kept_last_speaker", "rotation")):
-                    was_kept = first_by == "kept_last_speaker"
-                    last = self._last_group_speaker
+                    was_kept = route_kept
+                    last = route_last
                     keep = self._keeps_last_speaker(
-                        late_fresh, streak=self._kept_streak - int(was_kept))
-                    if keep and last in room.sessions:
+                        late_fresh, streak=self._kept_streak - int(was_kept),
+                        last=last)
+                    if bool(keep) == was_kept:
+                        target = first
+                    elif keep and last in room.sessions:
                         target = last
-                    elif last in order and len(order) > 1:
+                    elif not keep and last in order and len(order) > 1:
                         target = order[(order.index(last) + 1) % len(order)]
                     else:
                         target = first
@@ -10286,6 +10319,8 @@ class RealtimeVoiceSessionRunner:
                             agent = next(a for a in room.agents if a.id == first)
                             await old.update_instructions(self._instructions_for(agent))
                         self._kept_streak += int(bool(keep)) - int(was_kept)
+                        self._kept_owed = target if keep else None
+                        route_kept = bool(keep)
                         first, first_intent = target, None
                         first_by = "kept_last_speaker" if keep else "rotation"
                         keep_reason = keep
@@ -10298,9 +10333,10 @@ class RealtimeVoiceSessionRunner:
                         owner = self._trigger_agent(pending) if pending else None
                         if owner is None or owner == first:
                             await self._brief_member(first)
-                        else:
+                        elif not owner_deferred:
                             # A kept route may land on a non-owner: the beat
                             # waits for its own character, as at the fold.
+                            owner_deferred = True
                             self.session.store.event(
                                 "trigger_deferred",
                                 trigger_id=pending["id"],
@@ -10982,8 +11018,8 @@ class RealtimeVoiceSessionRunner:
         "did", "can", "could", "will", "would", "is",
     ))
 
-    def _keeps_last_speaker(self, fresh: str,
-                            streak: Optional[int] = None) -> Optional[str]:
+    def _keeps_last_speaker(self, fresh: str, streak: Optional[int] = None,
+                            last: Optional[str] = None) -> Optional[str]:
         """Why an unnamed turn stays with the character who just spoke, or
         None (#297). Prod runs no director (DIRECTOR_ROUTE=0), so an unnamed
         turn rotated to the next character in cast order: in Ben's two S3A
@@ -10997,10 +11033,11 @@ class RealtimeVoiceSessionRunner:
         the fillers, and a question or "you"/"your". Never a line to the whole
         room ("you guys", "anyone", "who ..."), never a filler, and at most
         ROOM_KEEP_ADDRESSEE kept turns in a row (`streak` overrides the count,
-        for the re-check of a route that already counted itself). Text only:
-        no LLM call."""
+        for the re-check of a route that already counted itself; `last`
+        overrides the last speaker, for the re-check of the route's own).
+        Text only: no LLM call."""
         cap = _realtime.room_keep_addressee()
-        last = self._last_group_speaker
+        last = self._last_group_speaker if last is None else last
         streak = getattr(self, "_kept_streak", 0) if streak is None else streak
         if cap <= 0 or not self.is_group() or last is None or streak >= cap:
             return None

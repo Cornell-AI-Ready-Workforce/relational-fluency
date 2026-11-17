@@ -295,3 +295,156 @@ async def test_late_keep_reroutes_the_merged_split_turn(monkeypatch, defer):
         owed.set()
         resume.set()
         await h.close()
+
+
+# --------------------------------------------------------------------------
+# Review of the keep (#297)
+# --------------------------------------------------------------------------
+
+def test_a_kept_turn_never_said_does_not_count_toward_the_cap(monkeypatch):
+    """Review 2, fails before it: the kept turn's grant failed, so Dan never
+    said it, yet it counted as his one kept turn and the next follow-up to
+    him rotated away."""
+    runner, session, _, grants = _room(monkeypatch)
+    real_grant = runner._grant
+    calls = []
+
+    async def failing_grant(agent_id):
+        calls.append(agent_id)
+        return None if len(calls) == 1 else await real_grant(agent_id)
+
+    async def no_regrant(room, agent_id, why):
+        return None
+
+    monkeypatch.setattr(runner, "_grant", failing_grant)
+    monkeypatch.setattr(runner, "_regrant_after_drop", no_regrant)
+    _turn(runner, FOLLOW_UP)
+    assert calls == ["dan"] and grants == []
+    assert session.store.of("floor_grant_failed")[-1]["agent_id"] == "dan"
+    _turn(runner, "What is in your queue right now?")
+    assert grants == ["dan"]
+    route = _route(session)
+    assert route["first_by"] == "kept_last_speaker" and route["kept_streak"] == 1
+
+
+async def _held_turn(monkeypatch, knob, mover_at):
+    """A turn routed on "Um" (rotation from `a`), held for the rest of the
+    line while another member's line is finalized."""
+    monkeypatch.setenv("ROOM_KEEP_ADDRESSEE", knob)
+    monkeypatch.setenv("ROOM_RESUME_HOLD_S", "8")
+    owed = asyncio.Event()
+    scripts = [Transcript(), Transcript("Um"),
+               Transcript("what's in your queue right now?", owed)]
+    chats, _ = wire(monkeypatch, scripts)
+    h = await Room(monkeypatch, model=CASCADE).open()
+    await speak(h)
+    await until(lambda: len(chats) == 1)
+    await finished(h)
+    h.runner.director = ScriptedDirector([])
+    order = h.runner.agent_order()
+    if len(order) < 3:
+        pytest.skip("needs three characters")
+    in_hold, resume = asyncio.Event(), asyncio.Event()
+    original = h.runner._await_participant_resume
+
+    async def hold(room, turn):
+        in_hold.set()
+        await resume.wait()
+        return await original(room, turn)
+
+    monkeypatch.setattr(h.runner, "_await_participant_resume", hold)
+    try:
+        a, b = order[0], order[1]
+        h.session.append_agent(a, ANSWERED)
+        h.runner._last_group_speaker = a
+        await speak(h)
+        await in_hold.wait()
+        # A line finalized while this turn holds (an earlier reply landing
+        # late) moves _last_group_speaker off the route's own.
+        mover = next(x for x in h.runner._resolve_agents()
+                     if x.id == order[mover_at])
+        await h.runner._finalize_member(mover, "Fine, whatever.")
+        await speak(h)
+        resume.set()
+        await asyncio.sleep(0.3)
+        owed.set()
+        await until(lambda: len(chats) >= 2)
+        await finished(h)
+        return h, b
+    except BaseException:
+        owed.set()
+        resume.set()
+        await h.close()
+        raise
+
+
+@in_a_loop
+@pytest.mark.parametrize("knob,mover_at", [("0", 1), ("0", 2), ("1", 2)])
+async def test_late_keep_rechecks_against_the_routes_own_last_speaker(
+        monkeypatch, knob, mover_at):
+    """Review 1, fails before it: the re-check at the grant checkpoint ran
+    with ROOM_KEEP_ADDRESSEE=0 and against whoever spoke during the hold, so
+    the rotation's pick was re-routed (late_keep). Knob 0 is the old rotation
+    exactly; knob 1 re-decides only the keep, against the route's speaker."""
+    h, b = await _held_turn(monkeypatch, knob, mover_at)
+    try:
+        route = h.of("director_route")[-1]
+        reasons = [e.get("reason") for e in h.of("trigger_deferred")] + \
+                  [e.get("reason") for e in h.of("trigger_undelivered")]
+        assert route["speakers"][0] == b
+        assert route["first_by"] == "rotation"
+        assert "late_keep" not in reasons
+    finally:
+        await h.close()
+
+
+@in_a_loop
+async def test_late_keep_to_another_non_owner_writes_one_deferral(monkeypatch):
+    """Review 3, fails before it: the fold deferred the owner's beat on the
+    rotation's pick, and the late keep to a second non-owner wrote a second
+    trigger_deferred row for the same turn and index."""
+    monkeypatch.setenv("ROOM_RESUME_HOLD_S", "8")
+    monkeypatch.setenv("ROOM_BEAT_FILLER_DEFER", "0")
+    owed = asyncio.Event()
+    h, chats, pending, owner, _ = await _cascade_room(
+        monkeypatch, ["Um", Transcript("what's in your queue right now?", owed)])
+    order = h.runner.agent_order()
+    if len(order) < 3:
+        await h.close()
+        pytest.skip("needs three characters")
+    # Rotation from the asker lands on a non-owner; the keep on another.
+    asker = order[(order.index(owner) - 2) % len(order)]
+    in_hold, resume = asyncio.Event(), asyncio.Event()
+    original = h.runner._await_participant_resume
+
+    async def hold(room, turn):
+        in_hold.set()
+        await resume.wait()
+        return await original(room, turn)
+
+    monkeypatch.setattr(h.runner, "_await_participant_resume", hold)
+    try:
+        h.session.append_agent(asker, ANSWERED)
+        h.runner._last_group_speaker = asker
+        index = h.runner._trigger_idx
+        before = len(h.of("trigger_deferred"))
+        await speak(h)
+        await in_hold.wait()
+        await speak(h)
+        resume.set()
+        await asyncio.sleep(0.3)
+        owed.set()
+        await until(lambda: len(chats) == 2)
+        await finished(h)
+        route = h.of("director_route")[-1]
+        assert route["speakers"][0] == asker
+        assert route["first_by"] == "kept_last_speaker"
+        rows = [e for e in h.of("trigger_deferred")[before:]
+                if e.get("reason") == "beat_belongs_to_another_character"
+                and e.get("index") == index]
+        assert len(rows) == 1 and rows[0]["agent_id"] == owner
+        assert h.runner._trigger_idx == index
+    finally:
+        owed.set()
+        resume.set()
+        await h.close()
