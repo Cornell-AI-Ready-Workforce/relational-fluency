@@ -1439,6 +1439,20 @@ def room_beat_filler_defers() -> int:
     return max(0, _int_setting("ROOM_BEAT_FILLER_DEFER", 3))
 
 
+def room_keep_addressee() -> int:
+    """ROOM_KEEP_ADDRESSEE, default 1 (#297). The most unnamed participant
+    turns in a row the character who just spoke may keep, when the turn
+    answers their question or follows up on what they said
+    (RealtimeVoiceSessionRunner._keeps_last_speaker). Prod runs no director
+    (DIRECTOR_ROUTE=0), so every unnamed turn rotated to the next character
+    in cast order: in Ben's two S3A sessions 0 of 41 unnamed turns went back
+    to the one who had just spoken, and on 11 he was plainly answering them.
+    1, not 2: the character who asks most (S3A Alex) could otherwise hold 3
+    of every 4 turns, and dominance is a measured quantity. 0 is the old
+    rotation and anti-dominance exactly."""
+    return max(0, _int_setting("ROOM_KEEP_ADDRESSEE", 1))
+
+
 def probe_after_seconds() -> float:
     """PROBE_AFTER_SECONDS, default 12, read the way the watchdog always has
     (the process environment), so this is the value the probe fires on."""
@@ -1669,6 +1683,7 @@ def pacing_provenance() -> dict:
         "followup_gap_s": followup_gap_s(),
         "room_resume_hold_s": room_resume_hold_s(),
         "room_beat_filler_defer": room_beat_filler_defers(),
+        "room_keep_addressee": room_keep_addressee(),
         "room_play_clock": "per_turn",
         "probe_after_s": probe_after_seconds(),
         "probe_tick_s": probe_tick_s(),

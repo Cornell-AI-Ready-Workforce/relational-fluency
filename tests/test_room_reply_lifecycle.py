@@ -614,6 +614,7 @@ def test_the_pacing_knobs_are_on_the_record():
         "followup_gap_s": 1.0,
         "room_resume_hold_s": 8.0,
         "room_beat_filler_defer": 3,
+        "room_keep_addressee": 1,
         "room_play_clock": "per_turn",
         "probe_after_s": 12.0,
         "probe_tick_s": 1.0,

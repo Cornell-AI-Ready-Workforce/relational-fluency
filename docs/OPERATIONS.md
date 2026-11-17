@@ -44,7 +44,8 @@ severity.
 `trigger_deferred` reasons: `beat_belongs_to_another_character` (the turn was
 routed to someone other than the beat's character), the provisional
 give-backs above (`transcript_missing`, `transcript_suppressed`,
-`late_address`), and `filler_turn` (#297, cascade rooms: the turn was
+`late_address`, and `late_keep` (#297: the merged line changed whether the
+last speaker keeps the turn, `ROOM_KEEP_ADDRESSEE`, default 1, 0 off)), and `filler_turn` (#297, cascade rooms: the turn was
 only a filler or hesitation such as "Um" or "I think", so the character
 answers it and the beat waits; `defers` counts consecutive filler turns, at
 most `ROOM_BEAT_FILLER_DEFER`, default 3, 0 off). When the resume hold merges

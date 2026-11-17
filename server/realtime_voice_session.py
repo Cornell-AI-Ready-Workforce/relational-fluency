@@ -1077,6 +1077,13 @@ class RealtimeVoiceSessionRunner:
         # turns: its measured speaking rate for heard_text (_heard_wpm).
         self._speech_rate: Dict[str, tuple] = {}
         self._last_group_speaker: Optional[str] = None
+        # #297 routing keep: unnamed turns in a row the last speaker has kept
+        # (reset in _finalize_member_inner whenever the speaker changes, the
+        # one place every path that changes it passes), and whether the last
+        # character line was cut or never heard whole (_keeps_last_speaker
+        # does not count a "?" the participant never heard as one to answer).
+        self._kept_streak = 0
+        self._last_line_cut: Optional[dict] = None
         self._turn_index = 0
         self._pending_direction: Optional[dict] = None
         # (agent_id, field, value) for every scenario voice this model cannot
@@ -3884,6 +3891,13 @@ class RealtimeVoiceSessionRunner:
         await self._finalize_member(agent, text, audio_bytes=st.relayed_bytes,
                                     response_id=rid)
 
+    def _note_line_cut(self, agent_id) -> None:
+        """#297: a playback_cut for the last character line's speaker means
+        the participant did not hear that line to its end."""
+        last = getattr(self, "_last_line_cut", None)
+        if last is not None and agent_id and last.get("agent_id") == agent_id:
+            last["cut"] = True
+
     def _cut_last_played(self, now: Optional[float] = None) -> Optional[dict]:
         """Write a playback_cut for the line still playing on the page
         (_last_played, on the playback clock): heard_seconds / total_seconds
@@ -3911,6 +3925,7 @@ class RealtimeVoiceSessionRunner:
             heard = max(0.0, now - lp["start"])
         total = (lp.get("end") or 0) - (lp.get("start") or 0)
         heard_text, _n, _words = _heard_share(lp.get("text") or "", heard, total)
+        self._note_line_cut(lp.get("agent_id"))
         self.session.store.event(
             "playback_cut", agent_id=lp.get("agent_id"),
             segment=self.segment,
@@ -4826,6 +4841,8 @@ class RealtimeVoiceSessionRunner:
                 "type": "transcript", "role": "assistant",
                 "agent_id": agent.id, "text": text,
             })
+        if agent.id != self._last_group_speaker:
+            self._kept_streak = 0
         self._last_group_speaker = agent.id
         if not text:
             self.session.store.event(
@@ -4914,6 +4931,13 @@ class RealtimeVoiceSessionRunner:
         # Decided here, synchronously, before anything below awaits.
         plan = self._memory_plan(agent, text, response_id, retry_head,
                                  unvoiced=unvoiced)
+        # #297: whether this line reached the participant whole. A cut that
+        # lands later, while it is still playing, marks it in _note_line_cut.
+        self._last_line_cut = {
+            "agent_id": agent.id,
+            "cut": bool(interrupted or plan.get("cut") is not None
+                        or plan.get("memory") in ("replaced", "deleted")),
+        }
         self.session.store.event(
             "assistant_turn", agent_id=agent.id, text=text,
             segment=self.segment, transcript_missing=not text,
@@ -6862,6 +6886,7 @@ class RealtimeVoiceSessionRunner:
                         # _cut_last_played names the line playing.
                         cut = None
                         if holder_playing:
+                            self._note_line_cut(speaking_id)
                             self.session.store.event(
                                 "playback_cut", agent_id=speaking_id,
                                 segment=self.segment,
@@ -9856,6 +9881,14 @@ class RealtimeVoiceSessionRunner:
             lead_first = first is None and self.is_group() and lead in room.sessions
             if lead_first:
                 first = lead
+            # How `first` was chosen when nobody decided it (director_route,
+            # #297): "opening_lead", "kept_last_speaker" or "rotation"; None
+            # for a name or a director decision. Prod runs no director, so
+            # without this a rotation reads as routing judgement.
+            first_by: Optional[str] = "opening_lead" if lead_first else None
+            keep_reason: Optional[str] = None
+            skipped_last: Optional[str] = None
+            rotated_from: Optional[str] = None
             # The director may return an ORDERED multi-speaker sequence (e.g.
             # [A, B, A]); capture it so the follow-up beats play it in order
             # instead of being re-decided by a second route() call. None when the
@@ -9927,13 +9960,29 @@ class RealtimeVoiceSessionRunner:
                     # them answer again: rotate to the next member instead
                     # (in production the director handed Dan four of five
                     # unnamed turns this way).
-                    first = next(
-                        (c for c in candidates if c != self._last_group_speaker), None,
-                    )
+                    #
+                    # Except (#297) when the turn answers or follows up on
+                    # what that character just said (_keeps_last_speaker):
+                    # then the director's pick stands.
+                    keep = (self._keeps_last_speaker(fresh)
+                            if candidates and candidates[0] == self._last_group_speaker
+                            else None)
+                    if keep:
+                        first = candidates[0]
+                        first_by, keep_reason = "kept_last_speaker", keep
+                        self._kept_streak += 1
+                    else:
+                        first = next(
+                            (c for c in candidates if c != self._last_group_speaker), None,
+                        )
+                    if (first is not None and candidates and first != candidates[0]
+                            and candidates[0] == self._last_group_speaker):
+                        skipped_last = candidates[0]
                     if first is None and candidates:
                         if self._last_group_speaker in order and len(order) > 1:
                             nxt = (order.index(self._last_group_speaker) + 1) % len(order)
                             first = order[nxt]
+                            first_by, rotated_from = "rotation", self._last_group_speaker
                             self.session.store.event(
                                 "dominance_rotated", from_agent=candidates[0], to_agent=first,
                             )
@@ -9960,10 +10009,19 @@ class RealtimeVoiceSessionRunner:
                 return
             if first is None:
                 # No signal at all: rotate the floor instead of always
-                # falling back to the cast's first-listed character.
-                if self._last_group_speaker in order and len(order) > 1:
+                # falling back to the cast's first-listed character. This is
+                # the path prod runs (DIRECTOR_ROUTE=0). An answer or a
+                # follow-up to whoever just spoke stays with them (#297).
+                keep = self._keeps_last_speaker(fresh)
+                first_by = "rotation"
+                if keep and self._last_group_speaker in room.sessions:
+                    first = self._last_group_speaker
+                    first_by, keep_reason = "kept_last_speaker", keep
+                    self._kept_streak += 1
+                elif self._last_group_speaker in order and len(order) > 1:
                     nxt = (order.index(self._last_group_speaker) + 1) % len(order)
                     first = order[nxt]
+                    rotated_from = self._last_group_speaker
                 else:
                     first = order[0]
             if first not in room.sessions:
@@ -10171,6 +10229,7 @@ class RealtimeVoiceSessionRunner:
                     first, first_intent = late_named, None
                     routed_seq, routed_intents = None, []
                     lead_first = False
+                    first_by = keep_reason = rotated_from = skipped_last = None
                     # A line with a name in it is never a filler (#297).
                     filler_held = False
                     self._filler_defer_n = 0
@@ -10179,6 +10238,60 @@ class RealtimeVoiceSessionRunner:
                     if owner is None or owner == first:
                         await self._brief_member(first)
                     continue
+                # #297: the keep is decided again on the merged line, as the
+                # name is above. Since #299 Ben's split turns ("Um" [pause]
+                # "what's in your queue?") are joined here, after the speaker
+                # was chosen on the first half; only for a route nobody
+                # decided (no name, no director, not the lead).
+                if (late_fresh != fresh and late_named is None and not routed_seq
+                        and first_by in ("kept_last_speaker", "rotation")):
+                    was_kept = first_by == "kept_last_speaker"
+                    last = self._last_group_speaker
+                    keep = self._keeps_last_speaker(
+                        late_fresh, streak=self._kept_streak - int(was_kept))
+                    if keep and last in room.sessions:
+                        target = last
+                    elif last in order and len(order) > 1:
+                        target = order[(order.index(last) + 1) % len(order)]
+                    else:
+                        target = first
+                    if target != first and target in room.sessions:
+                        if self._trigger_idx != spent_idx:
+                            await self._give_beat_back(first, spent_idx, spent_fired,
+                                                      probing=False, reason="late_keep")
+                        self._drop_undelivered_intent(first, "late_keep")
+                        old = room.session_for(first)
+                        if old is not None:
+                            agent = next(a for a in room.agents if a.id == first)
+                            await old.update_instructions(self._instructions_for(agent))
+                        self._kept_streak += int(bool(keep)) - int(was_kept)
+                        first, first_intent = target, None
+                        first_by = "kept_last_speaker" if keep else "rotation"
+                        keep_reason = keep
+                        rotated_from = None if keep else last
+                        # The merged line has words in it (a keep is never a
+                        # filler), so the filler hold is over (#297).
+                        filler_held = False
+                        self._filler_defer_n = 0
+                        pending = self._next_trigger()
+                        owner = self._trigger_agent(pending) if pending else None
+                        if owner is None or owner == first:
+                            await self._brief_member(first)
+                        else:
+                            # A kept route may land on a non-owner: the beat
+                            # waits for its own character, as at the fold.
+                            self.session.store.event(
+                                "trigger_deferred",
+                                trigger_id=pending["id"],
+                                interaction=self._interaction_id(),
+                                segment=self.segment,
+                                index=self._trigger_idx,
+                                agent_id=owner,
+                                routed_to=first,
+                                reason="beat_belongs_to_another_character",
+                            )
+                        continue
+                    keep_reason = keep if first_by == "kept_last_speaker" else None
                 fresh = hearing.text(text_turn)
                 if (filler_held and not hearing.missing(text_turn)
                         and not _realtime.is_beat_filler(fresh)):
@@ -10438,7 +10551,17 @@ class RealtimeVoiceSessionRunner:
                 # The lead taking an unnamed first line under its FIRST REPLY
                 # note: the director was not asked who speaks first, so this
                 # is no more routing judgement than a fallback is.
-                first_by="opening_lead" if lead_first else None,
+                first_by=first_by,
+                # #297, payload only (tools/load_analysis_db.py): the
+                # director's ids, the last speaker it named but the room
+                # skipped, who a rotation moved on from, and a keep's reason
+                # and how many turns in a row it has now kept.
+                candidates=list(routed_seq) if routed_seq else None,
+                skipped_last=skipped_last,
+                rotated_from=rotated_from,
+                keep_reason=keep_reason,
+                kept_streak=(self._kept_streak
+                             if first_by == "kept_last_speaker" else None),
                 fallback=route_fallback is not None,
                 fallback_reason=(route_fallback or {}).get("reason"),
                 fallback_detail=redact_key(
@@ -10812,6 +10935,68 @@ class RealtimeVoiceSessionRunner:
                     continue
                 best_at, best_id = i, a.id
         return best_id
+
+    # #297 routing keep. Words that carry nothing on their own, on top of
+    # realtime's _FILLERS; a turn that is all filler never keeps
+    # (realtime.is_beat_filler), so "Um" or "Okay." still rotates.
+    _KEEP_FILLERS = frozenset((
+        "um", "uh", "okay", "ok", "yeah", "yep", "so", "well", "mhm", "right",
+        "alright", "oh", "hmm", "like",
+    ))
+    _KEEP_ROOM = ("you guys", "you all", "all of you", "everyone", "everybody",
+                  "anyone", "anybody", "team")
+    _KEEP_QUESTION = frozenset((
+        "what", "why", "how", "when", "where", "which", "whose", "are", "do",
+        "did", "can", "could", "will", "would", "is",
+    ))
+
+    def _keeps_last_speaker(self, fresh: str,
+                            streak: Optional[int] = None) -> Optional[str]:
+        """Why an unnamed turn stays with the character who just spoke, or
+        None (#297). Prod runs no director (DIRECTOR_ROUTE=0), so an unnamed
+        turn rotated to the next character in cast order: in Ben's two S3A
+        sessions 0 of 41 went back to the one who had just spoken, and on 11
+        he was answering them ("No, you didn't... How many cases are you
+        doing?" to Alex, answered by Jordan: "That is Alex's workload").
+
+        "answers_their_question": their last line ended on a question the
+        participant heard to its end, not one put to the whole room, and the
+        turn has a word in it. "question_to_them": three words or more past
+        the fillers, and a question or "you"/"your". Never a line to the whole
+        room ("you guys", "anyone", "who ..."), never a filler, and at most
+        ROOM_KEEP_ADDRESSEE kept turns in a row (`streak` overrides the count,
+        for the re-check of a route that already counted itself). Text only:
+        no LLM call."""
+        cap = _realtime.room_keep_addressee()
+        last = self._last_group_speaker
+        streak = getattr(self, "_kept_streak", 0) if streak is None else streak
+        if cap <= 0 or not self.is_group() or last is None or streak >= cap:
+            return None
+        if not fresh or _realtime.is_beat_filler(fresh):
+            return None
+        line = next((h for h in reversed(self.session.shared_history)
+                     if h.get("speaker") != "user"), None)
+        if line is None or line.get("speaker") != last:
+            return None
+        tokens = _norm_speech(fresh).split()
+        padded = " %s " % " ".join(tokens)
+        if not tokens or tokens[0] == "who" or any(
+                " %s " % p in padded for p in self._KEEP_ROOM):
+            return None
+        content = [t for t in tokens
+                   if t not in self._KEEP_FILLERS and t not in _realtime._FILLERS]
+        said = (line.get("text") or "").strip()
+        said_norm = " %s " % _norm_speech(said)
+        cut = getattr(self, "_last_line_cut", None) or {}
+        heard = not (cut.get("agent_id") == last and cut.get("cut"))
+        if (said.endswith("?") and heard and content
+                and not any(" %s " % p in said_norm for p in self._KEEP_ROOM)):
+            return "answers_their_question"
+        if len(content) >= 3 and (fresh.rstrip().endswith("?")
+                                  or content[0] in self._KEEP_QUESTION
+                                  or "you" in tokens or "your" in tokens):
+            return "question_to_them"
+        return None
 
     # ── director ───────────────────────────────────────────────────────────
     async def _steer(self) -> None:

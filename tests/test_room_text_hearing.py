@@ -1268,6 +1268,10 @@ async def test_m4_one_turn_served_by_two_tasks(monkeypatch, duplicate_task):
     guard is tested independently of the waiting-flag repair.
     """
     from collections import Counter
+    # #297: "What about the budget..." is a follow-up the routing keep would
+    # leave with Dan; this test is about the spawn window, and its speakers
+    # and deferral counts are the rotation's, so keep the old rotation.
+    monkeypatch.setenv("ROOM_KEEP_ADDRESSEE", "0")
     two = "What about the budget for the pilot"
     three = "And who owns the rollout after that"
     gate, in_grant, resume_grant = (asyncio.Event() for _ in range(3))

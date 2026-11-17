@@ -612,6 +612,14 @@ def text_client() -> AsyncAnthropic:
 #                turn with words, or on the same turn if the resume hold
 #                merges words into it. At most ROOM_BEAT_FILLER_DEFER (3)
 #                such turns in a row; 0 turns it off.
+#   2026-11-16b  (also) routing keep (#297): an unnamed answer to the last
+#                character's question, or follow-up to what they said, stays
+#                with that character instead of rotating to the next in cast
+#                order (_keeps_last_speaker), decided again on the line the
+#                resume hold merged. At most ROOM_KEEP_ADDRESSEE (1) such turns
+#                in a row; 0 is the old rotation. Moves speaker share, a
+#                measured dominance quantity. director_route first_by is now
+#                rotation / kept_last_speaker as well as opening_lead.
 #
 # PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
@@ -897,6 +905,19 @@ def text_client() -> AsyncAnthropic:
 #                into it. Cascade rooms only; silence probes, keep-going
 #                moves, gpt/native rooms and 1:1 are unchanged. Events:
 #                trigger_deferred{reason=filler_turn}, trigger_filler_rearmed.
+#   2026-11-16b  (also) Rooms (#297): routing keep. With no director (prod,
+#                DIRECTOR_ROUTE=0) every unnamed turn rotated to the next
+#                character, so an answer to Alex's question was answered by
+#                Jordan. An unnamed turn that answers the last character's
+#                question (heard to its end, not put to the room) or asks them
+#                a follow-up now stays with them, and with the director on its
+#                pick of the last speaker stands on such a line instead of
+#                dominance_rotated. Never on a filler or a line to the whole
+#                room; re-decided at the grant checkpoint on the merged line
+#                (beat given back as late_keep). ROOM_KEEP_ADDRESSEE (default
+#                1 in a row; 0 = old rotation). director_route gains first_by
+#                rotation/kept_last_speaker, candidates, skipped_last,
+#                rotated_from, keep_reason, kept_streak (payload only).
 PIPELINE_VERSION = "2026-11-16b"
 ROOM_PACING_VERSION = "2026-11-16b"
 
