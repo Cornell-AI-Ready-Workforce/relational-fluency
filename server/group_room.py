@@ -451,12 +451,23 @@ class GroupRoom:
         one cut off, and its retry nudges become system items. Only where a
         knob asks for it: with ROOM_CUT_MEMORY=keep, ROOM_TOLD_TEXT=generated
         and ROOM_NUDGE_ROLE=user the member is exactly the 30a session, and
-        off the gpt route it always is. Assigned like `model` is in
+        off the gpt and cascade routes (or on cascade with
+        CASCADE_ROOM_MEMORY off) it always is. Assigned like `model` is in
         _new_session, so a test factory's session takes it harmlessly. The
         scribe is never configured: it holds nothing a character remembers."""
         model = getattr(rt, "model", "") or self._model or _configured_model()
         active = _realtime.room_memory_active(model)
-        rt.nudge_role = _realtime.room_nudge_role() if active else "user"
+        if _realtime.family_of(model) == "cascade":
+            # Since 11-16b (#297) a cascade member runs the same rules, its
+            # conversation being the stand-in's own list. CASCADE_ROOM_MEMORY
+            # is read once, here, and kept on the session: the runner's
+            # policy reads it there (_member_memory_active), so a flip in the
+            # middle of an encounter cannot leave a member asked to replace
+            # with nothing tracked.
+            rt.cascade_room_memory = active
+        # Nudges are system items on the gpt route only (room_memory_nudge_role).
+        rt.nudge_role = (_realtime.room_memory_nudge_role(model) if active
+                         else "user")
         rt.track_items = bool(active and (
             _realtime.room_cut_memory() == "replace"
             or _realtime.room_told_text() == "heard"))

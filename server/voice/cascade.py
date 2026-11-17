@@ -22,13 +22,20 @@ a cascade has no server-side conversation to edit:
 
   * Server-side turn detection. The runner's own VAD owns end-of-turn, as on the
     gpt route (needs_turn_detection_null).
-  * Room memory hygiene (delete / replace a cut reply's items). Items are
-    acknowledged, so the bridge does not stall, but a reply the participant
-    barged in on stays in the character's history as the whole line it was
-    about to say, not only the part that was heard. Cancelling stops the
-    reply mid-generation. With no audio emitted, its assistant item is removed;
-    after audio starts, what is kept is still the generated text, because the
-    TTS stream has no sentence alignment or page-playback acknowledgement.
+  * Its own idea of what was heard. Cancelling stops the reply
+    mid-generation; with no audio emitted its assistant item is removed (and
+    a delete of it later is acked), but after audio starts the item keeps the
+    generated text, because the TTS stream has no sentence alignment or
+    page-playback acknowledgement.
+
+In a ROOM that is put right from outside (pipeline 2026-11-16b, #297): a
+cascade room runs 10-01a's room memory hygiene like a gpt room. The bridge
+mirrors these items, and the runner deletes a reply nobody heard and puts
+back the heard words of one cut off, read from its own playback clock; a
+colleague's told note is corrected the same way. The deletes and inserts are
+applied to `items` at once (previous_item_id "root" is the front). Retry and
+unanswered nudges stay user items. CASCADE_ROOM_MEMORY=0 restores the
+11-16a cascade room, which kept every generated line whole.
 """
 import asyncio
 import base64
@@ -428,6 +435,11 @@ class CascadeSocket:
         # the model never answers a turn it has not yet read.
         self._pending_stt: list = []
         self._finished: set = set()
+        # Reply message items this socket removed itself (_respond: nothing
+        # of the reply reached the bridge, or only a function call did), by
+        # id, bounded. The bridge learned them from output_item.added; a room
+        # member's memory delete of one is acked, not item_not_found (11-16b).
+        self._dropped: dict = {}
         # Latencies of the latest turn, for the record and the benchmark.
         self.timings: dict = {}
         self._reply_trace = None
@@ -488,7 +500,12 @@ class CascadeSocket:
                   **extra) -> dict:
         item = {"id": iid or self._id("item"), "role": role, "text": text,
                 "type": kind, **extra}
-        if prev and any(i["id"] == prev for i in self.items):
+        if prev == "root":
+            # The front of the conversation, as on the gateway: the heard
+            # words of a room member's first line go back where it was
+            # (room memory, 11-16b), not after everything said since.
+            self.items.insert(0, item)
+        elif prev and any(i["id"] == prev for i in self.items):
             at = next(n for n, i in enumerate(self.items) if i["id"] == prev)
             self.items.insert(at + 1, item)
         else:
@@ -565,7 +582,7 @@ class CascadeSocket:
         iid = ev.get("item_id")
         before = len(self.items)
         self.items = [i for i in self.items if i["id"] != iid]
-        if len(self.items) == before:
+        if len(self.items) == before and self._dropped.pop(iid, None) is None:
             self._error("item_not_found", f"no item {iid}",
                         event_id=ev.get("event_id", ""))
             return
@@ -805,7 +822,19 @@ class CascadeSocket:
                     if it["id"] == iid:
                         it["text"] = text
                 if not text:
+                    # Also a reply that was only a function call: its call
+                    # item stays, its empty message item goes.
+                    before = len(self.items)
                     self.items = [i for i in self.items if i["id"] != iid]
+                    self._dropped[iid] = True
+                    while len(self._dropped) > 256:
+                        self._dropped.pop(next(iter(self._dropped)))
+                    if len(self.items) < before:
+                        # Said, as the gateway says a delete: the bridge's
+                        # mirror (_track_items) learned the item from
+                        # output_item.added and must not anchor on it.
+                        self._emit({"type": "conversation.item.deleted",
+                                    "item_id": iid, "event_id": ""})
                 self._finished.add(rid)
                 observe(self, "done", rid, "cancelled" if cancelled else "failed" if failed else "done")
                 if not self._closed:

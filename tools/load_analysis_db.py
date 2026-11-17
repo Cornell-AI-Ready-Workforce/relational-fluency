@@ -428,6 +428,9 @@ def load_encounter(cur, d: Path, s3_prefix: str) -> Optional[str]:
                  list(e.get("esci") or []) or None, et.split("_", 1)[1],
                  e.get("reason"), e.get("routed_to")))
         elif et == "director_route":
+            # first_by, candidates, skipped_last, rotated_from, keep_reason and
+            # kept_streak (#297, pipeline 2026-11-16b) are payload only: no
+            # column, read them from event.payload for type 'director_route'.
             cur.execute(
                 """INSERT INTO director_route (encounter_id, t, speakers, addressed, fallback,
                        fallback_reason, fallback_detail)

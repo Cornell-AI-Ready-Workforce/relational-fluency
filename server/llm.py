@@ -605,6 +605,26 @@ def text_client() -> AsyncAnthropic:
 #                while the participant is still talking, closing their next
 #                turn or owed its transcript (ROOM_RESUME_HOLD_S, 8 s max),
 #                so a second half joins the turn and one character answers.
+#   2026-11-16b  beats on fillers (#297): in a cascade room a planted beat is
+#                not spent on a participant turn that is only a filler or
+#                hesitation (is_beat_filler: "Um", "I think", "So"); the
+#                character answers it as usual and the beat fires on the next
+#                turn with words, or on the same turn if the resume hold
+#                merges words into it. At most ROOM_BEAT_FILLER_DEFER (3)
+#                such turns in a row; 0 turns it off.
+#   2026-11-16b  (also) routing keep (#297): an unnamed answer to the last
+#                character's question, or follow-up to what they said, stays
+#                with that character instead of rotating to the next in cast
+#                order (_keeps_last_speaker), decided again on the line the
+#                resume hold merged. At most ROOM_KEEP_ADDRESSEE (1) such turns
+#                in a row; 0 is the old rotation. Moves speaker share, a
+#                measured dominance quantity. director_route first_by is now
+#                rotation / kept_last_speaker as well as opening_lead.
+#   2026-11-16b  (also) cascade room memory (#297): a cascade room character
+#                no longer keeps a line nobody heard (10-01a's rules on the
+#                cascade route), so a reply-start to a member may wait up to
+#                REALTIME_MEMORY_SETTLE_S (1.0 s) for a cut to be decided, as
+#                on gpt. CASCADE_ROOM_MEMORY (default on; 0 = 11-16a).
 #
 # PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
@@ -880,8 +900,44 @@ def text_client() -> AsyncAnthropic:
 #                answers it, instead of a second character queued right
 #                behind the first. No wait when they have stopped.
 #                participant_resume_held records each hold.
-PIPELINE_VERSION = "2026-11-16a"
-ROOM_PACING_VERSION = "2026-11-16a"
+#   2026-11-16b  Rooms (#297): a planted beat is not spent on a participant
+#                turn that is only a filler or hesitation (is_beat_filler:
+#                "Um", "I think", "Uh, what", "Okay, um.", "So"). It is held
+#                for up to ROOM_BEAT_FILLER_DEFER (default 3; 0 turns it off)
+#                consecutive such turns, the character answers the filler
+#                normally, and the beat fires on the next turn that carries
+#                words, or on the same turn if the resume hold merges words
+#                into it. Cascade rooms only; silence probes, keep-going
+#                moves, gpt/native rooms and 1:1 are unchanged. Events:
+#                trigger_deferred{reason=filler_turn}, trigger_filler_rearmed.
+#   2026-11-16b  (also) Rooms (#297): routing keep. With no director (prod,
+#                DIRECTOR_ROUTE=0) every unnamed turn rotated to the next
+#                character, so an answer to Alex's question was answered by
+#                Jordan. An unnamed turn that answers the last character's
+#                question (heard to its end, not put to the room) or asks them
+#                a follow-up now stays with them, and with the director on its
+#                pick of the last speaker stands on such a line instead of
+#                dominance_rotated. Never on a filler or a line to the whole
+#                room; re-decided at the grant checkpoint on the merged line
+#                (beat given back as late_keep). ROOM_KEEP_ADDRESSEE (default
+#                1 in a row; 0 = old rotation). director_route gains first_by
+#                rotation/kept_last_speaker, candidates, skipped_last,
+#                rotated_from, keep_reason, kept_streak (payload only).
+#   2026-11-16b  (also) Rooms (#297): cascade room memory. A cascade room ran
+#                none of 10-01a: Ben's S3A cascade session kept a line queued
+#                behind a cut one, never played, whole in Alex's conversation
+#                and told it in full to the others ("I already answered
+#                that." / "No, you didn't."). Cascade rooms now run 10-01a
+#                (unheard replies deleted, cut lines replaced by the heard
+#                words without the trailing ellipsis, told notes corrected);
+#                nudges stay user items; previous_item_id "root" inserts at
+#                the front; a delete of a reply item the stand-in dropped
+#                itself is acked. CASCADE_ROOM_MEMORY (default on; 0 = the
+#                11-16a cascade room), read once per member. room_memory
+#                provenance gains `cascade`, and reports nudge_role user on
+#                cascade.
+PIPELINE_VERSION = "2026-11-16b"
+ROOM_PACING_VERSION = "2026-11-16b"
 
 
 def _voice_style_provenance():

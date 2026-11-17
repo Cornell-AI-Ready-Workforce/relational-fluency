@@ -39,7 +39,18 @@ withdrawn into the pending turn instead of spawning another task.
 A provisional planted beat returned before the grant is recorded as
 `trigger_deferred`, with a `transcript_missing` or `transcript_suppressed`
 reason when the transcript causes the return. Its console notice has `info`
-severity. A directly recorded firing, including a probe, still uses
+severity.
+
+`trigger_deferred` reasons: `beat_belongs_to_another_character` (the turn was
+routed to someone other than the beat's character), the provisional
+give-backs above (`transcript_missing`, `transcript_suppressed`,
+`late_address`, and `late_keep` (#297: the merged line changed whether the
+last speaker keeps the turn, `ROOM_KEEP_ADDRESSEE`, default 1, 0 off)), and `filler_turn` (#297, cascade rooms: the turn was
+only a filler or hesitation such as "Um" or "I think", so the character
+answers it and the beat waits; `defers` counts consecutive filler turns, at
+most `ROOM_BEAT_FILLER_DEFER`, default 3, 0 off). When the resume hold merges
+words into such a turn before its grant, `trigger_filler_rearmed` is written
+and the beat fires on that turn after all. A directly recorded firing, including a probe, still uses
 `trigger_undelivered` with `error` severity when its grant fails or its member
 is lost. Cancelling a turn clears its provisional firing record.
 
@@ -925,7 +936,50 @@ the adapter has no page-playback acknowledgements. Generated text is still
 kept after the first audio, even if some of it was unheard or that audio was
 held or discarded by the bridge. Exact trimming then needs alignment and
 playback information across the TTS, bridge and runner; it is not implemented
-by this adapter repair.
+by this adapter repair. In a cascade ROOM the runner does it from outside since
+2026-11-16b (next section); a 1:1 cascade session still keeps the generated
+text.
+
+## What changed on 2026-11-16, cascade room memory (pipeline_version 2026-11-16b)
+
+Cascade rooms now run 10-01a's room memory hygiene, the same rules as gpt
+rooms (#297). Until 11-16b a cascade room kept every generated line whole in
+the speaker's own conversation and told it in full to the colleagues, even when
+the participant cut it off or it was queued behind the line they cut and never
+played. Ben's S3A cascade session: Alex's queued line was never heard, Alex
+said "I already answered that", and Ben answered "No, you didn't".
+
+- A reply nobody heard (a suppressed hold, a re-brief cancel, a line queued
+  behind the cut one) is deleted from the character's conversation, and its
+  told notes from the colleagues'.
+- A line the participant cut off is replaced by the heard words, read from the
+  runner's playback clock (`heard_basis` in `room_memory` provenance). The
+  trailing `…` of playback_cut is not put into the cascade member's own
+  history; the record keeps it.
+- A colleague told the whole line has the note corrected in place.
+- Retry and unanswered nudges stay user items on cascade (`ROOM_NUDGE_ROLE`
+  applies to gpt rooms only; provenance `room_memory.nudge_role` says `user` on
+  cascade).
+- The adapter applies deletes and inserts to its own item list at once, inserts
+  at the front for `previous_item_id: "root"`, and acks a delete of a reply item
+  it had already dropped itself (no audio reached the bridge, or the reply was
+  only a function call).
+- A reply-start to a member with a memory operation pending can wait up to
+  `REALTIME_MEMORY_SETTLE_S` (1.0 s), as on gpt. On cascade only the cut reply's
+  `response.done` is waited for.
+
+Events are 10-01a's: `member_memory_replaced`, `told_line_corrected`,
+`member_memory_skipped`, `member_memory_waited` / `member_memory_late`. The
+`record.json` transcript `text` stays the generated line, as on gpt.
+
+`CASCADE_ROOM_MEMORY` (default on). `0`, `off`, `false` or `no` restores the
+11-16a cascade room exactly: no item mirror, no deletes or inserts, generated
+told notes, provenance `room_memory.active` false. It is read once per member
+when the room opens or rebuilds that member, so set it before the encounter.
+`ROOM_CUT_MEMORY=keep` with `ROOM_TOLD_TEXT=generated` also gives 30a on
+cascade. After this bump, the cascade S3A/S4A sim baseline needs a hand-read
+first run (lines_answered, speech_end_to_first_played_s,
+member_memory_late/error/skipped) before release; that is the PI's call.
 
 ## The seven-minute floor, and the twelve-minute stop
 

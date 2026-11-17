@@ -1077,6 +1077,23 @@ class RealtimeVoiceSessionRunner:
         # turns: its measured speaking rate for heard_text (_heard_wpm).
         self._speech_rate: Dict[str, tuple] = {}
         self._last_group_speaker: Optional[str] = None
+        # #297 routing keep: unnamed turns in a row the last speaker has kept
+        # (reset in _finalize_member_inner whenever the speaker changes, the
+        # one place every path that changes it passes), and whether the last
+        # character line was cut or never heard whole (_keeps_last_speaker
+        # does not count a "?" the participant never heard as one to answer).
+        self._kept_streak = 0
+        # The member a kept turn counted in _kept_streak before its line was
+        # said; cleared by _run_group_turn once that turn's own reply is said,
+        # and taken back by the next route if it never was (suppressed, grant
+        # failed, dropped, cancelled), so the streak counts kept lines that
+        # were said. Not by just any line of that member's (a probe's, a late
+        # older reply), which is not the kept turn's reply.
+        self._kept_owed: Optional[str] = None
+        # Set when the kept member finalizes a said line after this turn's
+        # grant; reset before each grant.
+        self._kept_said: Optional[str] = None
+        self._last_line_cut: Optional[dict] = None
         self._turn_index = 0
         self._pending_direction: Optional[dict] = None
         # (agent_id, field, value) for every scenario voice this model cannot
@@ -1102,6 +1119,9 @@ class RealtimeVoiceSessionRunner:
         # are the measurement: each maps to ESCI items, and the participant's
         # response to it is what a rater scores.
         self._trigger_idx = 0
+        # Consecutive filler-only participant turns the next planted beat has
+        # been held over in a cascade room (#297, ROOM_BEAT_FILLER_DEFER).
+        self._filler_defer_n = 0
         # The keep-going fallback's own counter (see _keep_going_trigger): it
         # never touches _trigger_idx or _fired, which are the measurement.
         self._after_idx = 0
@@ -1926,6 +1946,9 @@ class RealtimeVoiceSessionRunner:
                 index=self._after_idx)
             self._after_idx += 1
             return self._trigger_instruction(trigger, probing=True)
+        # A beat that fires, probe included, starts the next one's filler
+        # count from nothing (#297).
+        self._filler_defer_n = 0
         self._fired.append(trigger["id"])
         fields = dict(
             trigger_id=trigger["id"],
@@ -2041,7 +2064,8 @@ class RealtimeVoiceSessionRunner:
         # _maybe_advance simply retries the advance.
         before = (self.segment, self._series_idx, self._trigger_idx,
                   self._turns_this_interaction, self._interaction_started_at,
-                  self._handoff_briefed, self._handoff_probed)
+                  self._handoff_briefed, self._handoff_probed,
+                  self._filler_defer_n)
         try:
             agents = self._resolve_agents()
 
@@ -2057,7 +2081,7 @@ class RealtimeVoiceSessionRunner:
                     (self.segment, self._series_idx, self._trigger_idx,
                      self._turns_this_interaction,
                      self._interaction_started_at, self._handoff_briefed,
-                     self._handoff_probed) = before
+                     self._handoff_probed, self._filler_defer_n) = before
                 return True
 
             if self.segment + 1 >= len(self.interactions):
@@ -2067,6 +2091,7 @@ class RealtimeVoiceSessionRunner:
             self._series_idx = 0
             self._trigger_idx = 0
             self._after_idx = 0
+            self._filler_defer_n = 0
             self._turns_this_interaction = 0
             self._handoff_briefed = False
             self._handoff_probed = False
@@ -2076,7 +2101,7 @@ class RealtimeVoiceSessionRunner:
                 (self.segment, self._series_idx, self._trigger_idx,
                  self._turns_this_interaction,
                  self._interaction_started_at, self._handoff_briefed,
-                 self._handoff_probed) = before
+                 self._handoff_probed, self._filler_defer_n) = before
             return True
         finally:
             self._advancing = False
@@ -3876,6 +3901,13 @@ class RealtimeVoiceSessionRunner:
         await self._finalize_member(agent, text, audio_bytes=st.relayed_bytes,
                                     response_id=rid)
 
+    def _note_line_cut(self, agent_id) -> None:
+        """#297: a playback_cut for the last character line's speaker means
+        the participant did not hear that line to its end."""
+        last = getattr(self, "_last_line_cut", None)
+        if last is not None and agent_id and last.get("agent_id") == agent_id:
+            last["cut"] = True
+
     def _cut_last_played(self, now: Optional[float] = None) -> Optional[dict]:
         """Write a playback_cut for the line still playing on the page
         (_last_played, on the playback clock): heard_seconds / total_seconds
@@ -3903,6 +3935,7 @@ class RealtimeVoiceSessionRunner:
             heard = max(0.0, now - lp["start"])
         total = (lp.get("end") or 0) - (lp.get("start") or 0)
         heard_text, _n, _words = _heard_share(lp.get("text") or "", heard, total)
+        self._note_line_cut(lp.get("agent_id"))
         self.session.store.event(
             "playback_cut", agent_id=lp.get("agent_id"),
             segment=self.segment,
@@ -3973,13 +4006,27 @@ class RealtimeVoiceSessionRunner:
 
     def _memory_policy(self, rt) -> tuple:
         """(cut_memory, told_text) for a line of `rt`'s character: the knobs,
-        in a room on the gpt route; 30a's ("keep", "generated") anywhere
-        else, every 1:1 encounter included."""
+        in a room on the gpt route or (CASCADE_ROOM_MEMORY, 11-16b) the
+        cascade route; 30a's ("keep", "generated") anywhere else, every 1:1
+        encounter included."""
         if getattr(self, "room", None) is None or rt is None:
             return "keep", "generated"
-        if not _realtime.room_memory_active(getattr(rt, "model", "") or ""):
+        if not self._member_memory_active(rt):
             return "keep", "generated"
         return _realtime.room_cut_memory(), _realtime.room_told_text()
+
+    @staticmethod
+    def _member_memory_active(rt) -> bool:
+        """room_memory_active for this member: on the cascade route the
+        CASCADE_ROOM_MEMORY its room read when it configured the member
+        (GroupRoom._configure_memory, 11-16b), so the policy and the
+        member's item mirror never disagree; the model's answer elsewhere,
+        and for a member nobody configured."""
+        model = getattr(rt, "model", "") or ""
+        flag = getattr(rt, "cascade_room_memory", None)
+        if flag is not None and _realtime.family_of(model) == "cascade":
+            return bool(flag)
+        return _realtime.room_memory_active(model)
 
     def _memory_effective(self, rt) -> bool:
         """Whether this room member runs anything other than 30a
@@ -3991,7 +4038,9 @@ class RealtimeVoiceSessionRunner:
         if getattr(self, "room", None) is None or rt is None:
             return False
         try:
-            return _realtime.room_memory_effective(getattr(rt, "model", "") or "")
+            return _realtime.room_memory_effective(
+                getattr(rt, "model", "") or "",
+                active=self._member_memory_active(rt))
         except Exception:  # noqa: BLE001 - a record field must never cost a turn
             return False
 
@@ -4818,6 +4867,12 @@ class RealtimeVoiceSessionRunner:
                 "type": "transcript", "role": "assistant",
                 "agent_id": agent.id, "text": text,
             })
+        if text and agent.id == self._kept_owed:
+            # A said line from the member a kept turn went to; the turn's own
+            # wait checks it, so an empty reply never pays the keep.
+            self._kept_said = agent.id
+        if agent.id != self._last_group_speaker:
+            self._kept_streak = 0
         self._last_group_speaker = agent.id
         if not text:
             self.session.store.event(
@@ -4906,6 +4961,13 @@ class RealtimeVoiceSessionRunner:
         # Decided here, synchronously, before anything below awaits.
         plan = self._memory_plan(agent, text, response_id, retry_head,
                                  unvoiced=unvoiced)
+        # #297: whether this line reached the participant whole. A cut that
+        # lands later, while it is still playing, marks it in _note_line_cut.
+        self._last_line_cut = {
+            "agent_id": agent.id,
+            "cut": bool(interrupted or plan.get("cut") is not None
+                        or plan.get("memory") in ("replaced", "deleted")),
+        }
         self.session.store.event(
             "assistant_turn", agent_id=agent.id, text=text,
             segment=self.segment, transcript_missing=not text,
@@ -6854,6 +6916,7 @@ class RealtimeVoiceSessionRunner:
                         # _cut_last_played names the line playing.
                         cut = None
                         if holder_playing:
+                            self._note_line_cut(speaking_id)
                             self.session.store.event(
                                 "playback_cut", agent_id=speaking_id,
                                 segment=self.segment,
@@ -9840,6 +9903,10 @@ class RealtimeVoiceSessionRunner:
                     await self._await_member_rebuilds(room)) and (
                     self._closed or self.room is not room):
                 return
+            if self._kept_owed is not None:
+                # The last kept turn's line was never said: it does not count.
+                self._kept_streak = max(0, self._kept_streak - 1)
+                self._kept_owed = None
             first = named_early
             # What used to be the lead's unprompted opener is its answer to
             # the participant now (_first_room_reply_note): an unnamed turn
@@ -9848,6 +9915,20 @@ class RealtimeVoiceSessionRunner:
             lead_first = first is None and self.is_group() and lead in room.sessions
             if lead_first:
                 first = lead
+            # How `first` was chosen when nobody decided it (director_route,
+            # #297): "opening_lead", "kept_last_speaker" or "rotation"; None
+            # for a name or a director decision. Prod runs no director, so
+            # without this a rotation reads as routing judgement.
+            first_by: Optional[str] = "opening_lead" if lead_first else None
+            keep_reason: Optional[str] = None
+            skipped_last: Optional[str] = None
+            rotated_from: Optional[str] = None
+            # The no-signal route's last speaker and keep, which the late keep
+            # re-check below re-decides against (not whoever has spoken since),
+            # and whether `first` was reassigned off an absent member.
+            route_last: Optional[str] = None
+            route_kept = False
+            reassigned = False
             # The director may return an ORDERED multi-speaker sequence (e.g.
             # [A, B, A]); capture it so the follow-up beats play it in order
             # instead of being re-decided by a second route() call. None when the
@@ -9919,13 +10000,30 @@ class RealtimeVoiceSessionRunner:
                     # them answer again: rotate to the next member instead
                     # (in production the director handed Dan four of five
                     # unnamed turns this way).
-                    first = next(
-                        (c for c in candidates if c != self._last_group_speaker), None,
-                    )
+                    #
+                    # Except (#297) when the turn answers or follows up on
+                    # what that character just said (_keeps_last_speaker):
+                    # then the director's pick stands.
+                    keep = (self._keeps_last_speaker(fresh)
+                            if candidates and candidates[0] == self._last_group_speaker
+                            else None)
+                    if keep:
+                        first = candidates[0]
+                        first_by, keep_reason = "kept_last_speaker", keep
+                        self._kept_streak += 1
+                        self._kept_owed = first
+                    else:
+                        first = next(
+                            (c for c in candidates if c != self._last_group_speaker), None,
+                        )
+                    if (first is not None and candidates and first != candidates[0]
+                            and candidates[0] == self._last_group_speaker):
+                        skipped_last = candidates[0]
                     if first is None and candidates:
                         if self._last_group_speaker in order and len(order) > 1:
                             nxt = (order.index(self._last_group_speaker) + 1) % len(order)
                             first = order[nxt]
+                            first_by, rotated_from = "rotation", self._last_group_speaker
                             self.session.store.event(
                                 "dominance_rotated", from_agent=candidates[0], to_agent=first,
                             )
@@ -9952,10 +10050,22 @@ class RealtimeVoiceSessionRunner:
                 return
             if first is None:
                 # No signal at all: rotate the floor instead of always
-                # falling back to the cast's first-listed character.
-                if self._last_group_speaker in order and len(order) > 1:
+                # falling back to the cast's first-listed character. This is
+                # the path prod runs (DIRECTOR_ROUTE=0). An answer or a
+                # follow-up to whoever just spoke stays with them (#297).
+                route_last = self._last_group_speaker
+                keep = self._keeps_last_speaker(fresh, last=route_last)
+                first_by = "rotation"
+                if keep and route_last in room.sessions:
+                    first = route_last
+                    first_by, keep_reason = "kept_last_speaker", keep
+                    route_kept = True
+                    self._kept_streak += 1
+                    self._kept_owed = first
+                elif self._last_group_speaker in order and len(order) > 1:
                     nxt = (order.index(self._last_group_speaker) + 1) % len(order)
                     first = order[nxt]
+                    rotated_from = self._last_group_speaker
                 else:
                     first = order[0]
             if first not in room.sessions:
@@ -9973,6 +10083,7 @@ class RealtimeVoiceSessionRunner:
                     )
                     return
                 wanted_speaker = first
+                reassigned = True
                 first = next(
                     (a for a in live if a != self._last_group_speaker), live[0]
                 )
@@ -10023,7 +10134,33 @@ class RealtimeVoiceSessionRunner:
             # task and left the room's floor held, so nobody could answer the
             # participant for the rest of the interaction.
             spent_idx, spent_fired = self._trigger_idx, len(self._fired)
+            # #297: nor on a turn that holds no answer yet. Ben (S3A, cascade)
+            # spent 6 of 15 beats on "Um", "I think", "Uh, what", "So": the
+            # character performed its next scripted move over a participant
+            # still finding their words. A filler-only turn is answered as
+            # usual and the beat waits for the next turn with words in it, up
+            # to ROOM_BEAT_FILLER_DEFER such turns in a row. Cascade rooms
+            # only (text_turn is the cascade text relay): the evidence is
+            # cascade, and gpt/native keep their briefs; widening this is its
+            # own version bump. Any other turn the fold sees resets the count,
+            # an ownership deferral included, so the cap counts consecutive
+            # fillers and not a per-beat total.
+            filler_turn = (pending is not None and text_turn is not None
+                           and _realtime.room_beat_filler_defers() > 0
+                           and _realtime.is_beat_filler(fresh))
+            filler_held = False
+            # A filler turn that then goes unanswered (suppressed, grant
+            # failed) gives its count back, so the cap counts fillers that
+            # were heard. An at-cap filler too: its brief reset the count,
+            # and a beat given back must not let the next filler be held.
+            filler_n_before = self._filler_defer_n
+            if pending is not None and not filler_turn:
+                self._filler_defer_n = 0
+            # The ownership deferral is written once per turn: a late re-route
+            # to another non-owner does not write a second row for the beat.
+            owner_deferred = False
             if pending is not None and owner is not None and owner != first:
+                owner_deferred = True
                 self.session.store.event(
                     "trigger_deferred",
                     trigger_id=pending["id"],
@@ -10042,6 +10179,26 @@ class RealtimeVoiceSessionRunner:
                     "trigger_deferred", agent_id=owner,
                     detail=f"beat {pending['id']} belongs to {owner}; "
                            f"this turn routed to {first}",
+                )
+            elif (filler_turn and self._filler_defer_n
+                  < _realtime.room_beat_filler_defers()):
+                # Not briefed, so not spent: _trigger_idx stays at spent_idx
+                # and the director's own intent (below) is delivered instead.
+                # No console notice: fillers are ordinary, the row is enough.
+                self._filler_defer_n += 1
+                filler_held = True
+                self.session.store.event(
+                    "trigger_deferred",
+                    trigger_id=pending["id"],
+                    interaction=self._interaction_id(),
+                    segment=self.segment,
+                    index=self._trigger_idx,
+                    agent_id=owner,
+                    routed_to=first,
+                    reason="filler_turn",
+                    text=fresh[:80],
+                    defers=self._filler_defer_n,
+                    cap=_realtime.room_beat_filler_defers(),
                 )
             else:
                 # _brief_member SPENDS the beat: it writes trigger_fired,
@@ -10109,6 +10266,8 @@ class RealtimeVoiceSessionRunner:
                                                   probing=False, reason="transcript_suppressed")
                     self._drop_undelivered_intent(first, "transcript_suppressed")
                     self._take_unrouted()
+                    if filler_turn:
+                        self._filler_defer_n = filler_n_before
                     self.session.store.event("group_turn_skipped", reason="transcript_suppressed",
                                              text="", segment=self.segment,
                                              interaction=self._interaction_id())
@@ -10126,12 +10285,111 @@ class RealtimeVoiceSessionRunner:
                     first, first_intent = late_named, None
                     routed_seq, routed_intents = None, []
                     lead_first = False
+                    first_by = keep_reason = rotated_from = skipped_last = None
+                    # A line with a name in it is never a filler (#297).
+                    filler_held = filler_turn = False
+                    self._filler_defer_n = 0
                     pending = self._next_trigger()
                     owner = self._trigger_agent(pending) if pending else None
                     if owner is None or owner == first:
                         await self._brief_member(first)
                     continue
+                # #297: the keep is decided again on the merged line, as the
+                # name is above. Since #299 Ben's split turns ("Um" [pause]
+                # "what's in your queue?") are joined here, after the speaker
+                # was chosen on the first half; only for a route nobody
+                # decided (no name, no director, not the lead, not reassigned
+                # off an absent member), against the route's own last
+                # speaker, and only when the keep itself changes.
+                if (late_fresh != fresh and late_named is None and not routed_seq
+                        and not reassigned and route_last is not None
+                        and _realtime.room_keep_addressee() > 0
+                        and first_by in ("kept_last_speaker", "rotation")):
+                    was_kept = route_kept
+                    last = route_last
+                    keep = self._keeps_last_speaker(
+                        late_fresh, streak=self._kept_streak - int(was_kept),
+                        last=last)
+                    if bool(keep) == was_kept:
+                        target = first
+                    elif keep and last in room.sessions:
+                        target = last
+                    elif not keep and last in order and len(order) > 1:
+                        target = order[(order.index(last) + 1) % len(order)]
+                    else:
+                        target = first
+                    if target != first and target in room.sessions:
+                        if self._trigger_idx != spent_idx:
+                            await self._give_beat_back(first, spent_idx, spent_fired,
+                                                      probing=False, reason="late_keep")
+                        self._drop_undelivered_intent(first, "late_keep")
+                        old = room.session_for(first)
+                        if old is not None:
+                            agent = next(a for a in room.agents if a.id == first)
+                            await old.update_instructions(self._instructions_for(agent))
+                        self._kept_streak += int(bool(keep)) - int(was_kept)
+                        self._kept_owed = target if keep else None
+                        route_kept = bool(keep)
+                        first, first_intent = target, None
+                        first_by = "kept_last_speaker" if keep else "rotation"
+                        keep_reason = keep
+                        rotated_from = None if keep else last
+                        # The merged line has words in it (a keep is never a
+                        # filler), so the filler hold is over (#297).
+                        filler_held = filler_turn = False
+                        self._filler_defer_n = 0
+                        pending = self._next_trigger()
+                        owner = self._trigger_agent(pending) if pending else None
+                        if owner is None or owner == first:
+                            await self._brief_member(first)
+                        elif not owner_deferred:
+                            # A kept route may land on a non-owner: the beat
+                            # waits for its own character, as at the fold.
+                            owner_deferred = True
+                            self.session.store.event(
+                                "trigger_deferred",
+                                trigger_id=pending["id"],
+                                interaction=self._interaction_id(),
+                                segment=self.segment,
+                                index=self._trigger_idx,
+                                agent_id=owner,
+                                routed_to=first,
+                                reason="beat_belongs_to_another_character",
+                            )
+                        continue
+                    keep_reason = keep if first_by == "kept_last_speaker" else None
                 fresh = hearing.text(text_turn)
+                if (filler_held and not hearing.missing(text_turn)
+                        and not _realtime.is_beat_filler(fresh)):
+                    # #297: the resume hold merged words into the filler the
+                    # beat was held over ("Um" + the rest of the sentence), so
+                    # the turn has its answer after all and the beat is spent
+                    # here. Its brief replaces the director intent delivered
+                    # at the fold, so that intent is retracted first; the
+                    # firing is stored on the ungranted turn and written by
+                    # the branch below, or given back if it clarifies. A brief
+                    # that did not land (trigger_brief_failed, no session)
+                    # leaves _trigger_idx where it was: the delivered intent
+                    # then stays, and so does the hold. A brief that did land
+                    # has replaced _pending_direction with the beat's, so the
+                    # intent is retracted from the snapshot.
+                    before_brief, held = self._trigger_idx, self._pending_direction
+                    await self._brief_member(first)
+                    if self._trigger_idx != before_brief:
+                        beat, self._pending_direction = self._pending_direction, held
+                        self._drop_undelivered_intent(first, "planted_beat_briefed")
+                        self._pending_direction = beat
+                        filler_held = filler_turn = False
+                        self._filler_defer_n = 0
+                        self.session.store.event(
+                            "trigger_filler_rearmed",
+                            trigger_id=pending["id"] if pending else None,
+                            interaction=self._interaction_id(),
+                            segment=self.segment,
+                            index=spent_idx,
+                            agent_id=first,
+                            text=fresh[:80],
+                        )
                 text_turn.route_text = fresh
                 text_turn.clarification = hearing.missing(text_turn)
                 if text_turn.clarification:
@@ -10146,6 +10404,7 @@ class RealtimeVoiceSessionRunner:
                     text_turn.trigger_fired = None
                 self._take_unrouted()
                 break
+            self._kept_said = None
             granted = await self._grant(first)
             if granted is None:
                 # Its session went while it was being granted the floor: once
@@ -10197,6 +10456,8 @@ class RealtimeVoiceSessionRunner:
                     # pending and paired with whichever turn finalises next.
                     self._pending_direction = None
                 self._drop_undelivered_intent(first, "floor_grant_failed")
+                if filler_turn:
+                    self._filler_defer_n = filler_n_before
                 return
             regranted = False
             asked_after_held_end = False
@@ -10245,6 +10506,11 @@ class RealtimeVoiceSessionRunner:
                 if self._dropped_unanswered.get(first) is not granted:
                     # Nothing dropped, or a session this grant never went to.
                     self._dropped_unanswered.pop(first, None)
+                    if self._kept_owed == first and self._kept_said == first:
+                        # The kept turn's own reply was said: it counts. An
+                        # empty reply, a timeout or a reply never retried
+                        # leaves it owed, for the next route to take back.
+                        self._kept_owed = None
                     break
                 # Its session went before any of its reply reached the page
                 # (pipeline 2026-10-14a). Given the floor again once it is
@@ -10264,6 +10530,8 @@ class RealtimeVoiceSessionRunner:
                             first, spent_idx, spent_fired, probing=False,
                             reason="member_lost")
                     self._drop_undelivered_intent(first, "member_lost")
+                    if filler_turn:
+                        self._filler_defer_n = filler_n_before
                     return
                 granted, regranted = again, True
 
@@ -10368,7 +10636,17 @@ class RealtimeVoiceSessionRunner:
                 # The lead taking an unnamed first line under its FIRST REPLY
                 # note: the director was not asked who speaks first, so this
                 # is no more routing judgement than a fallback is.
-                first_by="opening_lead" if lead_first else None,
+                first_by=first_by,
+                # #297, payload only (tools/load_analysis_db.py): the
+                # director's ids, the last speaker it named but the room
+                # skipped, who a rotation moved on from, and a keep's reason
+                # and how many turns in a row it has now kept.
+                candidates=list(routed_seq) if routed_seq else None,
+                skipped_last=skipped_last,
+                rotated_from=rotated_from,
+                keep_reason=keep_reason,
+                kept_streak=(self._kept_streak
+                             if first_by == "kept_last_speaker" else None),
                 fallback=route_fallback is not None,
                 fallback_reason=(route_fallback or {}).get("reason"),
                 fallback_detail=redact_key(
@@ -10742,6 +11020,74 @@ class RealtimeVoiceSessionRunner:
                     continue
                 best_at, best_id = i, a.id
         return best_id
+
+    # #297 routing keep. Words that carry nothing on their own, on top of
+    # realtime's _FILLERS; a turn that is all filler never keeps
+    # (realtime.is_beat_filler), so "Um" or "Okay." still rotates.
+    _KEEP_FILLERS = frozenset((
+        "um", "uh", "okay", "ok", "yeah", "yep", "so", "well", "mhm", "right",
+        "alright", "oh", "hmm", "like",
+    ))
+    _KEEP_ROOM = ("you guys", "you all", "all of you", "everyone", "everybody",
+                  "anyone", "anybody", "team")
+    _KEEP_QUESTION = frozenset((
+        "what", "why", "how", "when", "where", "which", "whose", "are", "do",
+        "did", "can", "could", "will", "would", "is",
+    ))
+
+    def _keeps_last_speaker(self, fresh: str, streak: Optional[int] = None,
+                            last: Optional[str] = None) -> Optional[str]:
+        """Why an unnamed turn stays with the character who just spoke, or
+        None (#297). Prod runs no director (DIRECTOR_ROUTE=0), so an unnamed
+        turn rotated to the next character in cast order: in Ben's two S3A
+        sessions 0 of 41 went back to the one who had just spoken, and on 11
+        he was answering them ("No, you didn't... How many cases are you
+        doing?" to Alex, answered by Jordan: "That is Alex's workload").
+
+        "answers_their_question": their last line ended on a question the
+        participant heard to its end, not one put to the whole room, and the
+        turn has a word in it. "question_to_them": three words or more past
+        the fillers, and a question or "you"/"your". Never a line to the whole
+        room ("you guys", "anyone", "who ..."), never a filler, and at most
+        ROOM_KEEP_ADDRESSEE kept turns in a row (`streak` overrides the count,
+        for the re-check of a route that already counted itself; `last`
+        overrides the last speaker, for the re-check of the route's own).
+        Text only: no LLM call."""
+        cap = _realtime.room_keep_addressee()
+        last = self._last_group_speaker if last is None else last
+        streak = getattr(self, "_kept_streak", 0) if streak is None else streak
+        if cap <= 0 or not self.is_group() or last is None or streak >= cap:
+            return None
+        if not fresh or _realtime.is_beat_filler(fresh):
+            return None
+        line = next((h for h in reversed(self.session.shared_history)
+                     if h.get("speaker") != "user"), None)
+        if line is None or line.get("speaker") != last:
+            return None
+        tokens = _norm_speech(fresh).split()
+        padded = " %s " % " ".join(tokens)
+        # "Who ..." asks the room, after any leading marker too ("Then, who
+        # is writing it up?", "So who's taking this?").
+        lead = next((t for t in tokens
+                     if t not in self._KEEP_FILLERS and t not in _realtime._FILLERS
+                     and t not in _realtime._BEAT_MARKERS), "")
+        if not tokens or lead in ("who", "whos", "whose") or any(
+                " %s " % p in padded for p in self._KEEP_ROOM):
+            return None
+        content = [t for t in tokens
+                   if t not in self._KEEP_FILLERS and t not in _realtime._FILLERS]
+        said = (line.get("text") or "").strip()
+        said_norm = " %s " % _norm_speech(said)
+        cut = getattr(self, "_last_line_cut", None) or {}
+        heard = not (cut.get("agent_id") == last and cut.get("cut"))
+        if (said.endswith("?") and heard and content
+                and not any(" %s " % p in said_norm for p in self._KEEP_ROOM)):
+            return "answers_their_question"
+        if len(content) >= 3 and (fresh.rstrip().endswith("?")
+                                  or content[0] in self._KEEP_QUESTION
+                                  or "you" in tokens or "your" in tokens):
+            return "question_to_them"
+        return None
 
     # ── director ───────────────────────────────────────────────────────────
     async def _steer(self) -> None:

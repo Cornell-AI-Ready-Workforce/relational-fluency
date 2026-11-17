@@ -51,6 +51,8 @@ from test_bridge_correctness import (  # noqa: E402
     until,
 )
 
+CASCADE = "cascade-argon-elevenlabs"
+
 
 def in_a_loop(fn):
     """test_bridge_correctness's, with a ceiling: a regression that leaves an
@@ -868,6 +870,20 @@ async def test_open_configures_gpt_members_only(monkeypatch):
     await room.open()
     for rt in room.sessions.values():
         assert rt.track_items is False and rt.nudge_role == "user"
+
+    # 11-16b (#297): cascade members track their items too, with user
+    # nudges, and keep the knob as read; the scribe never tracks.
+    for knob, on in ((None, True), ("0", False)):
+        if knob is not None:
+            monkeypatch.setenv("CASCADE_ROOM_MEMORY", knob)
+        room = gr.GroupRoom([Agent(a) for a in CAST], instructions_for=lambda a: "",
+                            voice_for=lambda a: "", model=CASCADE)
+        await room.open()
+        for rt in room.sessions.values():
+            assert rt.track_items is on and rt.nudge_role == "user"
+            assert rt.cascade_room_memory is on
+        assert room.scribe.track_items is False
+    monkeypatch.delenv("CASCADE_ROOM_MEMORY")
 
     for k, v in zip(KNOBS, ("keep", "generated", "user")):
         monkeypatch.setenv(k, v)
@@ -1731,13 +1747,23 @@ def test_room_memory_is_on_the_record(monkeypatch, tmp_path):
     prov = llm.provenance(GPT)
     assert prov["room_memory"] == {
         "cut_memory": "replace", "told_text": "heard", "nudge_role": "system",
-        "active": True, "effective": True,
+        "active": True, "effective": True, "cascade": True,
         "heard_basis": {"cut_floor_holder": "play_clock_wpm",
                         "cut_still_playing": "play_clock_share",
                         "cut_queued": "play_clock_share"},
         "settle_s": R.MEMORY_SETTLE_S, "op_ttl_s": R.MEMORY_OP_TTL_S}
     native = llm.provenance(NATIVE)["room_memory"]
     assert native["active"] is False and native["effective"] is False
+    # 11-16b (#297): a cascade room runs it too, with the nudges it applies.
+    casc = llm.provenance(CASCADE)["room_memory"]
+    assert (casc["active"], casc["effective"], casc["cascade"],
+            casc["nudge_role"]) == (True, True, True, "user")
+    monkeypatch.setenv("CASCADE_ROOM_MEMORY", "0")
+    casc = llm.provenance(CASCADE)["room_memory"]
+    assert (casc["active"], casc["effective"], casc["cascade"],
+            casc["nudge_role"]) == (False, False, False, "user")
+    assert llm.provenance(GPT)["room_memory"]["active"] is True
+    monkeypatch.delenv("CASCADE_ROOM_MEMORY")
     for k, v in zip(KNOBS, ("keep", "generated", "user")):
         monkeypatch.setenv(k, v)
     rm = llm.provenance(GPT)["room_memory"]
