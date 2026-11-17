@@ -153,18 +153,20 @@ def quiet(h):
 
 
 async def bens_s2(monkeypatch, *, knob=None):
-    """Line 10 playing (cut at 6.6 of 6.8 s), line 11 finalized, told and
-    queued behind it, then the participant cuts in."""
+    """Line 10 playing (6.0 of 6.8 s; Ben's was cut at 6.6), line 11
+    finalized, told and queued behind it, then the participant cuts in."""
     if knob is not None:
         monkeypatch.setenv("CASCADE_ROOM_MEMORY", knob)
     chats = wire(monkeypatch, [LINE10, LINE11, NEXT])
     h = await Room(monkeypatch, model=CASCADE).open()
     t10 = await says(h, "dan")
-    playing_since(h, "dan", 6.6, 6.8)
+    playing_since(h, "dan", 6.0, 6.8)
     t11 = await says(h, "dan")
     # Re-placed just before the cut, so a slow step above cannot let line 10
-    # end first: line 10 heard 6.6 of 6.8 s, line 11 (5.76 s) queued.
-    place(h, [(t10["rid"], 6.6, 6.8), (t11["rid"], 0, 5.76)])
+    # end first: line 10 heard 6.0 of 6.8 s, line 11 (5.76 s) queued. The
+    # 0.8 s left covers the barge-in itself (~0.2 s, more in a loaded run);
+    # at 6.6 the cut could land on line 11 instead.
+    place(h, [(t10["rid"], 6.0, 6.8), (t11["rid"], 0, 5.76)])
     assert h.runner._last_played["start"] > time.time()
     await barge_in(h)
     if R.room_memory_active(CASCADE):
@@ -258,7 +260,7 @@ async def test_the_knob_is_read_once_per_member(monkeypatch):
         monkeypatch.setenv("CASCADE_ROOM_MEMORY", "0")
         t10 = await says(h, "dan")
         t11 = await says(h, "dan")
-        place(h, [(t10["rid"], 6.6, 6.8), (t11["rid"], 0, 5.76)])
+        place(h, [(t10["rid"], 6.0, 6.8), (t11["rid"], 0, 5.76)])
         await barge_in(h)
         await until(lambda: len(h.of("member_memory_replaced")) == 2, 5)
         await settle(h.runner)
@@ -272,7 +274,7 @@ async def test_the_knob_is_read_once_per_member(monkeypatch):
         monkeypatch.setenv("CASCADE_ROOM_MEMORY", "on")
         t10 = await says(h, "dan")
         t11 = await says(h, "dan")
-        place(h, [(t10["rid"], 6.6, 6.8), (t11["rid"], 0, 5.76)])
+        place(h, [(t10["rid"], 6.0, 6.8), (t11["rid"], 0, 5.76)])
         await barge_in(h)
         await settle(h.runner)
         assert not h.of("member_memory_replaced") and not h.of("member_memory_skipped")
