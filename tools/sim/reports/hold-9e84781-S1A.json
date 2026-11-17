@@ -1,0 +1,290 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "t225-bad145d",
+   "date": "2026-11-15",
+   "pipeline_version": "2026-11-15d",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "hold-9e84781",
+ "build_from": "--build",
+ "failures": [
+  "S1A: the baseline was recorded on pipeline_version 2026-11-15d, room_pacing_version 2026-11-04a; the server runs 2026-11-16a, 2026-11-16a: a different experiment, so re-record it (tools/sim/README.md)"
+ ],
+ "generated_at": "2026-11-17T03:59:32Z",
+ "health": {
+  "build": null,
+  "pipeline_version": "2026-11-16a",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-16a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S1A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 1.0,
+     "limit": 0.8,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 7,
+     "limit": 6,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 7
+    },
+    {
+     "baseline": 1.743,
+     "limit": 3.115,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 1.92
+    },
+    {
+     "baseline": 2.661,
+     "limit": 4.992,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.447
+    },
+    {
+     "baseline": {
+      "pipeline_version": "2026-11-15d",
+      "room_pacing_version": "2026-11-04a"
+     },
+     "metric": "versions",
+     "note": "the baseline was recorded on pipeline_version 2026-11-15d, room_pacing_version 2026-11-04a; the server runs 2026-11-16a, 2026-11-16a: a different experiment, so re-record it (tools/sim/README.md)",
+     "ok": false,
+     "value": {
+      "pipeline_version": "2026-11-16a",
+      "room_pacing_version": "2026-11-16a"
+     }
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 1,
+     "p": 1,
+     "x": 0,
+     "y": 6
+    },
+    "build": null,
+    "chances": {
+     "met": 5,
+     "of": 5,
+     "per_item": {
+      "bring_into_open": 4,
+      "de_escalate": 3,
+      "fester_r": 3,
+      "resolve_not_fester": 3,
+      "talk_openly": 3
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 1,
+     "ROLE": 0,
+     "RULE": 0,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 1,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "sam",
+      "at": 16,
+      "c": "LOOP",
+      "i": 15,
+      "line": "Hey, how is it going? This morning has just dragged on forever. Do you have those new num…",
+      "q": "turn 9",
+      "source": null
+     }
+    ],
+    "lines": 10,
+    "missed": [
+     {
+      "agent": "sam",
+      "at": 14,
+      "i": 13,
+      "line": "Sure, we can talk about it, but those slides were set up around the structure I put toget…",
+      "trigger": "t5_brush_it_off"
+     }
+    ],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S1A",
+    "session_id": "s_1794887739_2cf8a2",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 7439,
+     "out": 223
+    },
+    "verdicts": [
+     {
+      "agent": "riley",
+      "at": 1,
+      "i": 1,
+      "trigger": "t1_retaliation_fork",
+      "v": "y"
+     },
+     {
+      "agent": "riley",
+      "at": 8,
+      "i": 7,
+      "trigger": null,
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 10,
+      "i": 9,
+      "trigger": "t2_the_opening",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 12,
+      "i": 11,
+      "trigger": "t3_defensiveness",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 14,
+      "i": 13,
+      "trigger": "t5_brush_it_off",
+      "v": "n"
+     },
+     {
+      "agent": "sam",
+      "at": 16,
+      "i": 15,
+      "trigger": "t6_how_it_works",
+      "v": "p"
+     },
+     {
+      "agent": "sam",
+      "at": 17,
+      "i": 16,
+      "trigger": "t4_half_concession",
+      "v": "y"
+     },
+     {
+      "agent": "sam",
+      "at": 19,
+      "i": 18,
+      "trigger": "t7_time_runs_out",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 11,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 8,
+    "lines_said": 8,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": null,
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-16a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-16a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794887739_2cf8a2",
+    "speech_end_to_first_played_s": {
+     "n": 8,
+     "p50": 1.92,
+     "p90": 2.447
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t1_retaliation_fork",
+     "t2_the_opening",
+     "t3_defensiveness",
+     "t5_brush_it_off",
+     "t6_how_it_works",
+     "t4_half_concession",
+     "t7_time_runs_out"
+    ],
+    "triggers_fired": 7,
+    "turns_suppressed": {
+     "probe_pad": 2
+    },
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794887739_2cf8a2"
+  }
+ },
+ "server": "http://127.0.0.1:60128"
+}

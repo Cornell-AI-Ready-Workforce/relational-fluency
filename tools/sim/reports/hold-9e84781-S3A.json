@@ -1,0 +1,283 @@
+{
+ "baseline": {
+  "realtime_model": "cascade-argon-elevenlabs",
+  "recorded": {
+   "build": "t225-bad145d",
+   "date": "2026-11-15",
+   "pipeline_version": "2026-11-15d",
+   "room_pacing_version": "2026-11-04a"
+  }
+ },
+ "build": "hold-9e84781",
+ "build_from": "--build",
+ "failures": [
+  "S3A: the baseline was recorded on pipeline_version 2026-11-15d, room_pacing_version 2026-11-04a; the server runs 2026-11-16a, 2026-11-16a: a different experiment, so re-record it (tools/sim/README.md)"
+ ],
+ "generated_at": "2026-11-17T03:59:00Z",
+ "health": {
+  "build": null,
+  "pipeline_version": "2026-11-16a",
+  "realtime_model": "cascade-argon-elevenlabs",
+  "room_pacing_version": "2026-11-16a"
+ },
+ "passed": false,
+ "scenarios": {
+  "S3A": {
+   "checks": [
+    {
+     "baseline": 1.0,
+     "limit": 0.85,
+     "metric": "heard_rate",
+     "ok": true,
+     "value": 1.0
+    },
+    {
+     "baseline": 0.889,
+     "limit": 0.689,
+     "metric": "answered_rate",
+     "ok": true,
+     "value": 0.889
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "phantom_turns",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 3,
+     "metric": "refused_creates",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "voice_error",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 1,
+     "metric": "reply_missing",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "error_frames",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 0,
+     "limit": 0,
+     "metric": "spoke_first",
+     "ok": true,
+     "value": 0
+    },
+    {
+     "baseline": 7,
+     "limit": 6,
+     "metric": "triggers_fired",
+     "ok": true,
+     "value": 6
+    },
+    {
+     "baseline": 2.048,
+     "limit": 3.572,
+     "metric": "speech_end_to_first_played_p50_s",
+     "ok": true,
+     "value": 2.121
+    },
+    {
+     "baseline": 2.614,
+     "limit": 4.921,
+     "metric": "speech_end_to_first_played_p90_s",
+     "ok": true,
+     "value": 2.373
+    },
+    {
+     "baseline": {
+      "pipeline_version": "2026-11-15d",
+      "room_pacing_version": "2026-11-04a"
+     },
+     "metric": "versions",
+     "note": "the baseline was recorded on pipeline_version 2026-11-15d, room_pacing_version 2026-11-04a; the server runs 2026-11-16a, 2026-11-16a: a different experiment, so re-record it (tools/sim/README.md)",
+     "ok": false,
+     "value": {
+      "pipeline_version": "2026-11-16a",
+      "room_pacing_version": "2026-11-16a"
+     }
+    }
+   ],
+   "judge": {
+    "beats": {
+     "n": 0,
+     "p": 1,
+     "x": 0,
+     "y": 5
+    },
+    "build": null,
+    "chances": {
+     "met": 3,
+     "of": 5,
+     "per_item": {
+      "brings_out_best": 3,
+      "builds_pride": 3,
+      "compelling_vision": 2,
+      "inspires": 3,
+      "not_inspire_r": 2
+     }
+    },
+    "counts": {
+     "FACT": 0,
+     "LOOP": 0,
+     "ROLE": 0,
+     "RULE": 3,
+     "SAFE": 0,
+     "STOCK": 0
+    },
+    "disputed": [],
+    "dropped": {
+     "unconfirmed": 1,
+     "ungrounded": 0
+    },
+    "flags": [
+     {
+      "agent": "alex",
+      "at": 5,
+      "c": "RULE",
+      "i": 5,
+      "line": "Forty open reviews sit on three desks where ten each is a normal load. Are you going to a…",
+      "q": "never end two turns in a row on a question",
+      "source": "Mix statements and questions, and never end two turns in a row on a question."
+     },
+     {
+      "agent": "alex",
+      "at": 7,
+      "c": "RULE",
+      "i": 7,
+      "line": "Forty open reviews are on our desks right now. What are you going to cut from the queue?",
+      "q": "never end two turns in a row on a question",
+      "source": "Mix statements and questions, and never end two turns in a row on a question."
+     },
+     {
+      "agent": "casey",
+      "at": 12,
+      "c": "RULE",
+      "i": 12,
+      "line": "Can three of these reviews be reassigned to someone else by tomorrow afternoon?",
+      "q": "You never name a clause or a contract, or any other number.",
+      "source": "You never name a clause or a contract, or any other number."
+     }
+    ],
+    "lines": 9,
+    "missed": [],
+    "model": "nto.gemini-4-argon",
+    "passed": true,
+    "rubric": "97e0ab8d",
+    "scenario": "S3A",
+    "session_id": "s_1794887739_d0652e",
+    "spec_changed": null,
+    "usage": {
+     "calls": 3,
+     "in": 5655,
+     "out": 309
+    },
+    "verdicts": [
+     {
+      "agent": "alex",
+      "at": 1,
+      "i": 1,
+      "trigger": "t0_hello",
+      "v": "y"
+     },
+     {
+      "agent": "alex",
+      "at": 3,
+      "i": 3,
+      "trigger": "t1_public_challenge",
+      "v": "p"
+     },
+     {
+      "agent": "jordan",
+      "at": 9,
+      "i": 9,
+      "trigger": "t2_jordans_flat_fine",
+      "v": "y"
+     },
+     {
+      "agent": "casey",
+      "at": 10,
+      "i": 10,
+      "trigger": "t3_caseys_overload",
+      "v": "y"
+     },
+     {
+      "agent": "alex",
+      "at": 15,
+      "i": 15,
+      "trigger": "t4_what_the_team_is_for",
+      "v": "y"
+     },
+     {
+      "agent": "jordan",
+      "at": 17,
+      "i": 17,
+      "trigger": "t5_a_fact_left_on_the_table",
+      "v": "y"
+     }
+    ]
+   },
+   "metrics": {
+    "assistant_turns": 9,
+    "completed": false,
+    "error_frames": 0,
+    "lines_answered": 8,
+    "lines_heard": 9,
+    "lines_said": 9,
+    "participant_turns": 9,
+    "phantom_turn_texts": [],
+    "phantom_turns": 0,
+    "provenance": {
+     "build": null,
+     "director_model": "nto.gemini-4-argon",
+     "pipeline_version": "2026-11-16a",
+     "realtime_model": "cascade-argon-elevenlabs",
+     "room_pacing_version": "2026-11-16a"
+    },
+    "refused_creates": 0,
+    "reply_missing": 0,
+    "session_id": "s_1794887739_d0652e",
+    "speech_end_to_first_played_s": {
+     "n": 8,
+     "p50": 2.121,
+     "p90": 2.373
+    },
+    "spoke_first": 0,
+    "trigger_ids": [
+     "t0_hello",
+     "t1_public_challenge",
+     "t2_jordans_flat_fine",
+     "t3_caseys_overload",
+     "t4_what_the_team_is_for",
+     "t5_a_fact_left_on_the_table"
+    ],
+    "triggers_fired": 6,
+    "turns_suppressed": {},
+    "unheard_lines": [],
+    "voice_error": 0,
+    "voice_error_benign_cancel": 0,
+    "voice_error_messages": []
+   },
+   "passed": false,
+   "session_id": "s_1794887739_d0652e"
+  }
+ },
+ "server": "http://127.0.0.1:60127"
+}

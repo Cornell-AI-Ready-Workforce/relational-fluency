@@ -1097,6 +1097,10 @@ async def test_merge_leaves_the_untranscribed_tail_for_its_waiting_task(monkeypa
     monkeypatch.setattr(h.runner, "_brief_member", brief)
     monkeypatch.setattr(h.room, "give_floor", grant)
     monkeypatch.setenv("ROUTE_TRANSCRIPT_WAIT", "3")
+    # The merge's own tail handling, with the resume hold off: since #299 the
+    # hold waits for an owed tail before granting (tests/test_room_resume_hold.py),
+    # and this split is what still happens once the hold is capped or off.
+    monkeypatch.setenv("ROOM_RESUME_HOLD_S", "0")
     try:
         await speak(h)
         await in_brief.wait()

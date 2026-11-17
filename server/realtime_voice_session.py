@@ -10079,6 +10079,13 @@ class RealtimeVoiceSessionRunner:
                     intent=first_intent, reason="planted_beat_briefed",
                 )
 
+            # #299: the participant may only have paused. Hold the grant while
+            # they go on, so their next line joins this turn below
+            # (merge_accepted) instead of drawing a second reply.
+            if text_turn is not None:
+                await self._await_participant_resume(room, text_turn)
+                if self._closed or self.room is not room:
+                    return
             self._response_done.clear()
             # _grant (origin/main) first: it plays a reply this member has
             # ALREADY made rather than asking for a second one, and falls
@@ -10491,6 +10498,92 @@ class RealtimeVoiceSessionRunner:
                 severity="error",
             )
 
+    # Quiet this long before the resume hold lets go: the VAD's speech end and
+    # the turn close that follows it are separate events, and the grant must
+    # not slip through between them.
+    RESUME_QUIET_S = 0.2
+
+    def _resume_pending(self, room, text_turn, *, holding: bool = False) -> Optional[str]:
+        """Why the participant may still be adding to `text_turn`, or None.
+
+        Their voice alone STARTS a hold only at the barge-in bar (loud and
+        sustained, vad.barge_in): a cough, a laugh, an "mm" or a click opened
+        the plain VAD and held an ordinary reply about 2 s for nothing (review
+        of #299, reproduced). Once holding, the plain VAD keeps it, so the dips
+        between words do not let the grant slip through mid-sentence."""
+        hearing = getattr(room, "hearing", None)
+        last = max(text_turn.commits, default=0)
+        if hearing is not None and any(
+                seq > last and slot.outcome == "pending" and not slot.turn.granted
+                and not slot.turn.consumed
+                for seq, slot in list(hearing.commits.items())):
+            return "transcript_owed"
+        if getattr(self, "_participant_turn_closing", False):
+            return "turn_closing"
+        if getattr(self, "_speech_checks_pending", 0):
+            return "speech_check"
+        # Not the VAD alone while a line is still playing: the page's speakers
+        # can open it on a character's voice (as in _await_followup_gap).
+        vad = getattr(self, "vad", None)
+        voiced = vad is not None and (vad.speaking if holding
+                                      else (vad.speaking and vad.barge_in))
+        if voiced and RealtimeVoiceSessionRunner._heard_to_end(self, time.time()):
+            return "participant_speaking"
+        return None
+
+    async def _await_participant_resume(self, room, text_turn) -> None:
+        """THE RESUME HOLD (#299). Ben, S3A 2026-11-15: in 14 of 59 lines a
+        second character began 0.0-0.9 s after the first. Each time he had
+        paused about 1 s mid-sentence, the 900 ms end of turn committed the
+        first half, a character was granted it, and he went on speaking
+        before that reply played; the second half was then routed as its own
+        turn while the floor was still held, and its reply queued on the page
+        right behind the first. In 12 of the 14 he was already speaking again
+        when the first character was granted.
+
+        So before the first grant of a turn, wait while he is still talking,
+        his next turn is being closed, or its transcript is still owed (or
+        being heard again). The grant site's merge_accepted then folds the
+        second half into this turn, and one character answers all of it; the
+        queued turn finds itself consumed and returns. When he has stopped,
+        nothing is waited for. Bounded by ROOM_RESUME_HOLD_S; the event says
+        how long, why, and whether the turn grew."""
+        hold = _realtime.room_resume_hold_s()
+        if hold <= 0:
+            return
+        start = time.time()
+        quiet_since = None
+        first_why = None
+        capped = False
+        while not self._closed and self.room is room:
+            now = time.time()
+            why = RealtimeVoiceSessionRunner._resume_pending(
+                self, room, text_turn, holding=first_why is not None)
+            if why is not None:
+                first_why = first_why or why
+                quiet_since = None
+            elif first_why is None:
+                return  # nothing pending at all: grant at once, as before
+            elif quiet_since is None:
+                quiet_since = now
+            elif now - quiet_since >= RealtimeVoiceSessionRunner.RESUME_QUIET_S:
+                break
+            if now - start >= hold:
+                capped = True
+                break
+            await asyncio.sleep(0.05)
+        commits_before = len(text_turn.commits)
+        hearing = getattr(room, "hearing", None)
+        grew = False
+        if hearing is not None:
+            grew = hearing.merge_accepted(text_turn)
+        self.session.store.event(
+            "participant_resume_held", reason=first_why,
+            waited_s=round(time.time() - start, 3), capped=capped,
+            merged=grew, commits=len(text_turn.commits),
+            commits_before=commits_before, segment=self.segment,
+            interaction=self._interaction_id())
+
     async def _await_followup_gap(self, room) -> Optional[str]:
         """THE FOLLOW-UP GAP (issues #24 and #48; the researchers' decision of
         2026-09-29, room pacing 2026-09-29a and b). The next character of a room
@@ -10628,6 +10721,13 @@ class RealtimeVoiceSessionRunner:
         # alone is wrong: a raw substring test made 'Dan' fire on 'abundant',
         # and first-match routed "Sorry Alex, but Jordan, how are you?" to Alex
         # when people address the target LAST.
+        #
+        # A possessive is not an address (#297, #299): "Priya, what about the
+        # timeline for Chris's team?" is to Priya. _norm_speech turns "Chris's"
+        # (and "Chris’s") into "chris s", so a name followed by a lone "s" is
+        # skipped. That mattered more once the resume hold (#299) joined a
+        # paused sentence's halves into one line: last-position-wins then saw
+        # "Chris's" in the second half and gave Chris a line meant for Priya.
         tokens = _norm_speech(text).split()
         best_at, best_id = -1, None
         for a in self._resolve_agents():
@@ -10636,8 +10736,11 @@ class RealtimeVoiceSessionRunner:
                 continue
             n = len(name_tokens)
             for i in range(len(tokens) - n + 1):
-                if tokens[i:i + n] == name_tokens and i > best_at:
-                    best_at, best_id = i, a.id
+                if tokens[i:i + n] != name_tokens or i <= best_at:
+                    continue
+                if i + n < len(tokens) and tokens[i + n] == "s":
+                    continue
+                best_at, best_id = i, a.id
         return best_id
 
     # ── director ───────────────────────────────────────────────────────────

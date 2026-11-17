@@ -1415,6 +1415,19 @@ def followup_gap_s() -> float:
     return _float_setting("FOLLOWUP_GAP_S", 1.0)
 
 
+def room_resume_hold_s() -> float:
+    """ROOM_RESUME_HOLD_S, default 8.0 (#299). In a room, the first character
+    of a turn is not granted the floor while the participant is still talking
+    or their next line is still being transcribed: they paused about a second
+    mid-thought, the 900 ms end of turn closed the first half, and the second
+    half used to draw a second character's reply queued straight behind the
+    first. Held instead, the second half joins the turn (RoomHearing.
+    merge_accepted) and one character answers the whole thing. No hold at all
+    when they have stopped, so an ordinary turn waits no longer than before.
+    This is the longest the grant waits for them; 0 turns the hold off."""
+    return max(0.0, _float_setting("ROOM_RESUME_HOLD_S", 8.0))
+
+
 def probe_after_seconds() -> float:
     """PROBE_AFTER_SECONDS, default 12, read the way the watchdog always has
     (the process environment), so this is the value the probe fires on."""
@@ -1643,6 +1656,7 @@ def pacing_provenance() -> dict:
         "room_adopt_guard": room_adopt_guard(),
         "room_split_turn_s": room_split_turn_s(),
         "followup_gap_s": followup_gap_s(),
+        "room_resume_hold_s": room_resume_hold_s(),
         "room_play_clock": "per_turn",
         "probe_after_s": probe_after_seconds(),
         "probe_tick_s": probe_tick_s(),

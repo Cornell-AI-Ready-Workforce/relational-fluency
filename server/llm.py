@@ -601,6 +601,10 @@ def text_client() -> AsyncAnthropic:
 #                Same deadline, conditions and order: a room routes the same
 #                line, about 70 ms sooner on average (max 146 ms), measured
 #                with fakes.
+#   2026-11-16a  the resume hold (#299): a room turn's first grant waits
+#                while the participant is still talking, closing their next
+#                turn or owed its transcript (ROOM_RESUME_HOLD_S, 8 s max),
+#                so a second half joins the turn and one character answers.
 #
 # PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
@@ -868,8 +872,16 @@ def text_client() -> AsyncAnthropic:
 #                cue name the risk section, as S4B names its piece; Dan's
 #                example "a close" is "a month-end close". Beat ids, agents
 #                and ESCI items unchanged.
-PIPELINE_VERSION = "2026-11-15d"
-ROOM_PACING_VERSION = "2026-11-04a"
+#   2026-11-16a  Rooms (#299): the resume hold. The first character of a
+#                room turn is not granted while the participant is still
+#                talking, closing their next turn or owed its transcript
+#                (ROOM_RESUME_HOLD_S, default 8 s; 0 turns it off). Their
+#                second half joins the turn (merge_accepted) and one reply
+#                answers it, instead of a second character queued right
+#                behind the first. No wait when they have stopped.
+#                participant_resume_held records each hold.
+PIPELINE_VERSION = "2026-11-16a"
+ROOM_PACING_VERSION = "2026-11-16a"
 
 
 def _voice_style_provenance():
