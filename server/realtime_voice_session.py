@@ -1084,9 +1084,11 @@ class RealtimeVoiceSessionRunner:
         # does not count a "?" the participant never heard as one to answer).
         self._kept_streak = 0
         # The member a kept turn counted in _kept_streak before its line was
-        # said; cleared when that member's line finalizes, and taken back by
-        # the next route if it never did (suppressed, grant failed,
-        # cancelled), so the streak counts kept lines that were said.
+        # said; cleared by _run_group_turn once that turn's own reply is said,
+        # and taken back by the next route if it never was (suppressed, grant
+        # failed, dropped, cancelled), so the streak counts kept lines that
+        # were said. Not by just any line of that member's (a probe's, a late
+        # older reply), which is not the kept turn's reply.
         self._kept_owed: Optional[str] = None
         self._last_line_cut: Optional[dict] = None
         self._turn_index = 0
@@ -4864,8 +4866,6 @@ class RealtimeVoiceSessionRunner:
             })
         if agent.id != self._last_group_speaker:
             self._kept_streak = 0
-        if agent.id == self._kept_owed:
-            self._kept_owed = None
         self._last_group_speaker = agent.id
         if not text:
             self.session.store.event(
@@ -10498,6 +10498,9 @@ class RealtimeVoiceSessionRunner:
                 if self._dropped_unanswered.get(first) is not granted:
                     # Nothing dropped, or a session this grant never went to.
                     self._dropped_unanswered.pop(first, None)
+                    if self._kept_owed == first:
+                        # The kept turn's own reply was said: it counts.
+                        self._kept_owed = None
                     break
                 # Its session went before any of its reply reached the page
                 # (pipeline 2026-10-14a). Given the floor again once it is

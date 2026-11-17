@@ -327,6 +327,35 @@ def test_a_kept_turn_never_said_does_not_count_toward_the_cap(monkeypatch):
     assert route["first_by"] == "kept_last_speaker" and route["kept_streak"] == 1
 
 
+def test_another_line_from_the_kept_member_does_not_pay_the_owed_keep(
+        monkeypatch):
+    """Review 4, fails before it: the kept turn's grant failed, then Dan
+    finalized a different line (a silence probe's), which cleared the owed
+    marker, so the never-said kept turn still used the keep and the next
+    follow-up rotated away from him."""
+    runner, session, room, grants = _room(monkeypatch)
+    real_grant = runner._grant
+    calls = []
+
+    async def failing_grant(agent_id):
+        calls.append(agent_id)
+        return None if len(calls) == 1 else await real_grant(agent_id)
+
+    async def no_regrant(room, agent_id, why):
+        return None
+
+    monkeypatch.setattr(runner, "_grant", failing_grant)
+    monkeypatch.setattr(runner, "_regrant_after_drop", no_regrant)
+    _turn(runner, FOLLOW_UP)
+    assert calls == ["dan"] and grants == []
+    dan = next(a for a in runner._resolve_agents() if a.id == "dan")
+    asyncio.run(runner._finalize_member(dan, "Are you still there? " + ASKED))
+    _turn(runner, "Um, tomorrow.")
+    assert grants == ["dan"]
+    route = _route(session)
+    assert route["first_by"] == "kept_last_speaker" and route["kept_streak"] == 1
+
+
 async def _held_turn(monkeypatch, knob, mover_at):
     """A turn routed on "Um" (rotation from `a`), held for the rest of the
     line while another member's line is finalized."""
