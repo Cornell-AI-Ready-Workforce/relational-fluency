@@ -247,3 +247,82 @@ def test_gpt_and_native_rooms_still_spend_the_beat_on_a_filler(monkeypatch, mode
     assert fired[-1]["index"] == index
     assert not [e for e in session.store.of("trigger_deferred")
                 if e.get("reason") == "filler_turn"]
+
+
+@in_a_loop
+async def test_rearm_brief_failure_keeps_intent_and_hold(monkeypatch):
+    """The resume hold merges words into the filler, but the beat's brief is
+    refused (trigger_brief_failed): nothing was re-armed, so no
+    trigger_filler_rearmed row, the delivered intent is not retracted and the
+    filler hold and its count stand."""
+    monkeypatch.setenv("ROOM_RESUME_HOLD_S", "8")
+    owed = asyncio.Event()
+    h, chats, pending, owner = await _room_after_first_turn(
+        monkeypatch, ["I think", Transcript(SECOND, owed)])
+    intent = "Ask them which day suits."
+    h.runner.director = ScriptedDirector([{"agent_id": owner, "intent": intent}])
+    in_direct, resume = asyncio.Event(), asyncio.Event()
+    original, deliver_brief = h.runner._direct_member, h.runner._deliver_brief
+    directed = []
+
+    async def direct(aid, text):
+        in_direct.set()
+        await resume.wait()
+        r = await original(aid, text)
+        directed.append(aid)
+        return r
+
+    async def deliver(rt, instructions):
+        if directed and pending["cue"] in instructions:
+            raise RuntimeError("brief refused")
+        return await deliver_brief(rt, instructions)
+
+    monkeypatch.setattr(h.runner, "_direct_member", direct)
+    monkeypatch.setattr(h.runner, "_deliver_brief", deliver)
+    try:
+        index = h.runner._trigger_idx
+        h.runner._last_group_speaker = None
+        await speak(h)
+        await in_direct.wait()
+        await speak(h)
+        resume.set()
+        await asyncio.sleep(0.3)
+        owed.set()
+        await until(lambda: len(chats) == 2)
+        await finished(h)
+        assert h.of("trigger_brief_failed")
+        assert h.runner._trigger_idx == index
+        assert not h.of("trigger_filler_rearmed")
+        assert not [e for e in h.of("director_intent_undelivered")
+                    if e["reason"] == "planted_beat_briefed"]
+        assert h.runner._filler_defer_n == 1
+    finally:
+        owed.set()
+        resume.set()
+        await h.close()
+
+
+@in_a_loop
+async def test_unanswered_filler_turn_gives_its_count_back(monkeypatch):
+    """A filler turn whose grant fails was never answered, so it does not
+    count toward ROOM_BEAT_FILLER_DEFER."""
+    h, chats, pending, _ = await _room_after_first_turn(
+        monkeypatch, ["I think", "So"])
+    try:
+        index = h.runner._trigger_idx
+        await _turn(h, chats, 2)
+        assert h.runner._filler_defer_n == 1
+
+        async def no_grant(*a, **kw):
+            return None
+        monkeypatch.setattr(h.runner, "_grant", no_grant)
+        monkeypatch.setattr(h.runner, "_regrant_after_drop", no_grant)
+        h.runner._last_group_speaker = None
+        await speak(h)
+        await until(lambda: h.of("floor_grant_failed"))
+        await finished(h)
+        assert [e["defers"] for e in _fillers(h)] == [1, 2]
+        assert h.runner._filler_defer_n == 1
+        assert h.runner._trigger_idx == index
+    finally:
+        await h.close()

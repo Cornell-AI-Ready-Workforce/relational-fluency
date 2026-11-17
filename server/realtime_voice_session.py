@@ -10120,6 +10120,9 @@ class RealtimeVoiceSessionRunner:
                            and _realtime.room_beat_filler_defers() > 0
                            and _realtime.is_beat_filler(fresh))
             filler_held = False
+            # A held turn that then goes unanswered (suppressed, grant failed)
+            # gives its count back, so the cap counts fillers that were heard.
+            filler_n_before = self._filler_defer_n
             if pending is not None and not filler_turn:
                 self._filler_defer_n = 0
             if pending is not None and owner is not None and owner != first:
@@ -10228,6 +10231,8 @@ class RealtimeVoiceSessionRunner:
                                                   probing=False, reason="transcript_suppressed")
                     self._drop_undelivered_intent(first, "transcript_suppressed")
                     self._take_unrouted()
+                    if filler_held:
+                        self._filler_defer_n = filler_n_before
                     self.session.store.event("group_turn_skipped", reason="transcript_suppressed",
                                              text="", segment=self.segment,
                                              interaction=self._interaction_id())
@@ -10317,20 +10322,29 @@ class RealtimeVoiceSessionRunner:
                     # here. Its brief replaces the director intent delivered
                     # at the fold, so that intent is retracted first; the
                     # firing is stored on the ungranted turn and written by
-                    # the branch below, or given back if it clarifies.
-                    self._drop_undelivered_intent(first, "planted_beat_briefed")
+                    # the branch below, or given back if it clarifies. A brief
+                    # that did not land (trigger_brief_failed, no session)
+                    # leaves _trigger_idx where it was: the delivered intent
+                    # then stays, and so does the hold. A brief that did land
+                    # has replaced _pending_direction with the beat's, so the
+                    # intent is retracted from the snapshot.
+                    before_brief, held = self._trigger_idx, self._pending_direction
                     await self._brief_member(first)
-                    filler_held = False
-                    self._filler_defer_n = 0
-                    self.session.store.event(
-                        "trigger_filler_rearmed",
-                        trigger_id=pending["id"] if pending else None,
-                        interaction=self._interaction_id(),
-                        segment=self.segment,
-                        index=spent_idx,
-                        agent_id=first,
-                        text=fresh[:80],
-                    )
+                    if self._trigger_idx != before_brief:
+                        beat, self._pending_direction = self._pending_direction, held
+                        self._drop_undelivered_intent(first, "planted_beat_briefed")
+                        self._pending_direction = beat
+                        filler_held = False
+                        self._filler_defer_n = 0
+                        self.session.store.event(
+                            "trigger_filler_rearmed",
+                            trigger_id=pending["id"] if pending else None,
+                            interaction=self._interaction_id(),
+                            segment=self.segment,
+                            index=spent_idx,
+                            agent_id=first,
+                            text=fresh[:80],
+                        )
                 text_turn.route_text = fresh
                 text_turn.clarification = hearing.missing(text_turn)
                 if text_turn.clarification:
@@ -10396,6 +10410,8 @@ class RealtimeVoiceSessionRunner:
                     # pending and paired with whichever turn finalises next.
                     self._pending_direction = None
                 self._drop_undelivered_intent(first, "floor_grant_failed")
+                if filler_held:
+                    self._filler_defer_n = filler_n_before
                 return
             regranted = False
             asked_after_held_end = False
