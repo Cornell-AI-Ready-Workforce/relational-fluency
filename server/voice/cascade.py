@@ -824,10 +824,17 @@ class CascadeSocket:
                 if not text:
                     # Also a reply that was only a function call: its call
                     # item stays, its empty message item goes.
+                    before = len(self.items)
                     self.items = [i for i in self.items if i["id"] != iid]
                     self._dropped[iid] = True
                     while len(self._dropped) > 256:
                         self._dropped.pop(next(iter(self._dropped)))
+                    if len(self.items) < before:
+                        # Said, as the gateway says a delete: the bridge's
+                        # mirror (_track_items) learned the item from
+                        # output_item.added and must not anchor on it.
+                        self._emit({"type": "conversation.item.deleted",
+                                    "item_id": iid, "event_id": ""})
                 self._finished.add(rid)
                 observe(self, "done", rid, "cancelled" if cancelled else "failed" if failed else "done")
                 if not self._closed:

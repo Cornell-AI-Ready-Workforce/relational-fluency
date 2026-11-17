@@ -439,6 +439,9 @@ async def test_the_adapter_acks_a_delete_of_an_item_it_dropped(monkeypatch):
     (added,) = [f for f in frames if f["type"] == "response.output_item.added"]
     iid = added["item"]["id"]
     assert [i["type"] for i in ws.items] == ["message", "function_call"]
+    # Said when dropped (review of 11-16b), before the reply's done.
+    said = [f for f in frames if f["type"] == "conversation.item.deleted"]
+    assert said == [{"type": "conversation.item.deleted", "item_id": iid, "event_id": ""}]
     await ws.send(json.dumps({"type": "conversation.item.delete", "item_id": iid,
                               "event_id": "e1"}))
     ack = json.loads(await asyncio.wait_for(ws.recv(), 5))
@@ -479,18 +482,55 @@ async def test_a_one_to_one_cascade_session_is_untouched(monkeypatch):
     assert runner._memory_effective(rt) is False
 
 
-def test_cascade_room_memory_knob_and_version():
+@in_a_loop
+async def test_a_one_to_one_cascade_barge_in_sends_no_memory_frames(monkeypatch):
+    """Passes before and after 11-16b: a 1:1 cascade turn the participant
+    cuts into, through the real runner, bridge and adapter, sends no
+    conversation.item.delete and puts back no rf_ item (no room memory)."""
+    from test_cascade_cancel import pump
+    from test_cascade_transcribe import Hearing, bridge, completed
+    from test_participant_turn_integrity import runner_for, send_ms
+    monkeypatch.setenv("CASCADE_ROOM_MEMORY", "1")
+    monkeypatch.setattr(llm, "_FILE", {})
+    monkeypatch.setattr(R, "MODEL", CASCADE)
+    monkeypatch.setattr(R, "RECV_POLL_S", 0.01)
+    runner, session, page = runner_for("S2A")
+    session.append_user("Hello Morgan.")
+    hearings = [Hearing(completed("Can we talk about the launch date?")),
+                Hearing(completed("Wait, hold on."))]
+    async with bridge(monkeypatch, hearings) as (rt, sock, tts, _):
+        assert rt.track_items is False
+        async with pump(runner, rt):
+            await send_ms(rt, LOUD, 800)
+            await rt.commit_turn()
+            await until(lambda: runner._speaking, 5)
+            tts.audio()
+            await until(lambda: runner._turn_audio_bytes > 0, 5)
+            page._frames = [LOUD] * 25
+            await runner._client_to_model()
+            await until(lambda: any(f["type"] == "response.cancel"
+                                    for f in sock.sent), 5)
+            await until(lambda: sock._reply is None or sock._reply.done(), 5)
+            await settle(runner)
+        assert not [f for f in sock.sent if f["type"] == "conversation.item.delete"]
+        assert not [i for i in sock.items if i["id"].startswith("rf_")]
+        assert not session.store.of("member_memory_replaced")
+
+
+def test_cascade_room_memory_knob_and_version(monkeypatch):
+    # The two 10-01a knobs room_memory_effective also reads, at their
+    # defaults: with both at 30a's values it would read False however set.
+    monkeypatch.setenv("ROOM_CUT_MEMORY", "replace")
+    monkeypatch.setenv("ROOM_TOLD_TEXT", "heard")
     for v, on in (("on", True), ("1", True), ("anything", True), ("0", False),
                   ("off", False), ("False", False), ("no", False)):
-        import os
-        os.environ["CASCADE_ROOM_MEMORY"] = v
-        try:
-            assert R.cascade_room_memory() is on, v
-            assert R.room_memory_active(CASCADE) is on
-            assert R.room_memory_effective(CASCADE) is on
-            assert R.room_memory_active("gpt-realtime-2.1") is True
-        finally:
-            del os.environ["CASCADE_ROOM_MEMORY"]
+        monkeypatch.setenv("CASCADE_ROOM_MEMORY", v)
+        assert R.cascade_room_memory() is on, v
+        assert R.room_memory_active(CASCADE) is on
+        assert R.room_memory_effective(CASCADE) is on
+        assert R.room_memory_active("gpt-realtime-2.1") is True
+    monkeypatch.delenv("CASCADE_ROOM_MEMORY", raising=False)
+    assert R.cascade_room_memory() is True
     assert R.room_memory_nudge_role(CASCADE) == "user"
     assert R.room_memory_nudge_role("gpt-realtime-2.1") == "system"
     assert llm.PIPELINE_VERSION >= "2026-11-16b"
@@ -498,3 +538,28 @@ def test_cascade_room_memory_knob_and_version():
     src = open(llm.__file__, encoding="utf-8").read()
     assert src.count("(also) cascade room memory (#297)") == 1
     assert src.count("(also) Rooms (#297): cascade room memory") == 1
+
+
+@in_a_loop
+async def test_a_function_call_only_reply_leaves_no_phantom_in_the_mirror(monkeypatch):
+    """Review of 11-16b. Fails before the fix. A room member's reply that was
+    only a function call: the socket drops its empty message item and says
+    so (conversation.item.deleted), so the bridge's mirror (_conv) holds no
+    id the socket does not, and a later anchor cannot pick the dropped one
+    (CascadeSocket._add_item would then append at the end)."""
+    wire(monkeypatch, [{"name": "note_aside", "arguments": "{}"}])
+    h = await Room(monkeypatch, model=CASCADE).open()
+    try:
+        dan = h.rt("dan")
+        assert dan.track_items
+        h.room.speaking = "dan"
+        await dan.request_response()
+        await until(lambda: any(i["type"] == "function_call_output"
+                                for i in dan.ws.items), 5)
+        await settle(h.runner)
+        ids = [i["id"] for i in dan.ws.items]
+        assert dan._reply_items, "the dropped message item was announced"
+        assert [i for i in dan._conv if i not in ids] == []
+        assert [i for i in ids if i in dan._conv] == dan._conv
+    finally:
+        await h.close()
