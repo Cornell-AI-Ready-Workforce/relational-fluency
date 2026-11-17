@@ -620,6 +620,11 @@ def text_client() -> AsyncAnthropic:
 #                in a row; 0 is the old rotation. Moves speaker share, a
 #                measured dominance quantity. director_route first_by is now
 #                rotation / kept_last_speaker as well as opening_lead.
+#   2026-11-16b  (also) cascade room memory (#297): a cascade room character
+#                no longer keeps a line nobody heard (10-01a's rules on the
+#                cascade route), so a reply-start to a member may wait up to
+#                REALTIME_MEMORY_SETTLE_S (1.0 s) for a cut to be decided, as
+#                on gpt. CASCADE_ROOM_MEMORY (default on; 0 = 11-16a).
 #
 # PIPELINE_VERSION, continued:
 #   2026-09-24c  a transcript with no letter or digit ("..." / "." / "```")
@@ -918,6 +923,19 @@ def text_client() -> AsyncAnthropic:
 #                1 in a row; 0 = old rotation). director_route gains first_by
 #                rotation/kept_last_speaker, candidates, skipped_last,
 #                rotated_from, keep_reason, kept_streak (payload only).
+#   2026-11-16b  (also) Rooms (#297): cascade room memory. A cascade room ran
+#                none of 10-01a: Ben's S3A cascade session kept a line queued
+#                behind a cut one, never played, whole in Alex's conversation
+#                and told it in full to the others ("I already answered
+#                that." / "No, you didn't."). Cascade rooms now run 10-01a
+#                (unheard replies deleted, cut lines replaced by the heard
+#                words without the trailing ellipsis, told notes corrected);
+#                nudges stay user items; previous_item_id "root" inserts at
+#                the front; a delete of a reply item the stand-in dropped
+#                itself is acked. CASCADE_ROOM_MEMORY (default on; 0 = the
+#                11-16a cascade room), read once per member. room_memory
+#                provenance gains `cascade`, and reports nudge_role user on
+#                cascade.
 PIPELINE_VERSION = "2026-11-16b"
 ROOM_PACING_VERSION = "2026-11-16b"
 

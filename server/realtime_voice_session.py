@@ -3996,13 +3996,27 @@ class RealtimeVoiceSessionRunner:
 
     def _memory_policy(self, rt) -> tuple:
         """(cut_memory, told_text) for a line of `rt`'s character: the knobs,
-        in a room on the gpt route; 30a's ("keep", "generated") anywhere
-        else, every 1:1 encounter included."""
+        in a room on the gpt route or (CASCADE_ROOM_MEMORY, 11-16b) the
+        cascade route; 30a's ("keep", "generated") anywhere else, every 1:1
+        encounter included."""
         if getattr(self, "room", None) is None or rt is None:
             return "keep", "generated"
-        if not _realtime.room_memory_active(getattr(rt, "model", "") or ""):
+        if not self._member_memory_active(rt):
             return "keep", "generated"
         return _realtime.room_cut_memory(), _realtime.room_told_text()
+
+    @staticmethod
+    def _member_memory_active(rt) -> bool:
+        """room_memory_active for this member: on the cascade route the
+        CASCADE_ROOM_MEMORY its room read when it configured the member
+        (GroupRoom._configure_memory, 11-16b), so the policy and the
+        member's item mirror never disagree; the model's answer elsewhere,
+        and for a member nobody configured."""
+        model = getattr(rt, "model", "") or ""
+        flag = getattr(rt, "cascade_room_memory", None)
+        if flag is not None and _realtime.family_of(model) == "cascade":
+            return bool(flag)
+        return _realtime.room_memory_active(model)
 
     def _memory_effective(self, rt) -> bool:
         """Whether this room member runs anything other than 30a
@@ -4014,7 +4028,9 @@ class RealtimeVoiceSessionRunner:
         if getattr(self, "room", None) is None or rt is None:
             return False
         try:
-            return _realtime.room_memory_effective(getattr(rt, "model", "") or "")
+            return _realtime.room_memory_effective(
+                getattr(rt, "model", "") or "",
+                active=self._member_memory_active(rt))
         except Exception:  # noqa: BLE001 - a record field must never cost a turn
             return False
 

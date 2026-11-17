@@ -1518,8 +1518,9 @@ def handoff_idle_s() -> float:
 #
 # Same rules as the knobs above: each can be put back without a code change,
 # each is read per call, room_memory_provenance writes what this process
-# applies onto every record. Rooms on the gpt route only: native-audio and
-# Gemini rooms, and every 1:1 session, are untouched.
+# applies onto every record. Rooms on the gpt route, and since 2026-11-16b
+# cascade rooms (CASCADE_ROOM_MEMORY; nudges stay user there): native-audio
+# and Gemini rooms, and every 1:1 session, are untouched.
 
 def room_cut_memory() -> str:
     """ROOM_CUT_MEMORY, default "replace". A room line the participant cut
@@ -1550,29 +1551,67 @@ def room_nudge_role() -> str:
     unanswered nudges (AUDIO_RETRY_NUDGE, UNANSWERED_NUDGE) a ROOM member is
     given: as user items they were lines the participant never said, sitting
     in the character's memory as theirs. "user" restores 30a. 1:1 sessions
-    are always "user" whatever this says (RealtimeVoiceSession.nudge_role)."""
+    are always "user" whatever this says (RealtimeVoiceSession.nudge_role),
+    and so are rooms off the gpt route (room_memory_nudge_role)."""
     v = (setting("ROOM_NUDGE_ROLE", "system") or "").strip().lower()
     return v if v in ("system", "user") else "system"
 
 
+def cascade_room_memory() -> bool:
+    """CASCADE_ROOM_MEMORY, default on (pipeline 2026-11-16b, #297). Whether
+    cascade rooms run the 10-01a rules too. Until 11-16b they never did: a
+    cascade character kept the whole of a line the participant cut off, and
+    of a line queued behind it that never played at all, and its colleagues
+    were told both in full (Ben's S3A cascade session: Alex's queued line was
+    never heard, Alex then said "I already answered that", and Ben replied
+    "No, you didn't"). The cascade's conversation is local (CascadeSocket
+    .items), so a delete or an insert is applied and acked at once; the
+    heard words come from the runner's playback clock, as on gpt. Its
+    nudges stay user items (room_nudge_role is gpt only: a mid-conversation
+    system message was measured on gpt alone, and LiteLLM may move Gemini's
+    into system_instruction). "0", "off", "false" or "no" restores the
+    cascade room of 11-16a exactly. Read when a member is configured
+    (GroupRoom._configure_memory), which keeps it on that session for the
+    member's life: set it before the encounter starts."""
+    v = (setting("CASCADE_ROOM_MEMORY", "on") or "").strip().lower()
+    return v not in ("0", "off", "false", "no")
+
+
 def room_memory_active(model: str) -> bool:
-    """Whether the three knobs above apply to a ROOM on `model`: the gpt
-    route only, where item deletes were measured. Never on a 1:1 session,
-    whatever this says; `active` on the record means "a room on this model"."""
-    return is_openai_realtime(model or "")
+    """Whether the knobs above apply to a ROOM on `model`: the gpt route,
+    where item deletes were measured, and the cascade route while
+    CASCADE_ROOM_MEMORY is on (its conversation is ours). Never native-audio
+    or Gemini, and never a 1:1 session, whatever this says; `active` on the
+    record means "a room on this model"."""
+    model = model or ""
+    return is_openai_realtime(model) or (
+        family_of(model) == "cascade" and cascade_room_memory())
 
 
-def room_memory_effective(model: str) -> bool:
-    """Whether a room on `model` runs anything other than 30a: on the gpt
-    route, and with at least one of the three knobs away from its 30a value
-    (keep, generated, user). Only then does a room member track its items,
-    and only then do the room's records carry the 10-01a fields
+def room_memory_nudge_role(model: str) -> str:
+    """The role a room member's retry and unanswered nudges take on
+    `model`: ROOM_NUDGE_ROLE on the gpt route, "user" everywhere else (a
+    cascade member's included, see cascade_room_memory)."""
+    return room_nudge_role() if is_openai_realtime(model or "") else "user"
+
+
+def room_memory_effective(model: str, active: Optional[bool] = None) -> bool:
+    """Whether a room on `model` runs anything other than 30a: on a route
+    room_memory_active names (`active`, when the caller already knows it
+    for one member), and with at least one knob away from its 30a value
+    (keep, generated, user; the nudge knob counts on the gpt route only,
+    since nowhere else is it applied). Only then does a room member track
+    its items, and only then do the room's records carry the 10-01a fields
     (assistant_turn response_id / memory / told, nudge_role on a retry): at
     keep / generated / user a room's frames AND records are 30a's, and only
     provenance `room_memory` says which rules ran."""
-    return room_memory_active(model) and (
-        room_cut_memory(), room_told_text(), room_nudge_role()
-    ) != ("keep", "generated", "user")
+    model = model or ""
+    if not (room_memory_active(model) if active is None else active):
+        return False
+    if is_openai_realtime(model):
+        return (room_cut_memory(), room_told_text(), room_nudge_role()
+                ) != ("keep", "generated", "user")
+    return (room_cut_memory(), room_told_text()) != ("keep", "generated")
 
 
 def room_memory_provenance(model: str, room: Optional[bool] = None) -> dict:
@@ -1596,8 +1635,12 @@ def room_memory_provenance(model: str, room: Optional[bool] = None) -> dict:
     return {
         "cut_memory": room_cut_memory(),
         "told_text": room_told_text(),
-        "nudge_role": room_nudge_role(),
+        # The role that applies on `model`: a cascade room's nudges are
+        # user items whatever ROOM_NUDGE_ROLE says (11-16b, #297).
+        "nudge_role": ("user" if family_of(model or "") == "cascade"
+                       else room_nudge_role()),
         "active": room_memory_active(model),
+        "cascade": cascade_room_memory(),
         "effective": room is not False and room_memory_effective(model),
         "heard_basis": {"cut_floor_holder": "play_clock_wpm",
                         "cut_still_playing": "play_clock_share",
@@ -2672,6 +2715,9 @@ class RealtimeVoiceSession:
         # tracks nothing and sends exactly the frames it always did.
         self.track_items = False
         self.nudge_role = "user"
+        # CASCADE_ROOM_MEMORY as read when this member was configured
+        # (GroupRoom._configure_memory, 11-16b); None where nobody did.
+        self.cascade_room_memory: Optional[bool] = None
         self.memory_errors = 0
         self.memory_late = 0
         # The task iterating events(): the ordering gate must never wait from
@@ -2870,10 +2916,15 @@ class RealtimeVoiceSession:
         """
         if not self.ws:
             return
-        if self.track_items and payload.get("type") in (
-                "response.create", "input_audio_buffer.commit"):
+        if self.track_items and (
+                payload.get("type") == "response.create"
+                or (payload.get("type") == "input_audio_buffer.commit"
+                    and family_of(self.model or "") != "cascade")):
             # Room memory hygiene (pipeline 2026-10-01a): when this session
-            # last asked for a reply, for _busy.
+            # last asked for a reply, for _busy. Not a cascade commit
+            # (11-16b): the stand-in starts a reply on response.create only,
+            # so a commit with no create (one refused as empty, say) would
+            # have read the member busy for 2 s and held its corrections.
             self._reply_start_at = time.time()
         try:
             await self.ws.send(json.dumps(payload))
@@ -3495,7 +3546,7 @@ class RealtimeVoiceSession:
             op = {"key": rid, "kind": "reply", "response_id": rid,
                   "requested_at": time.time(), "deferred": False,
                   "context": {}}
-        op.update(state="pending", keep_text=(keep_text or "").strip() or None,
+        op.update(state="pending", keep_text=self._kept_words(keep_text),
                   insert_role="assistant",
                   context={**(op.get("context") or {}), **dict(context or {})})
         self._memory_ops[rid] = op
@@ -3504,6 +3555,17 @@ class RealtimeVoiceSession:
             await self._start_memory_op(rid)
             return "sent"
         return "deferred"
+
+    def _kept_words(self, text: Optional[str]) -> Optional[str]:
+        """The heard words a reply's items are replaced by, as this session
+        keeps them. On the cascade route (11-16b, #297) without playback_cut's
+        trailing "\u2026": they become an assistant message of Argon's own
+        history, and a model shown its earlier turns ending in "\u2026" may
+        take to ending its lines that way. The record keeps the "\u2026"."""
+        text = (text or "").strip()
+        if text and family_of(self.model or "") == "cascade":
+            text = text.rstrip("\u2026").rstrip()
+        return text or None
 
     async def correct_item(self, item_id: Optional[str], *, role: str,
                            text: Optional[str],
@@ -3723,6 +3785,9 @@ class RealtimeVoiceSession:
         mirror's id, "" for an untracked frame that went out, None when
         nothing was sent."""
         if self.track_items:
+            if role == "assistant":
+                # Its own heard words, as forget_reply would have kept them.
+                text = self._kept_words(text) or text
             return await self.insert_item(role, text, context={"kind": "seed"})
         if self.ws is None:
             return None
