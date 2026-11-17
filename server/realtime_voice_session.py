@@ -10142,8 +10142,10 @@ class RealtimeVoiceSessionRunner:
                            and _realtime.room_beat_filler_defers() > 0
                            and _realtime.is_beat_filler(fresh))
             filler_held = False
-            # A held turn that then goes unanswered (suppressed, grant failed)
-            # gives its count back, so the cap counts fillers that were heard.
+            # A filler turn that then goes unanswered (suppressed, grant
+            # failed) gives its count back, so the cap counts fillers that
+            # were heard. An at-cap filler too: its brief reset the count,
+            # and a beat given back must not let the next filler be held.
             filler_n_before = self._filler_defer_n
             if pending is not None and not filler_turn:
                 self._filler_defer_n = 0
@@ -10257,7 +10259,7 @@ class RealtimeVoiceSessionRunner:
                                                   probing=False, reason="transcript_suppressed")
                     self._drop_undelivered_intent(first, "transcript_suppressed")
                     self._take_unrouted()
-                    if filler_held:
+                    if filler_turn:
                         self._filler_defer_n = filler_n_before
                     self.session.store.event("group_turn_skipped", reason="transcript_suppressed",
                                              text="", segment=self.segment,
@@ -10278,7 +10280,7 @@ class RealtimeVoiceSessionRunner:
                     lead_first = False
                     first_by = keep_reason = rotated_from = skipped_last = None
                     # A line with a name in it is never a filler (#297).
-                    filler_held = False
+                    filler_held = filler_turn = False
                     self._filler_defer_n = 0
                     pending = self._next_trigger()
                     owner = self._trigger_agent(pending) if pending else None
@@ -10327,7 +10329,7 @@ class RealtimeVoiceSessionRunner:
                         rotated_from = None if keep else last
                         # The merged line has words in it (a keep is never a
                         # filler), so the filler hold is over (#297).
-                        filler_held = False
+                        filler_held = filler_turn = False
                         self._filler_defer_n = 0
                         pending = self._next_trigger()
                         owner = self._trigger_agent(pending) if pending else None
@@ -10370,7 +10372,7 @@ class RealtimeVoiceSessionRunner:
                         beat, self._pending_direction = self._pending_direction, held
                         self._drop_undelivered_intent(first, "planted_beat_briefed")
                         self._pending_direction = beat
-                        filler_held = False
+                        filler_held = filler_turn = False
                         self._filler_defer_n = 0
                         self.session.store.event(
                             "trigger_filler_rearmed",
@@ -10446,7 +10448,7 @@ class RealtimeVoiceSessionRunner:
                     # pending and paired with whichever turn finalises next.
                     self._pending_direction = None
                 self._drop_undelivered_intent(first, "floor_grant_failed")
-                if filler_held:
+                if filler_turn:
                     self._filler_defer_n = filler_n_before
                 return
             regranted = False

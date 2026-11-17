@@ -326,3 +326,35 @@ async def test_unanswered_filler_turn_gives_its_count_back(monkeypatch):
         assert h.runner._trigger_idx == index
     finally:
         await h.close()
+
+
+@in_a_loop
+async def test_unanswered_at_cap_filler_keeps_the_count(monkeypatch):
+    """An at-cap filler spends the beat (its brief resets the count); when its
+    grant then fails the beat is given back, and so is the count, so the next
+    answered filler spends the beat instead of being held past the cap."""
+    h, chats, pending, _ = await _room_after_first_turn(
+        monkeypatch, ["I think", "So", "Um"], defer="1")
+    try:
+        index = h.runner._trigger_idx
+        await _turn(h, chats, 2)
+        assert h.runner._filler_defer_n == 1
+        real_grant, real_regrant = h.runner._grant, h.runner._regrant_after_drop
+
+        async def no_grant(*a, **kw):
+            return None
+        monkeypatch.setattr(h.runner, "_grant", no_grant)
+        monkeypatch.setattr(h.runner, "_regrant_after_drop", no_grant)
+        h.runner._last_group_speaker = None
+        await speak(h)
+        await until(lambda: h.of("floor_grant_failed"))
+        await finished(h)
+        assert h.runner._trigger_idx == index
+        assert h.runner._filler_defer_n == 1
+        monkeypatch.setattr(h.runner, "_grant", real_grant)
+        monkeypatch.setattr(h.runner, "_regrant_after_drop", real_regrant)
+        await _turn(h, chats, 3)
+        assert [e["defers"] for e in _fillers(h)] == [1]
+        assert h.runner._trigger_idx == index + 1
+    finally:
+        await h.close()
