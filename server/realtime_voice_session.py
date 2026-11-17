@@ -10503,8 +10503,14 @@ class RealtimeVoiceSessionRunner:
     # not slip through between them.
     RESUME_QUIET_S = 0.2
 
-    def _resume_pending(self, room, text_turn) -> Optional[str]:
-        """Why the participant may still be adding to `text_turn`, or None."""
+    def _resume_pending(self, room, text_turn, *, holding: bool = False) -> Optional[str]:
+        """Why the participant may still be adding to `text_turn`, or None.
+
+        Their voice alone STARTS a hold only at the barge-in bar (loud and
+        sustained, vad.barge_in): a cough, a laugh, an "mm" or a click opened
+        the plain VAD and held an ordinary reply about 2 s for nothing (review
+        of #299, reproduced). Once holding, the plain VAD keeps it, so the dips
+        between words do not let the grant slip through mid-sentence."""
         hearing = getattr(room, "hearing", None)
         last = max(text_turn.commits, default=0)
         if hearing is not None and any(
@@ -10519,8 +10525,9 @@ class RealtimeVoiceSessionRunner:
         # Not the VAD alone while a line is still playing: the page's speakers
         # can open it on a character's voice (as in _await_followup_gap).
         vad = getattr(self, "vad", None)
-        if vad is not None and vad.speaking and RealtimeVoiceSessionRunner._heard_to_end(
-                self, time.time()):
+        voiced = vad is not None and (vad.speaking if holding
+                                      else (vad.speaking and vad.barge_in))
+        if voiced and RealtimeVoiceSessionRunner._heard_to_end(self, time.time()):
             return "participant_speaking"
         return None
 
@@ -10550,7 +10557,8 @@ class RealtimeVoiceSessionRunner:
         capped = False
         while not self._closed and self.room is room:
             now = time.time()
-            why = RealtimeVoiceSessionRunner._resume_pending(self, room, text_turn)
+            why = RealtimeVoiceSessionRunner._resume_pending(
+                self, room, text_turn, holding=first_why is not None)
             if why is not None:
                 first_why = first_why or why
                 quiet_since = None

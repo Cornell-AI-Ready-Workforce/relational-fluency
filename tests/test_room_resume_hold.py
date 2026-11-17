@@ -116,3 +116,85 @@ async def test_the_hold_is_bounded(monkeypatch):
         owed.set()
         resume.set()
         await h.close()
+
+
+async def _feed(h, frames):
+    h.page._frames = frames
+    await h.runner._client_to_model()
+
+
+@in_a_loop
+async def test_still_speaking_at_the_grant_holds_until_they_finish(monkeypatch):
+    """Ben's usual case (12 of 14): he is already talking again, with no
+    commit yet, when the first character would be granted."""
+    from cascade_room_harness import QUIET
+    from test_bridge_correctness import LOUD
+    monkeypatch.setenv("ROOM_RESUME_HOLD_S", "8")
+    chats, _ = wire(monkeypatch, [Transcript(WORDS), Transcript(SECOND)])
+    h = await Room(monkeypatch, model=CASCADE).open()
+    in_brief, resume = asyncio.Event(), asyncio.Event()
+    original = h.runner._brief_member
+    paused = False
+
+    async def brief(aid, **kw):
+        nonlocal paused
+        if not paused:
+            paused = True
+            in_brief.set()
+            await resume.wait()
+        await original(aid, **kw)
+
+    monkeypatch.setattr(h.runner, "_brief_member", brief)
+    try:
+        await speak(h)
+        await in_brief.wait()
+        await _feed(h, [LOUD] * 60)          # talking again, no turn end yet
+        assert h.runner.vad.speaking and h.runner.vad.barge_in
+        resume.set()
+        await asyncio.sleep(0.4)
+        assert chats == []
+        await _feed(h, [QUIET] * 120)        # they finish: turn end, commit
+        await until(lambda: len(chats) == 1, 10)
+        await finished(h)
+        assert len(chats) == 1
+        assert_heard(chats[0], [WORDS, SECOND])
+        held = h.of("participant_resume_held")
+        assert held[0]["reason"] == "participant_speaking" and held[0]["merged"] is True
+    finally:
+        resume.set()
+        await h.close()
+
+
+@in_a_loop
+async def test_a_short_sound_does_not_start_a_hold(monkeypatch):
+    """Under the barge-in bar (a click, a breath, a short "mm") the plain VAD
+    may open, but the first reply is granted without waiting on it."""
+    from test_bridge_correctness import LOUD
+    monkeypatch.setenv("ROOM_RESUME_HOLD_S", "8")
+    chats, _ = wire(monkeypatch, [Transcript(WORDS), Transcript("")])
+    h = await Room(monkeypatch, model=CASCADE).open()
+    in_brief, resume = asyncio.Event(), asyncio.Event()
+    original = h.runner._brief_member
+    paused = False
+
+    async def brief(aid, **kw):
+        nonlocal paused
+        if not paused:
+            paused = True
+            in_brief.set()
+            await resume.wait()
+        await original(aid, **kw)
+
+    monkeypatch.setattr(h.runner, "_brief_member", brief)
+    try:
+        await speak(h)
+        await in_brief.wait()
+        h.runner.vad.barge_ms = 10_000       # this sound never reaches the bar
+        await _feed(h, [LOUD] * 20)
+        assert h.runner.vad.speaking and not h.runner.vad.barge_in
+        resume.set()
+        await until(lambda: len(chats) == 1, 3)
+        assert h.of("participant_resume_held") == []
+    finally:
+        resume.set()
+        await h.close()
