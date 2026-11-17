@@ -11066,7 +11066,12 @@ class RealtimeVoiceSessionRunner:
             return None
         tokens = _norm_speech(fresh).split()
         padded = " %s " % " ".join(tokens)
-        if not tokens or tokens[0] == "who" or any(
+        # "Who ..." asks the room, after any leading marker too ("Then, who
+        # is writing it up?", "So who's taking this?").
+        lead = next((t for t in tokens
+                     if t not in self._KEEP_FILLERS and t not in _realtime._FILLERS
+                     and t not in _realtime._BEAT_MARKERS), "")
+        if not tokens or lead in ("who", "whos", "whose") or any(
                 " %s " % p in padded for p in self._KEEP_ROOM):
             return None
         content = [t for t in tokens

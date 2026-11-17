@@ -74,6 +74,9 @@ def test_answer_to_their_question_stays(monkeypatch):
 @pytest.mark.parametrize("text", [
     "Um", "Okay.", "Who wants to take them?",
     "I need you guys to distribute the queue properly.",
+    # A "who" after a leading marker still asks the room (S4A sim, #297).
+    "Then, who is going to write up the summary of this meeting?",
+    "So who's taking this?",
 ])
 def test_filler_and_group_lines_still_rotate(monkeypatch, text):
     """The speaker passes on origin/main; first_by/rotated_from fail there
