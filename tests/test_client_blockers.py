@@ -281,6 +281,10 @@ function makeFetch() {
       const out = route.fn(call, calls.filter(c => c.url.includes(route.match)).length);
       if (out === 'hang') return;
       if (out instanceof Error) return reject(out);
+      // A delayed answer (a promise) must stay abortable: resolve(promise)
+      // would lock this fetch to it, and the page's deadline could no longer
+      // reject it the way a real fetch is rejected.
+      if (out && typeof out.then === 'function') return out.then(resolve, reject);
       resolve(out);
     });
   }
