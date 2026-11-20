@@ -39,7 +39,7 @@ for s in specs:
     # Two columns whatever the spec has: S3 became a single group meeting on
     # 2026-09-23, and a spec with one interaction used to crash this line.
     cells = (cells + ["—", "—"])[:2]
-    L.append(f"| `{s['id']}` | {s['construct'].replace('_',' ')} | {s['variant']} | `{s['parallel_form']}` | {agents} | {cells[0]} | {cells[1]} |")
+    L.append(f"| `{s['id']}` | {s['construct'].replace('_',' ')} | {s['variant']} | {('`'+s['parallel_form']+'`') if s.get('parallel_form') else '—'} | {agents} | {cells[0]} | {cells[1]} |")
 
 L += ["", "## Planted triggers → ESCI items", "",
       "Triggers fire in order within their interaction. **probe** means the trigger",

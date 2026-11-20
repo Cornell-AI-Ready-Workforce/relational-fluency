@@ -177,6 +177,10 @@ def test_the_eight_form_bank_still_exists_whatever_the_default_is():
     by_construct = {}
     for sid in v3.available():
         spec = v3.load_spec(sid)
+        # Practice scenarios (CS1) sit in the bank outside the study's four
+        # constructs and have no parallel form.
+        if spec["construct"] not in runs.CONSTRUCT_ORDER:
+            continue
         by_construct.setdefault(spec["construct"], set()).add(
             spec["variant"].upper())
     assert len(by_construct) == 4, sorted(by_construct)

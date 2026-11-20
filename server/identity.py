@@ -29,6 +29,7 @@ ROLES: Dict[str, str] = {
     "influence": "senior analyst",
     "inspirational_leadership": "interim team lead",
     "teamwork": "fourth member of the project team",
+    "customer_service": "customer support specialist",
 }
 
 ORG = "a mid-sized company"

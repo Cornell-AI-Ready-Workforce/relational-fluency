@@ -55,6 +55,7 @@ body:
         - S3B
         - S4A
         - S4B
+        - CS1
         - Not in a conversation (intro, notices, closing screens)
         - Not sure
     validations:
