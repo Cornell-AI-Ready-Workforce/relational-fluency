@@ -7,6 +7,7 @@ Regenerate with `python tools/gen_scenario_map.py`.
 
 | ID | Construct | Var | Pair | Agents | Interaction 1 | Interaction 2 |
 |---|---|---|---|---|---|---|
+| `CS1` | customer service | A | — | Dale | **1:1** — The call with Dale (Dale) | — |
 | `S1A` | conflict management | A | `S1B` | Riley, Sam | **1:1** — Riley corners you (Riley) | **1:1** — Hallway run-in with Sam (Sam) |
 | `S1B` | conflict management | B | `S1A` | Mel, Drew | **1:1** — Mel pings you first thing (Mel) | **1:1** — Coffee-machine run-in with Drew (Drew) |
 | `S2A` | influence | A | `S2B` | Morgan | **1:1** — Making the case (Morgan) | **1:1** — Your conversation with Morgan (Morgan) |
@@ -33,6 +34,11 @@ produces an empty encounter until the 12:00 stop (docs/OPERATIONS.md). S3's
 
 | Scenario | Interaction | Trigger | ESCI items | |
 |---|---|---|---|---|
+| `CS1` | `i1` | `t1_the_list` |  | probe |
+| `CS1` | `i1` | `t2_new_complaint` |  | probe |
+| `CS1` | `i1` | `t3_manager` |  | probe |
+| `CS1` | `i1` | `t4_half_concession` |  | probe |
+| `CS1` | `i1` | `t5_time_runs_out` |  | probe |
 | `S1A` | `i1` | `t1_retaliation_fork` | resolve_not_fester, bring_into_open, fester_r | probe |
 | `S1A` | `i2` | `t2_the_opening` | talk_openly, bring_into_open, fester_r | probe |
 | `S1A` | `i2` | `t3_defensiveness` | de_escalate, talk_openly | probe |
@@ -105,6 +111,9 @@ produces an empty encounter until the 12:00 stop (docs/OPERATIONS.md). S3's
 | `S4B` | `i2` | `t7_priya_waits_to_be_handed_work` | supportive, respectful, encourages_cooperation | probe |
 
 ## ESCI item keys
+
+**customer service**
+
 
 **conflict management**
 
