@@ -3206,6 +3206,46 @@ async def api_run_get(run_id: str, key: Optional[str] = None):
     return _run_view(run, key)
 
 
+def _is_qualtrics_origin(origin: str) -> bool:
+    try:
+        from urllib.parse import urlsplit
+        u = urlsplit(origin)
+    except ValueError:
+        return False
+    h = (u.hostname or "").lower()
+    return u.scheme == "https" and (h == "qualtrics.com" or h.endswith(".qualtrics.com"))
+
+
+@app.get("/api/survey/scenarios")
+async def api_survey_scenarios(request: Request, qid: Optional[str] = None,
+                               key: Optional[str] = None):
+    """Which scenario each conversation of this survey response's run is.
+
+    For the Phase 1 survey (docs/qualtrics-phase1-scenarios.md): the page after
+    the completion-code box calls this with its own ResponseID and saves the
+    answer as rf_scenario_1..4, so later questions can name the right
+    conversation. The run's order is counterbalanced, so position n is not
+    scenario Sn. Says only the scenario ids, in the order the run serves them,
+    and how many of them were done; nothing about the participant. Readable
+    cross-origin from a Qualtrics page only.
+    """
+    check_participant(key)
+    from . import runs
+
+    run = runs.find_for_survey_response(qid)
+    if run is None:
+        raise HTTPException(404, "no run for this survey response")
+    body = {f"rf_scenario_{i}": sc.get("id")
+            for i, sc in enumerate(run.get("scenarios") or [], start=1)}
+    body["rf_completed"] = len(run.get("completed") or [])
+    headers = {"Cache-Control": "no-store"}
+    origin = request.headers.get("origin") or ""
+    if _is_qualtrics_origin(origin):
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Vary"] = "Origin"
+    return JSONResponse(body, headers=headers)
+
+
 @app.post("/api/run/{run_id}/withdraw")
 async def api_run_withdraw(run_id: str, payload: Optional[dict] = None,
                            key: Optional[str] = None,
