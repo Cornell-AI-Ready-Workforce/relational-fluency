@@ -2521,10 +2521,77 @@ class RealtimeVoiceSessionRunner:
                 "voice_error", detail=f"room_steer: {exc}", severity="error"
             )
 
+    async def _save_open_participant_turn(self) -> None:
+        """The page is gone: write the participant's last line before the room
+        is torn down (#224).
+
+        End closes the socket at once and sends nothing, so the participant's
+        last turn is either still open (under the 900 ms of quiet that closes
+        it: nothing was ever committed to the scribe) or committed with its
+        transcript still on the way. Teardown used to expire that slot as
+        missing and cancel the scribe's STT call, so the line stayed in
+        user_audio.wav and never reached `user_turn`.
+
+        This closes an open turn, then waits for the scribe's transcript for at
+        most CLOSE_TRANSCRIPT_WAIT_S (default 3 s, closing the turn included)
+        and records it. It routes
+        nothing: the group turns are already cancelled (including one waiting
+        out ROOM_RESUME_HOLD_S, which is never waited on here), so no
+        character answers a line that nobody is left to hear. Only for rooms
+        whose scribe transcripts go through the hearing (the cascade route);
+        and never raises, a slow scribe must not cost the teardown.
+        """
+        room = self.room
+        hearing = getattr(room, "hearing", None)
+        if room is None or hearing is None:
+            return
+        try:
+            wait = max(0.0, float(os.getenv("CLOSE_TRANSCRIPT_WAIT_S", "3")))
+        except ValueError:
+            wait = 3.0
+        deadline = time.monotonic() + wait
+        close_timed_out = False
+        try:
+            # It sends the pad and the commit to the scribe, and a send to a
+            # stalled socket can block: the same deadline covers it.
+            try:
+                await asyncio.wait_for(
+                    room.close_participant_turn(),
+                    timeout=max(0.0, deadline - time.monotonic()))
+            except asyncio.TimeoutError:
+                close_timed_out = True
+
+            def owed() -> bool:
+                return any(s.outcome == "pending" and s.event is None
+                           for s in hearing.commits.values())
+
+            while True:
+                # The release loop stops at once on a closed runner, so it is
+                # run here, in commit order, as each transcript arrives.
+                await self._release_room_transcripts(room, closing=True)
+                if not owed() or time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(0.02)
+            self.session.store.event(
+                "open_turn_saved_on_close", still_owed=owed(),
+                close_timed_out=close_timed_out,
+                waited_s=round(wait - max(0.0, deadline - time.monotonic()), 2))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - teardown goes on without it
+            self.session.store.event(
+                "voice_error", where="save_open_turn",
+                message=redact_key(f"{type(exc).__name__}: {exc}"))
+
     async def _close_room(self) -> None:
         # In-flight group turns go first, for the reason _cancel_group_turns
         # documents: one of them may be holding the floor.
         self._cancel_group_turns()
+        # Teardown only (an interaction change closes a room with _closed
+        # unset): the participant's last line, before the pumps and the scribe
+        # go (#224).
+        if self._closed:
+            await self._save_open_participant_turn()
         # The steering reviews only at teardown. A room is also closed to be
         # rebuilt at an interaction change (_open_room) or left for a 1:1 one
         # (_enter); a review needs no room, and those let it finish.
