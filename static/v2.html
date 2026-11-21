@@ -1819,6 +1819,11 @@
   // the upload: on the completion overlay, on the button that leaves that
   // overlay for the next encounter, and on the way out of the study.
   const PRESIGN_TIMEOUT_MS = 15000;
+  // A 2 s video chunk is 70-140 KB, not the small JSON call PRESIGN_TIMEOUT_MS
+  // was sized for; on a thin uplink it needs longer than 15 s to land. A chunk
+  // that fails is retried after a growing pause (see pumpVideoStream).
+  const VIDEO_CHUNK_TIMEOUT_MS = 60000;
+  const VIDEO_CHUNK_BACKOFF_MS = [2000, 30000];   // first pause, cap
   const PUT_TIMEOUT_MS = 180000;
   const CONFIRM_TIMEOUT_MS = 15000;
   const VIDEO_UPLOAD_WAIT_MS = 45000;
@@ -4222,7 +4227,7 @@
   // mid-conversation leaves a full audio record and no video at all.
   //
   // Best effort and silent. A chunk that fails stays at the head of the queue
-  // and goes again with the next one; a refusal that cannot change (401, 403,
+  // and goes again after a backoff pause; a refusal that cannot change (401, 403,
   // 404, 409 already stored, 413) stops the stream. Nothing here touches
   // videoChunks or the upload chain, so the stream failing costs nothing the
   // page had before.
@@ -4236,8 +4241,20 @@
     stream.queue.push({ seq: stream.seq++, blob });
     pumpVideoStream(stream);
   }
+  // The head of the queue is the only thing posted, so a chunk that fails must
+  // not be re-sent by every chunk that arrives behind it (that, at a 15 s
+  // deadline, was #274: chunk 0 sent over and over, nothing after it). A
+  // failure instead waits out a pause that doubles up to a cap and then goes
+  // again by itself; a success starts the pause over.
+  function backOffVideoStream(stream) {
+    stream.failures = (stream.failures || 0) + 1;
+    const [first, cap] = VIDEO_CHUNK_BACKOFF_MS;
+    const wait = Math.min(first * Math.pow(2, stream.failures - 1), cap);
+    stream.waiting = true;
+    setTimeout(() => { stream.waiting = false; pumpVideoStream(stream); }, wait);
+  }
   async function pumpVideoStream(stream) {
-    if (stream.busy || !stream.sid) return;
+    if (stream.busy || stream.waiting || !stream.sid) return;
     stream.busy = true;
     try {
       while (stream.queue.length && !stream.dead && !withdrawing) {
@@ -4247,9 +4264,9 @@
           r = await fetchWithDeadline(videoChunkUrl(stream.sid, head.seq), {
             method: 'POST', body: head.blob,
             headers: { 'Content-Type': (videoMime || 'video/webm').split(';')[0] },
-          }, PRESIGN_TIMEOUT_MS);
-        } catch (e) { break; }   // network: try again with the next chunk
-        if (r.ok) { stream.queue.shift(); continue; }
+          }, VIDEO_CHUNK_TIMEOUT_MS);
+        } catch (e) { backOffVideoStream(stream); break; }   // network or deadline
+        if (r.ok) { stream.queue.shift(); stream.failures = 0; continue; }
         if (r.status === 409) {
           const j = await r.json().catch(() => null);
           // Out of order: the server already holds everything below
@@ -4262,7 +4279,7 @@
           stream.dead = true; break;
         }
         if ([400, 401, 403, 404, 413].includes(r.status)) { stream.dead = true; break; }
-        break;   // 5xx: storage hiccup, try again with the next chunk
+        backOffVideoStream(stream); break;   // 5xx: storage hiccup, try again after a pause
       }
     } finally {
       stream.busy = false;

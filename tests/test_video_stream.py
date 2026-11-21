@@ -275,3 +275,115 @@ def test_the_page_streams_every_timeslice_and_flushes_on_exit():
     # Bound to the session announced for THIS recording, not the page global
     # that still names the previous encounter when the recorder starts.
     assert "videoStream.sid = m.session_id" in src
+
+
+# --- the page's chunk pump (#274) ---------------------------------------------
+#
+# The pump posts the head of the queue and, on a failure, used to give up the
+# loop without removing it, so the next 2 s chunk re-sent the same head: a
+# chunk that took longer than the 15 s deadline meant by a small JSON call was
+# posted over and over and nothing behind it was ever sent. Driven in the same
+# Node harness as the other page tests, on a virtual clock.
+
+PUMP_HARNESS = r"""/* Drives static/v2.html's streamVideoChunk / pumpVideoStream against a routed
+   /video-chunk and reads what the page did to the network and when. */
+'use strict';
+const assert = require('assert');
+const { bootV2, vm } = require('./stub.js');
+
+const PAGE = process.argv[2];
+const CHUNK = '/video-chunk';
+const seqOf = (u) => Number(/[?&]seq=(\d+)/.exec(u)[1]);
+
+function boot(handler) {
+  const b = bootV2(PAGE, '?run=r_1');
+  vm.runInContext("participantId = 'p_test'; videoMime = 'video/webm;codecs=vp8,opus';", b.ctx);
+  b.posts = [];                                    // [{ seq, at }]
+  b.net.route([{ match: CHUNK, fn: (call) => {
+    const seq = seqOf(call.url);
+    const n = b.posts.filter(p => p.seq === seq).length + 1;   // this attempt's number
+    b.posts.push({ seq, at: b.clock.now() });
+    return handler(b, seq, n);
+  } }]);
+  b.stream = { sid: 's_1772460300_44c9a2', seq: 0, queue: [], busy: false, dead: false };
+  b.push = () => b.ctx.streamVideoChunk(b.stream, { size: 100000 });
+  b.ok = () => b.net.res(200, { ok: true });
+  b.later = (ms, r) => new Promise(res => b.clock.setTimeout(() => res(r), ms));
+  b.attempts = (seq) => b.posts.filter(p => p.seq === seq).map(p => p.at);
+  return b;
+}
+
+(async () => {
+  // --- the issue's repro: every answer takes 20 s -------------------------
+  // Longer than the old 15 s deadline, well inside a chunk deadline. Chunk 0
+  // was posted four times in 55 s and nothing else was ever sent.
+  {
+    const b = boot((b) => b.later(20000, b.ok()));
+    for (let i = 0; i < 10; i++) { b.push(); await b.clock.advance(2000); }
+    await b.clock.advance(300000);
+    const order = b.posts.map(p => p.seq);
+    assert.deepStrictEqual(order, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+      'a slow-but-answered chunk was re-sent, or the ones behind it were held: ' + order);
+    assert.strictEqual(b.stream.queue.length, 0, 'chunks are still queued after every one was answered');
+  }
+
+  // --- a chunk that times out is retried, and what follows still goes in order
+  {
+    const b = boot((b, seq, n) => (seq === 0 && n === 1 ? 'hang' : b.ok()));
+    for (let i = 0; i < 5; i++) { b.push(); await b.clock.advance(2000); }
+    await b.clock.advance(300000);
+    const order = b.posts.map(p => p.seq);
+    assert.deepStrictEqual(order, [0, 0, 1, 2, 3, 4],
+      'after a timed-out chunk the stream did not carry on in order: ' + order);
+    assert.strictEqual(b.stream.queue.length, 0);
+    // the deadline is long enough for a slow uplink: nothing gave up before 60 s
+    assert(b.attempts(0)[1] >= 60000, 'the chunk was abandoned after ' + b.attempts(0)[1] + ' ms');
+  }
+
+  // --- 5xx: backs off, then the delay starts over after a success ---------
+  // All three chunks are queued at once so only the pump's own timer can move
+  // things on; a retry that waits for the next chunk would never happen.
+  {
+    const b = boot((b, seq, n) => ((seq === 0 && n <= 2) || (seq === 1 && n === 1)
+      ? b.net.res(503, {}) : b.ok()));
+    b.push(); b.push(); b.push();
+    await b.clock.advance(120000);
+    assert.deepStrictEqual(b.attempts(0), [0, 2000, 6000],
+      'chunk 0 retries should back off 2 s then 4 s: ' + b.attempts(0));
+    assert.deepStrictEqual(b.attempts(1), [6000, 8000],
+      'the backoff did not reset after chunk 0 succeeded: ' + b.attempts(1));
+    assert.deepStrictEqual(b.attempts(2), [8000]);
+    assert.strictEqual(b.stream.queue.length, 0);
+  }
+
+  // --- a newly arrived chunk does not cut the backoff short ----------------
+  {
+    const b = boot((b, seq, n) => (seq === 0 && n === 1 ? b.net.res(503, {}) : b.ok()));
+    b.push();
+    await b.clock.advance(1000);
+    b.push();                                        // arrives mid-backoff
+    await b.clock.advance(500);
+    assert.strictEqual(b.attempts(0).length, 1, 'a new chunk re-sent the failed head inside its backoff');
+    await b.clock.advance(120000);
+    assert.deepStrictEqual(b.posts.map(p => p.seq), [0, 0, 1]);
+  }
+
+  // --- the backoff is capped -----------------------------------------------
+  {
+    const b = boot(() => b_503());
+    function b_503() { return { ok: false, status: 503, json: async () => ({}) }; }
+    b.push();
+    await b.clock.advance(400000);
+    const gaps = b.attempts(0).map((t, i, a) => i ? t - a[i - 1] : null).slice(1);
+    assert.deepStrictEqual(gaps.slice(0, 6), [2000, 4000, 8000, 16000, 30000, 30000],
+      'backoff gaps: ' + gaps);
+  }
+
+  console.log('PUMP OK');
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+def test_the_chunk_pump_waits_for_a_slow_chunk_and_backs_off(tmp_path):
+    """#274: a 20 s answer is not a failure; a failure backs off, in order."""
+    assert "PUMP OK" in _run(tmp_path, PUMP_HARNESS, ROOT / "static" / "v2.html")
